@@ -17,14 +17,17 @@
  * @module @iris/app-service/regex
  */
 
+import { createHash } from 'node:crypto'
+
 import type { CharacterCard } from '@iris/character'
 import { createMacroContext, toRegexSubstitute, type MacroVariableStore } from '@iris/macro'
-import type { ViewRole } from '@iris/protocol'
+import type { TavernRegexSource, TavernRegexView, ViewRole } from '@iris/protocol'
 import {
   applyRegexScripts,
   orderScripts,
   PLACEMENT,
   SCRIPT_TYPE,
+  SUBSTITUTE,
   type MacroSubstitute,
   type OwnedScript,
   type Placement,
@@ -388,4 +391,220 @@ export function runScripts(
     ...rest,
     ...substitute === undefined ? {} : { substitute },
   })
+}
+
+// —— family②: regex ——
+
+/**
+ * Which placement a card's `source` argument names.
+ *
+ * Upstream's own table, transcribed from `formatAsTavernRegexedString`
+ * (`src/function/tavern_regex.ts:36-42`), whose values are
+ * `extensions/regex/engine.js:281-292`'s `regex_placement`. Kept beside
+ * {@link placementFor} because those two are the only two mappings from a
+ * caller's vocabulary into a placement number, and a third one written at a
+ * call site is how they would come to disagree.
+ *
+ * Five sources, and `MD_DISPLAY` (`0`) is deliberately unreachable: upstream
+ * retired it and its member offers no word for it.
+ */
+export const SOURCE_PLACEMENT: Readonly<Record<TavernRegexSource, Placement>> = {
+  user_input: PLACEMENT.USER_INPUT,
+  ai_output: PLACEMENT.AI_OUTPUT,
+  slash_command: PLACEMENT.SLASH_COMMAND,
+  world_info: PLACEMENT.WORLD_INFO,
+  reasoning: PLACEMENT.REASONING,
+}
+
+/**
+ * How a rule the document did not name is addressed.
+ *
+ * Upstream mints ids lazily — on render, on save, on migration — so a document
+ * can genuinely arrive with rules that have none, and `to_tavern_regex` passes
+ * `undefined` straight through into a field its own type declares as `string`.
+ * A card that read such a rule, toggled it and wrote the tier back would send a
+ * rule with no handle, and nothing could match it to what was stored.
+ *
+ * So an unnamed rule is reported under a **content-derived** id rather than a
+ * fresh one: derived, so two reads of an unchanged document agree and a card
+ * can round-trip; content rather than position, so reordering the list — which
+ * is upstream's own stated reason for offering a whole-tier write — does not
+ * make every rule a stranger. Two byte-identical rules collide, which is
+ * correct: nothing distinguishes them.
+ *
+ * Measured over the ST corpus, **all 251 stored rules carry an id** (173 in 15
+ * cards, 78 in 4 presets), so this path is the format's possibility rather than
+ * the corpus's habit. It is not a write: an id minted here becomes real only if
+ * a card writes the tier back, which is exactly when upstream's own lazy mint
+ * would have happened.
+ * @param script - the rule as its document stores it.
+ * @returns the document's id, or a stable derived one.
+ */
+export function tavernRegexId(script: RegexScript): string {
+  const stored = script.id
+  if (typeof stored === 'string' && stored.length > 0) return stored
+  const digest = createHash('sha256')
+    .update([
+      typeof script.scriptName === 'string' ? script.scriptName : '',
+      script.findRegex,
+      script.replaceString,
+    ].join(String.fromCharCode(0)))
+    .digest('hex')
+    .slice(0, 12)
+  // Prefixed, so a reader looking at a card file can tell a derived handle from
+  // one an install wrote.
+  return `iris-derived-${digest}`
+}
+
+/**
+ * One stored rule in Tavern Helper's vocabulary.
+ *
+ * Upstream's `to_tavern_regex` (`src/function/tavern_regex.ts:136-163`), field
+ * for field. Three of the translations are worth naming because getting one
+ * backwards is silent:
+ *
+ * - `enabled` is `!disabled`, the **file author's** switch. The user's own
+ *   override is a separate record and is deliberately not folded in here —
+ *   upstream has only the one switch, so a card reading two would be reading a
+ *   surface no other host has, and a card *writing* the folded value back would
+ *   burn the user's decision into the document.
+ * - `destination` is the two `…Only` flags, **not** a partition: a rule with
+ *   neither is the permanent kind and answers `false` to both, which is how
+ *   upstream reports it too.
+ * - `min_depth`/`max_depth` become `null` for anything that is not a number, so
+ *   a card can test one field instead of three states.
+ * @param script - the rule as its document stores it.
+ * @returns the rule in the shape a card reads.
+ */
+export function toTavernRegex(script: RegexScript): TavernRegexView {
+  const placement = Array.isArray(script.placement) ? script.placement : []
+  return {
+    id: tavernRegexId(script),
+    script_name: typeof script.scriptName === 'string' ? script.scriptName : '',
+    enabled: script.disabled !== true,
+    find_regex: script.findRegex,
+    replace_string: script.replaceString,
+    trim_strings: Array.isArray(script.trimStrings) ? [...script.trimStrings] : [],
+    source: {
+      user_input: placement.includes(PLACEMENT.USER_INPUT),
+      ai_output: placement.includes(PLACEMENT.AI_OUTPUT),
+      slash_command: placement.includes(PLACEMENT.SLASH_COMMAND),
+      world_info: placement.includes(PLACEMENT.WORLD_INFO),
+      reasoning: placement.includes(PLACEMENT.REASONING),
+    },
+    destination: {
+      display: script.markdownOnly === true,
+      prompt: script.promptOnly === true,
+    },
+    run_on_edit: script.runOnEdit === true,
+    min_depth: typeof script.minDepth === 'number' ? script.minDepth : null,
+    max_depth: typeof script.maxDepth === 'number' ? script.maxDepth : null,
+  }
+}
+
+/**
+ * One card-written rule in the shape its document stores.
+ *
+ * Upstream's `from_tavern_regex` (`src/function/tavern_regex.ts:165-194`) with
+ * **one deliberate departure**: upstream writes `substituteRegex: 0` with the
+ * comment `// TODO: handle this?`, so a rule whose pattern expands macros in
+ * escaped mode silently becomes one that does not the first time any card
+ * writes the tier back — and `getTavernRegexes` never showed the field, so no
+ * card could have preserved it. Here the rule's previous stored form is passed
+ * in and everything this vocabulary has no word for is carried across from it:
+ * `substituteRegex` and any key the file arrived with. A card that means to
+ * change a field changes it; a card that means to reorder or toggle keeps the
+ * rest of the document intact.
+ * @param regex - the rule as the card wrote it.
+ * @param previous - the stored rule of the same id, when there is one.
+ * @returns the rule in its document's shape.
+ */
+export function fromTavernRegex(
+  regex: TavernRegexView,
+  previous?: RegexScript,
+  // `id` and `scriptName` are narrowed to required, because this always writes
+  // both: the global store's own row type (`RegexScriptView`) insists on a
+  // name, and a `RegexScript`'s optional one would not satisfy it even though
+  // every value produced here has it.
+): RegexScript & { id: string, scriptName: string } {
+  const source = regex.source
+  return {
+    // Unnamed fields first, so every field this vocabulary *does* carry
+    // overwrites them rather than the other way round.
+    ...previous ?? {},
+    id: regex.id,
+    scriptName: regex.script_name,
+    disabled: !regex.enabled,
+    runOnEdit: regex.run_on_edit,
+    findRegex: regex.find_regex,
+    replaceString: regex.replace_string,
+    trimStrings: [...regex.trim_strings],
+    placement: [
+      ...source.user_input ? [PLACEMENT.USER_INPUT] : [],
+      ...source.ai_output ? [PLACEMENT.AI_OUTPUT] : [],
+      ...source.slash_command ? [PLACEMENT.SLASH_COMMAND] : [],
+      ...source.world_info ? [PLACEMENT.WORLD_INFO] : [],
+      ...source.reasoning ? [PLACEMENT.REASONING] : [],
+    ],
+    markdownOnly: regex.destination.display,
+    promptOnly: regex.destination.prompt,
+    minDepth: regex.min_depth,
+    maxDepth: regex.max_depth,
+    // Kept last so an absent previous rule still gets upstream's own default
+    // rather than `undefined`, which the engine's `Number(…)` would read as NaN
+    // and fall through to the unescaped branch on.
+    substituteRegex: typeof previous?.substituteRegex === 'number' ? previous.substituteRegex : SUBSTITUTE.NONE,
+  }
+}
+
+/**
+ * Run one chat's regex chain over a string a card handed in.
+ *
+ * Upstream's `formatAsTavernRegexedString` (`src/function/tavern_regex.ts:27-73`)
+ * has three steps and two of them are here:
+ *
+ * 1. `getRegexedString` over the whole allowed chain, with `isMarkdown` /
+ *    `isPrompt` set from `destination` and the depth window honoured only when
+ *    a `depth` was given. That is {@link applyRegexScripts} with the same
+ *    scripts the reader's page and the outgoing prompt use.
+ * 2. `substituteParams` over the **result**, so `{{char}}` in text no rule
+ *    touched still expands — which is why this is not simply `runScripts`. The
+ *    `character_name` argument overrides `{{char}}` for this call, upstream's
+ *    `name2Override`.
+ * 3. `macros.forEach` — the `registerMacroLike` family. This host has no such
+ *    member, so there is nothing registered and the step is a no-op; a card
+ *    that registered one upstream and formats here gets its text back with that
+ *    one macro unexpanded (ledger §64).
+ * @param text - the string to rewrite.
+ * @param source - what kind of text it is.
+ * @param destination - what it is about to be used as.
+ * @param scripts - the chat's ordered chain (`entry.scripts`).
+ * @param options - the depth, the character-name override, and the expander.
+ * @returns the rewritten string.
+ */
+export function formatAsTavernRegexed(
+  text: string,
+  source: TavernRegexSource,
+  destination: 'display' | 'prompt',
+  scripts: readonly RegexScript[],
+  options: {
+    depth?: number
+    characterName?: string
+    substitute?: MacroSubstitute | undefined
+  } = {},
+): string {
+  const { substitute, characterName, depth } = options
+  const stage = destination === 'display' ? { isMarkdown: true } : { isPrompt: true }
+  const override = characterName === undefined ? {} : { characterOverride: characterName }
+  const rewritten = applyRegexScripts(text, SOURCE_PLACEMENT[source], scripts, {
+    ...stage,
+    ...depth === undefined ? {} : { depth },
+    ...override,
+    ...substitute === undefined ? {} : { substitute },
+  })
+  // Step 2. Skipped entirely when there is no expander, rather than reported:
+  // this is the same silence `runScripts` keeps, and the member's own gap note
+  // belongs to the frame that answered the card.
+  if (substitute === undefined) return rewritten
+  return substitute(rewritten, override)
 }

@@ -15,6 +15,7 @@ import { extname, resolve } from 'node:path'
 import { CharacterCardError, decodeCardPng, mutateCardPng, normalizeCard, readCardChunks, type CharacterCard } from '@iris/character'
 import type { CharacterSummary } from '@iris/protocol'
 import { extractScripts } from '@iris/script'
+import type { RegexScript } from '@iris/regex'
 
 import { AppError, invalid, notFound } from './errors.ts'
 import { fileFor, toId, uniqueId } from './paths.ts'
@@ -498,6 +499,47 @@ export class CharacterLibrary {
       return raw
     })
     return this.summarize(await this.#refOf(ref.characterId, ref.extension, ref.path), await this.load(characterId))
+  }
+
+  // —— family②: regex ——
+  /**
+   * Replace a card's own regex tier, in the card.
+   *
+   * This tier lives in the document (`data.extensions.regex_scripts`), so a
+   * write is a write to the card file — the same surgical mutation a rename and
+   * a tag edit use. Upstream does exactly this and by the same route:
+   * `replaceTavernRegexes` ends in `writeExtensionField(id, 'regex_scripts',
+   * converted)` (`src/function/tavern_regex.ts:288`/`:324`), which rewrites the
+   * character.
+   *
+   * **Wholesale**, as upstream is: the array replaces the stored list, so a
+   * rule absent from it is gone. No V1 mirror is touched, because the field has
+   * never had one — `extensions` is a V2 concept.
+   *
+   * **No `regex_scripts` key is created for an empty list on a card that had
+   * none.** Absent and empty read the same to every reader of this field
+   * (`scriptsOf` tests `Array.isArray`), and writing `[]` into a card that
+   * carried nothing would change the document's bytes — and therefore its
+   * export — to say the same thing it already said.
+   * @param characterId - the card to edit.
+   * @param scripts - the complete new tier, in run order.
+   * @throws {AppError} `unsupported` when the file is a plain image.
+   */
+  async setScopedRegex(characterId: string, scripts: readonly RegexScript[]): Promise<void> {
+    const ref = await this.ref(characterId)
+    const fresh = scripts.map(script => ({ ...script }))
+    await this.#mutateCard(ref, raw => {
+      if (!isRecord(raw.data)) return raw
+      if (!isRecord(raw.data.extensions)) {
+        if (fresh.length === 0) return raw
+        raw.data.extensions = {}
+      }
+      const extensions = raw.data.extensions
+      if (!isRecord(extensions)) return raw
+      if (fresh.length === 0 && extensions['regex_scripts'] === undefined) return raw
+      extensions['regex_scripts'] = fresh
+      return raw
+    })
   }
 
   /**

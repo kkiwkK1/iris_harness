@@ -31,10 +31,44 @@ import type {
   ScriptChatMessage,
   ScriptContext,
   WorldbookEntry,
+  // —— family②: regex ——
+  TavernRegexSource,
+  TavernRegexTier,
+  TavernRegexView,
 } from '@iris/protocol'
 
 import { buttonEventName } from './button-event.ts'
 import { UnsupportedApiError } from './errors.ts'
+
+// —— family②: regex ——
+/** Which tier a card's option names, as the wire spells it. */
+type TavernRegexTierName = TavernRegexTier
+
+/**
+ * One rule as a card receives it.
+ *
+ * The wire's shape plus upstream's deprecated `scope` tag, which only the
+ * `{scope, enable_state}` read attaches (`@types/function/tavern_regex.d.ts:34`
+ * marks it `@deprecated` and says it is returned *only* on that path). It is a
+ * frame-side tag rather than a wire field for exactly that reason: the host
+ * answers one tier per call and has nothing to say about it.
+ */
+type TavernRegexRow = TavernRegexView & { scope?: 'global' | 'character' }
+
+/**
+ * Upstream's five sources, in the order its own table declares them.
+ *
+ * Checked in the frame rather than left to the host's schema, so a card that
+ * mistypes one gets a message naming the member and the five spellings instead
+ * of a transport-shaped refusal.
+ */
+const TAVERN_REGEX_SOURCES: readonly TavernRegexSource[] = [
+  'user_input',
+  'ai_output',
+  'slash_command',
+  'world_info',
+  'reasoning',
+]
 
 /**
  * The events a **started** generation is announced under.
@@ -1491,6 +1525,140 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     return event
   }
 
+  // —— family②: regex ——
+  /**
+   * Which tier a card's `option.type` names, and a refusal for the `name` this
+   * host cannot honour.
+   *
+   * Upstream's option carries `name?: string | 'current'` for a character and
+   * `name?: string | 'in_use'` for a preset, and resolves it through
+   * `RawCharacter.findIndex` / `getCompletionPresetByName` — so a card there
+   * reads and writes *any* installed card's tier and any saved preset's. Here
+   * the tier is whatever the open conversation is playing, which is what makes
+   * "a card cannot edit another card's rules" structural rather than a check.
+   *
+   * A `name` naming something else is therefore **refused, not ignored**:
+   * ignoring it would answer with this card's rules under another card's name,
+   * a wrong answer that looks like a right one — and a card that then wrote the
+   * list back would overwrite the wrong document. The two self-referential
+   * spellings pass through, since they name what this host would have answered
+   * anyway.
+   * @param member - the member being called, for the message.
+   * @param type - the caller's `option.type`.
+   * @param name - the caller's `option.name`, if any.
+   * @returns the tier.
+   */
+  const tavernTier = (member: string, type: unknown, name: unknown): TavernRegexTierName => {
+    if (type !== 'global' && type !== 'character' && type !== 'preset') {
+      throw new UnsupportedApiError(
+        `${member}({type: ${String(type)}})`,
+        "the type must be 'global', 'character' or 'preset'",
+      )
+    }
+    const own = type === 'preset' ? 'in_use' : 'current'
+    if (name !== undefined && name !== own) {
+      throw new UnsupportedApiError(
+        `${member}({type: '${type}', name: '${String(name)}'})`,
+        `this host answers only for the conversation you are in, so the ${type} tier is`
+          + ` addressed as '${own}' or by leaving the name out. Naming another one would`
+          + ' have been answered with this one.',
+      )
+    }
+    return type
+  }
+
+  /**
+   * One tier's rules, or — in upstream's older spelling — global and card
+   * concatenated.
+   *
+   * Shared by all three members so that "which tier a call names" is decided
+   * once: `updateTavernRegexesWith` reading its own way is precisely how its
+   * input would come to disagree with `getTavernRegexes`' output, which is a
+   * difference a card author cannot see.
+   * @param option - upstream's tier option, or its deprecated scope form.
+   * @returns the rules, tagged with `scope` on the deprecated path.
+   */
+  const readTavernRegexes = async (
+    option?: Record<string, unknown>,
+  ): Promise<TavernRegexRow[]> => {
+    const tier = async (name: TavernRegexTierName): Promise<TavernRegexRow[]> => {
+      const answer = await host.call('getTavernRegexes', { tier: name })
+      return (answer as { regexes?: TavernRegexRow[] } | undefined)?.regexes ?? []
+    }
+    const type = option?.['type']
+    if (type !== undefined) return tier(tavernTier('getTavernRegexes', type, option?.['name']))
+
+    const scope = option?.['scope'] ?? 'all'
+    const enableState = option?.['enable_state'] ?? 'all'
+    // Validated before anything is read, and in upstream's order —
+    // `enable_state` first — so a call that is wrong twice is refused with the
+    // message upstream would have given it. Plain `Error`, not
+    // `UnsupportedApiError`: these are upstream's own strings, and a card that
+    // catches one and reads its text is reading that text.
+    if (!['all', 'enabled', 'disabled'].includes(String(enableState))) {
+      throw Error(
+        `提供的 enable_state 无效, 请提供 'all', 'enabled' 或 'disabled', 你提供的是: ${String(enableState)}`,
+      )
+    }
+    if (!['all', 'global', 'character'].includes(String(scope))) {
+      throw Error(`提供的 scope 无效, 请提供 'all', 'global' 或 'character', 你提供的是: ${String(scope)}`)
+    }
+    let rows: TavernRegexRow[] = []
+    if (scope === 'all' || scope === 'global') {
+      rows = [...rows, ...(await tier('global')).map(row => ({ ...row, scope: 'global' as const }))]
+    }
+    if (scope === 'all' || scope === 'character') {
+      rows = [...rows, ...(await tier('character')).map(row => ({ ...row, scope: 'character' as const }))]
+    }
+    if (enableState !== 'all') rows = rows.filter(row => row.enabled === (enableState === 'enabled'))
+    return rows
+  }
+
+  /**
+   * Replace one tier — or, on the deprecated path, both of them, partitioned by
+   * each row's own `scope`.
+   *
+   * Upstream's `_.partition(regexes, r => r.scope === 'global')`
+   * (`src/function/tavern_regex.ts:276`), so a row with no `scope` lands in the
+   * card's tier: that is which bucket `_.partition`'s falsy half is, and it is
+   * what a card holding the legacy read's output relies on.
+   * @param regexes - the rules to store.
+   * @param option - upstream's tier option, or its deprecated scope form.
+   */
+  const writeTavernRegexes = async (
+    regexes: readonly Record<string, unknown>[],
+    option?: Record<string, unknown>,
+  ): Promise<void> => {
+    const rows = [...regexes]
+    const write = async (
+      name: TavernRegexTierName,
+      list: readonly Record<string, unknown>[],
+    ): Promise<void> => {
+      // `scope` is stripped: it is the deprecated read's tag, not a stored
+      // field, and the host's schema is strict — a card that round-trips the
+      // legacy shape would otherwise be refused for echoing what it was given.
+      await host.call('replaceTavernRegexes', {
+        tier: name,
+        regexes: list.map(({ scope: _tag, ...rest }) => rest),
+      })
+    }
+    const type = option?.['type']
+    if (type !== undefined) {
+      await write(tavernTier('replaceTavernRegexes', type, option?.['name']), rows)
+      return
+    }
+    const scope = option?.['scope'] ?? 'all'
+    if (!['all', 'global', 'character'].includes(String(scope))) {
+      throw Error(`提供的 scope 无效, 请提供 'all', 'global' 或 'character', 你提供的是: ${String(scope)}`)
+    }
+    if (scope === 'all' || scope === 'global') {
+      await write('global', rows.filter(row => row['scope'] === 'global'))
+    }
+    if (scope === 'all' || scope === 'character') {
+      await write('character', rows.filter(row => row['scope'] !== 'global'))
+    }
+  }
+
   const api: Record<string, unknown> = {
     // ── reads, answered here because their callers do not await ──────────
     getVariables: (option?: VariableOption) => readVariables('getVariables', option),
@@ -2942,6 +3110,166 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     iframe_events: IFRAME_EVENTS,
     tavern_events: TAVERN_EVENTS,
     mvu_events: MVU_EVENTS,
+
+    // —— family②: regex ——
+    /**
+     * One tier of regex rules, or — in upstream's older spelling — global and
+     * card concatenated.
+     *
+     * **Both call shapes, because upstream still answers both.** Its
+     * `getTavernRegexes(option?)` branches on `option?.type === undefined`
+     * (`src/function/tavern_regex.ts:209-242`): a `type` names one tier, and
+     * anything else is the deprecated `{scope, enable_state}` form, which reads
+     * global then card, tags each row with `scope`, and filters by
+     * enabled-state. The two error strings are upstream's own, character for
+     * character, because a card that catches one and reads its text is reading
+     * that text.
+     *
+     * The legacy form is where the **tier order** is visible in one answer:
+     * global rows first, then the card's. Note that it omits the preset tier
+     * entirely — which upstream's own legacy branch does too, even though the
+     * preset's rules run *between* those two.
+     *
+     * **A promise, where upstream returns an array.** This is the family's one
+     * departure and it is measured, not chosen for convenience: see
+     * `CARD_METHODS`. A card that awaits — which every card in this family's
+     * own examples does, since the write half is async upstream too — is
+     * unaffected; one that treats the answer as an array immediately gets a
+     * `TypeError` on the frame's own answer rather than silence.
+     * @param option - upstream's tier option, or its deprecated scope form.
+     * @returns the rules, in the tier's stored order.
+     */
+    getTavernRegexes: async (option?: Record<string, unknown>): Promise<TavernRegexRow[]> => {
+      return readTavernRegexes(option)
+    },
+
+    /**
+     * Replace one tier wholesale.
+     *
+     * Upstream's `replaceTavernRegexes(regexes, option)`, and wholesale is the
+     * word: a rule absent from the array is deleted. The **deprecated** form is
+     * answered too — with no `type`, upstream partitions the array by each
+     * row's own `scope` field and writes global and card separately
+     * (`src/function/tavern_regex.ts:267-291`), which is what a card holding
+     * the legacy read's output does next, so the two halves have to agree.
+     *
+     * Accepted and ignored where upstream would repaint: it reloads every
+     * message to re-run the rules (`render_tavern_regexes_debounced`), and the
+     * host announces the changed chat itself.
+     * @param regexes - the tier's new contents.
+     * @param option - upstream's tier option, or its deprecated scope form.
+     * @returns nothing, matching upstream's `Promise<void>`.
+     */
+    replaceTavernRegexes: async (
+      regexes: readonly Record<string, unknown>[],
+      option?: Record<string, unknown>,
+    ): Promise<void> => {
+      await writeTavernRegexes(regexes, option)
+    },
+
+    /**
+     * Read a tier, let the card rewrite it, and store the result.
+     *
+     * Built in the frame rather than sent over the wire, for the reason
+     * `updateWorldbookWith` is: it takes a **function**, and a function cannot
+     * cross the boundary. So it is composed from the two members above, which
+     * is also how upstream composes it
+     * (`src/function/tavern_regex.ts:335-343`: get, updater, replace, return).
+     *
+     * The updater may be synchronous or async — upstream's `TavernRegexUpdater`
+     * is a union of both — and what it returns is passed through whole. Upstream
+     * returns the array the updater produced; this returns **what the host
+     * stored**, which differs wherever a blank name was filled in or an unnamed
+     * field was carried across, and those are exactly the changes a card cannot
+     * otherwise see. Web ledger §88.
+     * @param updater - given the tier's rules, returns the new ones.
+     * @param option - upstream's tier option, or its deprecated scope form.
+     * @returns the tier as it stands after the write.
+     */
+    updateTavernRegexesWith: async (
+      updater: (
+        regexes: TavernRegexRow[],
+      ) => readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>,
+      option?: Record<string, unknown>,
+    ): Promise<TavernRegexRow[]> => {
+      // Composed from the same two locals the members above delegate to, not
+      // from the published surface: reaching a sibling through the returned
+      // object would break the first time a card destructured this API, which
+      // is how cards routinely import it.
+      const next = await updater(await readTavernRegexes(option))
+      await writeTavernRegexes(next, option)
+      return await readTavernRegexes(option)
+    },
+
+    /**
+     * Whether the character being played may run its own regex tier.
+     *
+     * Upstream's `isCharacterTavernRegexesEnabled()` is synchronous and reads
+     * `extension_settings.character_allowed_regex.includes(characters[this_chid].avatar)`
+     * (`src/function/tavern_regex.ts:196-200`) — so this reads the snapshot,
+     * the same way `getCharWorldbookNames` and `getLorebookSettings` do, and it
+     * is one boolean rather than a tier's worth of bodies.
+     *
+     * **Absent reads as allowed**, which is this host's own default for the
+     * card tier and a deliberate divergence from upstream's (§30): there a card
+     * must be added to the allow-list, here it is allowed until refused. So a
+     * card asking this on a fresh install gets `true` here and `false` there.
+     * @returns whether the tier may run.
+     */
+    isCharacterTavernRegexesEnabled: (): boolean =>
+      snapshot('isCharacterTavernRegexesEnabled').characterRegexAllowed !== false,
+
+    /**
+     * Apply this chat's regex chain to a string.
+     *
+     * Upstream's `formatAsTavernRegexedString(text, source, destination, {depth,
+     * character_name})`, answered by the host because that is where the rules
+     * are — and the by-product is worth more than the round trip costs: the
+     * chain is `entry.scripts`, the very list that produced the text on the
+     * page and the text in the last request, so the three cannot disagree.
+     *
+     * **A promise, where upstream returns a string** — the family's one
+     * departure, measured in `CARD_METHODS`.
+     *
+     * Upstream's third step, the `registerMacroLike` macros, has nothing to run
+     * here: this host has no such member, so a card that registered one
+     * upstream gets its text back with that one macro unexpanded. Reported once
+     * per frame rather than silently, because text handed back unchanged and
+     * text a step never touched are indistinguishable — the same rule
+     * `substitudeMacros` above keeps.
+     * @param text - the string to rewrite.
+     * @param source - which of upstream's five sources this text is.
+     * @param destination - `'display'` or `'prompt'`.
+     * @param option - upstream's `{depth, character_name}`.
+     * @returns the rewritten string.
+     */
+    formatAsTavernRegexedString: async (
+      text: string,
+      source: string,
+      destination: string,
+      option?: { depth?: number, character_name?: string },
+    ): Promise<string> => {
+      if (!TAVERN_REGEX_SOURCES.includes(source as TavernRegexSource)) {
+        throw new UnsupportedApiError(
+          `formatAsTavernRegexedString(…, '${String(source)}', …)`,
+          `the source must be one of ${TAVERN_REGEX_SOURCES.join(', ')}`,
+        )
+      }
+      if (destination !== 'display' && destination !== 'prompt') {
+        throw new UnsupportedApiError(
+          `formatAsTavernRegexedString(…, '${String(destination)}')`,
+          "the destination must be 'display' or 'prompt'",
+        )
+      }
+      const answer = await host.call('formatAsTavernRegexedString', {
+        text,
+        source,
+        destination,
+        ...typeof option?.depth === 'number' ? { depth: option.depth } : {},
+        ...typeof option?.character_name === 'string' ? { characterName: option.character_name } : {},
+      })
+      return (answer as { text?: string } | undefined)?.text ?? text
+    },
   }
 
   /*

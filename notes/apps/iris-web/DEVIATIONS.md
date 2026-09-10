@@ -5039,6 +5039,120 @@ other way, and the gate its frame back); or the two-branch shape recurring, whic
 would argue for the seam itself (a `build:sandbox` run on the merge result, not on
 each branch) rather than for another kibibyte.
 
+## 88. The regex family reads and writes over the wire, because the tiers are too heavy to ride the snapshot
+
+**Kind:** deliberate departure, measured.
+
+**Upstream.** Tavern Helper declares five regex members and the *shape* of three
+of them is the whole difficulty:
+
+| member | upstream declaration | upstream implementation | signature |
+| --- | --- | --- | --- |
+| `getTavernRegexes(option)` | `@types/function/tavern_regex.d.ts:87` | `src/function/tavern_regex.ts:209-242` | **synchronous**, returns `TavernRegex[]` |
+| `replaceTavernRegexes(regexes, option)` | `:103` | `:260-329` | `Promise<void>` |
+| `updateTavernRegexesWith(updater, option)` | `:131` | `:335-343` | `Promise<TavernRegex[]>` |
+| `isCharacterTavernRegexesEnabled()` | `:62` | `:196-200` | **synchronous**, returns `boolean` |
+| `formatAsTavernRegexedString(text, source, destination, option)` | `:23` | `:27-73` | **synchronous**, returns `string` |
+
+They are real functions on the ST page (`src/function/index.ts:424-428` puts
+them on `globalThis.TavernHelper`, and `predefine.js` picks the surface off the
+parent into every same-origin frame), so a card's call runs in the page's own
+realm and returns before the next statement. Storage: `'global'` is
+`extension_settings.regex`, `'character'` is
+`characters.at(id).data.extensions.regex_scripts`, `'preset'` is the preset
+body's `extensions.regex_scripts` — the same three tiers Iris already composes
+(§30, §47, §53, and the host ledger §35 for the order).
+
+**The measurement that settled it.** The two synchronous *readers* could only be
+faithful by riding the pushed snapshot, the way `getCharWorldbookNames` and
+`getLorebookSettings` do. Measured over `E:\sillyTavern` (read-only,
+2026-09-10), the card tier alone:
+
+| tier | rules | bytes (JSON) |
+| --- | ---: | ---: |
+| global (`settings.json`) | 0 | 2 |
+| preset, largest of 4 files | 15 | 55,804 |
+| card, median of the 15 that carry one | — | 134,819 |
+| card, largest (创世回廊 1.3, 9 rules) | 9 | **1,090,531** |
+| largest single `replaceString` | — | 524,550 chars |
+
+251 rules in all, 173 in cards and 78 in presets. The snapshot is **inlined into
+every frame's `srcdoc` as a double-JSON-encoded string literal**
+(`srcdoc.ts:519-528`), uncached, one copy per frame; at `FRAME_COUNT_LIMIT` 18
+that is about 2.4 MiB of frame source for a typical card and 19.6 MiB for the
+worst one — paid by every card, including the whole corpus, which calls none of
+these five (0 hits in both audits). That is the same cost that got `getPreset`
+refused in §85, an order of magnitude larger.
+
+**Now.** Three members are round trips — `regex.tavernList`,
+`regex.tavernReplace`, `regex.tavernFormat` — and two are answered in the frame:
+
+- **`getTavernRegexes` and `formatAsTavernRegexedString` return promises.** This
+  is the departure. A card that awaits is unaffected, and this family's own
+  documented examples await (its write half is async upstream); a card that
+  treats the answer as an array or a string gets a `TypeError` on the frame's own
+  answer. Refusing them outright — §85's treatment of `getPreset` — was the
+  alternative, and is worse here: `getPreset` had a throwing-vs-absent argument
+  about `typeof` guards, while these two are useful the moment a card awaits.
+- **`isCharacterTavernRegexesEnabled` really is synchronous**, because its answer
+  is one boolean: `ScriptContext.characterRegexAllowed`. **Absent means allowed**,
+  Iris's default for the card tier and a standing divergence from upstream's
+  (§30) — so a card asking this on a fresh install gets `true` here and `false`
+  there.
+- **`updateTavernRegexesWith` is composed in the frame** from the other two,
+  exactly as `updateWorldbookWith` is, because it takes a function. It returns
+  **the stored tier** rather than the updater's array (upstream returns the
+  array), because the host fills in a blank name and carries unnamed fields
+  across, and those are changes a card cannot otherwise see.
+- **Both signatures of both mutable members are answered**, the new
+  `{type, name}` one and the deprecated `{scope, enable_state}` one, with
+  upstream's two refusal strings character for character. The deprecated read is
+  the only answer in which the tier order is visible — global rows first, then
+  the card's, with each row carrying the `@deprecated` `scope` tag — and it omits
+  the **preset** tier, which runs between those two. That omission is upstream's.
+- **`name` is refused, not ignored.** Upstream resolves `option.name` through
+  `RawCharacter.findIndex` / `getCompletionPresetByName`, so a card there reads
+  and writes any installed card's tier and any saved preset's. Here the tier is
+  resolved from the `chatId` the shell stamps on every card action, so
+  `'character'` is the conversation's own card and `'preset'` the active one;
+  `'current'` and `'in_use'` pass through and any other name is refused by name.
+  Ignoring it would answer with this card's rules under another card's name — and
+  a card that wrote the list back would overwrite the wrong document.
+- **A `'preset'` write is refused** (`unsupported`, saying the library is
+  read-only). Upstream writes both `oai_settings` and a named preset file.
+- All five sit in `OFF_ST_SURFACE`: none is among `st-context.js`'s 145 keys, so
+  `SillyTavern.getTavernRegexes` would be Iris inventing a member on the surface
+  it mirrors. All five are `shared` in `MEMBER_KINDS` — a regex tier is a
+  document, and none of the five carries a scope or a script id.
+
+**Cost.** The bootstrap grows **260 bytes** (53,536 → 53,796 raw; `bootstrap
+check` reports 53,712 and a frame overhead of about 54,736 against the budgeted
+55,296), all of it `card-api.ts`'s three table entries and five deny-list
+strings. That leaves 560 bytes under the 54 KiB row of §86, and three sibling
+branches are adding to the same two tables — so the merge is where this is
+decided, not here.
+
+**Pinned.** `apps/iris-web/tests/tavern-regex-facade.test.ts` (19 tests): the
+five names bare and under `TavernHelper`; the routable three against the
+frame-answered two; the deny list and the identity classification; both
+signatures of both mutable members including the two upstream strings; the
+deprecated read's order and tag and its `enable_state` filter; the deprecated
+write's partition, with an **untagged** row belonging to the card (upstream's
+`_.partition` falsy half); the `scope` tag stripped before a strict schema sees
+it; a foreign `name` refused; `updateTavernRegexesWith` composed from the two
+locals rather than through the published object, and awaiting an async updater;
+the gate synchronous, snapshot-read, absent-means-allowed; `depth: 0` surviving
+(a truthiness check would drop the commonest value); `character_name` renamed at
+the boundary; a bad source or destination refused in the frame. Thirteen frame
+mutations, each red on its own assertion.
+
+**What would overturn it.** A card measured calling `getTavernRegexes` without
+awaiting — the promise would then be a real break, and the answer would be to
+push a *projection* (names, ids and switches, no bodies) and refuse the bodies,
+which is a different member than upstream's; or a snapshot channel that is not
+per-frame source bytes (a shared `SharedArrayBuffer`, a fetched per-chat blob),
+which would make the tiers affordable and the whole departure unnecessary.
+
 ---
 
 ## 91. The frame bootstrap is fetched, not inlined — and the premise that made it inline is now checked three ways

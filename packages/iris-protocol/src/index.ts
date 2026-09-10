@@ -118,6 +118,11 @@ export type {
   WorldbookPosition,
   WorldbookSettingsView,
   WorldbookSummary,
+  // —— family②: regex ——
+  TavernRegexDestination,
+  TavernRegexSource,
+  TavernRegexTier,
+  TavernRegexView,
 } from './views.ts'
 
 export { CACHE_STALE_MS, HISTORY_ITEM_PREFIX, MAX_CONTEXT_WINDOW, providerExcuse } from './views.ts'

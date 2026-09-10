@@ -23,7 +23,7 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TurnUsage } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TurnUsage } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -82,6 +82,8 @@ import { PersonaStore, type ActivePersona } from './persona.ts'
 import type { PruneOptions } from './prune.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
+// —— family②: regex ——
+import { formatAsTavernRegexed, fromTavernRegex, readPresetRegex, tavernRegexId, toTavernRegex } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
 import { applyOps, buildSnapshot } from './template.ts'
 import type { ScriptPolicyStore } from './scripts.ts'
@@ -3436,6 +3438,15 @@ export class IrisAppService {
             characters: await library.list(),
             ...messageId === undefined ? {} : { messageId },
             onReport: message => { this.#report(message, { kind: 'script', grade: 'note', chatId, characterId }) },
+            // —— family②: regex ——
+            // The **chat's** card, not the asking one, because that is what
+            // upstream's `isCharacterTavernRegexesEnabled()` tests
+            // (`characters[this_chid].avatar`) — the same reading `charBooks`
+            // above takes. Absent when this host keeps no policy store, which
+            // reads as allowed, exactly as `scopedRegex` does.
+            ...scripts === undefined || entry.meta.characterId === undefined
+              ? {}
+              : { characterRegexAllowed: (await scripts.scopedRegex(entry.meta.characterId)).allowed },
           }),
         }
       },
@@ -3672,7 +3683,150 @@ export class IrisAppService {
           ...contentType === null ? {} : { contentType },
         }
       },
+
+      // —— family②: regex ——
+      /**
+       * One tier of regex rules, in the vocabulary a card reads.
+       *
+       * Upstream's `getTavernRegexes`. Which document each tier lives in is the
+       * whole of it, and the three answers are the three storages the composer
+       * already reads (`scriptsOf`) — so a card asking what rules exist and a
+       * conversation running them cannot be looking at different lists.
+       *
+       * Never gated. Upstream's reader takes no `allowedOnly`
+       * (`get_tavern_regexes_without_clone`), and `regex.scopedList` above
+       * answers the same way for the same reason: a refused tier reported as an
+       * empty list reads as a document that carries no rules.
+       */
+      'regex.tavernList': async ({ chatId, tier }) => {
+        const entry = await chats.open(chatId)
+        return { regexes: (await this.#tavernTier(entry, tier)).map(script => toTavernRegex(script)) }
+      },
+
+      /**
+       * Replace one tier wholesale, where that tier lives.
+       *
+       * `'preset'` is refused rather than written: this host's preset library is
+       * read-only for a card, and a write reported as done that changed nothing
+       * would leave the card believing its rules had been stored. Upstream
+       * writes both the in-use `oai_settings` and a named preset file
+       * (`src/function/tavern_regex.ts:298-311`).
+       */
+      'regex.tavernReplace': async ({ chatId, tier, regexes }) => {
+        const entry = await chats.open(chatId)
+        if (tier === 'preset') {
+          throw new AppError(
+            'unsupported',
+            'a card cannot write the preset regex tier on this host: the preset library is read-only,'
+            + ' and the tier is edited from the preset panel',
+          )
+        }
+
+        // Upstream's own rename, before anything is stored: a rule with no name
+        // is unaddressable in every panel that lists one.
+        // (`src/function/tavern_regex.ts:261-265`.)
+        const named = regexes.map(regex => regex.script_name === ''
+          ? { ...regex, script_name: `未命名-${regex.id}` }
+          : regex)
+        // The stored tier, by id, so every field this vocabulary has no word
+        // for survives a card's reorder or toggle — see `fromTavernRegex`.
+        const previous = new Map(
+          (await this.#tavernTier(entry, tier)).map(script => [tavernRegexId(script), script]),
+        )
+        const stored = named.map(regex => fromTavernRegex(regex, previous.get(regex.id)))
+
+        if (tier === 'global') {
+          const extensionSettings = this.#options.extensionSettings
+          if (extensionSettings === undefined) {
+            throw new AppError('unsupported', 'this host keeps no global regex store')
+          }
+          await extensionSettings.setGlobalRegex(stored)
+        } else {
+          const characterId = this.#tavernCharacter(entry)
+          await library.setScopedRegex(characterId, stored)
+          // The card *file* changed, and every open conversation on it is
+          // holding a decoded copy from before the write. Without this the
+          // refresh below recomposes from the old rules — the card would be
+          // told its rule was stored and no page would change until the
+          // conversation was reopened.
+          await chats.refreshCard(characterId)
+        }
+        // The same refresh every other regex write performs: the composed list
+        // each open chat holds is otherwise a fact about the past, and a rule a
+        // card just wrote would not reach a page until the chat was reopened.
+        await this.#refreshRegex()
+        return { regexes: (await this.#tavernTier(entry, tier)).map(script => toTavernRegex(script)) }
+      },
+
+      /**
+       * Run this chat's regex chain over one string.
+       *
+       * `entry.scripts` is the chain, which is what makes the answer worth
+       * trusting: the same composition, in the same order, with the same gates
+       * that produced the text on the reader's page and the text in the last
+       * request.
+       */
+      'regex.tavernFormat': async ({ chatId, text, source, destination, depth, characterName }) => {
+        const entry = await chats.open(chatId)
+        return {
+          text: formatAsTavernRegexed(text, source, destination, entry.scripts, {
+            ...depth === undefined ? {} : { depth },
+            ...characterName === undefined ? {} : { characterName },
+            substitute: entry.substitute,
+          }),
+        }
+      },
     }
+  }
+
+  // —— family②: regex ——
+  /**
+   * The card a chat's `'character'` tier belongs to.
+   *
+   * Upstream resolves `option.name ?? 'current'` through
+   * `RawCharacter.findIndex`, so a card there can name any installed character.
+   * Here there is no name to resolve: the tier is the chat's own card, which is
+   * what makes "a card cannot edit another card's rules" structural rather than
+   * a check that could be forgotten. See the host ledger §64.
+   * @param entry - the open conversation.
+   * @returns the character id.
+   * @throws {AppError} `not-found` when the conversation has no card.
+   */
+  #tavernCharacter(entry: ChatEntry): string {
+    const characterId = entry.meta.characterId
+    if (characterId === undefined) {
+      throw notFound('this conversation has no character card, so it has no card regex tier')
+    }
+    return characterId
+  }
+
+  /**
+   * One tier's stored rules, in the tier's own order.
+   *
+   * The **stored** rules, not the composed chain: this is what a list answers
+   * and what a write is diffed against, so it must be the document's own list
+   * with the user's per-rule overrides left out of it (they live in the policy
+   * file and are not part of any document).
+   * @param entry - the open conversation.
+   * @param tier - which document to read.
+   * @returns the rules as stored.
+   */
+  async #tavernTier(entry: ChatEntry, tier: TavernRegexTier): Promise<readonly RegexScript[]> {
+    if (tier === 'global') {
+      const extensionSettings = this.#options.extensionSettings
+      if (extensionSettings === undefined) return []
+      return await extensionSettings.globalRegex()
+    }
+    if (tier === 'preset') {
+      // Read through the same reader the composer uses, so the malformed rows
+      // it refuses (an empty `findRegex` matches at every position) are absent
+      // here too. A card offered a rule the engine will never run would be
+      // offered a switch with nothing behind it.
+      return readPresetRegex(this.#options.settings.presetBody()).scripts
+    }
+    const card = await this.#options.library.load(this.#tavernCharacter(entry))
+    const scoped = card.data.extensions.regex_scripts
+    return Array.isArray(scoped) ? (scoped as RegexScript[]) : []
   }
 
   /** The snapshot store, or a refusal naming why there is none. */

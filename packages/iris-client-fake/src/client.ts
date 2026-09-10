@@ -1721,6 +1721,39 @@ class InMemoryClient implements FakeClient {
         )
       }
 
+      // —— family②: regex ——
+      case 'regex.tavernList':
+      case 'regex.tavernReplace':
+      case 'regex.tavernFormat': {
+        /*
+         * Refused as a group, on the persona arm's reasoning and with the three
+         * reasons named separately, because they are three different absences:
+         *
+         * - `tavernFormat` runs the regex engine, and this client depends on
+         *   `@iris/protocol` alone — it has no `@iris/regex` and assembles
+         *   nothing. Echoing the text back would be the quietest possible lie:
+         *   a card cannot tell text no rule matched from text no engine saw.
+         * - `tavernReplace` writes a **card file** for the character tier
+         *   (`data.extensions.regex_scripts`, which the host rewrites in the
+         *   PNG) and this client's scoped tier is a frozen seed.
+         * - `tavernList` alone is the one that could be answered, from the
+         *   tiers the `regex.*` arms above already hold — but it would need a
+         *   second copy of the `to_tavern_regex` translation living beside the
+         *   host's, and this vocabulary is where a silent disagreement would
+         *   cost the most (`enabled` is `!disabled`, `destination` is two flags,
+         *   an absent depth is `null`). A named refusal is cheaper to read than
+         *   a list that is subtly not the host's.
+         *
+         * Nothing in the interface asks for these: all three are card-facing
+         * only, reached through `runCardAction` on an open chat.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          `the fake client runs no regex engine and cannot write a card file, so ${method}`
+          + ' has nothing true to answer with',
+        )
+      }
+
       default: {
         // Exhaustiveness guard: a method added to the protocol without an arm
         // here becomes a type error rather than a runtime surprise.

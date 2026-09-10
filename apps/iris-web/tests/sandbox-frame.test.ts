@@ -360,6 +360,16 @@ test('exactly the outward-reaching names are shadowed', () => {
     'iframe_events',
     'tavern_events',
     'mvu_events',
+    // —— family②: regex ——
+    // Bare as well as under `TavernHelper`, like every member above: upstream
+    // seeds the whole surface into each frame as bare globals (`predefine.js`),
+    // and both spellings appear in real cards. `TavernHelper` stays last
+    // because it is assigned after the literal rather than inside it.
+    'getTavernRegexes',
+    'replaceTavernRegexes',
+    'updateTavernRegexesWith',
+    'isCharacterTavernRegexesEnabled',
+    'formatAsTavernRegexedString',
     'TavernHelper',
   ])
 })
@@ -1491,6 +1501,12 @@ test('the bridged globals are published, and the window aliases are not', () => 
     'iframe_events',
     'tavern_events',
     'mvu_events',
+    // —— family②: regex ——
+    'getTavernRegexes',
+    'replaceTavernRegexes',
+    'updateTavernRegexesWith',
+    'isCharacterTavernRegexesEnabled',
+    'formatAsTavernRegexedString',
     'TavernHelper',
     // The per-script registry, published with the rest so a failure to define
     // it is reported like anything else — rather than leaving co-located scripts

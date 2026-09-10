@@ -218,6 +218,24 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   mvu_events: 'shared',
   /** The nested surface; it carries the same members and inherits their kinds. */
   TavernHelper: 'shared',
+
+  // —— family②: regex ——
+  /*
+   * All five `shared`, on the world-book family's reasoning: a regex tier is a
+   * document — the profile's list, the preset file, the card — and two scripts
+   * of one card asking must see, and write, the same one. None of the five
+   * carries a scope or a script id; upstream's option is `{type, name}`, and
+   * `name` is not even accepted here (the tier is resolved from the chat).
+   *
+   * `formatAsTavernRegexedString` is a pure question about text and this chat's
+   * own chain, and `isCharacterTavernRegexesEnabled` is a fact about the
+   * character being played. Neither changes with who asks.
+   */
+  getTavernRegexes: 'shared',
+  replaceTavernRegexes: 'shared',
+  updateTavernRegexesWith: 'shared',
+  isCharacterTavernRegexesEnabled: 'shared',
+  formatAsTavernRegexedString: 'shared',
 }
 
 /**
