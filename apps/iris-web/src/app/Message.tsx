@@ -22,7 +22,7 @@ import { Slot } from '../slots/Slot.tsx'
 import { Reasoning } from './Reasoning.tsx'
 import { UsagePopover } from './UsagePopover.tsx'
 import { VariantRail } from './VariantRail.tsx'
-import { formatTokens, totalTokens, usageDetailRows } from './token-format.ts'
+import { usageChipText, usageDetailRows } from './token-format.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /** What a message row can do, supplied by the pane that owns the chat. */
@@ -248,14 +248,32 @@ export function Message({
                 touch tap toggles it, and its rows are `usageDetailRows` — the
                 harness dialog's rows, in the harness dialog's order, now read
                 by a screen reader as a table instead of one run-on line.
+
+                **The speed rides the same chip, when the host clocked the
+                generation.** `message.generation` is a separate optional beside
+                `usage` — it has to be, because most OpenAI-compatible
+                endpoints report no usage while every generation has a duration,
+                and because a duration must never be summed the way a bucket is
+                (`@iris/protocol`'s `TurnGeneration`). The chip keeps the word
+                「用量」 and appends `· N tok/s`; the rate is the provider's
+                output count over the whole generation window, which is
+                upstream's own definition, so the number is the one SillyTavern
+                would print for the same reply. §92.
+
+                Still gated on `usage`, and deliberately: the rate's numerator
+                is the provider's `outputTokens`, so a turn with a stopwatch and
+                no bill has nothing to divide and shows neither. What that
+                leaves out is a reading with a timing and no usage — visible in
+                the popover as nothing at all, rather than as a duration with no
+                speed beside it, which is the follow-up §92 names.
               */}
               {message.usage === undefined ? null : (
                 <UsagePopover
                   className="iris-act iris-act--reading"
                   heading={t('usageTurnTitle')}
-                  rows={usageDetailRows(message.usage, lang)}
+                  rows={usageDetailRows(message.usage, lang, message.generation)}
                 >
-                  {t('usageTurn', { total: formatTokens(totalTokens(message.usage), lang) })}
+                  {usageChipText(message.usage, message.generation, lang)}
                 </UsagePopover>
               )}
             </div>

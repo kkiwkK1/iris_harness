@@ -5678,3 +5678,156 @@ that starts repairing `charLore` on delete, which would make the dangling row an
 interoperability difference rather than a copied behaviour; a panel wanting to
 delete a book the reader can see is bound, which needs the two unscanned
 sources and therefore a different cost decision.
+
+## 67. Every generation is clocked, and the stopwatch is stored in SillyTavern's own four fields
+
+**Kind:** compatibility (the storage) around a measurement upstream already
+takes (the timing), with one departure in the numerator and one in what is
+*not* stored. Dated 2026-09-11.
+
+**The request**, verbatim: 「加一个功能在每轮对话的用量中就是 token 输出速度」 —
+put the token output speed into each turn's usage reading. The reading existed
+(`MessageView.usage`, §47 on the web side) and nothing in the host recorded how
+long a generation took, so there was no denominator anywhere.
+
+**What upstream does.** SillyTavern has shown this for years, as the message
+timer: `formatGenerationTimer(gen_started, gen_finished, tokenCount, reasoningDuration, timeToFirstToken)`
+(`public/script.js:2681`) renders a `{seconds}s` badge whose hover title carries
+`Generation queued`, `Reply received`, `Time to generate`, `Time to first
+token`, `Time to think` and **`Token rate: {n} t/s`**. It is called at `:2586`
+off five fields of the stored message:
+
+| field | where upstream writes it | shape |
+| --- | --- | --- |
+| `gen_started` | `chat[id].gen_started = this.timeStarted` (`:3625`) | a `Date`, so ISO 8601 with milliseconds in the file |
+| `gen_finished` | `chat[id].gen_finished = currentTime` (`:3626`) | same |
+| `extra.time_to_first_token` | `:3630`, from `now - this.createdAt` (`:3820`) | milliseconds, or `null` (initialised `null` at `:3512`) |
+| `extra.reasoning_duration` | `reasoning.js:416`, `ReasoningHandler.getDuration()` | milliseconds, or `null` when nothing was reasoned (`:381`) |
+| `extra.token_count` | `:3638`, `getTokenCountAsync(reasoning + mes, 0)` | upstream's **own tokenizer estimate** of the reply text |
+
+Two details of upstream's own semantics were read rather than assumed, because
+both decide what a number means: the reasoning clock **starts with the
+generation**, not with the first reasoning token (`ReasoningHandler`'s
+`startTime = this.initialTime`, `reasoning.js:304`/`:347`/`:445`), and its end
+is the first content delta while the state is still `Thinking` (`:448`). And
+the rate is over the **whole** window, `gen_finished - gen_started` (`:2688`),
+so a provider's queue is inside it.
+
+**Measured on the corpus** (`E:/sillyTavern/SillyTavern/data`, 13,186 message
+lines): 6,480 lines carry both ends of the window, 12,960 timestamps in all and
+**every one** of them canonical `YYYY-MM-DDTHH:mm:ss.sssZ` — so an epoch parsed
+out of one and re-serialised is byte-identical and a chat that round-trips
+through Iris does not change a character. `extra.time_to_first_token` is present
+on 6,461 lines, always a number; `extra.reasoning_duration` on 6,481, of which
+**1,260 are `null`** — which is why `null` is read as absent here and never as
+zero, and why a record with no reasoning writes nothing rather than a `0`.
+
+**What Iris does.** `TurnGeneration` (`@iris/protocol`) is `{ startedAt,
+durationMs, firstTokenMs?, reasoningMs? }`, all three durations from the one
+origin `startedAt`, and it rides on `MessageView.generation` **beside**
+`usage`, never inside it: `sumUsage` folds a `TurnUsage`'s fields into a
+conversation total, and a summed duration is not a duration while a summed
+moment is not a moment. The measurement is `service.ts`'s `#stream`, the one
+funnel all four generation entries pass through:
+
+- `startedAt` is the existing `sentAt`, reused rather than re-read, so the
+  cost's `at` and the timer's `gen_started` are one reading of one moment;
+- `firstTokenMs` is the first chunk carrying **output** — a `text-delta` or a
+  `reasoning-delta`, whichever came first, and pointedly not a `block-start`,
+  which on a reasoning model would read as an instant answer;
+- `reasoningMs` is upstream's boundary transcribed: every `reasoning-delta`
+  moves the end forward until the first `text-delta` closes it, and a stream
+  that was still reasoning when it ended keeps the last delta's moment;
+- `durationMs` runs to the **last chunk's** arrival, taken in the loop rather
+  than in the `finally`, because the `finally` runs after the consumer has
+  finished with the final chunk and would fold the assembler's and the
+  broadcast's work into the model's time.
+
+The record is parked on `pending` and filed at settle exactly as the cost is —
+`ChatEntry.noteTiming` beside `noteUsage`, `recordTiming` beside `recordUsage`,
+called from `#settle` — onto the **newest** candidate of the turn, which is by
+construction the one just waited for. `noteTiming` is one call with the whole
+record rather than one per moment, so "a record with a start and no end" is not
+a state that can reach storage.
+
+**Two records, independently absent, and that is why they are two.**
+`recordUsage` writes nothing when the provider reported nothing, which is most
+OpenAI-compatible endpoints; the *time* is the host's own measurement and exists
+either way. Folding timing into the `iris/usage` event would have made "how fast
+was that" answerable only where a bill was. So the log carries a separate
+`iris/generation-timing` event, keyed by `candidateSeq` like the other two
+per-candidate records.
+
+**Storage: upstream's four fields, and a different shape from `iris_usage`.**
+`usage.ts` had to invent a top-level array parallel to `swipes` because upstream
+has no place for a provider's bill. Here upstream has exactly the place, so:
+
+- `gen_started` / `gen_finished` / `extra.time_to_first_token` /
+  `extra.reasoning_duration` are written on the line, describing **the swipe the
+  line is showing** — which is what they mean upstream, whose per-swipe archive
+  is `swipe_info[i].{gen_started, gen_finished, extra}` (`:3648`), a structure
+  this host does not model;
+- so `#selectedTimings` writes the *selected* candidate's timing, not the
+  newest, and `hydrateTiming` reads it back onto `swipe_id`;
+- only the fields a record has are written. A timing with no `reasoningMs`
+  leaves the line's existing `reasoning_duration` alone — including upstream's
+  own `null` — because overwriting another product's record of its own work with
+  a number Iris did not measure, or dropping it from the round trip, are both
+  worse than saying nothing.
+
+`hydrateTiming` therefore reads **imported SillyTavern chats too**, and that is
+the sharpest contrast with the cost: a cost may never be back-filled for an
+imported floor because upstream never recorded one, while the *time* is
+something upstream recorded in these very fields, on half its corpus.
+
+**The two departures.**
+
+1. **The numerator is the provider's count, not an estimate.** Upstream divides
+   its own tokenizer's guess at the reply text (`extra.token_count`) into the
+   seconds; Iris divides the provider's reported `outputTokens`. Same
+   definition, better numerator — §47 rules that departure for every usage
+   figure, and the web ledger's §92 states it for this row. `extra.token_count`
+   is still never read and never written here, and the tests pin that it
+   survives untouched.
+2. **Only the selected reading's timing is stored.** The log holds every
+   candidate's while the chat is open (`#snapshotTimings` carries them across a
+   rebuild, so a `trimSentences` trim does not drop them), and a reload finds a
+   timer only for the swipe the file was showing. The alternatives were a second
+   parallel array of Iris's own — which would not appear in SillyTavern, the
+   whole reason for using these fields — or modelling `swipe_info`.
+
+**What is not measured, deliberately.** Side generations: a card's
+`TavernHelper.generate` and the host's own compaction summary run through the
+same `#stream` and are timed the same way, but they have no candidate and land
+on the chat header (`side-usage.ts`), where upstream has no timer field and Iris
+has no surface, so no record is written. A duration stored there would be a
+number nothing reads. Likewise there is **no live rate** while a reply streams:
+a duration that grows makes a rate that starts absurd and settles down, and
+`PendingTurn.timing` is deliberately not projected onto the streaming row. Both
+are follow-ups rather than gaps.
+
+**An aborted turn records what it has.** `#fail`'s partial path settles a kept
+reply through `#settle`, so `recordTiming` picks up a window that closes at the
+last thing the provider said — not when the user got round to pressing stop,
+which is also where upstream's own `gen_finished` stops moving. A generation
+that failed with no candidate records nothing, the rule the cost lives under.
+
+**Held by** `tests/generation-timing.test.ts`, eight tests on a frozen `Date.now`
+and a stream whose chunks arrive at declared offsets, so the assertions are exact
+values rather than bands — a band is exactly what a wrong origin passes. Every
+new assertion was shown red under a named mutation: the first-token moment taken
+from any chunk rather than an output-carrying one, the window closed in the
+`finally` rather than at the last chunk, the reasoning end left at the last
+reasoning delta, the record filed against `selectedCandidate` rather than the
+newest, the export writing the newest rather than the selected, the `null`
+reasoning duration read as `0`, and the record folded onto the usage event.
+
+**What would overturn it.** A ruling that Iris should model `swipe_info`, which
+would let every reading keep its timer and would make the second departure
+unnecessary. A provider population where the wall clock is dominated by
+something the person does not wait for (a proxy that buffers the whole reply
+before forwarding it), which would make the whole-window rate a number about the
+proxy — the decode rate beside it is already the answer to that, and it would
+then have to become the primary. Or a card that wants to read a turn's timing,
+which needs a Tavern Helper member and a decision about which of the two rates
+it answers with.

@@ -121,6 +121,57 @@ test('a generated reply arrives with a cost, and the total moves by it', async (
   client.dispose()
 })
 
+test('a generated reply is also clocked, in a shape a rate can be taken from', async () => {
+  const client = testClient()
+  await client.call('chat.send', { chatId: 'chat-survey', text: 'Show me the shoal.' })
+  const end = await nextEvent(client, 'stream.end', 'chat-survey')
+
+  const reply = end.view.messages.at(-1)
+  const timing = reply?.generation
+  assert.ok(timing !== undefined, 'the settled row carries how long the generation took')
+  // The invariants a surface divides by. The failure guarded against is a
+  // plausible-looking record that makes a nonsense rate: a zero duration
+  // (infinite tokens per second), a first token at or after the end (a
+  // negative decode window), a start that is not a moment.
+  assert.ok(Number.isInteger(timing.startedAt) && timing.startedAt > 0)
+  assert.ok(timing.durationMs > 0)
+  assert.ok(timing.firstTokenMs !== undefined && timing.firstTokenMs > 0)
+  assert.ok(timing.firstTokenMs < timing.durationMs, 'the first token arrived after the last one')
+  // The moment is one reading, not two: the host stamps `sentAt` once and hands
+  // the same number to both records, so a fake whose two objects disagreed
+  // would let a surface be built on a difference that cannot occur.
+  assert.equal(reply?.usage?.at, timing.startedAt)
+  assert.equal(reply?.streaming, undefined, 'a settled row is not a streaming one')
+
+  // The band, not the digits: a rate outside it would mean the fake's own
+  // arithmetic has drifted to a number no provider produces, and the shell's
+  // formatting thresholds are calibrated on this range.
+  const rate = (reply?.usage?.outputTokens ?? 0) / (timing.durationMs / 1_000)
+  assert.ok(rate > 1 && rate < 500, `the fake decodes at ${String(rate)} tok/s`)
+
+  client.dispose()
+})
+
+test('the seeded turn has one reading with a stopwatch and one without', async () => {
+  const client = testClient()
+  const { view } = await client.call('chat.open', { chatId: 'chat-lamplighter' })
+
+  // The shape a reloaded chat is in: the file carries one timer and it belongs
+  // to the reading it was showing, so a turn's other swipes have a cost and no
+  // speed. The interface must render that as no speed, not as zero.
+  const shown = view.messages[2]
+  assert.equal(shown?.role, 'assistant')
+  assert.ok(shown?.generation !== undefined, 'the reading on screen has no timing')
+  assert.ok(shown.usage !== undefined)
+
+  const swiped = await client.call('chat.swipe', { chatId: 'chat-lamplighter', turn: 1, index: 1 })
+  const other = swiped.view.messages[2]
+  assert.ok(other?.usage !== undefined, 'the other reading was generated and billed')
+  assert.equal(other.generation, undefined, 'and its timer is not in the file')
+
+  client.dispose()
+})
+
 test('a regenerate adds to the total while the row shows only the new reading', async () => {
   const client = testClient()
   await client.call('chat.send', { chatId: 'chat-survey', text: 'Show me the shoal.' })

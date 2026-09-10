@@ -36,9 +36,16 @@ test('every zh string is actually Chinese, and every en string is not', () => {
   // (`4.1K → 780`) and `commandRow` (`/compact —— …`) are the same kind of row:
   // a layout for figures and names the surrounding copy supplies, with no words
   // of their own in either column.
+  // `usageSeconds` (`1.8s`) and `usageRate` (`37.5 tok/s`) join them on the
+  // same grounds and with the same evidence: `tok` is already untranslated in
+  // `usageCount` above, and `tok/s` is the unit SillyTavern's own message timer
+  // prints (`t/s`), so a reader comparing the two hosts compares one string.
+  // The *words* beside them — 用时 / 首字 / 思考 / 输出速度 / 纯输出 — are in
+  // the dictionary and are checked.
   const neutral = new Set([
     'topP', 'topK', 'minP', 'langEn',
     'tokensThousand', 'tokensMillion', 'thousandsSeparator', 'usageCount',
+    'usageSeconds', 'usageRate',
     'contextCardFigures', 'compactedFigures', 'commandRow',
   ])
   for (const [key, value] of Object.entries(DICTIONARIES.zh)) {

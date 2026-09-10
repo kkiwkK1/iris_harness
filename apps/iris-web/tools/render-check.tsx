@@ -41,8 +41,8 @@ import { ringDash } from '../src/app/composer-bar.ts'
 import { ContextCard } from '../src/app/ContextMeter.tsx'
 import { cacheCeiling, providerExcuse, providerFellShort } from '../src/app/divergence.ts'
 import {
-  billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailRows,
-  usageSideShareSentences, usageSummaryRows,
+  billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageChipText,
+  usageDetailRows, usageSideShareSentences, usageSummaryRows,
 } from '../src/app/token-format.ts'
 import { UsageDetailCard } from '../src/app/UsagePopover.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
@@ -1519,7 +1519,7 @@ async function main(): Promise<void> {
 
   // Per-reply readings: exactly the replies whose generation reported a cost.
   const pricedFloors = costed.messages.flatMap(row =>
-    row.usage === undefined ? [] : [{ id: row.id, usage: row.usage }])
+    row.usage === undefined ? [] : [{ id: row.id, usage: row.usage, generation: row.generation }])
   assert.ok(pricedFloors.length >= 2, 'the seed should price more than one reply')
   assert.equal(
     priced.match(/iris-act--reading/g)?.length,
@@ -1535,10 +1535,28 @@ async function main(): Promise<void> {
   )
   for (const floor of pricedFloors) {
     assert.ok(
-      priced.includes(`>Usage ${formatTokens(totalTokens(floor.usage))}<`),
+      priced.includes(`>${usageChipText(floor.usage, floor.generation)}<`),
       `floor ${String(floor.id)} does not carry its own usage reading`,
     )
   }
+  /*
+   * The speed half of the same reading (`DEVIATIONS.md` §92).
+   *
+   * Both branches, from the seed rather than from a constructed row: the
+   * reading the seeded turn is showing was clocked and prints
+   * `· {rate} tok/s`, and a reading whose timer is not in the file prints the
+   * bare total. The second is not an edge case — the host stores the timer in
+   * SillyTavern's one-per-line `gen_started` pair, so every reloaded turn but
+   * one reading is in that state — and a chip that appended a separator with
+   * nothing after it would be visible here as a stray `·`.
+   */
+  const clocked = pricedFloors.find(floor => floor.generation !== undefined)
+  assert.ok(clocked !== undefined, 'the seed no longer clocks any reply, so the rate branch is not taken here')
+  assert.match(usageChipText(clocked.usage, clocked.generation), / · [\d.]+ tok\/s$/)
+  assert.ok(priced.includes(`>${usageChipText(clocked.usage, clocked.generation)}<`))
+  const unclocked = pricedFloors.find(floor => floor.generation === undefined)
+  assert.ok(unclocked !== undefined, 'the seed no longer carries a priced reply with no timer')
+  assert.doesNotMatch(usageChipText(unclocked.usage, undefined), /·|tok\/s/)
   // The breakdown is a hover card now (`UsagePopover`), and a server render
   // cannot hover: closed, so the rows appear in the page only through the
   // card, which is asserted by rendering the card itself — the same component

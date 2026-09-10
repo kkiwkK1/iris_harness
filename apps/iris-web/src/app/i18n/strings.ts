@@ -1227,6 +1227,12 @@ export const en = {
   usageCacheHit: 'Cache hit {percent}%',
   /** The reading in a reply's action row, and the heading of its hover table. */
   usageTurn: 'Usage {total}',
+  /** The same reading once the host also measured how long the reply took. The
+      word 「用量」 stays, because it is what says these are provider figures and
+      not the prompt panel's estimate (`STRINGS.md` §三); the speed is appended
+      to it rather than replacing it. `{rate}` arrives with its own unit on it,
+      the way `usageCount`'s `{count}` arrives already grouped. */
+  usageTurnRate: 'Usage {total} · {rate}',
   usageTurnTitle: 'Turn usage',
   /* The hover table's rows. "Uncached input" says what it says because the
      three prompt-side buckets are disjoint: what the cache served is not in
@@ -1238,6 +1244,30 @@ export const en = {
   usageDetailOutput: 'Output',
   /** Reasoning is part of the output it follows, not a fourth bucket beside it. */
   usageDetailReasoning: ' ({tokens} reasoning)',
+  /* The same table's timing rows, in the order upstream's own message-timer
+     tooltip states them (`public/script.js:2681`): how long, how long to the
+     first token, how long thinking. The English words are upstream's own
+     ("Time to generate", "Time to first token", "Time to think") so that a
+     reader who knows SillyTavern meets the same names for the same numbers.
+
+     `usageDetailRate` is upstream's `Token rate` — the provider's output count
+     over the *whole* window, queue included, which is what makes the figure
+     comparable with the one SillyTavern prints. `usageDetailDecodeRate` is
+     Iris's own addition and a different number: the same tokens over the time
+     after the first one arrived. Two labels that could not be read as each
+     other, because the two rates can differ by a factor of two on a slow first
+     connection and a reader comparing hosts must know which they are holding.
+     `notes/apps/iris-web/DEVIATIONS.md` §92. */
+  usageDetailDuration: 'Time to generate',
+  usageDetailFirstToken: 'Time to first token',
+  usageDetailThinking: 'Time to think',
+  usageDetailRate: 'Token rate',
+  usageDetailDecodeRate: 'Decode rate',
+  /** Number formats, carrying no words in either column — the same rule the
+      three token formats above live under. `tests/i18n.test.ts` allowlists
+      them by key. */
+  usageSeconds: '{value}s',
+  usageRate: '{value} tok/s',
   /** The composer strip's hover table: its heading, and the row label for the
       three prompt buckets added. The table and the strip's own line are the
       same rows (`usageSummaryRows`), so this is the line's own word `Input`
@@ -2580,6 +2610,7 @@ export const zh: Record<StringKey, string> = {
   usageCount: '{count} tok',
   usageCacheHit: '缓存命中 {percent}%',
   usageTurn: '用量 {total}',
+  usageTurnRate: '用量 {total} · {rate}',
   usageTurnTitle: '本轮用量',
   usageDetailCacheHit: '缓存命中',
   usageDetailInput: '未缓存输入',
@@ -2587,6 +2618,16 @@ export const zh: Record<StringKey, string> = {
   usageDetailCacheWrite: '缓存写入',
   usageDetailOutput: '输出',
   usageDetailReasoning: '（其中推理 {tokens}）',
+  /** 计时四行。口径见 en 一侧：「输出速度」是上游 `Token rate`，整段窗口（含排队）
+      的输出量除以秒数，与 SillyTavern 打印的是同一个数；「纯输出」是 Iris 自己加的，
+      去掉首字等待之后的速度。两者可以差一倍，所以词不相同。 */
+  usageDetailDuration: '用时',
+  usageDetailFirstToken: '首字',
+  usageDetailThinking: '思考',
+  usageDetailRate: '输出速度',
+  usageDetailDecodeRate: '纯输出',
+  usageSeconds: '{value}s',
+  usageRate: '{value} tok/s',
   /** 输入框下用量行的悬浮卡：标题，与「输入」一栏的行标签。卡和行本是同一组行
       （`usageSummaryRows`），这里就是行上那个「输入」拿到了自己的键，不是给计费
       之和另起一个词。 */

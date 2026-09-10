@@ -15,6 +15,7 @@ import type {
   ChatView,
   GenerationSettings,
   MessageView,
+  TurnGeneration,
   TurnUsage,
   UsageBucket,
   UsageBuckets,
@@ -41,6 +42,17 @@ export interface Candidate {
    * render that absence as *nothing* rather than as zeros.
    */
   usage?: TurnUsage
+  /**
+   * How long generating this reading took, when the host measured it.
+   *
+   * Per candidate for the same reason the cost is, and absent under the same
+   * rule with one more case: the host stores this in SillyTavern's own
+   * `gen_started` / `gen_finished` pair, which is **one slot per line**, so
+   * after a reload only the reading the file was showing still has a timer.
+   * The interface therefore has to survive a turn whose swipe 0 has a speed and
+   * whose swipe 1 has none, and the seeded conversations put it in that state.
+   */
+  generation?: TurnGeneration
 }
 
 /** A message in the fake log, with every candidate it ever produced. */
@@ -165,7 +177,69 @@ export function toMessageView(message: FakeMessage, id: number, streaming: boole
     // a fake that did would teach the interface to render a state that cannot
     // occur against the real thing.
     ...(candidate.usage === undefined || streaming ? {} : { usage: candidate.usage }),
+    // The same gate on the same boundary: a duration that grew while the reply
+    // arrived would make a rate that starts absurd and settles, and the host
+    // projects none onto a streaming row (`@iris/app-service`'s `PendingTurn`).
+    ...(candidate.generation === undefined || streaming ? {} : { generation: candidate.generation }),
     ...(streaming ? { streaming: true } : {}),
+  }
+}
+
+/**
+ * The rate the fake pretends to decode at, tokens per second.
+ *
+ * A number in the band a real hosted model streams at rather than a round one,
+ * so the formatter's two branches (one decimal at or above ten, two below) are
+ * both exercised by a rate that came out of arithmetic instead of a constant
+ * someone chose to hit them.
+ */
+const FAKE_DECODE_RATE = 37.5
+
+/** What the fake's provider makes a reader wait before the first token, ms. */
+const FAKE_FIRST_TOKEN_MS = 460
+
+/**
+ * Invent a plausible stopwatch for a settled generation.
+ *
+ * Arithmetically self-consistent, exactly like the costs beside it: the wait
+ * before the first token is fixed, the decode takes as long as the tokens
+ * warrant at {@link FAKE_DECODE_RATE}, and the reasoning — when there was any
+ * — ends part-way through, so a surface has all three of "how long", "how long
+ * to the first word" and "how long thinking" and they add up in the order they
+ * happened.
+ *
+ * **Not measured.** The fake streams on timers a test can set to zero delay
+ * (`#beginTurn` says why), so a real reading would be `0ms` under test and a
+ * rate of infinity. What the interface needs from the fake is figures that
+ * *move with the reply* and stay in a believable band; the host is where the
+ * clock is.
+ *
+ * The three durations share their origin, which is the protocol's contract for
+ * `TurnGeneration`: `reasoningMs` **contains** `firstTokenMs`, because upstream
+ * starts its "Time to think" clock at the generation's start rather than at the
+ * first reasoning token.
+ * @param outputTokens - what the generation produced, reasoning included.
+ * @param reasoningTokens - the reasoning share, or `undefined` for a model that
+ *   emitted none.
+ * @param finishedAt - the moment the reply landed, Unix epoch milliseconds.
+ * @returns the timing, with `startedAt` a whole generation before `finishedAt`.
+ */
+export function generationTimingFor(
+  outputTokens: number,
+  reasoningTokens: number | undefined,
+  finishedAt: number,
+): TurnGeneration {
+  const decodeMs = Math.max(1, Math.round(outputTokens * 1_000 / FAKE_DECODE_RATE))
+  const durationMs = FAKE_FIRST_TOKEN_MS + decodeMs
+  return {
+    startedAt: finishedAt - durationMs,
+    durationMs,
+    firstTokenMs: FAKE_FIRST_TOKEN_MS,
+    // Absent, never zero, on a model that did not reason — the protocol's rule,
+    // and the difference between "no thinking block" and "thought instantly".
+    ...reasoningTokens === undefined
+      ? {}
+      : { reasoningMs: FAKE_FIRST_TOKEN_MS + Math.round(reasoningTokens * 1_000 / FAKE_DECODE_RATE) },
   }
 }
 
