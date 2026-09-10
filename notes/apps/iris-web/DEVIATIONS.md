@@ -4674,3 +4674,337 @@ columns are lower bounds by more than the aliasing already makes them; a
 decision to bridge the host page's globals wholesale, which would make the
 parent face's careful exclusion list pointless and is the opposite of what the
 sandbox is for.
+## 83. `parent.alert`, `parent.confirm`, `parent.prompt` and `parent.toastr` are the frame's own, one object per name
+
+**Kind:** fix. Four names upstream's parent window carries and Iris's virtual one
+did not — three of them killing a real card on contact.
+
+**Measured** 2026-09-10, both corpora (the ST install's `data/default-user` and
+`apps/iris/data/default-user`), five populations read through the product's own
+readers (`decodeCardPng` → `extractScripts`, the card's own regex replacement
+text, the *rendered* interfaces deduplicated per card, preset regex replacement
+text, world book entry bodies): 415 sources, 35 owners.
+
+| name | owners | lines | shape | before |
+| --- | ---: | ---: | --- | --- |
+| `parent.alert` | 1 (銀麒赎世) | 10 | `_pw.alert("…")`, **no guard** | `TypeError: _pw.alert is not a function` |
+| `parent.confirm` | 1 (銀麒赎世) | 1 | `if (!_pw.confirm("确定导入存档？…")) return;`, **no guard** | same throw |
+| `parent.prompt` | 1 (銀麒赎世) | 3 | `_pw.prompt && _pw.prompt("…")`, guarded | silent skip |
+| `parent.toastr` | 4 | 144 | `if (_pw.toastr) _pw.toastr.success("…")`; also `window.parent.toastr ? … : window.toastr` | silent skip |
+
+`_pw` is that card's own `var _pw = window.parent`. The worst site is the first,
+`银麒系统面板` L52 — `_pw.alert("未找到API通道，请确保手机UI脚本已加载")`. The line
+whose job is to *report* a missing API channel was the line that killed the
+script, so the card's own diagnostic destroyed the diagnosis.
+
+### Why they were missing
+
+Not a ruling. All four exist inside the frame already: the three dialogs as
+`bridgedDialogs` (bridged when `allow-modals` was ruled out, so a card's
+unanswerable question reaches the run panel instead of being a browser no-op),
+and `toastr` as `toastr-report.ts`'s adapter, seeded onto the frame's window by
+`provideToastr`. Nobody asked whether a card reaches for the **parent's** copy
+first. That unasked question is the whole defect — the same shape as the six
+schedulers (§71's postscript) and `postMessage` (§76): a card walking
+`window.parent` outward holds, upstream, the same-origin page window, where every
+one of these is simply there.
+
+Upstream's own values, checked rather than assumed:
+
+- `alert`/`confirm`/`prompt` are native methods of any window, so a card's parent
+  upstream has them whatever else is on the page.
+- `toastr` is a classic script tag on upstream's page (`public/index.html:8194`),
+  and `predefine.js:12` `_.pick`s it from `window.parent` into every script frame
+  — so both spellings are live there, from one object.
+
+### What was built
+
+Four branches in the virtual parent's `get`, four names on `isBridged`, four on
+`has`. The dialogs walk a new exported list, `VIRTUAL_PARENT_DIALOG_MEMBERS`, for
+the reason the scheduler list exists: three traps read one list, so they cannot
+drift apart silently.
+
+- **Object identity, not equivalent behaviour.** `parent.alert` returns the very
+  function `resolveValues` binds to the bare name, and the test asserts
+  `parent.alert === alert`. The rule is `eventSource`'s: one implementation per
+  name, two spellings. A mutation that wraps the bridge in an identical-behaving
+  closure turns two tests red, one of them the pre-existing surface pin.
+- **`toastr` is read live off the frame's window**, exactly as `$` is, and for a
+  second reason besides load order: `provideToastr` deliberately does *not*
+  overwrite a toastr a card brought itself, so a captured value could hand out
+  Iris's adapter after the card had installed the real library. `has` asks the
+  window the same question `get` does, so absent reads as absent and a guarded
+  card's guard stays correct.
+- **All four are read-only.** One card's scripts share this frame, so an
+  assignment would replace every sibling's dialog or notifier; and upstream
+  cannot be written to either — the dialogs are native, and `parent.toastr` is
+  SillyTavern's own instance, which a card overwriting would break the host UI
+  rather than a neighbour's. Same argument as `parent.$`.
+
+### The divergence this does **not** close
+
+A card's toast still does not pop. What arrives under both spellings is the
+reporting adapter, and its calls land in the run panel — the standing ruling in
+`toastr-report.ts`, unchanged. This section is about *one object under two
+spellings*; it is not a promise of a toast. Read the other way: 銀麒赎世's ~100
+notifications now reach the panel instead of being skipped, which is more
+information than before and still not what upstream shows.
+
+### What would overturn it
+
+A card that legitimately needs to replace `parent.toastr` for its own scripts —
+the read-only rule would then need the same exception `provideToastr` already
+makes for the bare spelling; a measurement that a card depends on
+`parent.alert !== window.alert` (nothing in either corpus reads them apart); a
+decision to grant `allow-modals` to trusted cards, which would make the dialogs
+real and change what all four spellings mean at once.
+
+## 84. `getContext().chat` is the live array a card mutates, and `saveChat` means it
+
+**Kind:** fix — of a defect whose fix had already been designed, written, tested
+and left unplugged.
+
+**The defect.** `chat-journal.ts` — the recording Proxy, the ordered journal and
+the replay — was built against the two measured cards, shipped green, and had
+**exactly one consumer: its own test file.** `frame.ts` never imported it. So
+`SillyTavern.chat` was a plain snapshot copy, `saveChat` was
+`callAction('saveChat', {})`, and every in-place mutation a card made went into
+the copy while the host stored its own array. Nothing threw and nothing was said.
+
+That is worse than an unbuilt member, and worth naming as a class: a module that
+fixes a problem and is not wired in fixes nothing, while reading in every review
+— and in every test run — exactly as though it had. `notes/apps/iris-web/CHAT-WRITES.md`
+describes the mechanism in the present tense; the mechanism was not running.
+`grep` for a module's consumers, not for the module.
+
+**Who it cost.** Measured 2026-09-10 through the product's own readers, both
+corpora. 銀麒赎世's `手机UI` inserts a forum event as a user floor at **six
+sites**, all the same block (L19167-19185 and five copies):
+
+```js
+var chat = context.chat;
+var newMessage = { name: context.name1 || "玩家", is_user: true, is_system: false,
+                   mes: content, extra: {}, send_date: Date.now() };
+chat.push(newMessage);
+if (typeof context.saveChat === "function") context.saveChat();
+if (typeof context.addOneMessage === "function") { context.addOneMessage(newMessage, { scroll: false }); }
+else if (typeof context.printMessages === "function") { context.printMessages(); }
+…
+console.log("[论坛见面] 已插入楼层，对方：" + md.inviterNick);
+```
+
+The card logged *"已插入楼层"* — a success line for a floor that did not exist.
+`notes/apps/iris-web/CHAT-WRITES.md` counts the family at 2 cards and 5
+de-duplicated write sites (rewrite, splice and push), every one of them saving,
+none behind a branch that could skip the save.
+
+### What was built
+
+`recordChatEdits` and `replayChatEdits` join the **fetched member table**, not
+the inlined bootstrap — the module is 358 lines and the bootstrap is re-parsed
+per frame, which is the same line `popup-api.ts` and `card-storage.ts` sit on.
+Then two wires in the core:
+
+- **On every snapshot**, the chat a card is handed is `recording.array` and
+  `context` is rebound to carry it, so `SillyTavern.chat`,
+  `getContext().chat` and every Tavern Helper member that reads the snapshot see
+  one array.
+- **`saveChat` replays the journal, in order, then commits once.** An empty
+  journal still calls `saveChat` directly: that is the shape every non-mutating
+  caller has (銀麒赎世 closes a read-only refresh with it), and
+  `replayChatEdits` returns without committing when there is nothing to replay —
+  so routing every save through it would turn the commonest call into a no-op
+  that reported success.
+
+### Two orderings that are load-bearing
+
+- **The recorder is installed *before* `restoreFloorTables`.** The recorder
+  copies each row; a copy taken after the floor-table getters were installed
+  would spread through every one of them, parsing every floor's variable tables
+  eagerly — the exact cost the JSON-text encoding exists to avoid (45% of the
+  snapshot's bytes, 91% of its clone time) — and would lose the self-replacing
+  cache besides. Nothing would throw and no value would change; only the bill.
+  Taken first, the rows still carry `variables` as plain text and the two layers
+  compose, which is also what `restoreFloorTables`' own in-place note requires.
+- **The journal replays in the order the card wrote it**, never sorted, batched
+  across a structural operation, or deduplicated. One measured card works back to
+  front (`sort((a, b) => b.index - a.index)`, commented *"avoid index shift"*)
+  precisely so that each index is valid against the array as the earlier entries
+  in the same batch left it. A mutation that sorts the journal turns four tests
+  red.
+
+### The deliberate choices
+
+- **The journal is cleared whether or not the replay succeeded.**
+  `ChatReplayError` already says how many entries landed; leaving them in place
+  would make the next `saveChat()` re-send what the host already took, turning a
+  *described* partial failure into silent duplicate floors. The error is the
+  record.
+- **The inlined seed is not wrapped.** `seededContext` is the pre-arrival answer
+  for a parse-time read and is replaced whole by the `context` message a moment
+  later. Wrapping it too would put two journals in one frame, each holding half a
+  card's intentions with no rule for which one a save replays. A card that
+  mutates the seed and saves loses the write, as it did before — recorded here
+  rather than quietly changed, and the seed's rows are equally un-restored today.
+- **Only `push` and `splice(i, 1)` are recorded.** Everything else that mutates —
+  `sort`, `pop`, `chat[i] = …`, `chat.length = n` — is refused **by name, in the
+  card's own stack**, because a journal entry that could describe it does not
+  exist and inventing one is the guess the whole module avoids.
+
+### What is still missing, precisely
+
+The **data** half of this family is now closed; the **draw** half is not.
+`addOneMessage` (2 cards, 8 sites), `printMessages` (2 cards, 14 sites) and
+`reloadCurrentChat` (2 cards, 3 sites — one of them 命定之诗与黄昏之歌 v3.0.4's
+`card-regex[8] 首页` L891 `await SillyTavern.reloadCurrentChat()`, **unguarded**)
+are all requests to *redraw*. They are not built, and the reason is now sharper
+than it was: the host's write arms broadcast `chat.updated` and the shell
+re-renders on it, so after this section a card's insert both lands and appears —
+what the three members would add is the card's own control over *when*. The one
+that still fails hard is `reloadCurrentChat`: reading it answers `undefined` and
+`await undefined()` throws at the tail of a swipe-switch whose data has already
+been saved. Building it needs a shell arm ("re-push and wait for the render"),
+which is a decision about the reading column rather than about this surface, so
+it is left named rather than guessed at.
+
+### What would overturn it
+
+A card that relies on `addOneMessage` alone to make an insert stick —
+`notes/apps/iris-web/CHAT-WRITES.md` measured zero such sites in this corpus, and
+card 20 is under no obligation; a measured `splice` with a count other than 1 or
+an insert-via-splice, which today is refused by name; a host append arm that
+takes a batch atomically, which would make the one-entry-per-call replay a
+choice rather than the only correct reading of the recorded indices.
+
+## 85. Names a card reaches for that Iris deliberately leaves absent, and three phantoms
+
+**Kind:** four recorded non-builds, one measured refusal, and one correction of a
+census this project's own planning was resting on.
+
+The occasion was a task list of ~20 names to build, drawn from a corpus census
+dated 2026-09-09. Checking the premise before doing the work — every name's
+value **on upstream's own page**, and every "used" count against evidence lines
+— dissolved most of the list. That is recorded here rather than in a handoff
+note, because the same names will be re-derived by the next census and the reason
+not to build them is not visible from a count.
+
+### The `top.X` / `parent.X` family: undefined upstream too, so building them is the divergence
+
+`public/index.html:8204` loads `script.js` as `<script type="module">`. **Module
+exports do not land on `window`.** So a card reading `top.saveChat`,
+`top.reloadCurrentChat`, `top.printMessages`, `top.substituteParams`,
+`top.sendMessageAsUser`, `top.stopAllGeneration` or `top.context` on real
+SillyTavern gets `undefined` — every one of them. Verified independently of the
+census: the tag, and each function's definition site.
+
+| name | upstream | in the corpus | ruling |
+| --- | --- | --- | --- |
+| `saveChat` | `script.js:154` via `st-context.js:154` (`saveChatConditional`) | `top.saveChat` (1 card, guarded); `context.saveChat` (4 cards, 34 lines) | the **context** spelling is built (§84); the `top` spelling is not |
+| `reloadCurrentChat` | `script.js:1676`, `st-context.js:129` | `top.` (1 card, guarded); `SillyTavern.` (1 card, **unguarded**) | the ST-surface spelling is the real gap (§84's last section); `top.` no |
+| `printMessages` | `script.js:1475`, `st-context.js:288` | `top.` (1 card); `context.` (2 cards) | same split |
+| `substituteParams` | `script.js:2922`, `st-context.js:161` | `top.` only (1 card, guarded) | no |
+| `sendMessageAsUser` | `script.js:5815` — and **not among `st-context.js`'s 145 keys** (`grep -c` = 0), nor among Tavern Helper's 171 | `top.` only (1 card, guarded) | no, and there is nowhere faithful to put it: `SillyTavern.sendMessageAsUser` would invent a member on a surface being mirrored |
+| `stopAllGeneration` | absent from all of `public/` (`grep -rn` = 0); declared only by Tavern Helper (`function/generate.d.ts:223`) | `top.` only (1 card, guarded) | no on `parent`; its faithful home is `TavernHelper.stopAllGeneration`, unbuilt, and blocked on a host stop arm |
+| `markdown` / `markdown_parser` | neither exists on upstream's page | `if (top.showdown && top.markdown)` (1 card) | no — the combination is **false upstream as well**, so Iris is already bit-for-bit identical here |
+| `showdown` on `parent` | exists on upstream's page (`lib.js:34-88` shims) | only inside the combination above | no: the guard is false either way, so bridging changes no behaviour |
+| `triggerSlash` on `parent` | undefined — `predefine.js:12` picks only `EjsTemplate`, `TavernHelper`, `YAML`, `showdown`, `toastr`, `z` from the parent, and Tavern Helper's own members are merged onto the **child** window | not reproduced: the one site in these populations is `window.triggerSlash` on the frame's own window, which Iris already serves | no |
+
+The reason not to build them is the one §12 (`chat_metadata`) paid for: **these
+guards fail upstream too, so their degraded branch is the baseline the card
+author was writing against.** Adding the names brings dead branches to life. If a
+card ever hard-depends on one, the single name goes in and the ledger records
+"we activated a path upstream does not have" — which is the honest entry, and it
+is not a free one.
+
+### `Split`, `moment`, `d3`: zero real uses, and the phantoms named
+
+The census reported `Split` 2 cards, `moment` 1, `d3` 1 as unmet bare globals.
+Every hit is a literal collision. Read back with evidence lines:
+
+| name | every corpus hit | verdict |
+| --- | --- | --- |
+| `Split` | `const parts = key.split(/[·・]/); // Split by '·' or '・'` (a comment); `/* Side Nav Styles for Split View */` (a CSS comment) | 0 real uses |
+| `moment` | `.phone-moment-like-btn`, `data-moment-index`, `.moment-comment-box` (CSS classes and data attributes, 46 lines in one card); *"She complies after a moment of terrified hesitation"* (English prose in a rendered interface) | 0 real uses |
+| `d3` | `.xr-d3{bottom:8px…}` (a CSS class); `const d3 = parseDataTriple(map['数据项三'])` (a local variable) | 0 real uses |
+
+So: **nothing is seeded and nothing is refused by name.** Adding them to
+`EXPECTED_GLOBALS` would be worse than silence in the other direction — that list
+drives the missing-libraries banner, so three names no card wants would report a
+gap on every card forever, which is how a banner stops being read. (Upstream's
+page does carry `window.moment` via `lib.js:72`; nobody reaches for it.)
+
+The lesson is the one the surface census exists to serve and did not: a
+bare-identifier detector cannot tell a library from a comment, a CSS class or a
+local, so **a bare-global count is a hypothesis and its evidence lines are the
+measurement.** The three phantoms cost one planning round.
+
+### `getPreset('in_use')`: refused with a number, not deferred
+
+The one Tavern Helper member with a real corpus caller and no cheap answer.
+
+- **Who calls it.** 魔法少女的扣扣审判1.0, script `外置状态栏`, two sites, both
+  `if (usePreset && TavernHelper && typeof TavernHelper.getPreset === 'function')`
+  → `TavernHelper.getPreset('in_use')`. It consumes exactly
+  `preset.prompts[].{id, enabled, content, role}` and
+  `preset.settings.{temperature, max_completion_tokens}`, to assemble its
+  forum feature's own request to a user-supplied endpoint.
+- **Upstream's contract.** `[TH] @types/function/preset.d.ts:180`
+  `declare function getPreset(preset_name): Preset` — **synchronous**, returning
+  the preset itself, throwing when it does not exist. So the faithful shape is
+  the one `getVariables` and `getLorebookSettings` have: answered from the pushed
+  snapshot, not a round trip. An async `getPreset` would put a member on the
+  surface that lies about its contract, and the card's `preset.prompts` read
+  would be `undefined` — the same silent skip it takes today, dressed as a
+  feature.
+- **The cost of the faithful shape, measured.** The two real presets in
+  `apps/iris/data/default-user/presets` carry **500.5 KiB** and **342.5 KiB** of
+  `prompts` JSON (220 and 246 prompts). The prompt *content* is the bulk and is
+  precisely what the card needs — a projection without it would make the member
+  present and useless in a worse way than absent, since the card's placeholder
+  branches would fire while its text branches did not. Putting that in every
+  frame's snapshot, structure-cloned per frame against `FRAME_COUNT_LIMIT` 19, is
+  6–9 MiB of clone per reading window to serve one guarded call site in one card.
+- **Two corrections to the surface audit** (`origin/dev/audit-th-surface`
+  §4.1.1), which rated this P1 at S–M "delegate to the existing arm": there is
+  **no `preset.get` host arm** at this revision — the preset methods are
+  `list/read/view/save/select/delete/move/import/importFile/upsertPrompt/`
+  `removePrompt/setEnabled`, and `preset.read` takes a *library name* and answers
+  a stored file, which is neither "the preset in use" nor card-facing; and the
+  estimate assumed an async shape upstream does not have.
+- **Not given a named refusal either.** A throwing `getPreset` would make
+  `typeof … === 'function'` true, so a `typeof`-guarded caller *without* a
+  try/catch would go from silently skipping to crashing — a compatibility
+  regression on a path that works upstream. This card has a try/catch; card 20 is
+  under no obligation.
+- **What would overturn it.** The preset library landing with a host-side arm and
+  a decision about the synchronous contract (a preset pushed once per chat rather
+  than per frame would change the arithmetic); a second card reaching for it; or
+  a caller that needs only `settings` and not `prompts`, which is small enough to
+  push.
+
+### `registerMacroLike`: one caller, inside a bundle, and three places to change
+
+OVERLORD不死者之王's `ERA` script — a MagVarUpdate webpack module — registers
+`{{ERA:path}}` from a jQuery-ready callback. Upstream
+(`[TH] @types/function/macro_like.d.ts:27`) registers into Tavern Helper's own
+macro replacement, which participates in `substitudeMacros` **and** in what the
+host assembles for the model. Serving it faithfully means an in-frame registry,
+`substitudeMacros` running card macros before built-ins, and the host prompt path
+sending text back for in-frame replacement — three places, and the function
+cannot leave the frame. One caller, and the loss is "the ERA query macro is
+unavailable" rather than a crash. Left unbuilt; the upgrade condition is a second
+caller, or `{{ERA:…}}` appearing in corpus messages.
+
+### Where these readings came from
+
+Two audits on the user's own branches were read first and are credited: the
+`top.X`-is-undefined-upstream finding, the `predefine.js` reading, the
+`Split`/`moment`/`d3` disproof and the `alert`/`confirm`/`prompt` gap are all
+theirs (`origin/dev/audit-st-context-surface`
+`notes/apps/iris-web/ST-CONTEXT-SURFACE-AUDIT.md` §3.2, §4.2, §4.3;
+`origin/dev/audit-th-surface` `notes/apps/iris-web/TH-SURFACE-AUDIT.md` §4.1).
+Every upstream line number quoted above was re-checked against the install, and
+every corpus count re-measured with its own evidence lines; the two divergences
+found are the missing `preset.get` arm and `getCharData`'s evidence card
+(人贩子物语), which is in neither corpus reachable from this tree — so that one
+name can be neither confirmed nor built here.

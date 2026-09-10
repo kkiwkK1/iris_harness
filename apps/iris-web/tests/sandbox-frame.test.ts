@@ -1037,6 +1037,15 @@ test('an unpublished parent member yields undefined and is reported, not thrown'
    * Returning `undefined` is what a real parent window does. Saying nothing is
    * what loses a missing host capability, so the frame yields like upstream and
    * speaks unlike it.
+   *
+   * **The fixture was `parent.toastr` and had to move.** That name is bridged
+   * now, so the assertion went red on a change that was correct — the test was
+   * pinning an incidental absence rather than the policy it is about. Its
+   * replacement is chosen to be durable: `markdown_parser` is a real corpus read
+   * (魔法少女的扣扣审判's `if (top.showdown && top.markdown)` chain) whose value
+   * on upstream's own page is `undefined`, and it is on the recorded
+   * never-to-build list for exactly that reason (DEVIATIONS web §85). A fixture
+   * for "an unbridged name" must be a name nobody will bridge.
    */
   const scope = realm()
   scope.send({ iris: 'tok', type: 'context', context: snapshot() })
@@ -1045,7 +1054,7 @@ test('an unpublished parent member yields undefined and is reported, not thrown'
   evaluate(scope, globals => {
     const parent = globals['parent'] as Record<string, unknown>
     try {
-      read = parent['toastr']
+      read = parent['markdown_parser']
     } catch {
       threw = true
     }
@@ -1054,7 +1063,7 @@ test('an unpublished parent member yields undefined and is reported, not thrown'
   assert.equal(threw, false, 'throwing here breaks read-with-default, which is how publishing starts')
   assert.equal(read, undefined)
   const said = scope.posted.filter(m => m.type === 'note').map(m => (m as { message: string }).message)
-  assert.match(said.join(' '), /parent\.toastr/, 'yielding quietly is what loses a gap')
+  assert.match(said.join(' '), /parent\.markdown_parser/, 'yielding quietly is what loses a gap')
   assert.match(said.join(' '), /not a statement that the host has no such member/)
 })
 
@@ -1901,6 +1910,260 @@ test('saveMetadata sends the metadata the card has been mutating', () => {
   assert.ok(call?.type === 'call')
   assert.equal(call.method, 'saveMetadata')
   assert.deepEqual(call.params, { metadata: { yinqi_phone: { unread: 2 } } })
+})
+
+test('a card\'s in-place chat edits reach the host when it calls saveChat', async () => {
+  /*
+   * **The module was built and never wired.** `chat-journal.ts` — the Proxy, the
+   * ordered journal, the replay — was designed against the two measured cards
+   * and shipped green, and until now its only consumer was its own test file.
+   * So `SillyTavern.chat` was a plain copy, and the sequence those cards write
+   * (`chat[i].mes = x` then `saveChat()`) put the edit in the copy and the save
+   * in the host, with nothing thrown and nothing said. A test suite can be
+   * entirely green about a fix nobody installed.
+   *
+   * This is the assertion that could not be made from inside `chat-journal.ts`:
+   * it faces the seam, not the module. The card writes through the surface a
+   * card actually holds — `getContext().chat` — and the wire is what is
+   * inspected.
+   *
+   * The exact corpus shape, from `notes/apps/iris-web/CHAT-WRITES.md`: a rewrite
+   * and a delete in one batch, saved once at the end.
+   */
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({
+      chat: [
+        { mes: 'first', is_user: false },
+        { mes: 'second', is_user: true },
+      ],
+    }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as Record<string, unknown>
+  const chat = (surface['getContext'] as () => Record<string, unknown>)()['chat'] as Record<string, unknown>[]
+
+  // The two measured mutations, in the order a card makes them.
+  ;(chat[0] as Record<string, unknown>)['mes'] = 'rewritten'
+  ;(chat as unknown as { splice: (i: number, n: number) => unknown }).splice(1, 1)
+  // The card's own read-back must show the change — upstream's live array does
+  // that for free, and a recorder that only journalled would regress it.
+  assert.equal((chat[0] as Record<string, unknown>)['mes'], 'rewritten')
+  assert.equal(chat.length, 1, 'the working copy did not follow the splice')
+
+  const saved = (surface['saveChat'] as () => Promise<void>)()
+
+  /** Answer whatever call is outstanding, so the sequential replay can proceed. */
+  const answerNext = async (seen: number): Promise<{ method: string, params: Record<string, unknown> }> => {
+    for (let tries = 0; tries < 50; tries += 1) {
+      const calls = scope.posted.filter(message => message.type === 'call') as unknown as
+        { id: string, method: string, params: Record<string, unknown> }[]
+      const next = calls[seen]
+      if (next !== undefined) {
+        scope.send({ iris: 'tok', type: 'call:ok', id: next.id, result: {} })
+        return { method: next.method, params: next.params }
+      }
+      await Promise.resolve()
+    }
+    throw new Error(`no call number ${String(seen)} was made`)
+  }
+
+  const first = await answerNext(0)
+  const second = await answerNext(1)
+  const third = await answerNext(2)
+  await saved
+
+  /*
+   * Order is the assertion, not merely membership. One measured card works back
+   * to front so that each index is valid against the array as the earlier
+   * entries in the same batch left it; a replay that sorted, batched or
+   * deduplicated these would delete different floors, silently.
+   */
+  assert.equal(first.method, 'setChatMessages')
+  assert.deepEqual(first.params, { messages: [{ messageId: 0, message: 'rewritten' }] })
+  assert.equal(second.method, 'deleteChatMessages')
+  assert.deepEqual(second.params, { messageIds: [1] })
+  // One commit at the end, not one per entry: upstream's save is debounced, so a
+  // card making ten edits produces one save there too.
+  assert.equal(third.method, 'saveChat')
+
+  const calls = scope.posted.filter(message => message.type === 'call')
+  assert.equal(calls.length, 3, 'the replay sent more calls than the journal held')
+})
+
+test('a floor a card pushes onto getContext().chat reaches the host', async () => {
+  /*
+   * 銀麒赎世's 手机UI, transcribed rather than invented (L19167-19185, and the
+   * same block at five more sites):
+   *
+   *   var chat = context.chat;
+   *   var newMessage = { name, is_user: true, is_system: false, mes, extra: {}, send_date };
+   *   chat.push(newMessage);
+   *   if (typeof context.saveChat === "function") context.saveChat();
+   *
+   * The card is inserting a forum event as a user floor so the next generation
+   * sees it. Before the journal was wired the push landed in a copy, the save
+   * stored the host's array without it, and the card logged *"已插入楼层"* — a
+   * success message for a floor that did not exist. Six sites, one card, no
+   * error anywhere.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ chat: [{ mes: 'first', is_user: false }] }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const surface = scope.globals()['SillyTavern'] as Record<string, unknown>
+  const context = (surface['getContext'] as () => Record<string, unknown>)()
+  const chat = context['chat'] as Record<string, unknown>[]
+
+  const newMessage = {
+    name: context['name1'],
+    is_user: true,
+    is_system: false,
+    mes: '<ForumMeetEvent>…</ForumMeetEvent>',
+    extra: {},
+    send_date: 1_700_000_000_000,
+  }
+  ;(chat as unknown as { push: (m: unknown) => number }).push(newMessage)
+  assert.equal(chat.length, 2, 'the card must read back the floor it just pushed')
+
+  const saved = (surface['saveChat'] as () => Promise<void>)()
+  const drain = async (): Promise<{ method: string, params: Record<string, unknown> }[]> => {
+    const seen: { method: string, params: Record<string, unknown> }[] = []
+    for (let tries = 0; tries < 80; tries += 1) {
+      const calls = scope.posted.filter(message => message.type === 'call') as unknown as
+        { id: string, method: string, params: Record<string, unknown> }[]
+      const next = calls[seen.length]
+      if (next === undefined) { await Promise.resolve(); continue }
+      seen.push({ method: next.method, params: next.params })
+      scope.send({ iris: 'tok', type: 'call:ok', id: next.id, result: {} })
+      if (next.method === 'saveChat') return seen
+    }
+    throw new Error('the replay never reached its commit')
+  }
+  const sent = await drain()
+  await saved
+
+  assert.deepEqual(sent.map(call => call.method), ['createChatMessages', 'saveChat'])
+  /*
+   * Every field this card sets survives — `name`, `is_user`, `is_system`, `mes`,
+   * `extra` and `send_date` are all fields the host's append arm understands.
+   * Asserted whole rather than field by field: a narrowing that quietly dropped
+   * `is_user` would file the forum event as the character's line, which reads as
+   * a plausible chat and is wrong in a way no later step can detect.
+   */
+  assert.deepEqual(sent[0]?.params, { messages: [newMessage] })
+})
+
+test('a saveChat with nothing to replay is still a save', () => {
+  /*
+   * The shape every non-mutating caller has — 銀麒赎世's
+   * `if (typeof context.saveChat === "function") context.saveChat()` closing a
+   * read-only refresh. `replayChatEdits` returns without committing when the
+   * journal is empty, so a wiring that routed every save through it would turn
+   * the commonest call into a no-op: the card would be told it saved and nothing
+   * would have been written.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    void (bare['saveChat'] as () => Promise<void>)()
+  })
+
+  const calls = scope.posted.filter(message => message.type === 'call') as unknown as
+    { method: string, params: Record<string, unknown> }[]
+  assert.deepEqual(calls.map(call => call.method), ['saveChat'])
+  assert.deepEqual(calls[0]?.params, {})
+})
+
+test('the chat a card holds keeps its floor tables lazy', () => {
+  /*
+   * The order the recorder and `restoreFloorTables` are installed in, asserted
+   * from the outside because getting it wrong is invisible: the recorder copies
+   * each row, so a copy taken *after* the getters were installed would spread
+   * through every one of them — parsing every floor's variable tables eagerly,
+   * which is the exact cost the string encoding exists to avoid, and losing the
+   * self-replacing cache with it. Nothing would throw and no assertion about
+   * values would change; only the bill would.
+   *
+   * The instrument is a floor whose `variables` text is **unparseable**: a
+   * getter that has not been read reports nothing, and an eager spread would
+   * have read all of them before any card ran.
+   */
+  const scope = realm()
+  scope.send({
+    iris: 'tok',
+    type: 'context',
+    context: snapshot({
+      chat: [
+        { mes: 'a', is_user: false, variables: '{{{ not json' },
+        { mes: 'b', is_user: false, variables: '[{"x":1}]' },
+      ],
+    }),
+  })
+  evaluate(scope, () => undefined, 'first')
+
+  /**
+   * Everything the frame has said, on both report channels.
+   *
+   * `error`, not `fault`: the fault channel posts `type: 'error'` and there is
+   * no `'fault'` message at all. Naming a type the protocol does not have was
+   * this test's first mistake — the filter then collected nothing and
+   * `doesNotMatch` passed against an empty string whatever the code did. Found
+   * because the mutation that swaps the two installs turned two *pre-existing*
+   * tests red and left this one green.
+   * @returns the messages, joined.
+   */
+  const said = (): string =>
+    scope.posted
+      .filter(message => message.type === 'note' || message.type === 'error')
+      .map(message => String((message as { message?: string }).message ?? ''))
+      .join(' ')
+
+  const quiet = said()
+
+  const surface = scope.globals()['SillyTavern'] as Record<string, unknown>
+  const chat = (surface['getContext'] as () => Record<string, unknown>)()['chat'] as Record<string, unknown>[]
+  // The getter still works when a card does read it: lazy, not absent.
+  assert.deepEqual((chat[1] as Record<string, unknown>)['variables'], [{ x: 1 }])
+
+  /*
+   * **The positive control, and it is what makes the silence above a
+   * judgement.** Reading the unparseable floor must produce exactly the report
+   * the earlier assertion says had not happened yet; without this the whole
+   * test is "we looked for a string and did not find one", which is also what a
+   * broken matcher, a renamed message and a wrong channel all look like.
+   */
+  assert.deepEqual((chat[0] as Record<string, unknown>)['variables'], [])
+  assert.match(said(), /variable tables could not be parsed/, 'the instrument cannot see the thing it is looking for')
+  assert.doesNotMatch(
+    quiet,
+    /variable tables could not be parsed/,
+    'a floor table was parsed before any card read it',
+  )
+})
+
+test('a chat mutation Iris cannot save is refused in the card\'s own stack', () => {
+  /*
+   * Constraint 1 of the journal design, asserted through the wired surface: a
+   * mutation with no counterpart must throw where the card made it, not vanish
+   * at save time. `sort` is the clearest case — it changes every index the later
+   * entries were recorded against.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    const chat = (bare['getContext'] as () => Record<string, unknown>)()['chat'] as Record<string, unknown>[]
+    assert.throws(
+      () => { (chat as unknown as { sort: () => unknown }).sort() },
+      UnsupportedApiError,
+      'a mutation with no counterpart must be refused, not silently dropped',
+    )
+  })
 })
 
 test('an unmeasured call shape is refused by name rather than guessed at', () => {
@@ -4169,6 +4432,126 @@ test('a card cannot replace parent.$ for its siblings', () => {
 
   const parent = scope.globals()['parent'] as Record<string, unknown>
   assert.throws(() => { parent['$'] = () => undefined }, /not writable|parent\.\$/)
+})
+
+test('parent.alert, parent.confirm and parent.prompt are the frame\'s own bridges', () => {
+  /*
+   * **11 unguarded throws in one card.** 銀麒赎世's 银麒系统面板 holds
+   * `var _pw = window.parent` and calls `_pw.alert(...)` at 10 sites and
+   * `_pw.confirm(...)` at one — measured through the product's own readers over
+   * both corpora, every site a bare call with no `typeof` guard in front of it.
+   * With the three names absent from this proxy each read answered `undefined`
+   * and the call threw `TypeError: _pw.alert is not a function`. The worst of
+   * them is the first, L52 `_pw.alert("未找到API通道，请确保手机UI脚本已加载")`:
+   * the line whose job is to *report* a missing API channel was the line that
+   * killed the script, so the card's own diagnostic destroyed the diagnosis.
+   *
+   * The bare spelling has been bridged since `bridgedDialogs` landed. Nobody
+   * asked whether a card reaches for the parent's copy first, and that unasked
+   * question is the whole defect — not a ruling anyone recorded.
+   *
+   * Asserted **by identity**, not by behaviour: one implementation per name and
+   * two spellings is the rule `eventSource` set, and two objects that merely
+   * behave alike today are two objects that can come apart tomorrow.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+
+  let confirmed: unknown
+  let answered: unknown
+  let checked = 0
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    for (const name of ['alert', 'confirm', 'prompt']) {
+      assert.equal(typeof parent[name], 'function', `parent.${name} was not answered`)
+      assert.equal(name in parent, true, `'${name}' in parent disagreed with the read`)
+      assert.equal(parent[name], globals[name], `parent.${name} is not the bare binding`)
+      checked += 1
+    }
+    // The compared count as a floor: a loop that skipped its own sample would
+    // otherwise pass having compared nothing.
+    assert.equal(checked, 3)
+
+    // `top` too, and the same object — 魔法少女的扣扣审判 reaches the host window
+    // through `top`, so a fix that reached only `parent` leaves it throwing.
+    const top = globals['top'] as Record<string, unknown>
+    assert.equal(top['alert'], parent['alert'])
+
+    ;(parent['alert'] as (text: string) => undefined)('未找到API通道，请确保手机UI脚本已加载')
+    confirmed = (parent['confirm'] as (text: string) => boolean)('确定导入存档？当前游戏数据将被覆盖。')
+    answered = (parent['prompt'] as (text: string) => string | null)('📝 使用备注（可选）：')
+  })
+
+  assert.deepEqual(
+    scope.posted.filter(message => message.type === 'dialog'),
+    [
+      { iris: 'tok', type: 'dialog', kind: 'alert', text: '未找到API通道，请确保手机UI脚本已加载' },
+      { iris: 'tok', type: 'dialog', kind: 'confirm', text: '确定导入存档？当前游戏数据将被覆盖。' },
+      { iris: 'tok', type: 'dialog', kind: 'prompt', text: '📝 使用备注（可选）：' },
+    ],
+    'the parent spelling must reach the shell on the same channel as the bare one',
+  )
+  // The two synchronous answers a no-modal sandbox gives, unchanged by the route
+  // the card took to reach them: 銀麒赎世's `if (!_pw.confirm(...)) return;`
+  // therefore returns, which is the safe reading of an unanswerable question.
+  assert.equal(confirmed, false)
+  assert.equal(answered, null)
+})
+
+test('a card may not replace the parent dialogs for its siblings', () => {
+  // Read-only like `$` and `postMessage`: one card's scripts share this frame,
+  // and native window methods cannot be assigned upstream either.
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, globals => {
+    const parent = globals['parent'] as Record<string, unknown>
+    let refused = 0
+    for (const name of ['alert', 'confirm', 'prompt']) {
+      assert.throws(() => { parent[name] = () => undefined }, UnsupportedApiError)
+      assert.throws(() => { delete parent[name] }, UnsupportedApiError)
+      refused += 1
+    }
+    assert.equal(refused, 3)
+  })
+})
+
+test('parent.toastr is the frame\'s own notifier, read live', () => {
+  /*
+   * 4 owners, 144 lines, and **all of them guarded** — `if (_pw.toastr)
+   * _pw.toastr.success("API设置已保存")` in 銀麒赎世, `window.parent.toastr ? …
+   * : window.toastr` in another. So the absence cost silence rather than a
+   * throw: 銀麒赎世 skipped every one of its hundred-odd notifications with
+   * nothing said, which is the degradation this sandbox keeps choosing against.
+   *
+   * Live off the frame's window, exactly as `$` is, and for a second reason
+   * besides load order: `provideToastr` deliberately does **not** overwrite a
+   * toastr a card brought itself, so a captured value could hand out the
+   * adapter after the card had installed the real library.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot({ characterId: 'char' }) })
+  evaluate(scope, () => undefined, 'first')
+
+  const parent = scope.globals()['parent'] as Record<string, unknown>
+  // Absent reads as absent, so the card's own guard is right rather than sent
+  // into a branch that throws one line later.
+  assert.equal(parent['toastr'], undefined)
+  assert.equal('toastr' in parent, false, 'has must agree with get')
+
+  const adapter = { success: () => undefined, error: () => undefined }
+  ;(scope.realWindow as Record<string, unknown>)['toastr'] = adapter
+  assert.equal(parent['toastr'], adapter)
+  assert.equal('toastr' in parent, true, 'has must agree with get')
+
+  // Live, not captured: a card replacing the seeded adapter with its own real
+  // library must be the thing its own `parent.toastr` then reaches.
+  const own = { success: () => undefined }
+  ;(scope.realWindow as Record<string, unknown>)['toastr'] = own
+  assert.equal(parent['toastr'], own)
+
+  // And not writable through the proxy: an assignment here would replace every
+  // sibling script's notifier.
+  assert.throws(() => { parent['toastr'] = {} }, UnsupportedApiError)
 })
 test('a card drives the composer through document.getElementById, in both spellings', async () => {
   /*

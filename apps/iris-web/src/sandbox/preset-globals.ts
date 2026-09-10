@@ -62,11 +62,16 @@
  *   that forwards each call into the card's report list instead of showing a
  *   toast. It is on this list so the name stays accounted for, and the frame's
  *   own first line to the panel says plainly that this is not the real library.
- * - `showdown`, `VueRouter`, `EjsTemplate` — **absent and reported**. Measured
- *   across the 19 local cards: `EjsTemplate` is named by one card's source,
- *   `showdown` and `VueRouter` by none, and MagVarUpdate's bundle references
- *   none of the three. They stay listed precisely because the banner is the only
- *   thing that will speak when that changes.
+ *   Reachable as `parent.toastr` too since DEVIATIONS web §83, and as the same
+ *   object — one implementation, two spellings.
+ * - `showdown`, `VueRouter`, `EjsTemplate` — **all three are provided now**, and
+ *   this bullet said "absent and reported" for long enough to be found by an
+ *   audit rather than by a reader: `showdown` at `preset-entry.ts:200`,
+ *   `VueRouter` at `:230`, and `EjsTemplate` built by the frame itself because
+ *   it is a round trip rather than a library. The array below was never wrong —
+ *   the prose about it was, which is the failure mode source comments have and
+ *   documents do not: nothing runs a paragraph. Whoever changes what a name
+ *   means changes the sentence in the same commit.
  */
 export const EXPECTED_GLOBALS: readonly string[] = [
   '$',

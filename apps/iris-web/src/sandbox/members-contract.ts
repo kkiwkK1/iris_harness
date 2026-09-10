@@ -74,4 +74,6 @@ export interface MemberTable {
    * inline/fetch seam exists to stop anyone making by accident.
    */
   UPSTREAM_CONTEXT_MEMBERS: readonly string[]
+  recordChatEdits: typeof import('./chat-journal.ts').recordChatEdits
+  replayChatEdits: typeof import('./chat-journal.ts').replayChatEdits
 }

@@ -45,6 +45,7 @@ import { createReportingToastr } from './toastr-report.ts'
 import { createPopupApi } from './popup-api.ts'
 import { createParentMessages } from './parent-messages.ts'
 import { UPSTREAM_CONTEXT_MEMBERS } from './upstream-surface.ts'
+import { recordChatEdits, replayChatEdits } from './chat-journal.ts'
 import {
   SETTLED_EVENT_NAMES,
   STARTED_EVENTS,
@@ -80,6 +81,8 @@ host[MEMBERS_GLOBAL] = {
   createPopupApi,
   createParentMessages,
   UPSTREAM_CONTEXT_MEMBERS,
+  recordChatEdits,
+  replayChatEdits,
 }
 
 /*

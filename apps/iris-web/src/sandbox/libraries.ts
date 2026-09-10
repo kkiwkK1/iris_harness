@@ -21,9 +21,12 @@
  * libraries and not Vue.
  *
  * So Vue moved into `preset.js`, pinned, served from Iris's own origin, and a
- * card frame's startup now has no network dependency at all. `vue-router` did
- * not move with it: nothing measured uses it, and its absence is *reported*
- * rather than hidden. See `preset-entry.ts` for that decision and its numbers.
+ * card frame's startup now has no network dependency at all. `vue-router`
+ * followed it — this paragraph said for a while that it had not, on the ground
+ * that nothing measured uses it, and the ruling that a corpus zero says a family
+ * has not been reached rather than that it may be skipped reversed that. See
+ * `preset-entry.ts:203-229` for the decision, the pinned version and the
+ * fidelity gap it records.
  *
  * @module iris-web/sandbox/libraries
  */
