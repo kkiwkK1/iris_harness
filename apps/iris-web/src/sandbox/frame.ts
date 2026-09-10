@@ -70,6 +70,33 @@ export const VIRTUAL_PARENT_SCHEDULER_MEMBERS = [
   'cancelAnimationFrame',
 ] as const
 
+/**
+ * The three dialogs, which the parent answers with the frame's own bridges.
+ *
+ * A list for the same reason the schedulers are one: the parent proxy's `get`,
+ * its `has` and `isBridged` all walk it, so a name here is a name that works on
+ * all three traps at once, and the drift between them cannot happen silently.
+ *
+ * **Why the parent answers them.** They were bridged as bare globals only, and
+ * nobody asked whether a card reaches them through the parent first. 银麒赎世's
+ * 银麒系统面板 does: it holds `var _pw = window.parent` and calls
+ * `_pw.alert(...)` at **10 unguarded sites** and `_pw.confirm(...)` at one, both
+ * measured through the product's own readers across the two corpora. Every one
+ * of those read `undefined` and threw `TypeError: _pw.alert is not a function`
+ * — and the first of them (L52, `_pw.alert("未找到API通道…")`) is the card's own
+ * *error path*, so the line reporting a missing API channel was the line that
+ * killed the script. `_pw.prompt` has a guard (`_pw.prompt && _pw.prompt(…)`)
+ * and degraded silently instead, at 3 sites.
+ *
+ * Upstream every one of these exists: `alert`, `confirm` and `prompt` are native
+ * methods of any window, and a card's parent upstream is the SillyTavern page.
+ * So this is the plainest kind of gap — not a decision, an unasked question.
+ *
+ * **The same function objects the bare spelling gets**, not equivalents, which
+ * is the rule `eventSource` set: one implementation per name, two spellings.
+ */
+export const VIRTUAL_PARENT_DIALOG_MEMBERS = ['alert', 'confirm', 'prompt'] as const
+
 /** What the frame-side code needs from its realm. */
 export interface FrameEnv {
   /** The run token every message carries. */
@@ -566,6 +593,22 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   let context: ScriptContext | undefined = env.seededContext?.()
 
   /**
+   * The journal behind the chat array a card is holding, if it has one.
+   *
+   * Installed with each snapshot and read by `saveChat`, which is the only
+   * moment a card's recorded mutations may travel — upstream persists nothing
+   * between the mutation and the save either.
+   *
+   * `undefined` before the first snapshot **and for the inlined seed**. The seed
+   * is the pre-arrival answer for a parse-time read and is replaced whole by the
+   * `context` message a moment later; wrapping it too would mean two journals in
+   * one frame, each holding half a card's intentions with no rule for which one
+   * a save replays. A card that mutates the seed and saves loses the write, as
+   * it does today — recorded rather than quietly changed.
+   */
+  let chatRecording: ReturnType<MemberTable['recordChatEdits']> | undefined
+
+  /**
    * `extension_settings`, watched for top-level assignment.
    *
    * The corpus contains `if (!SillyTavern.extensionSettings.x) { … }` followed by
@@ -809,7 +852,45 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
           // rather than whatever the card happened to pass.
           return () => callAction('saveMetadata', { metadata: context?.chatMetadata ?? {} })
         }
-        if (property === 'saveChat') return () => callAction('saveChat', {})
+        /*
+         * `saveChat`, which is where a card's recorded chat mutations travel.
+         *
+         * Upstream this member means "persist the array I have been editing",
+         * and the array upstream hands over is the live one — so the save has
+         * nothing to carry. Here the array is a recording copy, and the save is
+         * the only moment its journal may be replayed: `push` (data) →
+         * `addOneMessage` (draw) → `saveChat` (persist) is the sequence the
+         * measured cards write, and dispatching earlier would collapse three
+         * steps the card is deliberately keeping apart.
+         *
+         * An **empty** journal still saves. It is the shape every non-mutating
+         * caller has — 銀麒赎世's `if (typeof context.saveChat === "function")
+         * context.saveChat()` at the end of a read-only refresh — and
+         * `replayChatEdits` returns without committing when there is nothing to
+         * replay, so the bare call has to remain the bare call.
+         *
+         * The journal is cleared **whether or not the replay succeeded**, and
+         * that is a decision rather than a convenience. `ChatReplayError` names
+         * how many entries landed; leaving them in place would make the next
+         * `saveChat()` re-send the ones the host already took, turning a
+         * described partial failure into silent duplicate floors. The error is
+         * the record.
+         */
+        if (property === 'saveChat') {
+          return async (): Promise<void> => {
+            const recording = chatRecording
+            const entries = recording?.entries() ?? []
+            if (recording === undefined || entries.length === 0) {
+              await callAction('saveChat', {})
+              return
+            }
+            try {
+              await env.members.replayChatEdits(entries, { call: callAction })
+            } finally {
+              recording.clear()
+            }
+          }
+        }
 
         /*
          * Upstream numbers its positions; this contract names them. The map is
@@ -1140,6 +1221,17 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * away from the shell's own channel. Native and unwritable upstream too.
      */
     property === 'postMessage' ||
+    /*
+     * `toastr` with them, on the `$` argument rather than a new one: within one
+     * card the scripts share this frame, so a script assigning `parent.toastr`
+     * would replace every sibling's notifier — and upstream's `parent.toastr` is
+     * the SillyTavern page's own instance, which a card overwriting would be
+     * breaking ST's UI rather than its neighbour's.
+     */
+    property === 'toastr' ||
+    // The dialogs, for the plainest version of the same reason: native methods
+    // of a real window, so unwritable upstream too.
+    (VIRTUAL_PARENT_DIALOG_MEMBERS as readonly string[]).includes(property) ||
     // The schedulers with them: same native read-only shape upstream, and a
     // script rearming a sibling's timer through the proxy is the same kind of
     // accident the read-only rule exists to prevent.
@@ -1251,6 +1343,42 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         return (env.realWindow as unknown as Record<string, unknown>)[property]
       }
 
+      /*
+       * The three dialogs, answered with **the very functions** the bare
+       * spelling is bound to (`resolveValues`' tail). See
+       * {@link VIRTUAL_PARENT_DIALOG_MEMBERS} for the measurement: 11 unguarded
+       * `_pw.alert`/`_pw.confirm` calls in one card, each of which threw.
+       *
+       * Not routed through `bridgedDialogs` by a second construction: object
+       * identity is the point, so a test can assert `parent.alert === alert` and
+       * the two can never come apart.
+       */
+      if ((VIRTUAL_PARENT_DIALOG_MEMBERS as readonly string[]).includes(property)) {
+        return bridgedDialogs[property]
+      }
+
+      /*
+       * `parent.toastr`, read **live** off the frame's window for the same two
+       * reasons `$` is: the preset that seeds a global may not have run when
+       * this proxy is built, and `provideToastr` deliberately does not overwrite
+       * a card's own real toastr — so capturing the value here would hand out a
+       * stale one in both directions.
+       *
+       * Measured: 4 owners, 144 lines, every one of them guarded
+       * (`if (_pw.toastr) _pw.toastr.success(…)`, `window.parent.toastr ? … :
+       * window.toastr`), so the cost of the absence was silence rather than a
+       * throw — 银麒赎世 skipped every one of its 100-odd notifications, and a
+       * card whose fallback is the bare spelling reached the panel anyway.
+       *
+       * **The divergence this does not close**: what arrives is Iris's reporting
+       * adapter, so a card's toast still does not pop — it lands in the run
+       * panel (`toastr-report.ts`, the standing ruling). This bridges "one object
+       * under two spellings"; it does not promise a toast.
+       */
+      if (property === 'toastr') {
+        return (env.realWindow as unknown as Record<string, unknown>)['toastr']
+      }
+
       // members so a card cannot shadow `document` by writing to it.
       if (published.has(property)) return published.get(property)
 
@@ -1349,6 +1477,17 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          * branch is the silent failure this proxy keeps choosing against.
          */
         (property === 'postMessage' && env.postToParent !== undefined) ||
+        // Unconditional, because `get` answers them unconditionally: the three
+        // bridges are built in this file and exist for the frame's whole life.
+        (VIRTUAL_PARENT_DIALOG_MEMBERS as readonly string[]).includes(property) ||
+        /*
+         * Conditional exactly as `$` is, and for the same reason: `get` reads
+         * the window live, so `in` must ask the window the same question. A
+         * frame whose preset has not run has no toastr, and saying it has one
+         * would send a guarded card into a branch that throws.
+         */
+        (property === 'toastr'
+          && (env.realWindow as unknown as Record<string, unknown>)['toastr'] !== undefined) ||
         (env.schedulers !== undefined
           && (VIRTUAL_PARENT_SCHEDULER_MEMBERS as readonly string[]).includes(property)) ||
         /*
@@ -2435,6 +2574,44 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       context = carried === undefined
         ? message.context
         : { ...message.context, chatMetadata: carried }
+      /*
+       * The chat a card gets is a **recording** array, not the snapshot's own.
+       *
+       * `chat-journal.ts` was designed, built and tested for this and then
+       * never installed: until now its only consumer was its own test file, so
+       * `SillyTavern.chat` was a plain copy and every in-place mutation a card
+       * made vanished at `saveChat()` with nothing thrown. That is the third
+       * instance of one shape in this project (`chatMetadata`, `strategy.keys`,
+       * `chat`) and the one the ledger's "live object replaced by snapshot" note
+       * is about — a module that fixes it and is not wired in fixes nothing,
+       * while reading in every review as though it had.
+       *
+       * Measured (`notes/apps/iris-web/CHAT-WRITES.md`): 2 cards, 5 sites after
+       * de-duplication, all of them `write → saveChat`, none behind a branch
+       * that could skip the save. So journal-and-replay-at-save is faithful and
+       * complete for the corpus as it stands.
+       *
+       * **Before `restoreFloorTables`, and the order is load-bearing.** The
+       * recording wrapper copies each row, and a copy taken *after* the floor
+       * tables were restored would spread through their getters — evaluating
+       * every floor's variable tables eagerly, which is the exact cost the
+       * string encoding exists to avoid (45% of the snapshot's bytes, 91% of its
+       * clone time), and losing the self-replacing cache besides. Taken first,
+       * the rows still carry `variables` as plain text and the two layers
+       * compose: `restoreFloorTables` then installs its getters on the rows the
+       * card actually holds, which is also what its own in-place note requires.
+       */
+      const recording = env.members.recordChatEdits(
+        context.chat as unknown as Record<string, unknown>[],
+        {
+          report: reportGap,
+          refuse: (member, detail) => {
+            throw new UnsupportedApiError(member, detail)
+          },
+        },
+      )
+      chatRecording = recording
+      context = { ...context, chat: recording.array as unknown as ScriptContext['chat'] }
       /*
        * Before anything can read the chat, and on **every** snapshot.
        *
