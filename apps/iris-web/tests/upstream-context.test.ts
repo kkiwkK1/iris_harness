@@ -25,8 +25,9 @@ import { UPSTREAM_CONTEXT_MEMBERS, UPSTREAM_MEMBERS } from '../src/sandbox/upstr
  * The keys `getContext()` returns, read out of upstream's own source.
  *
  * **A deliberately different mechanism from the caliper that first counted
- * them.** `scripts/st-context-audit.mjs` (on `dev/audit-st-context-surface`)
- * walks the file character by character, tracking brace depth and skipping
+ * them.** `scripts/st-context-audit.mjs` (retired with its branch on 2026-09-11;
+ * frozen at PR #51's head `c91d7b5`) walks the file character by character,
+ * tracking brace depth and skipping
  * strings and both comment forms. This one keys on **indentation**: the
  * returned literal's own members sit at four levels of two spaces, anything
  * nested sits deeper, and the `@deprecated` blocks between keys begin with `*`
@@ -96,12 +97,12 @@ test('reading this file the way the calipers do still finds only the Tavern Help
    * A guard over a hazard that is invisible in every other way, and that this
    * change created.
    *
-   * `scripts/th-member-census.mjs` in this tree and `scripts/th-surface-audit.mjs`
-   * on `dev/audit-th-surface` both locate the Tavern Helper list by searching
-   * `upstream-surface.ts` for its name and then matching **every quoted
-   * identifier to the end of the file**. Adding a second name array to that file
-   * is therefore a way to break two calipers without touching either: their
-   * surface silently becomes 316 names, most of which then report as "declared
+   * `scripts/th-member-census.mjs` in this tree (and `scripts/th-surface-audit.mjs`
+   * did too, until its branch was retired on 2026-09-11) locates the Tavern
+   * Helper list by searching `upstream-surface.ts` for its name and then
+   * matching **every quoted identifier to the end of the file**. Adding a second
+   * name array to that file is therefore a way to break the caliper without
+   * touching it: its surface silently becomes 316 names, most of which then report as "declared
    * but never used" — which reads as a finding rather than as a broken
    * extractor, so nobody would go looking.
    *
