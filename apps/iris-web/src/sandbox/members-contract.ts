@@ -62,4 +62,16 @@ export interface MemberTable {
   virtualiseNestedFrames: typeof import('./nested-frame.ts').virtualiseNestedFrames
   createReportingToastr: typeof import('./toastr-report.ts').createReportingToastr
   createParentMessages: typeof import('./parent-messages.ts').createParentMessages
+  /**
+   * The 145 keys upstream's `getContext()` returns, so the facade's report for a
+   * member it has not built can say which kind of absence it is.
+   *
+   * **A name list, carried in the table, for the reason the popup API is.** The
+   * core composes the sentence — that is policy and stays inlined — but the 145
+   * strings are data, about 2.4 KiB of it, and the bootstrap had roughly 1.8 KiB
+   * of headroom under `FRAME_OVERHEAD_BYTES` when this landed. Inlining them
+   * would have moved the frame gate to buy a diagnostic, which is the trade the
+   * inline/fetch seam exists to stop anyone making by accident.
+   */
+  UPSTREAM_CONTEXT_MEMBERS: readonly string[]
 }

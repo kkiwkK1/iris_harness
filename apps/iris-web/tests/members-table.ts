@@ -31,6 +31,7 @@ import { createNestedFrame, virtualiseNestedFrames } from '../src/sandbox/nested
 import { createReportingToastr } from '../src/sandbox/toastr-report.ts'
 import { createPopupApi } from '../src/sandbox/popup-api.ts'
 import { createParentMessages } from '../src/sandbox/parent-messages.ts'
+import { UPSTREAM_CONTEXT_MEMBERS } from '../src/sandbox/upstream-surface.ts'
 import {
   SETTLED_EVENT_NAMES,
   STARTED_EVENTS,
@@ -64,4 +65,5 @@ export const MEMBERS: MemberTable = {
   createReportingToastr,
   createPopupApi,
   createParentMessages,
+  UPSTREAM_CONTEXT_MEMBERS,
 }

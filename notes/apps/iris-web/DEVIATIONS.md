@@ -4464,3 +4464,213 @@ cannot express; Cormorant Garamond becoming available to subset, which changes
 the wordmark's face and this section's third bullet; a measurement that the
 150ms press makes the list feel unresponsive on touch, which would move the drag
 back onto the handle alone.
+
+## 82. The `getContext()` surface is a written-down list, so its absences say whose they are — and the virtual parent's two traps now agree about every name
+
+**Kind:** fix (a diagnostic that could not tell two absences apart, and three
+`has`/`get` disagreements), plus one caliper.
+
+Three pieces of one job: make the gap between what a card may reach for and what
+Iris answers **measurable and self-reporting**. No member is implemented here.
+The per-member accounting for all four surfaces already exists in
+`TH-SURFACE-AUDIT.md` and `ST-CONTEXT-SURFACE-AUDIT.md` (both from 2026-09-08,
+on their own branches) and this does not restate it.
+
+### 82.1 `UPSTREAM_CONTEXT_MEMBERS`, and which kind of absence a card met
+
+The facade's report for a member Iris has not built said:
+
+> a card read SillyTavern.printMessages, which Iris has not built — it returned
+> undefined, which is not a statement that the host has no such member
+
+The hedge at the end was the whole of what the frame could say, because it had
+no list of upstream's `getContext()` surface — so **a member upstream really
+has** and **a name nothing anywhere carries** produced the same sentence. The
+corpus reaches for both: three of the 145 keys are used and unbuilt
+(`addOneMessage`, `printMessages`, `reloadCurrentChat` — the same three the ST
+audit graded P1, reproduced here from a wider population), and reaching for a
+name upstream also lacks is a *measured idiom* — nineteen of them, all behind
+`typeof` guards, because a card written against SillyTavern probes before it
+calls.
+
+`upstream-surface.ts` now carries the 145 keys beside the 171 Tavern Helper
+names, extracted from the installed `public/scripts/st-context.js` rather than
+written by hand, and the frame's report splits in two: a name on upstream's list
+gets **"upstream's getContext() carries this and Iris has not built it yet, so
+this is missing scope here, not a fault in the card"** — the same sentence
+`script-run-state.ts`'s `attribute()` gives the Tavern Helper face, deliberately
+word-for-word, because a reader who has learned to recognise one should not have
+to learn a second. A name on nobody's list keeps its `undefined` and is told so.
+
+Three deliberate choices inside that:
+
+- **The list does not reach the parent proxy.** `parent.printMessages` is
+  `undefined` on the real SillyTavern page too: `public/script.js` loads as
+  `type="module"`, so its exports never land on `window`, and the page's own
+  `SillyTavern` global carries only `{libs, getContext}` (`script.js:292-295`).
+  Consulting this list there would answer "upstream declares this" about names
+  upstream's page does not have — manufacturing scope out of a list that is true
+  about a different object. The 145 are reachable as `SillyTavern.X` *inside a
+  card frame* only because Tavern Helper's `predefine.js:26-31` defines that
+  frame's global as `{...getContext(), getContext, writeExtensionField}`, which
+  is exactly the surface the facade stands in for. The module doc says so, so
+  the next person to wire it has the reason rather than the rule.
+- **The names travel in the fetched member table, not the bootstrap.** 145
+  strings is about 2.4 KiB and the bootstrap had roughly 1.8 KiB of headroom
+  under `FRAME_OVERHEAD_BYTES` (53 KiB, §76). Inlining them would have moved the
+  frame gate to buy a diagnostic — the trade the inline/fetch seam exists to
+  stop anyone making by accident, and the same answer the popup API and the
+  parent-message table gave. The core still composes the sentence; only the data
+  moved.
+- **Declaration order in `upstream-surface.ts` is load-bearing, and so is that
+  file's prose.** Two calipers — `scripts/th-member-census.mjs` here and
+  `scripts/th-surface-audit.mjs` on `dev/audit-th-surface` — find the Tavern
+  Helper list by searching the file for its name and then matching every quoted
+  identifier **to the end of the file**. A second array after it becomes part of
+  it: 171 answers 316, and 145 extra names that no card uses land in the
+  "declared but never used" column, which is those reports' *expected* shape, so
+  nobody would look. The context list therefore goes **first**, the header talks
+  about "the Tavern Helper list" instead of naming it (the search takes the
+  first occurrence, comment text included), the census in this tree now slices
+  to the closing bracket with a floor under it, and
+  `upstream-context.test.ts` asserts that reading the file the caliper's way
+  still yields exactly `UPSTREAM_MEMBERS`.
+
+### 82.2 The virtual parent's `has` now answers for every name its `get` does
+
+`#48` (web §76) found `parent.setTimeout` working while `'setTimeout' in parent`
+said false, and added the schedulers to `has`. That fix was right and the
+*shape* of the finding was the result: two hand-written lists in one proxy drift
+every time a member is added, silently and in the worst direction — the corpus
+feature-tests before calling at hundreds of sites, so a card skips a member that
+works.
+
+So the audit runs over the whole surface. `sandbox-frame.test.ts` extracts every
+`property === 'name'` from both traps out of `frame.ts` itself — brittle against
+our own source on purpose, with floors that turn a broken extraction red rather
+than into "0 inconsistencies" — and requires `in` and a read to agree, in three
+context states. It found three more, each the same shape:
+
+| name | `get` | `has` before | why it mattered |
+| --- | --- | --- | --- |
+| `EjsTemplate` | a real object, always | false | the measured caller tests `typeof tw.EjsTemplate.evalTemplate === 'function'`; a probe on the name itself would have skipped a working member |
+| `is_send_press` | a **boolean**, `false` most of the time | false | the read says "not generating" and the probe says "no such member"; the corpus polls it to avoid re-entering while the model writes |
+| `extension_settings` | the settings object | `context !== undefined` | a *different condition* — the object is built in the `context` message handler, so a **seeded interface frame**, whose snapshot arrives inlined in the srcdoc, had a context and no settings object, and `in` said true while the read was `undefined` |
+
+`has` now gates on the same thing `get` does: `EjsTemplate` and `is_send_press`
+unconditionally, `extension_settings` on the object rather than on the context.
+The third state — a seeded interface frame — is in the test because a gate and a
+constant look identical when only one state is checked, and it is the state that
+found the third row.
+
+### 82.3 `scripts/card-surface-census.mjs`
+
+A caliper (`npm run census:card-surface`, always exits 0, skips with no corpus).
+Not a third audit: what it adds is the **population** and the **unit**.
+
+- **Two code populations no other census reads**: preset regexes (`OpenAI
+  Settings/*.json` → `extensions.regex_scripts[].replaceString`) and disk world
+  book entries (`worlds/*.json` → `entries[].content`). Both carry code, and
+  three names in this corpus are reached **only** from them — `parent.postMessage`
+  (the member §76 built, whose only corpus caller is a preset),
+  `parent.triggerSlash` (a gap), and `YAML` (a world book). Every other
+  instrument in the tree reports those as absent, which is the same output as
+  "nobody uses it".
+- **Two columns, always both** (a card's scripts / the interface text it ships),
+  because a member reached only from rendered markup and one reached only from a
+  script body need different work, and this project has produced three tidy
+  wrong zeros by scanning `extractScripts` alone.
+- **The unit is the source** — a card, a preset, a world book — deduplicated by
+  content hash first, so one script pasted into nine cards is one vote.
+- **Our side is extracted from our own source** (`MEMBER_KINDS`, both proxies'
+  dispatch branches, `CARD_METHODS` minus `OFF_ST_SURFACE`, `ScriptContext`'s
+  fields, `EXPECTED_GLOBALS`, the seeded `host['x'] =` assignments), each with a
+  floor that stops the run rather than shading it. That discipline earned its
+  keep immediately: the snapshot fields were read from the wrong module, came
+  back empty **without saying so**, and reported `chat` — 94 calls across five
+  sources — as an unbuilt member of the getContext surface.
+
+The reading is in `notes/apps/iris-web/CARD-SURFACE.md` with the口径 and the
+差异 against both audits (group differences, no disagreements). One new
+conclusion came out of it, and it came from the *union* of the two audits'
+populations rather than from either being wrong: 魔法少女的扣扣审判's interface
+regex writes `if (typeof stopAllGeneration === 'function') … else if (typeof
+top.stopAllGeneration === 'function') …`. The ST audit saw the second branch and
+correctly ruled it out (upstream's page has no such global; adding it would
+activate a branch that is dead upstream). The TH audit did not see the first,
+because for the ST install it kept the older census's population — script bodies
+plus *rendered* interfaces — and this regex has never rendered in a local chat;
+it recorded the member as "未提供 · 0 命中". The bare spelling **is** provided
+upstream, as a plain global in every script frame, so the first guard passes
+there and fails here: a card asking to stop generation, doing nothing, saying
+nothing. Recorded as a fact; the grading stays where the TH audit put the
+family (P2, waiting on a host stop arm).
+
+### Costs
+
+- **Two more things extracted from our own source by text.** The audit test and
+  the census both read `frame.ts` and refuse rather than shrink, which is the
+  right failure mode but is a maintenance debt: renaming `isBridged` or moving
+  the facade's `set` trap turns a test red for a reason that is not a bug. The
+  floors and the messages say which, and that is the whole mitigation.
+- **A member-table field for a name list.** The table is the surface a card
+  reaches *with*, and this is data the core reads about the surface — the first
+  entry of that kind beside `KNOWN_ST_IDS` and the event-name lists. It is in
+  the table for a byte budget, not for a design reason, and the doc comment says
+  so.
+- **337 bytes of the bootstrap, for two sentences.** `tools/check-bootstrap.mjs`
+  measures 52,825 bytes after this, against the 52,488 §76 recorded at its own
+  commit — a frame overhead of about 53,849 against the budgeted 54,272, so
+  **423 bytes of headroom** under `FRAME_OVERHEAD_BYTES`. The 2.4 KiB of names
+  is not in that figure (it rode the member table, above); what is in it is the
+  branch and the two report strings, which are policy and cannot leave the core.
+  The next change to this file has to read the build's own comparison rather
+  than assume room — the margin is now a third of what §76 left.
+- **`tests/members-table.ts` had to grow with it**, which is the drift the
+  shared helper exists to catch — and it caught it: the new field was missing
+  there first, and the facade's report test went red with `nothing was said
+  about printMessages` rather than with a type error, because a runtime table
+  without the field throws inside the proxy.
+- **The census's parent face is a judgement call in one place.** A host-window
+  alias with several bindings in one body (`win`, `targetWindow`, `tw`, `_tw` —
+  four in this corpus, each declared three or four times as `window.parent ||
+  window`, then `window`, then `getCore().window`) is **counted**, and a
+  single-character alias is **dropped**. Requiring one binding cut
+  `parent.SillyTavern` from 4 sources / 84 calls to 2 / 4 and `parent.TavernHelper`
+  to zero, in a corpus where the audit beside it measures 6 cards and 4;
+  accepting one letter put 53 ordinary `e.replace(…)` / `e.trim()` calls from a
+  minified bundle on the host-global face. Both numbers are printed each run so
+  the residual uncertainty is visible rather than assumed away.
+
+### Found and not changed
+
+- **A seeded interface frame answers `extension_settings` with `undefined`.**
+  `extensionSettings` is built only in the `context` message handler, and an
+  interface frame's snapshot arrives inlined instead — so a card's interface
+  reading `parent.extension_settings` at parse time gets nothing, while the
+  snapshot it would have come from is right there in the srcdoc. `has` now
+  agrees with that, which is this section's fix; making the read *answer* is
+  building a member, which this branch does not do.
+- **`EjsTemplate` and `is_send_press` are not on `isBridged`**, so a card
+  assigning them lands in the published bag while the read keeps answering the
+  frame's own object — a write that appears to succeed and changes nothing.
+  Adding them would make the write throw, which upstream does not do for either
+  name (both are ordinary page globals there), so it is a behaviour change
+  rather than a consistency fix and it is recorded here instead of made.
+- **`preset-globals.ts:65-69` still calls `showdown`, `VueRouter` and
+  `EjsTemplate` "absent and reported"**, which `preset-entry.ts:200/:230` and
+  the frame's core list have made false. The ST audit found it first; this run
+  reproduces it from the other direction (the census reads the seeded
+  assignments and finds all ten of `EXPECTED_GLOBALS` provided).
+
+### What would overturn it
+
+Upstream reorganising `st-context.js`'s returned literal, which stops the
+extraction and — by the discipline both calipers already carry — stops any new
+number being quoted until it is repaired; a card that reaches a `getContext()`
+member through destructuring (`const { chat } = getContext()`), the one shape
+neither this census nor either audit matches, which would mean the "used"
+columns are lower bounds by more than the aliasing already makes them; a
+decision to bridge the host page's globals wholesale, which would make the
+parent face's careful exclusion list pointless and is the opposite of what the
+sandbox is for.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { UnsupportedApiError } from '../src/sandbox/errors.ts'
@@ -687,6 +688,133 @@ test('a membership probe answers for every injected parent member', () => {
   })
 })
 
+/**
+ * Every name the virtual parent's `get` trap answers by name, and every name
+ * `isBridged` holds read-only, read out of `frame.ts` itself.
+ *
+ * **Brittle against our own source, deliberately, and it refuses rather than
+ * shrinks.** The alternative was a hand-kept list of bridged names in this
+ * file, and a hand-kept list is exactly what the audit below exists to catch:
+ * the failure it looks for is a member added to one trap and not the other, and
+ * a second hand list would be a third place to forget. So the names come from
+ * the implementation, and the floors asserted at the call site turn a broken
+ * extraction into a red test instead of a quiet "0 inconsistencies".
+ *
+ * The regex takes `property === 'name'`, which is how both traps dispatch. Two
+ * exclusions, both real:
+ *
+ * - `typeof property === 'symbol'` matches the shape, so `'symbol'` is dropped
+ *   by name — it is a type test, not a member;
+ * - the two list-driven families (the schedulers here, the published bag) carry
+ *   no literal, so the caller adds `VIRTUAL_PARENT_SCHEDULER_MEMBERS` and the
+ *   published names are exercised by their own tests above.
+ * @returns the two name sets, in source order.
+ */
+function parentTrapNames(): { bridged: string[], answered: string[] } {
+  const source = readFileSync(new URL('../src/sandbox/frame.ts', import.meta.url), 'utf8')
+  const bridgedAt = source.indexOf('const isBridged =')
+  const proxyAt = source.indexOf('const virtualParent = new Proxy', bridgedAt)
+  const setAt = source.indexOf('    set(_target, property, value): boolean {', proxyAt)
+  assert.ok(bridgedAt > 0 && proxyAt > bridgedAt && setAt > proxyAt, 'the trap extraction lost its landmarks in frame.ts')
+
+  const namesIn = (text: string): string[] => [
+    ...new Set([...text.matchAll(/property === '([A-Za-z_$][A-Za-z0-9_$]*)'/g)].map(match => match[1] as string)),
+  ].filter(name => name !== 'symbol')
+
+  return {
+    bridged: namesIn(source.slice(bridgedAt, proxyAt)),
+    answered: namesIn(source.slice(proxyAt, setAt)),
+  }
+}
+
+test('every name the parent answers is a name a membership probe finds', () => {
+  /*
+   * The audit `#48` asked for, over the **whole** bridged surface rather than
+   * over the family that happened to be under repair.
+   *
+   * That report found `parent.setTimeout` working while `'setTimeout' in parent`
+   * said false, and the fix added the schedulers to `has`. The fix was right and
+   * the *shape* of the finding was the real result: a proxy where the two traps
+   * are two hand-written lists drifts every time one member is added, and the
+   * drift is silent in the worst direction — a card that feature-tests before
+   * calling (this corpus does, at hundreds of sites) skips a member that works.
+   * So this walks every name either trap knows and requires the two to agree.
+   *
+   * Three context states, because the gates differ by state and a single state
+   * cannot tell a gate from a constant:
+   *
+   * - **nothing pushed** — `SillyTavern` and `extension_settings` must both be
+   *   absent, and the schedulers present, so a card's `if (parent.SillyTavern)`
+   *   probe takes its own-window branch rather than a half-built host;
+   * - **a snapshot pushed** — the normal script-frame state;
+   * - **a seeded snapshot, nothing pushed** — an interface frame, whose context
+   *   arrives inline in the srcdoc. This state is not a formality: it is where
+   *   `extension_settings` disagrees, because the object is built in the
+   *   `context` message handler and the seed never reaches it.
+   */
+  const { bridged, answered } = parentTrapNames()
+  const names = [...new Set([...answered, ...bridged, ...VIRTUAL_PARENT_SCHEDULER_MEMBERS])]
+
+  // Floors, not equalities: the point is that the extraction saw the surface.
+  // An `assert.equal` on a count here would go red for a correct new member,
+  // which is how a guard turns into something people edit past.
+  assert.ok(bridged.length >= 14, `only ${String(bridged.length)} bridged names extracted from frame.ts`)
+  assert.ok(answered.length >= 15, `only ${String(answered.length)} answered names extracted from frame.ts`)
+
+  const schedulers = {
+    setTimeout: () => 0,
+    clearTimeout: () => undefined,
+    setInterval: () => 0,
+    clearInterval: () => undefined,
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => undefined,
+  }
+
+  const states: { label: string, scope: ReturnType<typeof realm> }[] = []
+  states.push({ label: 'no context pushed', scope: realm({ postToParent: () => undefined, schedulers }) })
+  const pushed = realm({ postToParent: () => undefined, schedulers })
+  pushed.send({ iris: 'tok', type: 'context', context: snapshot() })
+  states.push({ label: 'a snapshot pushed', scope: pushed })
+  states.push({
+    label: 'a seeded interface frame',
+    scope: realm({ interfaceFrame: true, seeded: snapshot(), postToParent: () => undefined, schedulers }),
+  })
+
+  const disagreed: string[] = []
+  let compared = 0
+  for (const state of states) {
+    evaluate(state.scope, globals => {
+      const parent = globals['parent'] as Record<string, unknown>
+      for (const name of names) {
+        /*
+         * `in` against a read, which is the pair a card actually writes:
+         * `_.has(parent, name)` or `'x' in parent` deciding whether to call
+         * `parent.x`. `getOwnPropertyDescriptor` is a third trap with its own
+         * test above (lodash's `_.has` reaches that one), and it answers only
+         * for published names by design — so it is not folded in here, where a
+         * bridged member would have to become an own property to satisfy it.
+         */
+        const present = name in parent
+        const read = parent[name] !== undefined
+        compared += 1
+        if (present !== read) {
+          disagreed.push(`[${state.label}] ${name}: in=${String(present)} get=${read ? 'a value' : 'undefined'}`)
+        }
+      }
+    })
+  }
+
+  /*
+   * The compared count as a floor. Every read above sits inside a body the
+   * sandbox runs in its own try/catch, and `evaluate` only carries assertion
+   * failures back out — so a loop that ended early, or a `parent` that came
+   * back empty, would report "nothing disagreed" having compared nothing.
+   */
+  assert.equal(compared, names.length * states.length, `only ${String(compared)} comparisons ran`)
+  assert.ok(compared >= 60, `only ${String(compared)} comparisons ran`)
+  assert.deepEqual(disagreed, [], `a card probing with \`in\` gets a different answer than reading:\n  ${disagreed.join('\n  ')}`)
+})
+
 test('the parent scheduler list is exactly the standard set', () => {
   /*
    * The list is the dispatch: a name added to it becomes a member a card can
@@ -1146,6 +1274,62 @@ test('a member read in a loop is reported once, not once per read', () => {
     message => message.type === 'note' && message.message.includes('generateQuietPrompt'),
   )
   assert.equal(named.length, 1)
+})
+
+test('the facade says which kind of absence it is, upstream’s or nobody’s', () => {
+  /*
+   * One sentence used to cover two situations that need opposite readings, and
+   * the corpus supplies both:
+   *
+   * - `printMessages` is one of the 145 keys upstream's `getContext()` returns,
+   *   and 銀麒赎世 reaches for it behind a `typeof` guard. That is **our**
+   *   missing scope, and it belongs in the ledger rather than in a bug report
+   *   about the card;
+   * - `deleteAllChats` is on nobody's list. A card reaching for it gets
+   *   `undefined` on the real SillyTavern page too, so the honest report says
+   *   the read found nothing *and* that upstream has nothing of that name — the
+   *   defensive-probe idiom ST-CONTEXT-SURFACE-AUDIT §4.2.3 measured 19 times
+   *   (branch `dev/audit-st-context-surface`; see
+   *   `notes/apps/iris-web/CARD-SURFACE.md`).
+   *
+   * The list that tells them apart is fetched with the member table rather than
+   * inlined per frame, so this also pins that it arrives: a table without it
+   * would throw here rather than answer the wrong sentence.
+   */
+  const scope = realm()
+  scope.send({ iris: 'tok', type: 'context', context: snapshot() })
+
+  evaluate(scope, globals => {
+    const bare = globals['SillyTavern'] as Record<string, unknown>
+    void bare['printMessages']
+    void bare['deleteAllChats']
+  })
+
+  const noteFor = (name: string): string => {
+    const note = scope.posted.find(
+      message => message.type === 'note' && message.message.includes(`SillyTavern.${name}`),
+    )
+    assert.notEqual(note, undefined, `nothing was said about ${name}`)
+    return note?.type === 'note' ? note.message : ''
+  }
+
+  const declared = noteFor('printMessages')
+  assert.ok(
+    declared.includes('missing scope here, not a fault in the card'),
+    `a member upstream carries was not attributed to Iris: ${declared}`,
+  )
+  const invented = noteFor('deleteAllChats')
+  assert.ok(
+    invented.includes('carries no such member either'),
+    `a name upstream does not have was reported as our gap: ${invented}`,
+  )
+  /*
+   * And the two sentences are actually different. Asserting only the substrings
+   * above would pass if one branch were dead and both reads produced the
+   * *declared* sentence, because that string contains neither of the other's
+   * markers — the shape a mutation that deletes the condition takes.
+   */
+  assert.notEqual(declared, invented, 'both reads produced the same sentence, so the branch is dead')
 })
 
 test('`in` and a read agree about an unbuilt member', () => {

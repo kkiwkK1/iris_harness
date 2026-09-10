@@ -44,6 +44,7 @@ import { createNestedFrame, virtualiseNestedFrames } from './nested-frame.ts'
 import { createReportingToastr } from './toastr-report.ts'
 import { createPopupApi } from './popup-api.ts'
 import { createParentMessages } from './parent-messages.ts'
+import { UPSTREAM_CONTEXT_MEMBERS } from './upstream-surface.ts'
 import {
   SETTLED_EVENT_NAMES,
   STARTED_EVENTS,
@@ -78,6 +79,7 @@ host[MEMBERS_GLOBAL] = {
   createReportingToastr,
   createPopupApi,
   createParentMessages,
+  UPSTREAM_CONTEXT_MEMBERS,
 }
 
 /*

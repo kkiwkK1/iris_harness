@@ -987,10 +987,33 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        *
        * "Absence must be named" is unchanged; the naming moves from an exception
        * to a report, and the report channel is durable and generation-stamped.
+       *
+       * **Which kind of absence, said out loud.** The sentence used to end "…
+       * which is not a statement that the host has no such member", and that
+       * hedge was the whole of what it could say: the frame had no list of the
+       * `getContext()` surface, so a card reading `printMessages` (upstream has
+       * it; Iris has not built it) and a card reading `top.context`-style
+       * probe names nothing anywhere carries produced the *same* line. The
+       * corpus reaches for both — 3 of the 145 are used and unbuilt, and a
+       * defensive probe for a name upstream also lacks is a measured idiom — so
+       * one sentence for the two is one sentence that answers neither reader.
+       *
+       * `UPSTREAM_CONTEXT_MEMBERS` closes it the way `UPSTREAM_MEMBERS` closed
+       * the Tavern Helper face in `script-run-state.ts`'s `attribute()`: a name
+       * on upstream's list is **missing scope here, not a fault in the card**,
+       * and a name on nobody's list keeps the hedge, because for that one the
+       * frame genuinely does not know. Same wording as the other face on
+       * purpose — a reader who has learned to recognise one sentence should not
+       * have to learn a second.
        */
+      const declaredUpstream = env.members.UPSTREAM_CONTEXT_MEMBERS.includes(property)
       reportGap(
-        `a card read SillyTavern.${property}, which Iris has not built` +
-          ' — it returned undefined, which is not a statement that the host has no such member',
+        declaredUpstream
+          ? `a card read SillyTavern.${property}, which upstream's getContext() carries and Iris has not`
+            + ' built yet, so this is missing scope here, not a fault in the card — it returned undefined'
+          : `a card read SillyTavern.${property}, which Iris has not built` +
+            ' — it returned undefined, and upstream’s getContext() carries no such member either,'
+            + ' so a card probing for it gets undefined there too',
       )
       return undefined
     },
@@ -1328,7 +1351,37 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         (property === 'postMessage' && env.postToParent !== undefined) ||
         (env.schedulers !== undefined
           && (VIRTUAL_PARENT_SCHEDULER_MEMBERS as readonly string[]).includes(property)) ||
-        ((property === 'SillyTavern' || property === 'extension_settings') && context !== undefined)
+        /*
+         * The last three, found by walking the whole surface rather than by
+         * meeting another card — the audit `#48` asked for, in
+         * `sandbox-frame.test.ts`. Each is the same shape the schedulers were:
+         * `get` has answered it all along and `in` said no.
+         *
+         * - `EjsTemplate` is a real object here (a getter answering `undefined`
+         *   would fail the measured caller's
+         *   `typeof tw.EjsTemplate.evalTemplate === 'function'`), so `in` has to
+         *   agree with the object, not with the fact that upstream keeps this
+         *   global on its page rather than on its API.
+         * - `is_send_press` is a **boolean**, and `false` is the value it holds
+         *   most of the time. A trap pair where the read says "not generating"
+         *   and the probe says "no such member" is the worst possible split for
+         *   this one member: the corpus polls it to avoid re-entering while the
+         *   model writes, and a card that probes first would poll nothing.
+         * - `extension_settings` gated on `context !== undefined`, which is a
+         *   *different* condition from the one `get` uses. The object is built
+         *   in the `context` message handler, so an **interface frame** — whose
+         *   snapshot arrives inlined in the srcdoc instead, through
+         *   `seededContext` — has a context and no settings object, and there
+         *   `in` said true while the read was undefined. Gating on the object
+         *   itself makes the two agree in every state; that a seeded frame
+         *   answers no settings at all is a separate gap, recorded rather than
+         *   quietly fixed here, because closing it means *building* a member and
+         *   this trap's job is only to describe what the other one does.
+         */
+        property === 'EjsTemplate' ||
+        property === 'is_send_press' ||
+        (property === 'extension_settings' && extensionSettings !== undefined) ||
+        (property === 'SillyTavern' && context !== undefined)
       )
     },
     /**
