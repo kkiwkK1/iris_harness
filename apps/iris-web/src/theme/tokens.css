@@ -72,6 +72,33 @@
   --iris-font-mono: Consolas, ui-monospace, 'Cascadia Code', 'DejaVu Sans Mono', monospace;
 
   /*
+   * The wordmark's face: the one typeface in the product with a job of its own.
+   *
+   * `Main.dc.html` sets 「Iris」 in **Cormorant Garamond 500**, pulled from
+   * Google Fonts inside the artboard. It is not pulled here, and that is the
+   * standing rule above rather than a compromise reached in a hurry: Iris is
+   * local-first, and a wordmark that falls back to something else whenever the
+   * network is down is a wordmark that tells the reader the product is broken.
+   *
+   * What ships is the artboard's own fallback stack, verbatim from its `.word`
+   * rule. Checked on this machine rather than assumed: `georgia.ttf` is
+   * installed (four faces), so the first name is the one that draws, and the
+   * mark is a real transitional serif against the interface's Corbel — which is
+   * the contrast the artboard is asking for. Cormorant is a Garamond and
+   * Georgia is not one; the letterforms are heavier and the axis more upright,
+   * so this is a **substitution**, not the same drawing at another weight.
+   *
+   * **Subsetting was the alternative and there was nothing to subset.** A woff2
+   * holding only `I`, `r`, `i`, `s` would be under 2 kB and would settle the
+   * argument — but the family is not installed here, this worktree may not
+   * install anything, and neither `fontTools` nor `pyftsubset` is on this
+   * machine, so there is no source to cut and no tool to cut it with. The
+   * moment either exists, this token plus one `@font-face` is the whole change,
+   * and `THIRD-PARTY-NOTICES.md` gains an OFL row.
+   */
+  --iris-font-wordmark: Georgia, 'Songti SC', serif;
+
+  /*
    * The reading surface is set in synthetic bold, and that is a choice.
    *
    * 幼圆 ships **one weight** on this machine, so there is no real bold to
@@ -123,7 +150,15 @@
    * quietness read as unfinished rather than as deliberate.
    *
    * 22 / 17 / 15 / 14 / 13 / 11. Each step has one job.
+   *
+   * `--iris-size-wordmark` sits above all of them and is **not** a step in this
+   * scale: it is one word in one place, set in its own face
+   * (`--iris-font-wordmark`), and 26px is what `Main.dc.html` draws it at
+   * against an 18px mark. Reusing `--iris-size-brand` — which the character
+   * page's name also takes — would have tied the product's own name to a
+   * heading's size and moved one whenever the other was tuned.
    */
+  --iris-size-wordmark: 26px;
   --iris-size-brand: 22px;
   --iris-size-title: 17px;
   --iris-size-row: 14px;
@@ -212,6 +247,25 @@
   --iris-ease: cubic-bezier(0.2, 0, 0.2, 1);
   --iris-fast: 90ms;
   --iris-slip: 150ms;
+
+  /*
+   * The sidebar's fold, in three durations that are one gesture.
+   *
+   * `LogoMotion.dc.html` choreographs it: the wordmark is clipped into the
+   * aperture over 160ms while the list fades out over 120ms, and only then does
+   * the bar travel 272 → 44 over 220ms. Expanding runs the same three in
+   * reverse, which is why they are tokens rather than three numbers in
+   * `shell.css` — every one of them is used twice, once per direction, with the
+   * delays swapped.
+   *
+   * 160 + 220 = **380ms** for the whole fold, against the artboards' own
+   * ceiling of 400. That is the constraint these three numbers have to keep,
+   * and it is why the rail's own fade-in overlaps the width rather than waiting
+   * for it: `--iris-fold-width` of delay plus `--iris-fold-fade` lands at 340.
+   */
+  --iris-fold-fade: 120ms;
+  --iris-fold-word: 160ms;
+  --iris-fold-width: 220ms;
 
   /* ------------------------------------------------------------- scrollbar */
 

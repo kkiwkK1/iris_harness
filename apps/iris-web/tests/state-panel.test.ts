@@ -442,9 +442,25 @@ test('the yield range is derived from the tracks the stylesheets actually declar
     tokens.includes(`--iris-drawer-w: min(${String(DRAWER_TRACK)}px`),
     `--iris-drawer-w is no longer ${String(DRAWER_TRACK)}px`,
   )
+  /*
+   * Read off `.iris-sidebar`, not off `.iris-shell`.
+   *
+   * The number moved when the panel learned to fold: the shell's first track is
+   * `auto` now so that one transition on the panel animates both it and the
+   * reading area beside it, and the width it animates lives on the panel. What
+   * the arithmetic needs is unchanged - the *expanded* width, because a media
+   * query cannot ask whether the reader has folded it (`state-panel.ts` says
+   * which direction that errs in).
+   */
+  const sidebarRule = shell.slice(shell.indexOf('.iris-sidebar {'))
+  assert.ok(sidebarRule.startsWith('.iris-sidebar {'), 'the sidebar has no base rule to read a width from')
   assert.ok(
-    shell.includes(`grid-template-columns: ${String(SIDEBAR_TRACK)}px minmax(0, 1fr)`),
-    `the sidebar track is no longer ${String(SIDEBAR_TRACK)}px`,
+    sidebarRule.slice(0, sidebarRule.indexOf('}')).includes(`width: ${String(SIDEBAR_TRACK)}px`),
+    `the sidebar is no longer ${String(SIDEBAR_TRACK)}px wide when it is open`,
+  )
+  assert.ok(
+    shell.includes('grid-template-columns: auto minmax(0, 1fr)'),
+    'the shell no longer sizes its first track to the sidebar, so the width above decides nothing',
   )
   assert.ok(
     panels.includes(`@media (min-width: ${String(ASIDE_FROM)}px)`),

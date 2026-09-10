@@ -35,6 +35,34 @@ export function since(at: number, now: number = Date.now(), lang: Language = 'en
 }
 
 /**
+ * A conversation row's whole stamp: when, and how much.
+ *
+ * One string rather than two spans, because the row is a single line now and
+ * the stamp is one column in it (`RowStates.dc.html`: 「2 天前 · 3 条」). Here
+ * rather than in `Sidebar.tsx` for the reason the rest of this module is here —
+ * it is copy, it varies by language, and it is the kind of sentence a
+ * `node --test` file can check without a DOM.
+ *
+ * The count is the **short** spelling: 「3 条」 / `3 msg`, not 「3 条消息」 /
+ * `3 messages`. The long one stays in the dictionary because the character page
+ * says it in a column wide enough for the noun; on a 272px row it was spending
+ * eight characters to repeat a word every row already implies.
+ * @param at - when the conversation last changed, in Unix epoch milliseconds.
+ * @param messages - how many floors it holds.
+ * @param now - the current time, injectable so this is testable.
+ * @param lang - the language to read the units in.
+ * @returns the stamp.
+ */
+export function chatMeta(
+  at: number,
+  messages: number,
+  now: number = Date.now(),
+  lang: Language = 'en',
+): string {
+  return `${since(at, now, lang)} · ${translate(lang, 'messageCountShort', { count: messages })}`
+}
+
+/**
  * Count words for the reasoning disclosure's summary.
  *
  * CJK text has no spaces, so a whitespace split would report "1 word" for a

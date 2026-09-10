@@ -42,6 +42,25 @@ export const en = {
   noCreatorListed: 'no creator listed',
   byCreator: 'by {creator}',
   messageCount: '{count} messages',
+  /* The row's own count, and it is short on purpose: a 272px line already
+     implies the noun, and the long spelling above still serves the character
+     page, where the column is wide enough to say it. `format.ts` builds the
+     whole stamp from this and `since`. */
+  messageCountShort: '{count} msg',
+
+  /* Folding the sidebar away. Two controls, one state (`Sidebar.tsx`): the
+     head's collapses and the rail's brings it back, and each is only visible in
+     the state whose label it carries. */
+  collapseSidebar: 'Collapse the sidebar',
+  expandSidebar: 'Expand the sidebar',
+
+  /* The conversation list's two orders, offered only once a row has been
+     dragged — before that the two are the same list. 「Arranged」 rather than
+     「Custom」: it names what the reader did, and 「Custom」 is the word a
+     settings panel uses for a value it does not understand. */
+  chatOrderAria: 'Order conversations',
+  chatOrderManual: 'Arranged',
+  chatOrderRecent: 'Recent',
 
   /** Sidebar content filter (`chat.search`). */
   chatSearchAria: 'Search conversations',
@@ -1532,6 +1551,14 @@ export const zh: Record<StringKey, string> = {
   noCreatorListed: '未署名作者',
   byCreator: '作者：{creator}',
   messageCount: '{count} 条消息',
+  messageCountShort: '{count} 条',
+
+  collapseSidebar: '收起侧边栏',
+  expandSidebar: '展开侧边栏',
+
+  chatOrderAria: '对话排序',
+  chatOrderManual: '自定义',
+  chatOrderRecent: '按时间',
 
   /** 侧栏内容搜索（`chat.search`）。 */
   chatSearchAria: '搜索对话内容',

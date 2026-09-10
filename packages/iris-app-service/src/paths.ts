@@ -225,6 +225,15 @@ export interface ProfilePaths {
   /** Which characters this profile has starred, by character id. */
   favorites: string
   /**
+   * The order the reader put their conversations in.
+   *
+   * Its own file, beside `favorites.json` and for the same reason: a star and a
+   * shelf position are both decisions about this profile's own library rather
+   * than settings a chat is using. Upstream keeps no manual chat order at all,
+   * so there is no name to inherit — this one is Iris's (`chat-order.ts`).
+   */
+  chatOrder: string
+  /**
    * The bodies of the most recent requests, one subdirectory per conversation.
    *
    * A diagnostic record, and the only store here that holds whole prompts
@@ -276,6 +285,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     presets: join(root, 'presets'),
     personas: join(root, 'personas.json'),
     favorites: join(root, 'favorites.json'),
+    chatOrder: join(root, 'chat-order.json'),
     cacheTrace: join(root, 'cache-trace'),
   }
 }

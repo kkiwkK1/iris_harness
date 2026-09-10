@@ -259,6 +259,11 @@ const PROBES: Record<string, unknown> = {
   'chat.open': { chatId: 'no-such-chat' },
   'chat.delete': { chatId: 'no-such-chat' },
   'chat.rename': { chatId: 'no-such-chat', title: 'x' },
+  // An empty order is the request that *clears* an arrangement, so it is both a
+  // valid body and the only one that proves reachability without naming a chat:
+  // every id in a non-empty order has to exist on the probe host, and this one
+  // has none.
+  'chat.reorder': { order: [] },
   // The scan reads the profile's chat directory, which the probe host has
   // created empty: the honest answer is no hits, and it proves registration.
   'chat.search': { query: 'x' },

@@ -37,6 +37,7 @@ import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { PersonaStore } from './persona.ts'
 import { FavoriteStore } from './favorites.ts'
+import { ChatOrderStore } from './chat-order.ts'
 import { ExtensionSettingsStore } from './context.ts'
 import { DEFAULT_PROFILE, profilePaths } from './paths.ts'
 import { PresetStore } from './presets.ts'
@@ -75,6 +76,7 @@ export {
 export { ChatEntry, lineTurns, metadataBackend, readMeta, type IrisChatMeta } from './entry.ts'
 export { AppError, busy, invalid, notFound } from './errors.ts'
 export { FavoriteStore } from './favorites.ts'
+export { applyChatOrder, ChatOrderStore } from './chat-order.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
 export {
   DEFAULT_PROFILE,
@@ -658,6 +660,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // card's `fav`, on the standing rule that runtime state stays out of shared
   // card files — an exported card carries no trace of the stars it earned here.
   const favorites = new FavoriteStore(paths.favorites)
+  // The order the reader put their conversations in — beside the stars, for the
+  // same reason: both are decisions about this profile's own shelf rather than
+  // settings a chat is using. Upstream keeps no manual chat order at all, so
+  // both the file and its name are Iris's (`chat-order.ts`), and a profile that
+  // has never dragged a row never gets the file.
+  const chatOrder = new ChatOrderStore(paths.chatOrder)
   // Runtime adapter installs, one per provider route this plugin has claimed.
   //
   // `connection.activate` and boot-time restoration both come through here: a
@@ -760,6 +768,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     connections,
     personas,
     favorites,
+    chatOrder,
     worldbookBindings,
     installConnection,
     scriptVariables,
@@ -837,6 +846,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.open', handlers['chat.open']),
       ctx.irisRpc.register('chat.delete', handlers['chat.delete']),
       ctx.irisRpc.register('chat.rename', handlers['chat.rename']),
+      ctx.irisRpc.register('chat.reorder', handlers['chat.reorder']),
       ctx.irisRpc.register('chat.search', handlers['chat.search']),
       // Beside `chat.search` because it is the same file scan; it is not a
       // `chat.` method because it is not about a chat — it answers across every

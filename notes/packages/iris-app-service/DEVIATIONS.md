@@ -5067,3 +5067,97 @@ saved into, or that copies a credential into a place a read can reach; a host
 whose provider list is empty *and* whose environment names an endpoint, on a
 composition that calls the import — that combination should not survive a
 restart.
+
+## 62. The conversation list can be arranged by hand, which upstream cannot do at all
+
+**What upstream does.** SillyTavern sorts the chat list with a picker — by name
+or by date, ascending or descending — and that is the whole set. There is no
+manual order, no file for one, no key in `settings.json` to hold one, and no
+gesture that produces one: the list is a projection of the chat files' own
+metadata, and the reader's only influence on it is which of four sorts to apply.
+
+**What Iris does.** A reader can drag a conversation to a new place, and the
+place is remembered. This is an addition rather than a divergence — there is no
+upstream behaviour here to depart from — and it is recorded because everything
+that is *not* upstream has to be findable, and because it puts a new file in the
+profile directory that a person reading their own data will want explained.
+
+**The protocol.** `chat.reorder({ order: string[] }) → { chats, ordered }`.
+
+- **The whole visible sequence, not a move.** `{ chatId, toIndex }` would be
+  smaller and would be wrong: the browser has just laid the list out and knows
+  exactly what its request means, while a host applying a relative move has to
+  agree with the browser about what the list was *before* it — and the two stop
+  agreeing the moment another tab creates or deletes a conversation. Sending the
+  sequence makes the request idempotent, and makes a stale caller fail loudly
+  rather than quietly arrange the wrong rows.
+- **An id the profile does not have refuses the whole request**, naming the id,
+  and stores none of it. A partial write is the worst outcome available: the
+  caller sent a sequence it had just laid out, so an unknown id means the two
+  ends disagree about what the profile contains, and dropping it silently would
+  store an arrangement the reader never made and can only find by noticing a row
+  in the wrong place.
+- **An empty order clears the arrangement.** That is the way back to
+  newest-first, and it is why the method needs no second spelling. It is also
+  the reachability probe in `rpc-transport.test.ts`: the only body that proves a
+  handler is registered without naming a chat.
+- `chat.list` grows an optional `ordered`. **Absent means the host keeps no
+  arrangement** — the same shape and the same reason as `chat.delete`'s
+  `cleared` (§59): a host without the store cannot say "false, nothing is
+  arranged", it can only decline to answer, and a caller reading a missing field
+  as `false` has manufactured a fact. The panel has exactly one decision to make
+  with it — whether to offer the reader a choice of order at all — and a control
+  that appears before there are two different lists to choose between is a
+  control that never changes anything.
+
+**The file.** `chat-order.json` in the profile, `{ "order": [ …chatId ] }`,
+beside `favorites.json` and for the same reason: a star and a shelf position are
+both decisions about this profile's own library rather than settings a chat is
+using. A profile that has never dragged a row **never gets the file** — reading
+an arrangement does not create one — so a profile from before this existed is
+byte-identical to one after it.
+
+**The rule the list is read by** (`chat-order.ts`, `applyChatOrder`), and it is
+the part that was got wrong first:
+
+1. what the arrangement has never heard of, **newest first**;
+2. then what the arrangement names, in its order;
+3. an id the arrangement names and the profile no longer has is skipped.
+
+The other way round — arranged rows on top, unmentioned ones beneath — is the
+obvious shape and it buries every new conversation: the panel writes the *whole*
+visible order on each drop, so after one drag the arrangement names every row in
+the profile, and a chat created afterwards would arrive at the bottom of it.
+Putting the unmentioned rows first also makes an empty arrangement a no-op,
+which is what lets a profile that has never used the feature read exactly as it
+did before.
+
+**One reader.** `chat.list`, every `chats.updated` broadcast, `chat.rename`,
+`chat.branch` and `chat.reorder` all answer through `IrisAppService#chatList()`,
+so no path hands one caller the arrangement and another newest-first. `ChatStore`
+itself stays sorted by `updatedAt` and knows nothing about this, which is the
+honest thing for it to report: it knows about files, not about shelves.
+
+**`chat.delete` forgets the place**, like `character.delete` forgets a star and
+for the same measured reason: ids are minted against the files that exist, so a
+freed chat id is handed to the next conversation of that name, and a position
+left behind would seat a stranger exactly where the deleted one used to be.
+
+**Pinned.** `chat-order.test.ts` (12 tests): the arrangement survives a new store
+instance and an unused profile never gets the file; a repeated id means one
+position and an empty order clears it; an unchanged order rewrites nothing (the
+panel re-sends on every drop, including drops that land a row back where it
+started); `chat.list` and `chat.rename` both answer in the arrangement; a chat
+created afterwards is listed on top of it; an unknown id refuses and the stored
+order is unchanged afterwards; a delete forgets the place; a host with no store
+refuses the method and omits `ordered` rather than answering `false`. Every one
+of the nine mechanisms was mutated and each assertion went red.
+
+**What would overturn it.** SillyTavern growing a manual order of its own — the
+file format and the key would then be an interoperability question rather than a
+free choice, and this file would have to be read against theirs; a report that
+readers expect a dragged conversation to *stay* at the top when it is next
+written to, which is a different rule (the arrangement would have to be
+re-derived on every turn rather than only on a drop); a profile large enough
+that rewriting the whole sequence per drop matters, which at the corpus's 31
+chat files it is nowhere near.

@@ -1,11 +1,18 @@
 /**
- * The 「梅花」 marks: the five-petal blossom and the two ink branches.
+ * The Iris marks: the aperture identity, the five-petal blossom, the ink branches.
  *
- * One module rather than four inline copies of the same path data. The brand
- * mark alone appears in the sidebar and inside the composer's writing surface,
- * and the branch is drawn twice at different widths — path data copied into a
+ * One module rather than four inline copies of the same path data. The blossom
+ * alone appears in the composer's writing surface and on a turn boundary, and
+ * the branch is drawn twice at different widths — path data copied into a
  * component is data that drifts one copy at a time, which is the failure the
  * token layer already exists to prevent for colours.
+ *
+ * **Two families live here and they are not the same kind of thing.** The
+ * aperture ({@link ApertureMark}) is the product's *identity*: it names Iris,
+ * it appears exactly once per window, and it is the only mark here that has
+ * states. The blossom and the branches are 「梅花」 *decoration* — a theme's
+ * handwriting, which is why the composer's seal and the character page's bough
+ * are untouched by the identity work and stay exactly where they were.
  *
  * **Every fill and stroke is a token, never a literal.** The artboards are
  * 雪-only, so their `#b3374a` and `#4a4543` are transcribed here as
@@ -22,16 +29,94 @@
  * @module iris-web/app/marks
  */
 
-import type { ReactElement } from 'react'
+import type { CSSProperties, ReactElement } from 'react'
 
 /**
- * The five-petal plum blossom: the brand mark, and the seal on the writing
+ * How many blades the aperture carries.
+ *
+ * Six, and the number is load-bearing twice: it is the angular step each blade
+ * is drawn at (360/6 = 60°), and it is what makes the closed form read as shut
+ * — the 38° each blade turns plus the 5.5px it travels inward carries its tip
+ * past the centre, so six of them overlap into a solid disc. Fewer blades leave
+ * gaps at the same angle and would need a different travel.
+ */
+const APERTURE_BLADES = 6
+
+/**
+ * The aperture: the Iris identity, open or closed.
+ *
+ * A camera iris, which is what the product is named after — an outer ring, six
+ * blades around it, and a round hole in the middle that the blades close over.
+ * It replaces the plum blossom in the sidebar's head, where the blossom was
+ * doing two jobs at once: it was the theme's decoration *and* the thing that
+ * said "Iris", so the identity changed whenever the theme did.
+ *
+ * **The two states are one drawing, not two.** `open` toggles a class and
+ * `shell.css` moves the blades' `rotate` and the hole's `r` — so collapsing the
+ * sidebar animates the mark it already had rather than swapping in a second
+ * asset, and the closed form is guaranteed to be the open form's own geometry.
+ * `Rail.dc.html` draws the closed mark as a solid `r=6.5` dot; that is what six
+ * converged blades look like, and drawing it separately would have been a
+ * second copy of a shape the mechanism already produces.
+ *
+ * The blades' base angles are CSS custom properties rather than the artboards'
+ * `transform="rotate(60 22 22)"` presentation attributes, because a CSS
+ * `transform` **replaces** the attribute rather than composing with it: with
+ * the base rotation left in the markup, every blade would have snapped to 0°
+ * the moment the transition touched it.
+ * @param props.size - the drawn edge in pixels; the artboards use 18.
+ * @param props.open - the blades stand apart and the hole is lit.
+ * @returns the mark.
+ */
+export function ApertureMark({ size, open }: { size: number, open: boolean }): ReactElement {
+  return (
+    <svg
+      className={open ? 'iris-mark iris-aperture' : 'iris-mark iris-aperture iris-aperture--shut'}
+      width={size}
+      height={size}
+      viewBox="0 0 44 44"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="22" cy="22" r="20" fill="none" stroke="var(--iris-accent)" strokeWidth="2.2" />
+      <g fill="var(--iris-accent)">
+        {Array.from({ length: APERTURE_BLADES }, (_blade, index) => (
+          <path
+            key={index}
+            className="iris-aperture__blade"
+            // The one inline style in this module, and it is data rather than
+            // styling: which of the six positions this blade holds. The
+            // stylesheet reads it for both states, so the angle exists once.
+            style={{ '--iris-blade-at': `${String((index * 360) / APERTURE_BLADES)}deg` } as CSSProperties}
+            d="M22 10.5c4.2 0 7.6 2.2 9.5 5.6l-5.4 3.1c-1-1.6-2.5-2.5-4.1-2.5z"
+          />
+        ))}
+      </g>
+      <circle
+        className="iris-aperture__hole"
+        cx="22"
+        cy="22"
+        r="5.2"
+        fill="none"
+        stroke="var(--iris-accent)"
+        strokeWidth="2.2"
+      />
+    </svg>
+  )
+}
+
+/**
+ * The five-petal plum blossom: 「梅花」's own mark, and the seal on the writing
  * surface.
+ *
+ * **No longer the sidebar's identity.** It sits in the composer's writing
+ * surface and on a turn boundary, where it is the theme signing its own paper.
  *
  * The centre dot is painted in the ground the mark sits on rather than in a
  * fixed white, because it appears on two different grounds — the sidebar's desk
  * and the composer's raised sheet — and a white dot on 墨 would be a hole.
- * @param props.size - the drawn edge in pixels; the artboards use 22 and 18.
+ * @param props.size - the drawn edge in pixels; the artboards use 18.
  * @param props.on - the token the centre dot takes, as a CSS colour.
  * @returns the mark.
  */

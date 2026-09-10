@@ -21,6 +21,7 @@ import { createFakeClient, fakeItemization } from '@iris/client-fake'
 
 import { App } from '../src/app/App.tsx'
 import { CharacterPage } from '../src/app/CharacterPage.tsx'
+import { Sidebar } from '../src/app/Sidebar.tsx'
 import { ConnectionPanel } from '../src/app/ConnectionPanel.tsx'
 import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
@@ -221,6 +222,145 @@ async function main(): Promise<void> {
   // The word is the disc's name, because the disc is 32px across and the word
   // does not fit inside it.
   assert.match(settled, /aria-label="Send"/, 'the send disc has no accessible name')
+
+  // ------------------------------------------------------------- sidebar
+  /*
+   * The panel's head, its rows, and both of its forms.
+   *
+   * Every assertion here was a specific decision in `dev/sidebar-redesign`, and
+   * each is the kind a server render can actually judge: which elements exist,
+   * which are nested inside which, and what a control advertises about itself.
+   * Nothing about the fold's timing or the drag's motion is checkable here, and
+   * none of it is asserted — `shell.css` and the browser own those.
+   */
+  // The identity: the aperture, open, and the wordmark beside it. The plum
+  // blossom used to be here and is now only the composer's seal — a decoration
+  // doing an identity's job meant the product's mark changed with the theme.
+  assert.match(settled, /class="iris-brand"/, 'the sidebar has no head')
+  const brandHead = settled.slice(settled.indexOf('iris-brand'), settled.indexOf('iris-tabs'))
+  assert.match(brandHead, /iris-aperture/, 'the aperture mark is missing from the head')
+  assert.doesNotMatch(brandHead, /iris-aperture--shut/, 'the expanded head shows the aperture shut')
+  assert.match(brandHead, /class="iris-brand__word">Iris</, 'the wordmark is missing')
+  // The blossom is still in the product, and still exactly where it belongs.
+  assert.match(settled, /iris-composer__seal/, 'the composer lost the plum seal')
+
+  /*
+   * One row, and what it is made of.
+   *
+   * The four-column grid is a stylesheet fact, so what is pinned here is the
+   * DOM that grid needs: the handle cell, the title, the stamp and the reserved
+   * well, in that order, inside one `<button>` — plus the stamp's short
+   * spelling, which is the copy change the single line paid for.
+   */
+  const rowAt = settled.indexOf('class="iris-row-shell"')
+  assert.ok(rowAt > 0, 'no conversation row rendered')
+  const oneRow = settled.slice(rowAt, settled.indexOf('</div>', rowAt))
+  assert.match(oneRow, /class="iris-row iris-row--chat"/, 'the row is not the single-line chat row')
+  const cells = ['iris-row__grip', 'iris-row__title', 'iris-row__meta', 'iris-row__well']
+  for (const cell of cells) {
+    assert.ok(oneRow.includes(cell), `the row is missing ${cell}, so its four columns cannot line up`)
+  }
+  const cellsAt = cells.map(cell => oneRow.indexOf(cell))
+  assert.deepEqual(
+    [...cellsAt].sort((left, right) => left - right),
+    cellsAt,
+    'the row cells are out of document order, so the grid would put them in the wrong columns',
+  )
+  // The stamp is the short spelling: `2d ago · 3 msg`, not `3 messages`.
+  assert.match(oneRow, /[0-9]+ msg</, 'the row stamp does not use the short message count')
+  assert.doesNotMatch(oneRow, /[0-9]+ messages</, 'the row stamp still spends a whole word on the noun')
+
+  /*
+   * The overflow trigger is in the row and is **not** inside the row's button.
+   *
+   * This is the redesign's one structural rule, and the one that would fail
+   * silently: a `<button>` inside a `<button>` renders and looks right, and the
+   * parser repairs it by hoisting the inner one out of the outer — so the
+   * control the reader sees inside the row sits somewhere else in the DOM, with
+   * a different tab position and a different event target. So: the trigger
+   * exists, it is inside the shell, and it is *after* the row button closes.
+   */
+  assert.match(oneRow, /class="iris-row__acts"/, 'the row has no inline actions cell')
+  const rowButtonEnds = oneRow.indexOf('</button>')
+  assert.ok(rowButtonEnds > 0, 'the row is not a button any more')
+  assert.ok(
+    oneRow.indexOf('iris-row__acts') > rowButtonEnds,
+    'the actions cell is inside the row button: that is a button inside a button',
+  )
+  assert.match(oneRow, /iris-row__more/, 'the overflow trigger is missing from the row')
+  // And the handle is drawn, which is what says the row can be moved at all.
+  assert.match(oneRow, /iris-row__grip"><svg/, 'the drag handle is not drawn on a root row')
+
+  /*
+   * The collapsed form.
+   *
+   * Mounted directly, and the concession is the one the character page's mount
+   * records above: whether the panel is folded is `useState` in `App` seeded
+   * from `localStorage`, and a server render cannot click. The three
+   * destinations, the expand control and what it says about the region it
+   * controls are what a rail has to have — an icon column that reported nothing
+   * about its own state would be four glyphs a screen reader cannot explain.
+   */
+  const railed = render(
+    wired.store,
+    slots.core,
+    <Sidebar
+      collapsed
+      onCollapsed={() => undefined}
+      tab="chats"
+      onTab={() => undefined}
+      face={undefined}
+      onFace={() => undefined}
+    />,
+  )
+  assert.match(railed, /class="iris-sidebar iris-sidebar--rail"/, 'the collapsed panel is not the rail')
+  assert.match(railed, /iris-aperture--shut/, 'the rail does not show the aperture closed')
+  for (const rail of ['chats', 'characters', 'search', 'import']) {
+    assert.match(
+      railed,
+      new RegExp(`data-rail="${rail}"`),
+      `the rail has no ${rail} icon, so that destination is unreachable while folded`,
+    )
+  }
+  /*
+   * Scoped to the control being asked about, in both directions.
+   *
+   * Both fold controls are in the tree at once — one in the head, one in the
+   * rail — so an unscoped search for `aria-expanded="true"` finds whichever of
+   * the two happens to be saying it. The first version of this pair did exactly
+   * that and stayed green when the head control's own value was inverted,
+   * because the rail's was still there to satisfy it. Each half now reads only
+   * its own control's region.
+   */
+  const railHead = railed.slice(railed.indexOf('class="iris-sidebar__rail"'))
+  assert.ok(railHead.length > 0, 'the collapsed panel has no rail to read')
+  assert.match(
+    railHead,
+    /aria-expanded="false"[^>]*aria-controls="iris-sidebar-body"/,
+    "the rail's expand control does not say the region it controls is collapsed",
+  )
+  // Expanded, the head's own control reports the other state — from one switch,
+  // so the two can never disagree.
+  assert.match(
+    brandHead,
+    /aria-expanded="true"[^>]*aria-controls="iris-sidebar-body"/,
+    'the expanded head does not report the sidebar as expanded',
+  )
+  // Both forms are in the tree, and the one that is away is hidden rather than
+  // merely faded: `Sidebar.tsx` argues why they are both mounted, and this is
+  // the half of that argument a render can check.
+  assert.match(
+    railed,
+    /class="iris-sidebar__full" id="iris-sidebar-body" aria-hidden="true"/,
+    'the folded panel still offers its list to the accessibility tree',
+  )
+  assert.match(
+    settled,
+    /class="iris-sidebar__rail" aria-hidden="true"/,
+    'the expanded panel still offers the rail to the accessibility tree',
+  )
+
+  // ---------------------------------------------------- model capsule
 
   // ------------------------------------------------------- the composer bar
   /*

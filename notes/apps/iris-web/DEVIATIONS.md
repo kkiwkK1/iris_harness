@@ -4238,3 +4238,229 @@ in another conversation, which would mean the sentence in the menu is not enough
 verb belongs somewhere global-looking; the primitives growing a role on `MenuItem`,
 which would delete `ComposerMenu.tsx` and half of what `tests/composer-bar.test.ts`
 holds.
+
+## 81. The sidebar gets an identity, a one-line row, a manual order and a rail
+
+The user's design, drawn 2026-09-10 in five artboards (`Main`, `RowStates`,
+`DragReorder`, `LogoMotion`, `Rail`) and implemented from them. Four changes,
+recorded together because they are one panel and three of them share a mechanism.
+
+### The identity: an aperture, not the blossom
+
+`marks.tsx` grows `ApertureMark` — an outer ring, six blades, a hole the blades
+close over — and the sidebar's head is now that mark plus the wordmark 「Iris」.
+The plum blossom that stood there is **still in the product** and has not moved:
+it is the composer's seal and the mark on a turn boundary, which is where a
+theme signs its own paper.
+
+The reason for the swap is that the blossom was doing two jobs. It was 「梅花」's
+decoration *and* the thing that said "Iris", so the product's identity changed
+whenever the theme did — and a theme is something a reader picks.
+
+- **Two states, one drawing.** `open` toggles a class; `shell.css` moves the
+  blades' `rotate` and the hole's `r`. Folding the panel therefore animates the
+  mark it already has rather than swapping in a second asset, and the closed
+  form is guaranteed to be the open form's own geometry. `Rail.dc.html` draws
+  the shut mark as a solid `r=6.5` dot; that is what six blades converged 38°
+  and 5.5px inward look like, and drawing it separately would have been a second
+  copy of a shape the mechanism already produces.
+- The blades' base angles are CSS custom properties, not the artboards'
+  `transform="rotate(60 22 22)"` attributes: a CSS `transform` **replaces** the
+  presentation attribute rather than composing with it, so with the base
+  rotation left in the markup every blade would have snapped to 0° the moment
+  the transition touched it.
+- The hole shuts by `r` **and** by `opacity`, which is one effect with a
+  fallback inside it: `r` as a CSS property is animatable in Chromium and
+  Firefox and not everywhere, and a hole still lit at full size behind closed
+  blades reads as a mark that failed to finish.
+- **The wordmark is set in a serif, and it is not the artboards' serif.**
+  `Main.dc.html` uses Cormorant Garamond 500 from Google Fonts. `tokens.css`'s
+  standing rule is system stacks only — Iris is local-first, and a wordmark that
+  falls back whenever the network is down tells the reader the product is
+  broken — so what ships is the artboard's own fallback stack verbatim,
+  `--iris-font-wordmark: Georgia, 'Songti SC', serif`. Checked rather than
+  assumed: `georgia.ttf` is installed on this machine, so the first name draws,
+  and the mark is a real transitional serif against the interface's Corbel.
+  A four-glyph woff2 subset was the alternative and there was **nothing to
+  subset**: the family is not installed here, this worktree may not install
+  anything, and neither `fontTools` nor `pyftsubset` is on this machine. When
+  either exists it is one token plus one `@font-face`, and an OFL row in
+  `THIRD-PARTY-NOTICES.md`.
+- **The tab icon is the shut aperture**, as a `data:` URI in `index.html`. It
+  was `data:,` — an empty icon whose only job was to stop the browser asking the
+  host for `/favicon.ico` (measured: one 404 per page load, on every card). That
+  job is unchanged, since a data URI is never fetched. The plum is a literal
+  there because a favicon has no stylesheet and so no tokens, exactly like the
+  ground colours the pre-paint script already duplicates; `shell-page.test.ts`
+  holds it to 雪's own `--iris-accent`.
+
+### The row: one line, four columns, and the trigger inside it
+
+`RowStates.dc.html`: 10px of handle, the title, the stamp right-aligned, 24px
+for the overflow trigger, 44px minimum. It was two lines with the stamp beneath
+the title, and the trigger was a **sibling of the row in a flex line** — which
+made every row narrower than the panel and put its own actions outside the
+rectangle they act on.
+
+- **The trigger is in the row and is not inside the row's button.** The row is
+  still one `<button>`; the trigger and the star are its siblings, absolutely
+  positioned over the cell the grid reserved (`.iris-row__acts`, `.iris-row__well`).
+  A `<button>` inside a `<button>` renders, looks right, and is repaired by the
+  parser hoisting the inner one *out* of the outer — so the control the reader
+  sees inside the row would sit somewhere else in the DOM, at a different tab
+  position and with a different event target. This is the redesign's one
+  structural rule and it is pinned twice, in the render check and against the
+  source of both row components.
+- The trigger is **permanent**, at `--iris-rule` — the hairlines' own grey —
+  and brightens to `--iris-ink-faint` when the row is hovered, focused or
+  current. It used to appear on hover, which cost a control that grows under
+  the pointer and a control a touch reader cannot find at all. Going from a rule
+  to an ink is one step; going from nothing to something is a flicker.
+- Hover moved from `.iris-row` to `.iris-row-shell`: reaching for the trigger,
+  which is outside the button, used to make the row's ground vanish under the
+  pointer.
+- The stamp is the **short** count — `2 天前 · 3 条` / `2d ago · 3 msg`, built
+  by `format.ts`'s `chatMeta`. `messageCount` survives for the character page,
+  whose column is wide enough for the noun.
+- The library row got the same treatment: its star and trigger are in the row
+  now, over a 52px reserved column.
+
+### Dragging, and an order the host keeps
+
+`DragReorder.dc.html`, implemented with Pointer Events and no library — a
+reorderable list is three numbers and a `splice`, and the libraries that do it
+ship a sensor stack and a collision strategy this one panel does not need.
+
+- `reorder.ts` holds the arithmetic (`moveItem`, `dropIndex`, `makeWay`) because
+  it is behaviour a `node --test` file can check; the pointer plumbing stays in
+  the component because that part is the browser's.
+- Row centres are **measured**, never computed from a constant: the rows are
+  44px today and a title that wraps would make that a lie the same afternoon,
+  and a wrong constant shows up as a drop that lands one row off — which reads
+  as a mystery rather than as a stale number.
+- And measured **once, when the row goes up**, which is a correction and not a
+  shortcut. Re-reading them on each move looks more honest and is not: a
+  neighbour making way carries a `translateY`, and `getBoundingClientRect`
+  reports the *transformed* box — so every row the drag had already passed
+  measured one pitch from where it rests, and the drop index was computed
+  against positions the drag itself had moved. Travel is now a delta from where
+  the pointer went down, plus the list's scroll drift, which is the only thing
+  that can still move a resting row under the pointer.
+- 150ms press on the row *or* the handle; 6px of slop abandons the press so a
+  flick-scroll stays a scroll; Escape or dragging 48px outside the list cancels
+  and writes nothing; `prefers-reduced-motion` keeps the well and the reorder
+  and drops every transform.
+- **Only a root row has a handle.** A branch renders under the conversation it
+  left, so its position is derived — a handle on one would offer a move the next
+  render undoes.
+- **The request carries the whole visible order, branches included.** The host
+  treats an id its arrangement does not name as newer than the arrangement and
+  puts it on top, so sending only the roots would detach every branch from its
+  parent the moment anything was dragged.
+- A finished drag eats exactly one click, scoped to the row that was carried and
+  stamped with a time — the row is a button, and the pointer-up that sets a
+  conversation down would otherwise open it.
+- **Keyboard:** Alt+↑/↓ on a focused row. Alt rather than a bare arrow because
+  the arrows scroll the list, and a reader stepping through rows with them must
+  not reorder by accident.
+- **Manual against by-time** (the relation the task asked to be decided): the
+  chat list had **no** sort control — `iris-sorts` belongs to the library tab —
+  and was unconditionally `updatedAt` desc, decided on the host. It now gets two
+  capsules, 自定义 / 按时间, which **appear only once the host reports an
+  arrangement exists**. Before the first drag the two answers are the same list
+  and a permanent pair of capsules would be a control that never changes
+  anything; the artboards draw the chat tab with nothing but a search box above
+  the rows, and this keeps that drawing until the reader has done the thing that
+  makes the choice real. 按时间 re-sorts **in the browser** and deliberately
+  does not tell the host: switching to newest-first is a way of looking at the
+  list, not a decision to throw the arrangement away, and switching back has to
+  find it exactly as it was. Dragging while in 按时间 flips the device to
+  自定义 and stores the result. The choice itself is per-device
+  (`sidebar-state.ts`), like the drawer's open cards; the *sequence* is on the
+  host, because a shelf someone arranged has to survive a new machine.
+- The host half is DEVIATIONS §62 (`chat.reorder`, `chat-order.json`, and why an
+  unmentioned conversation is listed on top).
+
+### Folding: one switch, two appearances
+
+`LogoMotion.dc.html` and `Rail.dc.html`. The panel folds to a 44px rail with the
+aperture shut at its head, the same three destinations as icons, and the import
+`+` at its foot.
+
+- **`navOpen` is gone and there are not two switches.** The shell holds one
+  `collapsed`, and the *width* decides what collapsing looks like: above 880px
+  the panel becomes the rail; at or below it the panel is off-canvas and the
+  masthead's ☰ is what brings it back, exactly as before. Two switches would
+  have let a window that got narrower arrive with one open and the other shut,
+  with no rule for which one the ☰ answers. The ☰ is now a toggle and says so
+  (`aria-expanded`), and the dismiss scrim still renders from the one switch and
+  is still shown only in the interval that has a sliding sidebar
+  (`breakpoints.test.ts` holds it there).
+- Stored in `localStorage` like the drawer's cards. With nothing stored, a
+  window narrower than **900px** starts folded — a *default* read once, not a
+  breakpoint: the shell has exactly three width breakpoints and each one is a
+  rule that holds at every moment, while this is a first guess that a reader
+  overrides for good. It is in TypeScript, not in a stylesheet, so
+  `breakpoints.test.ts` still sees three.
+- **Both forms are always mounted**, cross-faded by class. The outgoing form
+  cannot fade if it has already been unmounted, and the list's scroll position
+  would reset on every fold. The form that is away is `visibility: hidden`,
+  which takes it out of the accessibility tree and out of the tab order — so
+  "mounted" is not "reachable", and both `aria-hidden` states are pinned.
+- **Neither fold control travels** (the user's amendment, 2026-09-10: 「展开按钮
+  从左往右出现，缩放按钮从右往左消逝；风格和间距要和其他图标一致」). They are two
+  buttons, not one that moves: the head's leaves with the content it belongs to,
+  right to left; the rail's arrives with the rail, left to right. Both are the
+  same `.iris-sidebar__ico` as the rail's four destinations — 32px, radius 8,
+  `--iris-ink-tertiary`, sunken on hover, 12px apart — written once, because the
+  earlier drawing gave the fold button its own 28px box and its own colour and
+  at 44px wide the icons under it read as a set with an intruder at the top.
+- Timing: 160ms for the wordmark's clip, 120ms for the cross-fade, 220ms for the
+  bar, as three tokens (`--iris-fold-word`, `--iris-fold-fade`,
+  `--iris-fold-width`) because each is used twice, once per direction, with the
+  delays swapped. 160 + 220 = **380ms**, inside the artboards' 400ms ceiling.
+  Under `prefers-reduced-motion` the two end states remain and the choreography
+  goes.
+- One asymmetry, and it is about focus rather than looks: on the way *in*,
+  `visibility` flips with no delay while the opacity still waits for the bar.
+  The rail's 搜索 icon expands the panel and puts the cursor in the search box,
+  and a `visibility: hidden` element cannot take focus — so a delayed visibility
+  would have made that icon expand the panel and then silently do nothing for
+  220ms. Nothing appears any earlier: the opacity is 0 and the bar clips it.
+- The shell's first grid track became `auto` with the width on `.iris-sidebar`,
+  so one transition animates both the panel and the reading area. `SIDEBAR_TRACK`
+  (`state-panel.ts`) still reads 272 — the **expanded** width — because a media
+  query cannot ask whether the reader has folded the panel, and a breakpoint
+  that moved when they did would make the variable margin appear and vanish for
+  a reason nothing on screen explains. That errs safely: with the rail showing
+  there is 228px *more* reading area than the sums assume.
+
+### Costs
+
+- **A local `z-index`.** A lifted row has to paint over the rows it passes,
+  which is an order between siblings inside one list rather than a page layer.
+  `layers.test.ts` refused every literal; it now grants one named selector an
+  exception, on the argument it already makes for `reading.css`'s two
+  `z-index: 1`, **and asserts the exception is still used** — an allow-list
+  nothing uses is a licence waiting for the next literal.
+- **The panel's DOM is larger while folded**: the whole conversation list is
+  still there, hidden. That is the price of the cross-fade and of keeping the
+  scroll position, and it is the same trade `App.tsx` already makes for the
+  reading sheet.
+- **Two capsules that were not drawn.** The artboards give the chat tab a search
+  box and rows. The order control is an addition, and it is bounded to the case
+  where it means something.
+- **`chatMeta` is a second copy of a separator.** `STRINGS.md` argues elsewhere
+  against template keys that hold only punctuation; this one lives in `format.ts`
+  as code rather than in the dictionary, so there is still one layout.
+
+### What would overturn it
+
+A report that the rail's four icons are not enough to work from — the fold would
+then need labels and a wider rail, which is a different drawing; a reader who
+wants the arrangement to follow the conversation they are writing in (a chat
+that rises to the top when it is written to), which is a rule the current one
+cannot express; Cormorant Garamond becoming available to subset, which changes
+the wordmark's face and this section's third bullet; a measurement that the
+150ms press makes the list feel unresponsive on touch, which would move the drag
+back onto the handle alone.

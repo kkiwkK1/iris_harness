@@ -22,7 +22,15 @@
   /* Positioned, because the card-import overlay covers the whole shell. */
   position: relative;
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr);
+  /*
+   * `auto` for the sidebar's track rather than the 272px it used to name,
+   * because the panel folds: the width now lives on `.iris-sidebar` itself and
+   * the track follows it, so one transition on one element animates both the
+   * panel and the reading area beside it. With the number here instead, the
+   * fold would have needed a modifier class on the shell as well — two places
+   * saying one thing, and the grid is the one that cannot fade.
+   */
+  grid-template-columns: auto minmax(0, 1fr);
   height: 100%;
   background: var(--iris-bg-base);
   color: var(--iris-ink);
@@ -68,25 +76,279 @@
 
 /* ----------------------------------------------------------------- sidebar */
 
+/*
+ * The panel, in two forms that are one element.
+ *
+ * 272px of column or 44px of rail (`Rail.dc.html`), and the two subtrees are
+ * both mounted (`Sidebar.tsx` says why) — so everything below is a cross-fade
+ * plus a width, and no rule here has to know which form is "real".
+ *
+ * `overflow: hidden` is what makes the fold read as the artboards draw it: the
+ * list is clipped away as the panel narrows rather than reflowing into 44px,
+ * which is why both children are absolutely positioned at their own natural
+ * widths.
+ */
 .iris-sidebar {
+  position: relative;
+  width: 272px;
+  box-sizing: border-box;
+  min-height: 0;
+  overflow: hidden;
+  border-right: var(--iris-hairline) solid var(--iris-rule);
+  /*
+   * No delay: this is the *expanded* state, so this is the transition used on
+   * the way **to** it — the bar widens first and the content arrives into a
+   * column that is already there. The collapsing direction's own delay is on
+   * the modifier below, which is the state being transitioned to then.
+   */
+  transition: width var(--iris-fold-width) var(--iris-ease);
+}
+
+.iris-sidebar--rail {
+  width: 44px;
+  /* Collapsing waits for the content to leave: the wordmark is swallowed and
+     the list fades over `--iris-fold-word`, and only then does the bar narrow.
+     160 + 220 = 380ms, inside the 400ms the artboards allow the whole gesture. */
+  transition: width var(--iris-fold-width) var(--iris-ease) var(--iris-fold-word);
+}
+
+/*
+ * The expanded form. Absolutely positioned at its own 272px so narrowing the
+ * panel clips it instead of squeezing it, and `visibility` rather than
+ * `display` so it can fade — and so that while it is away it is out of the
+ * accessibility tree and out of the tab order.
+ */
+.iris-sidebar__full {
+  position: absolute;
+  inset: 0;
+  width: 272px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: var(--iris-hairline) solid var(--iris-rule);
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  /*
+   * Arriving: the content fades in once the bar has finished widening — but
+   * `visibility` flips **at once**, with no delay of its own.
+   *
+   * The asymmetry is about focus, not about looks. The rail's 搜索 icon expands
+   * the panel *and* puts the cursor in the search box, and a
+   * `visibility: hidden` element cannot take focus — so a visibility delayed
+   * behind the width would have made that one icon expand the panel and then
+   * silently do nothing for 220ms. Nothing becomes visible any earlier for it:
+   * the opacity is still 0 and the bar still clips the column.
+   */
+  transition:
+    opacity var(--iris-fold-word) var(--iris-ease) var(--iris-fold-width),
+    transform var(--iris-fold-word) var(--iris-ease) var(--iris-fold-width),
+    visibility 0s linear;
 }
 
+.iris-sidebar--rail .iris-sidebar__full {
+  opacity: 0;
+  /* Leaving to the left, which is the direction the panel folds. */
+  transform: translateX(-8px);
+  visibility: hidden;
+  transition:
+    opacity var(--iris-fold-fade) var(--iris-ease),
+    transform var(--iris-fold-fade) var(--iris-ease),
+    visibility 0s linear var(--iris-fold-fade);
+}
+
+/*
+ * The rail. Same two-form treatment, mirrored: it arrives from the left as the
+ * bar finishes narrowing, and leaves immediately when the bar starts widening.
+ */
+.iris-sidebar__rail {
+  position: absolute;
+  inset: 0;
+  width: 44px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0 14px;
+  opacity: 0;
+  transform: translateX(-8px);
+  visibility: hidden;
+  transition:
+    opacity var(--iris-fold-fade) var(--iris-ease),
+    transform var(--iris-fold-fade) var(--iris-ease),
+    visibility 0s linear var(--iris-fold-fade);
+}
+
+.iris-sidebar--rail .iris-sidebar__rail {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  /* Left to right, and only once the bar is nearly narrow: the icons must not
+     appear over a column that is still 200px wide. */
+  transition:
+    opacity var(--iris-fold-fade) var(--iris-ease) var(--iris-fold-width),
+    transform var(--iris-fold-fade) var(--iris-ease) var(--iris-fold-width),
+    visibility 0s linear var(--iris-fold-width);
+}
+
+/* Pushes the import icon to the rail's foot, where the 「导入卡片」 button is
+   in the expanded form. */
+.iris-sidebar__gap {
+  flex: 1;
+}
+
+/*
+ * The 32px icon control, and there is exactly one of it.
+ *
+ * The head's fold button, the rail's expand button and the rail's four
+ * destinations are all this class — the user's ruling 2026-09-10 (「风格和间距要
+ * 和其他图标一致」). Written once because the alternative was measured: the
+ * earlier drawing gave the fold button its own 28px box and its own colour, and
+ * at 44px wide the four icons under it read as a set with an intruder at the
+ * top.
+ */
+.iris-sidebar__ico {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  font: inherit;
+  color: var(--iris-ink-tertiary);
+  transition:
+    color var(--iris-fast) var(--iris-ease),
+    background var(--iris-fast) var(--iris-ease);
+}
+
+.iris-sidebar__ico:hover {
+  background: var(--iris-bg-sunken);
+  color: var(--iris-ink-secondary);
+}
+
+/* The list this rail icon would land on is the one already showing. */
+.iris-sidebar__ico[aria-current='true'] {
+  color: var(--iris-accent);
+  background: var(--iris-accent-wash);
+}
+
+/* One chevron drawing, two directions: into the edge, and back out of it. */
+.iris-sidebar__ico--flip .iris-icon {
+  transform: scaleX(-1);
+}
+
+/* Never stretched by the flex row or grid cell it lands in — the same rule
+   `.iris-mark` carries, for the same reason. */
+.iris-icon {
+  display: block;
+  flex: none;
+}
+
+/* ------------------------------------------------------------- the identity */
+
+/*
+ * The aperture and the wordmark, with the fold control at the other end.
+ *
+ * `align-items: center` rather than the `baseline` the blossom sat on: the mark
+ * has no baseline to share now that it is a ring, and the 32px button on the
+ * same line would have hung off whatever baseline the wordmark set.
+ */
 .iris-brand {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 20px 20px 18px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 8px 12px 13px;
 }
 
-.iris-brand__name {
-  font-family: var(--iris-font-prose);
-  font-size: var(--iris-size-brand);
-  letter-spacing: 0.015em;
+.iris-brand__id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+/*
+ * 「Iris」, and it is set in a serif on purpose.
+ *
+ * The one place in the product with a typeface of its own. Everything else is
+ * `--iris-font-ui` (Corbel over 幼圆) because it is interface text that has to
+ * disappear; a wordmark's whole job is to be recognised, so it is allowed to be
+ * a different voice. `--iris-font-wordmark` carries the stack and `tokens.css`
+ * carries the argument about why it is a system serif rather than the
+ * artboards' Cormorant Garamond.
+ *
+ * The clip is the fold: `inset(0 100% 0 0)` closed, so the letters are eaten
+ * from the right edge inward as they slide left into the aperture, which is
+ * what the artboards mean by 「被光圈吞进去」. A plain fade would have looked
+ * like the panel forgot its own name.
+ */
+.iris-brand__word {
+  font-family: var(--iris-font-wordmark);
+  font-size: var(--iris-size-wordmark);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
   color: var(--iris-ink);
+  white-space: nowrap;
+  clip-path: inset(0 0 0 0);
+  transform: none;
+  /* Last out, first in: delayed behind the bar's own width change. */
+  transition:
+    clip-path var(--iris-fold-word) var(--iris-ease) var(--iris-fold-width),
+    transform var(--iris-fold-word) var(--iris-ease) var(--iris-fold-width);
+}
+
+.iris-sidebar--rail .iris-brand__word {
+  clip-path: inset(0 100% 0 0);
+  transform: translateX(-10px);
+  transition:
+    clip-path var(--iris-fold-word) var(--iris-ease),
+    transform var(--iris-fold-word) var(--iris-ease);
+}
+
+/*
+ * The aperture's own two states.
+ *
+ * `transform-box: view-box` is what makes `transform-origin: 22px 22px` mean
+ * the centre of the drawing rather than the centre of each blade's own bounding
+ * box — without it every blade spins in place and the ring reads as a mill.
+ */
+.iris-aperture__blade {
+  transform-box: view-box;
+  transform-origin: 22px 22px;
+  transform: rotate(var(--iris-blade-at, 0deg));
+  transition: transform var(--iris-fold-width) var(--iris-ease);
+}
+
+/* 38° and 5.5px inward: the tip crosses the centre, so six of them overlap
+   into a solid disc — which is the closed mark `Rail.dc.html` draws. */
+.iris-aperture--shut .iris-aperture__blade {
+  transform: rotate(calc(var(--iris-blade-at, 0deg) + 38deg)) translate(0, 5.5px);
+}
+
+.iris-aperture__hole {
+  r: 5.2px;
+  opacity: 1;
+  transition:
+    r var(--iris-fold-width) var(--iris-ease),
+    opacity var(--iris-fold-width) var(--iris-ease);
+}
+
+/*
+ * The hole shuts by radius *and* by opacity, which is one effect with a
+ * fallback in it: `r` as a CSS property is animatable in Chromium and Firefox
+ * and not everywhere, and a hole that stayed lit at full size behind the closed
+ * blades would read as a mark that failed to finish.
+ */
+.iris-aperture--shut .iris-aperture__hole {
+  r: 1.2px;
+  opacity: 0;
 }
 
 /*
@@ -173,6 +435,25 @@
   color: var(--iris-ink-faint);
 }
 
+/*
+ * One row, and the controls that sit in it.
+ *
+ * The shell is what makes the row a single button *and* lets a second control
+ * live inside it: the row is a `<button>` and the trigger beside it is that
+ * button's **sibling**, absolutely positioned over the cell the row's grid
+ * reserved. Nesting them would have been a `<button>` inside a `<button>`,
+ * which browsers repair by hoisting the inner one out — the control stays
+ * visible and moves in the DOM, so keyboard order and event targets stop
+ * matching what is on screen.
+ *
+ * Positioned for that, and it is also the drag's coordinate system: the lifted
+ * row and its dashed well are transformed inside this box, so the row's place
+ * in the list is never disturbed by the row leaving it.
+ */
+.iris-row-shell {
+  position: relative;
+}
+
 .iris-row {
   display: block;
   width: 100%;
@@ -191,6 +472,30 @@
   color: var(--iris-ink-secondary);
 }
 
+/*
+ * A conversation: one line, four columns (`RowStates.dc.html`).
+ *
+ * 10px of handle, the title, the stamp, and 24px the trigger is positioned
+ * into. It was two lines with the stamp beneath the title, which spent 20px of
+ * every row putting the least important thing on the page on a line of its own
+ * — and the `min-height` here is why the single line is not *cramped*: 44px is
+ * the touch target the row has to be either way.
+ */
+.iris-row--chat {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 12px 6px 12px 8px;
+}
+
+/* Hover belongs to the whole shell, not to the row button: the trigger and the
+   star are outside the button, and reaching for one of them used to make the
+   row's own ground disappear from under the pointer. */
+.iris-row-shell:hover .iris-row,
+.iris-row-shell:focus-within .iris-row,
 .iris-row:hover {
   background: var(--iris-bg-sunken);
 }
@@ -199,6 +504,121 @@
   background: var(--iris-accent-wash);
   border-left-color: var(--iris-accent);
   color: var(--iris-ink);
+}
+
+/* ------------------------------------------------- a row's own two controls */
+
+/*
+ * The trailing controls, over the cell the grid reserved for them.
+ *
+ * Absolute rather than a grid cell of their own, because they are *siblings of
+ * the row button* and a sibling cannot be in that button's grid. `right: 6px`
+ * lands them inside the row's own right padding, which is what puts the
+ * trigger over its 24px column rather than beside it.
+ */
+.iris-row__acts {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The Menu primitive's own wrapper span, which has to be the anchor's box and
+   nothing more — it is what the portal measures to place the list. */
+.iris-row__menu {
+  display: inline-flex;
+}
+
+/*
+ * The overflow trigger, permanently present.
+ *
+ * It used to appear on hover, which cost two things: a row that grew a control
+ * under the pointer, and a control a touch reader could not find at all. So it
+ * is always drawn and it *brightens* instead — `--iris-rule`, the same grey as
+ * the hairlines, until the row is hovered or current, and then the faintest
+ * ink. Going from a rule to an ink is a change of one step; going from nothing
+ * to something is a flicker.
+ */
+.iris-row__more {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  font: inherit;
+  color: var(--iris-rule);
+  transition:
+    color var(--iris-fast) var(--iris-ease),
+    background var(--iris-fast) var(--iris-ease),
+    box-shadow var(--iris-fast) var(--iris-ease);
+}
+
+.iris-row-shell:hover .iris-row__more,
+.iris-row-shell:focus-within .iris-row__more,
+.iris-row[aria-current='true'] ~ .iris-row__acts .iris-row__more {
+  color: var(--iris-ink-faint);
+}
+
+.iris-row__more:hover {
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink-secondary);
+}
+
+/* The menu is open, so the trigger is a pressed control rather than a glyph:
+   a ring rather than a border, because a border would move the icon 1px. */
+.iris-row-shell--menu .iris-row__more {
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink-secondary);
+  box-shadow: 0 0 0 var(--iris-hairline) var(--iris-rule);
+}
+
+/*
+ * The drag handle.
+ *
+ * Hidden until the row is hovered or focused — a column of handles down a
+ * resting list is texture nobody asked for — and it is not the only way to
+ * start a drag: the artboards give the whole row a 150ms press. So the handle
+ * is a *hint* that the row moves, which is why it is allowed to be invisible at
+ * rest without making the feature unreachable.
+ */
+.iris-row__grip {
+  width: 10px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--iris-rule-strong);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity var(--iris-fast) var(--iris-ease);
+}
+
+.iris-row-shell:hover .iris-row__grip,
+.iris-row-shell:focus-within .iris-row__grip,
+.iris-row-shell--lifted .iris-row__grip {
+  opacity: 1;
+}
+
+/* Carrying: the handle is the one thing on the row that takes the accent, so
+   the reader can see which of the two gestures they are in. */
+.iris-row-shell--lifted .iris-row__grip {
+  color: var(--iris-accent);
+  cursor: grabbing;
+}
+
+/* The reserved cell itself: empty on purpose, because what fills it is
+   positioned over it rather than in it. */
+.iris-row__well {
+  display: block;
 }
 
 .iris-row__title {
@@ -223,6 +643,108 @@
 .iris-row__meta {
   display: block;
   margin-top: 3px;
+}
+
+/* On one line the stamp is a *column*, so the 3px that separated it from the
+   title above it would push it off the row's own centre. */
+.iris-row--chat .iris-row__meta {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------ dragging a row */
+
+/*
+ * A row on its way somewhere: lifted onto the raised paper, and the dashed
+ * well it would drop into.
+ *
+ * The lifted row leaves the sidebar's ground for `--iris-bg-raised` and takes
+ * the page's one shadow, so the reader can see it is *held* rather than
+ * selected — and it rounds all four corners, because the left well and the
+ * square edge belong to a row that is still in the list.
+ *
+ * The offsets arrive as custom properties from `Sidebar.tsx`: only the distance
+ * is data. `scale(1.02)`, the −0.6° tilt and the easing are the artboards' and
+ * stay here, where the reduced-motion block below can take them away.
+ */
+.iris-row-shell--lifted {
+  /* Over the rows it is passing, and over the well it left behind. */
+  z-index: 3;
+}
+
+.iris-row-shell--lifted .iris-row {
+  background: var(--iris-bg-raised);
+  border-left-color: transparent;
+  border-radius: var(--iris-radius);
+  box-shadow: var(--iris-shadow);
+  transform: translateY(var(--iris-drag-y, 0)) scale(1.02) rotate(-0.6deg);
+}
+
+/* The row is in the reader's hand, so its own actions are not offerable — and
+   they are positioned against the shell, so they would have stayed behind at
+   the row's old place looking like a second row. */
+.iris-row-shell--lifted .iris-row__acts {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/*
+ * The well. It travels with the drop position rather than staying where the
+ * row was lifted from, which is what tells the reader where the row is going
+ * — the gap the neighbours opened is on the same beat.
+ */
+.iris-row__slot {
+  position: absolute;
+  inset: 0;
+  border: var(--iris-hairline) dashed var(--iris-rule-strong);
+  border-radius: 0 var(--iris-radius) var(--iris-radius) 0;
+  background: var(--iris-accent-soft);
+  box-sizing: border-box;
+  transform: translateY(var(--iris-slot-y, 0));
+  transition: transform var(--iris-slip) var(--iris-ease);
+}
+
+/* A neighbour making way: exactly one row's pitch, in the direction that opens
+   the gap (`reorder.ts`: `makeWay`). */
+.iris-row-shell--away {
+  transform: translateY(var(--iris-drag-y, 0));
+  transition: transform var(--iris-slip) var(--iris-ease);
+}
+
+/*
+ * Reduced motion: the well and the new order, and nothing that moves.
+ *
+ * The artboards' own ruling (`DragReorder.dc.html`: 减少动效偏好下只保留槽与顺序
+ * 变化). What is left is still a complete gesture — the row lights up, the well
+ * says where it would land, the list reorders — which is why this is a
+ * simplification rather than a feature switched off.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .iris-row-shell--lifted .iris-row {
+    transform: none;
+  }
+
+  .iris-row-shell--away,
+  .iris-row__slot {
+    transform: none;
+    transition: none;
+  }
+
+  /* The fold keeps its two end states and loses the choreography: the blades
+     arrive shut rather than turning (「减少动效偏好下叶片不转」), and the panel
+     changes width at once. */
+  .iris-sidebar,
+  .iris-sidebar--rail,
+  .iris-sidebar__full,
+  .iris-sidebar--rail .iris-sidebar__full,
+  .iris-sidebar__rail,
+  .iris-sidebar--rail .iris-sidebar__rail,
+  .iris-brand__word,
+  .iris-sidebar--rail .iris-brand__word,
+  .iris-aperture__blade,
+  .iris-aperture__hole {
+    transition: opacity var(--iris-fast) var(--iris-ease);
+  }
 }
 
 /* A content hit's evidence: the matched text, clamped to two lines. */
@@ -263,9 +785,13 @@
  */
 .iris-row--character {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  /* A third column, reserved rather than filled: the star and the trigger are
+     positioned into it (`.iris-row__acts`), the way a chat row's 24px works.
+     52px is the two 24px cells plus the 2px between them, plus 2px of air. */
+  grid-template-columns: 34px minmax(0, 1fr) 52px;
   align-items: center;
   gap: 10px;
+  min-height: 44px;
 }
 
 .iris-avatar {
@@ -347,7 +873,12 @@
   color: var(--iris-ink-faint);
 }
 
-.iris-star--on {
+/* Starred beats every reveal rule the cell it shares with the trigger carries:
+   a favourite is a fact about the card, not a state of the pointer. */
+.iris-star--on,
+.iris-star--on:hover,
+.iris-row-shell:hover .iris-star--on,
+.iris-row-shell:focus-within .iris-star--on {
   color: var(--iris-accent);
 }
 
@@ -453,14 +984,22 @@
   display: none;
 }
 
-/* One list row plus its overflow menu; the menu must not steal the row's width. */
+/*
+ * A row being edited in place: the field, and its confirm and cancel.
+ *
+ * This is all `.iris-row-group` is now. It used to wrap every list row and the
+ * controls beside it, which is exactly the shape the rows moved away from —
+ * a flex line made the row narrower than the panel and put its own actions
+ * outside the rectangle they act on. A field with two words after it is a
+ * genuine line of three things, so the line survives here.
+ */
 .iris-row-group {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 2px;
 }
 
-.iris-row-group .iris-row {
+.iris-row-group .iris-search {
   flex: 1;
   min-width: 0;
 }

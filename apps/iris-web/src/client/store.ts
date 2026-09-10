@@ -372,6 +372,19 @@ export interface CardReportOptions {
 export interface IrisState {
   connected: boolean
   chats: ChatSummary[]
+  /**
+   * Whether the list's order is one somebody arranged, as the host reported it.
+   *
+   * `undefined` is not "no": it is a host that keeps no arrangement at all and
+   * therefore cannot answer (the protocol's `chat.list.ordered` says why it is
+   * optional). The sidebar has exactly one decision to make with this — whether
+   * to offer a choice between this order and newest-first — and `undefined` and
+   * `false` both mean there is nothing to choose between yet, so nothing needs
+   * to distinguish them downstream. It is kept as three states anyway, because
+   * folding a missing answer into `false` at the boundary is how a reader comes
+   * to be told a host does something it does not.
+   */
+  chatsOrdered: boolean | undefined
   characters: CharacterSummary[]
   /** The open conversation, or undefined on the empty surface. */
   chatId: string | undefined
@@ -794,6 +807,16 @@ export interface IrisActions {
   createChat(characterId: string): Promise<void>
   deleteChat(chatId: string): Promise<void>
   renameChat(chatId: string, title: string): Promise<void>
+  /**
+   * Put the conversation list in the order the reader dragged it into.
+   *
+   * Takes the **whole** visible sequence, which is the shape the host's method
+   * takes and for its reason: a relative move needs both ends to agree about
+   * what the list was first, and they stop agreeing the moment another tab
+   * creates a chat. The reply is adopted rather than the request — the host
+   * decides where a conversation the sequence never mentioned appears.
+   */
+  reorderChats(order: readonly string[]): Promise<void>
   /**
    * Search the profile's conversations by a fragment of floor text.
    *
@@ -1492,6 +1515,7 @@ export function createIrisStore(
     return {
       connected: client.connected,
       chats: [],
+      chatsOrdered: undefined,
       characters: [],
       chatId: undefined,
       view: undefined,
@@ -1577,6 +1601,7 @@ export function createIrisStore(
           ])
           set({
             chats: chats.chats,
+            chatsOrdered: chats.ordered,
             characters: characters.characters,
             settings: settings.settings,
             connected: client.connected,
@@ -1640,6 +1665,13 @@ export function createIrisStore(
           const next = get().chats.find(row => row.chatId !== chatId)
           if (next === undefined) get().closeChat()
           else await get().openChat(next.chatId)
+        })
+      },
+
+      async reorderChats(order: readonly string[]): Promise<void> {
+        await guard(async () => {
+          const answered = await client.call('chat.reorder', { order: [...order] })
+          set({ chats: answered.chats, chatsOrdered: answered.ordered })
         })
       },
 

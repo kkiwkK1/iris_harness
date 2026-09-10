@@ -35,6 +35,7 @@ import { CardPopup } from './CardPopup.tsx'
 import { CleanupOffer } from './CleanupOffer.tsx'
 import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
+import { loadSidebarCollapsed, saveSidebarCollapsed } from './sidebar-state.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 import '../theme/tokens.css'
@@ -58,7 +59,27 @@ export function App(): ReactElement {
 
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [navOpen, setNavOpen] = useState(false)
+  /*
+   * Whether the sidebar is folded away — **one switch, not two.**
+   *
+   * There used to be `navOpen`, which meant "the sliding drawer is showing" and
+   * existed only below 880px, where the sidebar is an overlay and the masthead
+   * grows a ☰. The rail (`Rail.dc.html`) is the same question asked at a width
+   * where the panel is a column: is it showing itself, or is it out of the way.
+   * Keeping both would have meant a window that got narrower could arrive with
+   * one switch open and the other shut, and no rule for which one the ☰ answers.
+   *
+   * So the shell holds `collapsed`, and the width decides what collapsing
+   * *looks* like: above 880px the panel becomes the 44px rail, at or below it
+   * the panel is off-canvas and the ☰ is what brings it back (`panels.css`).
+   * The scrim is the same either way — it belongs to the overlay form, so
+   * `panels.css` shows it only in the interval that has one.
+   */
+  const [collapsed, setCollapsed] = useState(loadSidebarCollapsed)
+  const foldSidebar = useCallback((next: boolean): void => {
+    setCollapsed(next)
+    saveSidebarCollapsed(next)
+  }, [])
   /*
    * Which list the sidebar shows, and which character's page is open.
    *
@@ -136,7 +157,8 @@ export function App(): ReactElement {
       }}
     >
       <Sidebar
-        open={navOpen}
+        collapsed={collapsed}
+        onCollapsed={foldSidebar}
         tab={tab}
         onTab={setTab}
         face={face}
@@ -219,7 +241,8 @@ export function App(): ReactElement {
           <div className="iris-sheet" hidden={tab === 'characters'}>
             <Masthead
               onOpenSettings={() => setSettingsOpen(true)}
-              onToggleNav={() => setNavOpen(!navOpen)}
+              navOpen={!collapsed}
+              onToggleNav={() => foldSidebar(!collapsed)}
             />
             {/*
               The reading column's card stage.
@@ -301,9 +324,18 @@ export function App(): ReactElement {
         </div>
       ) : null}
 
-      {navOpen ? (
-        <div className="iris-scrim" role="presentation" onClick={() => setNavOpen(false)} />
-      ) : null}
+      {/*
+        The tap-to-dismiss layer behind the sliding sidebar.
+
+        Rendered from the one switch, exactly as before, and still shown only in
+        the interval that has a sliding sidebar to dismiss (`panels.css`, the
+        880px block; `breakpoints.test.ts` holds it to that). Above that width
+        the sidebar collapses to the rail instead of overlaying anything, so
+        there is nothing to tap past.
+      */}
+      {collapsed ? null : (
+        <div className="iris-scrim" role="presentation" onClick={() => foldSidebar(true)} />
+      )}
 
     </div>
   )
