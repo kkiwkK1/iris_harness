@@ -438,6 +438,13 @@ const PROBES: Record<string, unknown> = {
     source: 'ai_output',
     destination: 'display',
   },
+  // —— family④: lorebook / worldbook ——
+  // A name nothing has, like every probe in this group. The probe host keeps no
+  // book store, so the handler refuses with not-found — which proves it ran,
+  // and, unlike a real name, cannot delete a file if the probe host ever grows
+  // one. **Never point this at a book that exists**: this table's calls are
+  // made for real.
+  'worldbook.delete': { name: 'no-such-book' },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

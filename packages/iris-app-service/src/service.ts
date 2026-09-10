@@ -3776,6 +3776,68 @@ export class IrisAppService {
           }),
         }
       },
+      // —— family④: lorebook / worldbook ——
+      /*
+       * Delete a named book, and say what the deletion left behind.
+       *
+       * Refused rather than answered `false` on a host with no store, on the
+       * line `worldbook.create` draws for the same reason: such a host has no
+       * books at all, so `false` — which here means "no book had that name" —
+       * would be indistinguishable from the same answer on a host that does
+       * keep books. The two lead to different repairs.
+       *
+       * The global selection is the one binding rewritten, because upstream's
+       * own delete splices `selected_world_info` and saves
+       * (`world-info.js:4253`). Everything else is left dangling and *named*
+       * instead: the report is pushed as irreversible, which is what puts it in
+       * front of a reader without their having to ask, and it is the only
+       * record that will exist once the file is gone.
+       */
+      'worldbook.delete': async ({ name }) => {
+        if (worldbooks === undefined) throw notFound(`world book "${name}"`)
+
+        // Read before the unlink: after it, "was this selected" is a question
+        // about a file nobody can look at.
+        const selected = settings.globalSelect()
+        const clearedGlobalSelect = selected.includes(name)
+        const characters = settings.charactersBindingBook(name)
+        const materialisedFor = Object.entries(await this.#options.worldbookBindings?.all() ?? {})
+          .filter(([, row]) => row.name === name)
+          .map(([characterId]) => characterId)
+
+        const deleted = await worldbooks.remove(name)
+        // Nothing was there. No settings write, no report: a delete that
+        // removed nothing has nothing to be irreversible about, and reporting
+        // it would train the reader to skim the ones that mattered.
+        if (!deleted) {
+          return { deleted: false, clearedGlobalSelect: false, dangling: { characters: [], materialisedFor: [] } }
+        }
+
+        if (clearedGlobalSelect) await settings.setGlobalSelect(selected.filter(row => row !== name))
+
+        const left = [
+          ...clearedGlobalSelect ? ['dropped from the global selection'] : [],
+          ...characters.length === 0
+            ? []
+            : [`still bound as an additional book by ${characters.join(', ')}`],
+          ...materialisedFor.length === 0
+            ? []
+            // Named because the consequence is not obvious: such a card falls
+            // back to the copy inside the card file
+            // (`resolveCardWorldbook`'s rule 2), so it keeps its world info
+            // and the user's edits to the deleted book are the thing that is
+            // gone.
+            : [`was the materialised copy of the embedded book of ${materialisedFor.join(', ')},`
+              + ' which now plays from the copy inside the card'],
+        ]
+        this.#report(
+          `world book "${name}" was deleted`
+          + (left.length === 0 ? '' : `: ${left.join('; ')}`),
+          { kind: 'host', grade: 'note', irreversible: true },
+        )
+
+        return { deleted, clearedGlobalSelect, dangling: { characters, materialisedFor } }
+      },
     }
   }
 

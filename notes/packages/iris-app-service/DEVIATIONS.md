@@ -5281,3 +5281,101 @@ the *write* still limited to the conversation's own card; a writable preset
 library, which would turn departure 2 into a plain capability; or upstream fixing
 its `substituteRegex: 0`, which would make departure 4 ordinary rather than an
 improvement worth naming.
+
+## 66. A world book can be deleted, and the deletion says what it left dangling
+
+**What upstream does.** `deleteWorldInfo(name)` (`world-info.js:4234`) is the
+one arm behind both card-facing spellings — `deleteWorldbook` and the older
+`deleteLorebook` — and it does five things. Three of them travel:
+
+1. a name not in `world_names` answers **`false`** rather than raising (`:4235`),
+   which is why both members are declared `Promise<boolean>`;
+2. the file goes, through `POST /api/worldinfo/delete`;
+3. the name is spliced out of `selected_world_info` — the **global selection** —
+   and the settings are saved (`:4253`).
+
+Two do not: it clears `#character_world` for whichever card happens to be open
+in the editor (`:4262`, a write into the card file) and the persona lorebook
+field (`:4270`). Neither has an equivalent here, and the first is a write this
+host has no arm for at all.
+
+**What upstream does not do, and neither does this.** It touches no
+`world_info.charLore` row and no chat's `chat_metadata.world_info`. Those
+bindings are left naming a file that is gone. That reads like an oversight and
+is not one to repair: every reader on this side already treats a name with no
+file as unbound — `getChatWorldbookName`'s existence guard, and
+`resolveCardWorldbook`'s rule 2 (fall back to the card's embedded book) and
+rule 4 (skip a dangling extra) — so a delete that rewrote them would be
+rewriting settings the caller never mentioned, on a request whose whole content
+was one book's name.
+
+**What Iris adds: the deletion is reported.** This is the one arm in the family
+whose failure cannot be undone, and the facts that make it comprehensible
+afterwards are exactly the ones the deleted file was the last record of.
+`worldbook.delete({ name }) → { deleted, clearedGlobalSelect, dangling }`:
+
+- `deleted` is upstream's boolean, and it is all the card-facing member can
+  carry — `Promise<boolean>` has no room for the rest;
+- `clearedGlobalSelect` says whether the one binding this arm rewrites was
+  rewritten;
+- `dangling.characters` are the character ids whose **additional** books still
+  name it, read from the settings layer through the new narrow reader
+  `SettingsStore.charactersBindingBook` (one file, and it answers that one
+  question rather than handing out the `charLore` rows — a caller holding the
+  rows is one edit away from writing them back and undoing `setCharBooks`'
+  three normalisation properties);
+- `dangling.materialisedFor` are the ids whose embedded book this was the host's
+  materialised copy of, read from `worldbook-bindings.json`. Those cards keep
+  their world info — rule 2 hands them the copy inside the card — so what was
+  actually lost is the user's edits to the deleted file, and the report says so.
+
+The same sentence is pushed as a **`kind: 'host'`, `grade: 'note'`,
+`irreversible: true`** report, which is what puts it in front of an open page
+without anyone asking for it. A delete that removed nothing pushes nothing and
+writes nothing: an instrument that also fires on the empty case teaches its
+reader to skim the ones that mattered.
+
+**Two things deliberately not scanned**, both named in the contract so their
+absence is a decision rather than a gap: a card's own `extensions.world`
+primary binding (it costs decoding every card in the library) and every chat's
+binding (a read of every chat file). Both dangle silently, exactly as they do
+upstream.
+
+**Refused, not answered `false`, on a host with no book store** — the line
+`worldbook.create` already draws. Such a host has no books at all, so `false`
+("no book had that name") would be indistinguishable from the same answer on a
+host that keeps books, and the two lead to different repairs.
+
+**The store.** `WorldbookStore.remove(name)` returns whether a file was there,
+uses `fileFor` for the containment guard every other arm uses (a name is
+verbatim here on purpose — 13 of 18 real book names change under `toId` — so
+the one thing that must not be verbatim is a name that climbs out of the
+directory), and writes no temporary file: unlike `replace`, there is no
+half-deleted state to be caught in. The class comment, which still said "one
+write" and "deliberately no create", is corrected to the three whole-file
+writes it now has.
+
+**The fake client refuses this method for every name, including a seeded one.**
+`worldbook.create` can answer `false` for a seeded name because "already there"
+is a *true* fact about a fixed seed; there is no equivalent true fact for a
+delete. `true` would report a deletion that did not happen — and a caller acting
+on `true` is a caller that has just told a user their world book is gone — while
+`false` would be a lie about a name the client can see in its own seed.
+
+**Pinned.** `worldbook-delete.test.ts` (8 tests): the file goes and leaves the
+listing; a name with no file answers `false` and writes and reports nothing; the
+global selection drops the name and the settings **file** says so after the
+write; a selection that did not name it is left alone (so
+`clearedGlobalSelect` can answer false for a real deletion); the two dangling
+kinds are reported and **not** repaired; the report carries the name, the
+selection change and the character; a traversal is refused with a control that
+proves the target file existed first; a store-less host refuses. Five mutations
+of the handler and the store each turned exactly the expected assertion red.
+
+**What would overturn it.** A measured card that expects a delete to clear its
+own chat binding — the report would then be the wrong instrument and
+`bindChat(null)` would have to happen inside the delete; a SillyTavern release
+that starts repairing `charLore` on delete, which would make the dangling row an
+interoperability difference rather than a copied behaviour; a panel wanting to
+delete a book the reader can see is bound, which needs the two unscanned
+sources and therefore a different cost decision.

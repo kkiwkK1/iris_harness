@@ -3233,10 +3233,31 @@ export function createIrisStore(
         const scoped = wire === 'script.setExtensionPrompt' && runId !== undefined
           ? { runId }
           : {}
+        /*
+         * —— family④: lorebook / worldbook ——
+         * A character rebind names the character **here**, not in the card.
+         *
+         * `worldbook.setCharBooks` takes a `characterId`, and the frame is the
+         * untrusted side: a card that supplied one could rewrite another
+         * character's bindings, which is a write outside the card the user
+         * opened. The two members that reach this arm
+         * (`rebindCharWorldbooks`, `setCurrentCharLorebooks`) accept only
+         * `'current'`, and this is the layer that knows which character that
+         * is — the same reason `runId` is filled in above rather than sent.
+         *
+         * Spread **before** the card's params for `runId` and after nothing:
+         * the id is put in front of `params_` deliberately, so a frame sending
+         * its own `characterId` cannot override it — the last spread wins, and
+         * that has to be this one.
+         */
+        const openCharacter = get().view?.characterId
+        const owned = wire === 'worldbook.setCharBooks' && openCharacter !== undefined
+          ? { characterId: openCharacter }
+          : {}
         // The method is typed now; only the params still need the cast, because
         // their shape depends on which method this turned out to be.
         try {
-          return await client.call(wire, { chatId, ...scoped, ...params_ } as never)
+          return await client.call(wire, { chatId, ...scoped, ...params_, ...owned } as never)
         } catch (error: unknown) {
           set(raise('error', translate(getLanguage(), 'cardCallFailed', {
             method,

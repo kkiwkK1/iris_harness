@@ -295,6 +295,21 @@ three behaviour corrections this introduced.*
   arrival; that card is why `getOrCreateChatWorldbook` and
   `createWorldbookEntries` are now built, and why 2.png's `getWorldbookNames`
   is.)
+
+  *Updated 2026-09-10 (family④): all three are built, together with
+  `rebindCharWorldbooks` and the whole old `Lorebook` vocabulary — see
+  `notes/apps/iris-web/DEVIATIONS.md` §90 and this package's `DEVIATIONS.md`
+  §66. The measured zero above still stands as a measurement and no longer
+  stands as a reason: the coordinator's ruling is that upstream's declared
+  surface is the floor, because the corpus is 19 cards and a card that predates
+  the 4.x rename fails on `getCharLorebooks().primary` with a `TypeError`
+  rather than a no-op. `deleteWorldbook` needed the one genuinely new host arm —
+  `worldbook.delete`, which drops the name from the global selection as upstream
+  does and reports the bindings it leaves dangling; the other two are composed
+  in the frame from `worldbook.create`, `worldbook.get` and
+  `worldbook.replace`. The one part of the family still **not** whole is
+  `rebindCharWorldbooks`' primary binding: it lives in the card file and no host
+  arm writes one, so a request to change it is refused by name.*
 - **`charLore` extra books.** `CharWorldbookNames.additional` is always empty:
   the measured installation has a `world_info` section — under
   `world_info_settings`, not at the top level — and it carries `globalSelect`

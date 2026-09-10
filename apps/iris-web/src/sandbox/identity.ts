@@ -236,6 +236,42 @@ export const MEMBER_KINDS: Readonly<Record<string, MemberKind>> = {
   updateTavernRegexesWith: 'shared',
   isCharacterTavernRegexesEnabled: 'shared',
   formatAsTavernRegexedString: 'shared',
+  // —— family④: lorebook / worldbook ——
+  /*
+   * `shared`, all twenty, and one sentence covers the group: a world book is a
+   * **file** belonging to the installation, and none of these members carries a
+   * scope or a script id. Two scripts of one card reading a book see the same
+   * entries because it is the same file; two writing one book write to the same
+   * place, which is the intended behaviour rather than a leak — the ruling the
+   * `Worldbook` members above already carry, inherited by the `Lorebook` names
+   * they were renamed from.
+   *
+   * Sixteen are upstream's pre-4.x spelling of members already here, so
+   * classifying one differently from the name it aliases would be the mistake
+   * this table exists to make impossible: `getChatLorebook` and
+   * `getChatWorldbookName` are one behaviour, and a card cannot be told which
+   * spelling it is allowed to trust.
+   */
+  createOrReplaceWorldbook: 'shared',
+  deleteWorldbook: 'shared',
+  deleteWorldbookEntries: 'shared',
+  rebindCharWorldbooks: 'shared',
+  getLorebooks: 'shared',
+  createLorebook: 'shared',
+  deleteLorebook: 'shared',
+  getCharLorebooks: 'shared',
+  getCurrentCharPrimaryLorebook: 'shared',
+  setCurrentCharLorebooks: 'shared',
+  getChatLorebook: 'shared',
+  setChatLorebook: 'shared',
+  getOrCreateChatLorebook: 'shared',
+  setLorebookSettings: 'shared',
+  getLorebookEntries: 'shared',
+  replaceLorebookEntries: 'shared',
+  updateLorebookEntriesWith: 'shared',
+  setLorebookEntries: 'shared',
+  createLorebookEntries: 'shared',
+  deleteLorebookEntries: 'shared',
 }
 
 /**

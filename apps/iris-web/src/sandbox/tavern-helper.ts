@@ -39,6 +39,16 @@ import type {
 
 import { buttonEventName } from './button-event.ts'
 import { UnsupportedApiError } from './errors.ts'
+// —— family④: lorebook / worldbook ——
+import {
+  assignLorebookUids,
+  fromLorebookEntry,
+  lorebookSettingsPatch,
+  matchesLorebookFilter,
+  mergeLorebookEntry,
+  toLorebookEntry,
+  type CardLorebookEntry,
+} from './lorebook-aliases.ts'
 
 // —— family②: regex ——
 /** Which tier a card's option names, as the wire spells it. */
@@ -1039,22 +1049,34 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   const chatOf = (member: string): ScriptChatMessage[] => snapshot(member).chat
 
   /**
-   * One named book's entries, revived.
+   * One named book's entries, **as the host sent them** — keys still text.
    *
-   * Shared by `getWorldbook` and `updateWorldbookWith` so that "how a book is
-   * fetched and what state its keys are in" is decided once. The alternative was
-   * for the update path to fetch its own copy, which is how the two would come
-   * to disagree about revival — and the updater's input disagreeing with
-   * `getWorldbook`'s output is precisely the kind of difference a card author
-   * cannot see.
+   * The fetch itself, so that "how a book is fetched" is decided once and
+   * revival is the only thing its two readers differ by. The old `Lorebook`
+   * vocabulary reads this half: its getter hands a card the stored strings and
+   * declares `keys: string[]`, so going through revival would be a conversion
+   * performed twice to arrive back where it started.
+   * @param name - the book's name, exactly as spelled.
+   * @returns its entries in the wire shape.
+   */
+  const readWorldbookRows = async (name: string): Promise<WorldbookEntry[]> => {
+    const answer = await host.call('getWorldbook', { name })
+    return (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+  }
+
+  /**
+   * The same book with its regex keys revived.
+   *
+   * Shared by `getWorldbook` and `updateWorldbookWith` so that what state a
+   * book's keys are in is decided once. The alternative was for the update path
+   * to fetch its own copy, which is how the two would come to disagree about
+   * revival — and the updater's input disagreeing with `getWorldbook`'s output
+   * is precisely the kind of difference a card author cannot see.
    * @param name - the book's name, exactly as spelled.
    * @returns its entries, with both key lists revived.
    */
-  const readWorldbook = async (name: string): Promise<CardWorldbookEntry[]> => {
-    const answer = await host.call('getWorldbook', { name })
-    const entries = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
-    return entries.map(entry => reviveWorldbookKeys(entry))
-  }
+  const readWorldbook = async (name: string): Promise<CardWorldbookEntry[]> =>
+    (await readWorldbookRows(name)).map(entry => reviveWorldbookKeys(entry))
 
   /**
    * The create and rebind arms, as locals.
@@ -1076,6 +1098,180 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   const bindChatBook = async (name: string | null): Promise<void> => {
     await host.call('rebindChatWorldbook', { name })
   }
+
+  // —— family④: lorebook / worldbook ——
+  /*
+   * The readings and writes the two vocabularies share.
+   *
+   * Every one of these was the body of a `Worldbook` member and is now a local
+   * both it and its `Lorebook` alias go through. That is the point: upstream
+   * renamed this family and kept the old names, so the two spellings are one
+   * behaviour by definition — a second implementation of "which book is the
+   * chat's" would be free to answer differently for `getChatLorebook` than for
+   * `getChatWorldbookName`, and nothing would catch it, because each half
+   * would be self-consistent.
+   *
+   * `member` travels into each one so a refusal names the member the *card*
+   * called rather than the local it reached.
+   */
+  const charBookNames = (
+    member: string,
+    characterName?: string,
+  ): { primary: string | null, additional: string[] } => {
+    if (characterName !== 'current') {
+      throw new UnsupportedApiError(
+        member,
+        'Iris only supports \'current\'; a named-character query needs a synchronous'
+        + ' host read that is not available in a frame.',
+      )
+    }
+    /*
+     * Absent means "no bindings", not "not loaded" — the host sends
+     * `{primary: null, additional: []}` for an unbound card, and the field is
+     * only optional so that a snapshot taken before it existed still parses.
+     * Copied on the way out because this surface is shared between a card's
+     * scripts, and an array handed out by reference is one a card can mutate
+     * under the next reader.
+     */
+    const bound = snapshot(member).charWorldbooks
+    return { primary: bound?.primary ?? null, additional: [...(bound?.additional ?? [])] }
+  }
+
+  /** The chat's own book, with upstream's existence guard applied. */
+  const chatBookName = (member: string): string | null => {
+    const context = snapshot(member)
+    const bound = context.chatMetadata['world_info']
+    if (typeof bound !== 'string' || bound === '') return null
+    return (context.worldbookNames ?? []).includes(bound) ? bound : null
+  }
+
+  /** Upstream's `getOrCreateChatLorebook`, which the new name also composes. */
+  const getOrCreateChatBook = async (member: string, worldbookName?: string): Promise<string> => {
+    const bound = chatBookName(member)
+    if (bound !== null) return bound
+
+    const minted = worldbookName === undefined
+    const name = worldbookName
+      ?? `Chat Book ${snapshot(member).chatId}`
+        .replace(/[^a-z0-9]/gi, '_')
+        .replace(/_{2,}/g, '_')
+        .substring(0, 64)
+
+    const created = await createBook(name)
+    if (!created) {
+      // Upstream throws this case for a caller-supplied name
+      // (`lorebook.ts:348`). A minted name colliding is possible too — two
+      // chats can sanitize to the same 64 characters — and upstream's
+      // `createNewWorldInfo` refuses it no less; the message is the same
+      // either way, with the name in it so the card can pick another.
+      throw new Error(
+        `${member}: the world book '${name}' already exists`
+        + (minted ? ' (name minted from the chat id; pass an explicit worldbook_name to choose your own)' : ''),
+      )
+    }
+    await bindChatBook(name)
+    return name
+  }
+
+  /** Delete a book by name; `false` is "there was none", as upstream's is. */
+  const deleteBook = async (name: string): Promise<boolean> => {
+    const answer = await host.call('deleteWorldbook', { name })
+    return (answer as { deleted?: boolean } | undefined)?.deleted === true
+  }
+
+  /**
+   * Rebind a character's books, for both spellings of that write.
+   *
+   * **`primary` is refused rather than dropped, and that is the one place this
+   * family cannot do what upstream does.** Upstream's `setCurrentCharLorebooks`
+   * writes the primary binding into the **card file** — it drives
+   * `#character_world` and posts `/api/characters/edit` (`lorebook.ts:263-284`)
+   * — and this host has no arm for that at all: `worldbook.setCharBooks` is
+   * `world_info.charLore`, the additional list, and its contract says the
+   * primary "lives on the card, and the card file is shared between
+   * installations". A card asking for one gets a named refusal; silently
+   * writing only `additional` would report success for half a request.
+   *
+   * An unchanged `primary` is **not** a request: the round trip a card writes is
+   * `setCurrentCharLorebooks({...getCharLorebooks(), additional: […]})`, and
+   * refusing that would refuse the ordinary call for naming a value it is not
+   * changing.
+   *
+   * Both lists are checked for existence **before** anything is written, which
+   * is upstream's order (`lorebook.ts:255-261`, one throw naming every missing
+   * book) rather than the host's per-write not-found. A half-applied rebind is
+   * the failure that order exists to prevent.
+   */
+  const rebindCharBooks = async (
+    member: string,
+    characterName: string | undefined,
+    books: { primary?: string | null, additional?: readonly string[] },
+  ): Promise<void> => {
+    const current = charBookNames(member, characterName)
+
+    if (books.primary !== undefined && (books.primary ?? null) !== current.primary) {
+      throw new UnsupportedApiError(
+        member,
+        'Iris cannot change a character\'s primary world book: that binding lives inside the'
+        + ' card file, which is shared between installations, and this host has no arm that'
+        + ' writes one. The additional books are writable, and nothing was written.',
+      )
+    }
+
+    if (books.additional === undefined) return
+
+    /*
+     * **The additional list only**, where upstream checks the primary too
+     * (`lorebook.ts:255` concatenates both before its one throw).
+     *
+     * Deliberate, and the reason is a state Iris supports on purpose: a
+     * primary binding whose file is gone is normal here — `getCharWorldbookNames`
+     * reports the binding rather than the book in use, and the host falls back
+     * to the card's embedded copy (2 of the corpus's 18 bindings dangle). A
+     * card doing the ordinary round trip,
+     * `setCurrentCharLorebooks({...getCharLorebooks(), additional: […]})`,
+     * would then be refused over a name it is not changing and this host
+     * cannot write anyway.
+     */
+    const known = snapshot(member).worldbookNames ?? []
+    const missing = books.additional.filter(name => !known.includes(name))
+    if (missing.length > 0) {
+      throw new Error(
+        `${member}: cannot bind world books that do not exist: ${JSON.stringify(missing)}`,
+      )
+    }
+
+    await host.call('rebindCharWorldbooks', { names: [...books.additional] })
+  }
+
+  /**
+   * Write a whole book from entries in the **old** vocabulary, and read it back.
+   *
+   * The one write leg of the five old entry members. Upstream builds each of
+   * them on `replaceLorebookEntries` plus a re-read
+   * (`lorebook_entry.ts:365`), and this keeps that shape: the array is
+   * translated, sent whole, and what comes back is what the **host** stored —
+   * which is the only thing worth returning, because the host mints uids and
+   * renumbers `displayIndex` from array position.
+   * @param name - the book's name.
+   * @param entries - the new contents, in the old vocabulary.
+   * @returns the book as stored, in the old vocabulary.
+   */
+  const replaceLorebook = async (
+    name: string,
+    entries: readonly Partial<CardLorebookEntry>[],
+  ): Promise<CardLorebookEntry[]> => {
+    const answer = await host.call('replaceWorldbook', {
+      name,
+      entries: assignLorebookUids(entries).map(entry => fromLorebookEntry(entry)),
+    })
+    const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+    return stored.map((entry, index) => toLorebookEntry(entry, index))
+  }
+
+  /** One book in the old vocabulary, `display_index` from array position. */
+  const readLorebook = async (name: string): Promise<CardLorebookEntry[]> =>
+    (await readWorldbookRows(name)).map((entry, index) => toLorebookEntry(entry, index))
 
   /**
    * One layer of the snapshot, by the name a card uses for it.
@@ -2097,26 +2293,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     getCharWorldbookNames: (characterName?: string): {
       primary: string | null
       additional: string[]
-    } => {
-      if (characterName !== 'current') {
-        throw new UnsupportedApiError(
-          'getCharWorldbookNames',
-          'Iris only supports \'current\'; a named-character query needs a synchronous'
-          + ' host read that is not available in a frame.',
-        )
-      }
-
-      /*
-       * Absent means "no bindings", not "not loaded" — the host sends
-       * `{primary: null, additional: []}` for an unbound card, and the field is
-       * only optional so that a snapshot taken before it existed still parses.
-       * Copied on the way out because this surface is shared between a card's
-       * scripts, and an array handed out by reference is one a card can mutate
-       * under the next reader.
-       */
-      const bound = snapshot('getCharWorldbookNames').charWorldbooks
-      return { primary: bound?.primary ?? null, additional: [...(bound?.additional ?? [])] }
-    },
+    } => charBookNames('getCharWorldbookNames', characterName),
     /**
      * World-info settings, read from the snapshot.
      *
@@ -2572,10 +2749,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
           + ' host read that is not available in a frame.',
         )
       }
-      const context = snapshot('getChatWorldbookName')
-      const bound = context.chatMetadata['world_info']
-      if (typeof bound !== 'string' || bound === '') return null
-      return (context.worldbookNames ?? []).includes(bound) ? bound : null
+      return chatBookName('getChatWorldbookName')
     },
 
     /**
@@ -2639,33 +2813,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
           'Iris only supports \'current\'; the chat that is open is the one this frame can name.',
         )
       }
-      const context = snapshot('getOrCreateChatWorldbook')
-      const bound = context.chatMetadata['world_info']
-      if (typeof bound === 'string' && bound !== '' && (context.worldbookNames ?? []).includes(bound)) {
-        return bound
-      }
-
-      const minted = worldbookName === undefined
-      const name = worldbookName
-        ?? `Chat Book ${context.chatId}`
-          .replace(/[^a-z0-9]/gi, '_')
-          .replace(/_{2,}/g, '_')
-          .substring(0, 64)
-
-      const created = await createBook(name)
-      if (!created) {
-        // Upstream throws this case for a caller-supplied name
-        // (`lorebook.ts:348`). A minted name colliding is possible too — two
-        // chats can sanitize to the same 64 characters — and upstream's
-        // `createNewWorldInfo` refuses it no less; the message is the same
-        // either way, with the name in it so the card can pick another.
-        throw new Error(
-          `getOrCreateChatWorldbook: the world book '${name}' already exists`
-          + (minted ? ' (name minted from the chat id; pass an explicit worldbook_name to choose your own)' : ''),
-        )
-      }
-      await bindChatBook(name)
-      return name
+      return getOrCreateChatBook('getOrCreateChatWorldbook', worldbookName)
     },
 
     /**
@@ -3269,6 +3417,385 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
         ...typeof option?.character_name === 'string' ? { characterName: option.character_name } : {},
       })
       return (answer as { text?: string } | undefined)?.text ?? text
+    },
+
+    // —— family④: lorebook / worldbook ——
+    /*
+     * The four `Worldbook` writes the family was missing, and then the whole
+     * `Lorebook` vocabulary they were renamed from.
+     *
+     * **Why the old names are built at all**, since every one of them is
+     * `@deprecated` upstream and the surface audit measured zero calls in
+     * either corpus: the corpus is 19 cards and one sample, the names were
+     * upstream's *only* spelling until 4.x, and a card that predates the rename
+     * reaches them as `undefined` — which for `getCharLorebooks().primary` is a
+     * `TypeError` in the card's own first statement. `@deprecated` is upstream
+     * telling authors what to write next, not a statement that the member has
+     * stopped working; it still works there, so it has to work here. The audit's
+     * "don't build" is recorded as overturned in DEVIATIONS §90 rather than
+     * quietly ignored.
+     */
+
+    /**
+     * Create the book, or replace it if it is already there.
+     *
+     * Upstream's `createOrReplaceWorldbook` (`worldbook.ts:377`) and the answer
+     * is the same one: `true` when it created, `false` when it replaced.
+     *
+     * Composed from the two host arms rather than a third: `worldbook.create`
+     * already takes the entries, so an absent book is one call, and an existing
+     * one is that call answering `created: false` followed by the replace.
+     * Upstream skips the save for a *new* book with no entries, which this gets
+     * for free — creating with an empty array writes an empty book either way.
+     *
+     * One deliberate difference: a creation that fails for a reason other than
+     * "already there" **rejects** here, where upstream returns `false`. The two
+     * outcomes upstream folds together — "I replaced it" and "I could not make
+     * it" — are the ones a card most needs apart.
+     * @param name - the book's name.
+     * @param worldbook - the whole contents; absent means an empty book.
+     * @param _options - upstream's `{ render }`, accepted and ignored.
+     * @returns whether the book was created rather than replaced.
+     */
+    createOrReplaceWorldbook: async (
+      name: string,
+      worldbook: readonly unknown[] = [],
+      _options?: { render?: 'debounced' | 'immediate' | 'none' },
+    ): Promise<boolean> => {
+      if (await createBook(name, worldbook)) return true
+      await host.call('replaceWorldbook', {
+        name,
+        entries: worldbook.map(entry => flattenWorldbookEntry(entry)),
+      })
+      return false
+    },
+
+    /**
+     * Delete a book, file and all.
+     *
+     * `false` means there was no such book, which is upstream's answer rather
+     * than an error (`deleteWorldInfo` returns `false` for a name not in
+     * `world_names`). The host drops the name from the global selection and
+     * leaves every other binding dangling, as upstream does — and pushes a
+     * report saying which, because the file is gone and nothing else will
+     * remember.
+     * @param name - the book's name.
+     * @returns whether a book was there to delete.
+     */
+    deleteWorldbook: async (name: string): Promise<boolean> => deleteBook(name),
+
+    /**
+     * Delete the entries a predicate picks out.
+     *
+     * Built in the frame for the reason `updateWorldbookWith` is: the predicate
+     * is a **function**, and a function cannot cross the boundary. The entries
+     * it is shown are the revived ones `getWorldbook` returns, so a predicate
+     * testing `entry.strategy.keys[0] instanceof RegExp` sees what it would see
+     * upstream.
+     *
+     * `deleted_entries` are the entries **as read**, not as re-read — they no
+     * longer exist to be read. `worldbook` is the re-read, because the host
+     * renumbers what it kept.
+     * @param name - the book's name.
+     * @param predicate - true for an entry to delete.
+     * @param options - upstream's `{ render }`, passed to the write.
+     * @returns the book as stored, and what was removed.
+     */
+    deleteWorldbookEntries: async (
+      name: string,
+      predicate: (entry: CardWorldbookEntry) => boolean,
+      options?: { render?: 'debounced' | 'immediate' },
+    ): Promise<{ worldbook: CardWorldbookEntry[], deleted_entries: CardWorldbookEntry[] }> => {
+      const current = await readWorldbook(name)
+      const deletedEntries: CardWorldbookEntry[] = []
+      const kept = current.filter((entry) => {
+        if (!predicate(entry)) return true
+        deletedEntries.push(entry)
+        return false
+      })
+      const answer = await host.call('replaceWorldbook', {
+        name,
+        entries: kept.map(entry => flattenWorldbookEntry(entry)),
+        ...(options?.render === undefined ? {} : { render: options.render }),
+      })
+      const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
+      return { worldbook: stored.map(entry => reviveWorldbookKeys(entry)), deleted_entries: deletedEntries }
+    },
+
+    /**
+     * Rebind a character's world books.
+     *
+     * Upstream refuses a character other than `'current'` by name
+     * (`worldbook.ts:54`) and so does this. The **primary** binding is refused
+     * as well when it would change: it lives inside the card file, and this host
+     * has no arm that writes one — see `rebindCharBooks`, which both spellings
+     * of this write go through.
+     * @param characterName - upstream's parameter; only `'current'` is served.
+     * @param charWorldbooks - the bindings to install.
+     */
+    rebindCharWorldbooks: async (
+      characterName: 'current',
+      charWorldbooks: { primary?: string | null, additional?: readonly string[] },
+    ): Promise<void> => rebindCharBooks('rebindCharWorldbooks', characterName, charWorldbooks),
+
+    /** Upstream's old name for `getWorldbookNames`, and the same list. */
+    getLorebooks: (): string[] => [...(snapshot('getLorebooks').worldbookNames ?? [])],
+
+    /** Upstream's old name for `createWorldbook`, which took no entries. */
+    createLorebook: async (lorebook: string): Promise<boolean> => createBook(lorebook),
+
+    /** Upstream's old name for `deleteWorldbook`. */
+    deleteLorebook: async (lorebook: string): Promise<boolean> => deleteBook(lorebook),
+
+    /**
+     * Upstream's old name for `getCharWorldbookNames`, with its option bag.
+     *
+     * **`type` is accepted and ignored, because upstream ignores it too.** The
+     * declaration offers `{name, type: 'all' | 'primary' | 'additional'}`
+     * (`lorebook.d.ts:40`) and the implementation destructures `{name}` alone
+     * (`lorebook.ts:219`) — so a card asking for `type: 'primary'` gets both
+     * lists there as well. Filtering here would be an improvement that makes a
+     * card behave differently on the two hosts, which is the one kind of
+     * improvement this surface may not make.
+     * @param option - upstream's bag; `name` defaults to `'current'`.
+     * @returns the primary binding and any additional ones.
+     */
+    getCharLorebooks: (option?: { name?: string, type?: string }): {
+      primary: string | null
+      additional: string[]
+    } => charBookNames('getCharLorebooks', option?.name ?? 'current'),
+
+    /** Upstream's `getCharLorebooks().primary`, spelled as its own member. */
+    getCurrentCharPrimaryLorebook: (): string | null =>
+      charBookNames('getCurrentCharPrimaryLorebook', 'current').primary,
+
+    /** Upstream's old name for `rebindCharWorldbooks`, over the same local. */
+    setCurrentCharLorebooks: async (
+      lorebooks: { primary?: string | null, additional?: readonly string[] },
+    ): Promise<void> => rebindCharBooks('setCurrentCharLorebooks', 'current', lorebooks),
+
+    /**
+     * Upstream's old name for `getChatWorldbookName`.
+     *
+     * Upstream throws here when no chat is open (`lorebook.ts:313`). That
+     * branch has no equivalent: a frame exists inside an open chat, so the
+     * refusal it would raise could only fire on a snapshot that has not
+     * arrived — which every member already answers with its own named
+     * refusal, through `snapshot`.
+     */
+    getChatLorebook: (): string | null => chatBookName('getChatLorebook'),
+
+    /** Upstream's old name for `rebindChatWorldbook`; `null` unbinds. */
+    setChatLorebook: async (lorebook: string | null): Promise<void> => bindChatBook(lorebook),
+
+    /** Upstream's old name for `getOrCreateChatWorldbook`, minus the chat name. */
+    getOrCreateChatLorebook: async (lorebook?: string): Promise<string> =>
+      getOrCreateChatBook('getOrCreateChatLorebook', lorebook),
+
+    /**
+     * Write the world-info settings a card can read with `getLorebookSettings`.
+     *
+     * **Synchronous and `void`, because upstream's is** — one of MVU's two call
+     * sites does not await it, and a `Promise` returned here would be a value
+     * that site never looks at. So the validation happens synchronously, before
+     * anything is sent, and the writes are fired with their failures reported
+     * rather than thrown: an asynchronous throw from a member declared `void`
+     * arrives as an unhandled rejection with no card frame in the stack, which
+     * is the precedent `writeButtons` set for exactly this shape.
+     *
+     * Upstream's two acts, in its order: refuse the whole call when the global
+     * selection names a book that does not exist (`lorebook.ts:191`, one throw
+     * carrying every missing name), then apply only the fields that differ from
+     * what is already set (`:198`).
+     *
+     * `overflow_alert` has nowhere to land on this host and is reported as a gap
+     * instead of being accepted — see `lorebookSettingsPatch`.
+     * @param settings - any subset of the sixteen fields.
+     */
+    setLorebookSettings: (settings: Partial<LorebookSettings>): void => {
+      const member = 'setLorebookSettings'
+      const context = snapshot(member)
+
+      if (settings.selected_global_lorebooks !== undefined) {
+        const known = context.worldbookNames ?? []
+        const missing = settings.selected_global_lorebooks.filter(name => !known.includes(name))
+        if (missing.length > 0) {
+          // Upstream's own shape: the whole call fails, and the message carries
+          // every missing name rather than the first — a card fixing them one
+          // rejection at a time is a card in a loop.
+          throw new Error(
+            `${member}: tried to set the globally enabled world books, but these do not exist:`
+            + ` ${JSON.stringify(missing)}`,
+          )
+        }
+      }
+
+      const { patch, globalSelect, unstored } = lorebookSettingsPatch(settings, context.lorebookSettings)
+      for (const field of unstored) {
+        host.reportGap(
+          `a card set ${field} through setLorebookSettings and this host stores no such knob —`
+          + ' the value was not kept, which is not a statement that it was applied',
+        )
+      }
+
+      const failed = (error: unknown): void => {
+        host.reportFault(
+          `card called ${member} and the write was refused: `
+          + (error instanceof Error ? error.message : String(error)),
+        )
+      }
+      if (Object.keys(patch).length > 0) void host.call('setLorebookSettings', patch).then(undefined, failed)
+      if (globalSelect !== undefined) {
+        void host.call('rebindGlobalWorldbooks', { names: globalSelect }).then(undefined, failed)
+      }
+    },
+
+    /**
+     * One book's entries in the old vocabulary, with upstream's `filter` option.
+     *
+     * The whole book is read and filtered **in the frame**, as upstream does:
+     * the filter is a set of field expectations rather than a query the host
+     * could serve, and its three rules (subset for arrays, *substring* for
+     * strings, equality otherwise) are the kind of thing a second
+     * implementation would get subtly wrong.
+     * @param lorebook - the book's name; a missing book rejects, as upstream's does.
+     * @param option - upstream's bag; `filter` defaults to `'none'`.
+     * @returns its entries, in the book's own order.
+     */
+    getLorebookEntries: async (
+      lorebook: string,
+      option?: { filter?: 'none' | Partial<CardLorebookEntry> },
+    ): Promise<CardLorebookEntry[]> => {
+      const entries = await readLorebook(lorebook)
+      const filter = option?.filter ?? 'none'
+      if (filter === 'none') return entries
+      return entries.filter(entry => matchesLorebookFilter(entry, filter))
+    },
+
+    /**
+     * Replace a book's contents with entries in the old vocabulary.
+     *
+     * Wholesale, and with the **old** defaults for absent fields — an entry
+     * given as `{uid: 0}` becomes a `selective` entry here and a `constant`
+     * (always-on) one through `replaceWorldbook`. That difference is upstream's
+     * and is the reason this vocabulary has its own write leg rather than
+     * forwarding to the new one.
+     * @param lorebook - the book's name.
+     * @param entries - the new contents; every field may be absent.
+     */
+    replaceLorebookEntries: async (
+      lorebook: string,
+      entries: readonly Partial<CardLorebookEntry>[],
+    ): Promise<void> => {
+      await replaceLorebook(lorebook, entries)
+    },
+
+    /**
+     * Read a book, let the card rewrite it, and store the result.
+     *
+     * Upstream's `updateLorebookEntriesWith` — the member every other old write
+     * is built on (`lorebook_entry.ts:361`), which is why it is here even
+     * though it was not on this branch's list of names: leaving it out would
+     * make the old vocabulary five sixths complete, with the missing sixth the
+     * one whose siblings are all compositions of it.
+     * @param lorebook - the book's name.
+     * @param updater - given the current entries, returns the new ones.
+     * @returns the book as stored afterwards.
+     */
+    updateLorebookEntriesWith: async (
+      lorebook: string,
+      updater: (
+        entries: CardLorebookEntry[],
+      ) => readonly Partial<CardLorebookEntry>[] | Promise<readonly Partial<CardLorebookEntry>[]>,
+    ): Promise<CardLorebookEntry[]> =>
+      replaceLorebook(lorebook, await updater(await readLorebook(lorebook))),
+
+    /**
+     * Patch entries by uid, leaving the rest of the book alone.
+     *
+     * Upstream merges each patch into the entry with that uid and **ignores a
+     * uid the book does not have** (`lorebook_entry.ts:375`, a `find` with no
+     * else). The merge is lodash's, which for this shape means index-wise for
+     * the two key lists — see `mergeLorebookEntry`, where the rule and the
+     * reason a spread is wrong are written down.
+     * @param lorebook - the book's name.
+     * @param entries - each carrying the `uid` it patches.
+     * @returns the whole book as stored afterwards.
+     */
+    setLorebookEntries: async (
+      lorebook: string,
+      entries: readonly (Partial<CardLorebookEntry> & { uid: number })[],
+    ): Promise<CardLorebookEntry[]> => {
+      const current = await readLorebook(lorebook)
+      const next = current.map((entry) => {
+        const patch = entries.find(row => row.uid === entry.uid)
+        return patch === undefined ? entry : mergeLorebookEntry(entry, patch)
+      })
+      return replaceLorebook(lorebook, next)
+    },
+
+    /**
+     * Append entries, and say which uids they were given.
+     *
+     * Upstream assigns the **lowest free** uid to each new entry
+     * (`lorebook_entry.ts:391`) — not the random one its replace path uses —
+     * and `new_uids` is what a card holds on to in order to find its own
+     * entries again, so the numbers have to be the ones that were stored.
+     *
+     * One deliberate difference: upstream writes the uid onto the caller's own
+     * objects (`entries.forEach(entry => (entry.uid = …))`). Copies are made
+     * here instead. Mutating a card's argument is not behaviour worth copying,
+     * and this surface already hands back copies everywhere else.
+     * @param lorebook - the book's name.
+     * @param entries - the entries to append.
+     * @returns the whole book as stored, and the new uids in append order.
+     */
+    createLorebookEntries: async (
+      lorebook: string,
+      entries: readonly Partial<CardLorebookEntry>[],
+    ): Promise<{ entries: CardLorebookEntry[], new_uids: number[] }> => {
+      const current = await readLorebook(lorebook)
+      const taken = new Set(current.map(entry => entry.uid))
+      const newUids: number[] = []
+      const appended = entries.map((entry) => {
+        let uid = 0
+        while (taken.has(uid)) uid += 1
+        taken.add(uid)
+        newUids.push(uid)
+        return { ...entry, uid }
+      })
+      return { entries: await replaceLorebook(lorebook, [...current, ...appended]), new_uids: newUids }
+    },
+
+    /**
+     * Delete entries by uid.
+     *
+     * `delete_occurred` answers whether any of the uids was there, which is the
+     * only way a card learns that it asked about entries the book does not
+     * hold — the book comes back either way.
+     *
+     * **The write happens even when nothing matched**, which is upstream's
+     * behaviour rather than an oversight: it routes through
+     * `updateLorebookEntriesWith` unconditionally. It is not free — a write
+     * through this vocabulary rebuilds every entry from the old defaults, so
+     * the four fields the old shape has no name for (`outletName`, `triggers`,
+     * `characterFilter`, `ignoreBudget`) are reset across the whole book.
+     * Upstream loses exactly the same four, for the same reason, on any write
+     * through the old API.
+     * @param lorebook - the book's name.
+     * @param uids - the uids to remove.
+     * @returns the whole book as stored, and whether anything was removed.
+     */
+    deleteLorebookEntries: async (
+      lorebook: string,
+      uids: readonly number[],
+    ): Promise<{ entries: CardLorebookEntry[], delete_occurred: boolean }> => {
+      const current = await readLorebook(lorebook)
+      const kept = current.filter(entry => !uids.includes(entry.uid))
+      return {
+        entries: await replaceLorebook(lorebook, kept),
+        delete_occurred: kept.length !== current.length,
+      }
     },
   }
 
