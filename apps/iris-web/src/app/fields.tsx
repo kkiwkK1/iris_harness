@@ -9,11 +9,14 @@
  * @module iris-web/app/fields
  */
 
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
 import { isOpen, loadCardState, saveCardState, type CardId } from './cards.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+
+/** Detail pages expose contents without altering saved card preferences. */
+export const SettingsPageSections = createContext(false)
 
 /** Bounds and granularity of one slider. */
 export interface Bounds {
@@ -222,6 +225,7 @@ export function CollapsibleSection({
   // Subscribed so a language switch re-renders the card's words.
   useLanguage()
 
+  const page = useContext(SettingsPageSections)
   const open = isOpen(state, id)
   const toggle = (): void => {
     // Read the store again, not the mount-time snapshot: two cards toggled in
@@ -231,6 +235,13 @@ export function CollapsibleSection({
     setState(next)
     saveCardState(next)
   }
+
+  if (page) return (
+    <section className="iris-section iris-card iris-settings-section">
+      <div className="iris-card__head"><h3 className="iris-label iris-card__title">{title}</h3>{summary === undefined ? null : <span className="iris-card__summary">{summary}</span>}</div>
+      <div id={"iris-card-" + id} className="iris-card__body">{children}</div>
+    </section>
+  )
 
   return (
     <section className="iris-section iris-card">

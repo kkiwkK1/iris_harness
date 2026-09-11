@@ -417,7 +417,7 @@ test('one ceiling bounds a typed window, a reported one, and the wire', async (t
   // the source, because that bound is a literal in JSX and was 2 000 000 —
   // upstream's `unlocked_max` — while this ceiling said 4 000 000.
   const drawer = readFileSync(
-    join(HERE, '..', '..', '..', 'apps', 'iris-web', 'src', 'app', 'SettingsDrawer.tsx'),
+    join(HERE, '..', '..', '..', 'apps', 'iris-web', 'src', 'app', 'MemoryContextPanel.tsx'),
     'utf8',
   )
   assert.match(

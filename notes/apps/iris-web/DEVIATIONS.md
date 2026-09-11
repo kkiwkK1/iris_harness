@@ -6706,3 +6706,44 @@ sandbox policy has open. This section is the ledger entry with the audit's
 wording and the reasoning; that one is the operational note. They are expected to
 agree, and the day they stop, the ledger is the one that was written first and
 the document is the one someone edited without looking here.
+
+## 96. Settings is a directory of tasks with drawer-local pages
+
+Dated 2026-09-11. The previous drawer stacked every settings card in one scroll.
+The controls were complete, but the only way to find one was to remember its
+position in that stack. The drawer now opens on fourteen rows grouped as General,
+Conversation, Content, Appearance, Data and Advanced. Each row says what is
+behind it and may show only a fact already held by the store: the selected
+profile or preset, a real count, the context window, model, or prose size. A
+selected connection is deliberately not called connected; only a probe can make
+that claim.
+
+The destination is local React state rather than a URL. The browser has not
+navigated and the drawer has not closed: Back and Escape return to the directory,
+while Escape on the directory closes the drawer. All destination trees remain
+mounted and are hidden by the route, preserving the old drawer's load behavior
+and panel-local drafts. The common header stays outside the scrolling region;
+the directory and every destination own their own scroll box.
+
+Four inline groups moved without changing their writes: generation keeps the
+same `patchSettings` keys and bounds; reply behavior keeps the asymmetric
+`cacheFriendly !== false` default; memory/context keeps `contextWindow` and
+`contextUnlocked`; reading keeps the device-local `ReadingControl` and language
+store. Existing connection, preset, persona, worldbook, script, appearance,
+backup, diagnostics and about components are reused. Backup preview, typed
+restore confirmation and armed deletion therefore remain the same component
+state. UsagePanel gained an `embedded` presentation only; its range query and
+chat navigation are unchanged.
+
+Regex remains three stores and three panels in execution order: global, preset,
+character. The segmented control changes visibility only, so preset permission
+and per-character permission remain where they were. Scripts similarly groups
+the card consent/run panel with the global/character user library without
+combining their data.
+
+No protocol schema, RPC, host package, Zustand field or action changed. The new
+contract is presentation-only: `SettingsNavigation.tsx` owns the route catalogue,
+bilingual category search and small shell primitives; `fields.tsx` can present a
+CollapsibleSection expanded inside a task page without mutating remembered card
+state. The old UsageSection modal remains available to any caller outside this
+drawer.

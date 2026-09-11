@@ -1268,6 +1268,243 @@
   padding: 4px 18px 32px;
 }
 
+/* Settings directory and drawer-local pages. The header remains outside the
+   scrolling region, while every destination owns its own scroll position. */
+.iris-settings__header {
+  flex: none;
+  min-height: 64px;
+  box-sizing: border-box;
+  padding: 8px 20px;
+}
+
+.iris-settings__heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.iris-settings__heading .iris-drawer__title {
+  outline: none;
+}
+
+.iris-settings__context {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--iris-ink-faint);
+  font-size: var(--iris-label-size);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-settings__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--iris-radius-pill);
+  background: transparent;
+  color: var(--iris-ink-secondary);
+  font: inherit;
+  font-size: 25px;
+  cursor: pointer;
+}
+
+.iris-settings__icon:hover,
+.iris-settings__icon:focus-visible {
+  background: var(--iris-bg-sunken);
+  color: var(--iris-accent);
+}
+
+.iris-settings__icon[hidden] {
+  display: none;
+}
+
+.iris-settings__content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.iris-settings__home,
+.iris-settings__page {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 20px 22px 32px;
+}
+
+.iris-settings__home[hidden],
+.iris-settings__page[hidden],
+.iris-settings__page [role="tabpanel"][hidden] {
+  display: none;
+}
+
+.iris-settings__search {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  min-height: 44px;
+  margin-bottom: 24px;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-strong);
+  color: var(--iris-ink-faint);
+}
+
+.iris-settings__search input {
+  min-width: 0;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--iris-ink);
+  font: inherit;
+}
+
+.iris-settings__search:focus-within {
+  border-color: var(--iris-accent);
+  color: var(--iris-accent);
+}
+
+.iris-settings__group + .iris-settings__group {
+  margin-top: 28px;
+}
+
+.iris-settings__group-title {
+  margin: 0 0 8px;
+  color: var(--iris-accent);
+  font-family: var(--iris-font-ui);
+  font-size: var(--iris-label-size);
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.iris-settings__rows {
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-settings__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+  background: transparent;
+  color: var(--iris-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.iris-settings__row:hover strong,
+.iris-settings__row:focus-visible strong {
+  color: var(--iris-accent);
+}
+
+.iris-settings__row-copy {
+  min-width: 0;
+}
+
+.iris-settings__row-copy strong,
+.iris-settings__row-copy small {
+  display: block;
+}
+
+.iris-settings__row-copy strong {
+  font-family: var(--iris-font-ui);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.iris-settings__row-copy small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--iris-ink-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-settings__status {
+  max-width: 116px;
+  overflow: hidden;
+  color: var(--iris-ink-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-settings__count {
+  min-width: 22px;
+  padding: 2px 6px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-pill);
+  color: var(--iris-ink-faint);
+  font-size: 11px;
+  text-align: center;
+}
+
+.iris-settings__chevron {
+  color: var(--iris-ink-faint);
+  font-size: 20px;
+}
+
+.iris-settings__lead {
+  margin: 0 0 16px;
+  color: var(--iris-ink-tertiary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.iris-settings__segments {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0 0 16px;
+  padding: 3px;
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-md);
+  background: var(--iris-bg-sunken);
+}
+
+.iris-settings__segments button {
+  min-height: 40px;
+  border: 0;
+  border-radius: var(--iris-radius-sm);
+  background: transparent;
+  color: var(--iris-ink-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.iris-settings__segments button[aria-selected="true"] {
+  background: var(--iris-bg-page);
+  color: var(--iris-accent);
+  box-shadow: 0 1px 0 var(--iris-rule);
+}
+
+.iris-settings-section .iris-card__head {
+  cursor: default;
+}
+
+.iris-settings-section .iris-card__head:hover .iris-card__title {
+  color: inherit;
+}
+
+.iris-settings__page > .iris-usage {
+  max-height: none;
+  overflow: visible;
+}
+
 .iris-section {
   padding: 18px 0 4px;
 }

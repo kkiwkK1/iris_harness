@@ -242,7 +242,7 @@ test('a split row renders its entries, with a badge and a locator per entry', ()
 })
 
 test('the settings switch reads absence as ON', () => {
-  const drawer = readFileSync(join(HERE, '..', 'src', 'app', 'SettingsDrawer.tsx'), 'utf8')
+  const drawer = readFileSync(join(HERE, '..', 'src', 'app', 'ReplyBehaviorPanel.tsx'), 'utf8')
 
   // The one control on that card whose default is on. Written `!== false`; a
   // copy-paste of its neighbours' `=== true` would show every fresh
