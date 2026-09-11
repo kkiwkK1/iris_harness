@@ -10,8 +10,16 @@
  * HTTP status describes the transport; the frame describes the call. Anything
  * that could be correlated to a request id answers `200` with a
  * `RpcResponseFrame` — including refusals — so a client has exactly one code
- * path. A non-2xx means no frame could be built at all: wrong method, wrong
- * content type, an oversized or unparsable body, a frame with no id.
+ * path. A non-2xx means no frame could be built at all: a `Host` this process
+ * does not answer to, wrong method, wrong content type, an oversized or
+ * unparsable body, a frame with no id.
+ *
+ * The `Host` allow-list (`host-guard.ts`) is the service's, not the endpoint's:
+ * `@iris/app-service` registers four more routes on the same carrier and wraps
+ * each with {@link IrisRpcHost.guard}, so every byte Iris answers goes through
+ * one predicate. The carrier's fallback seat — the static front-end bundle —
+ * stays unguarded and is the known gap; see
+ * `notes/packages/iris-rpc-host/DEVIATIONS.md` §1.
  *
  * @module @iris/rpc-host
  */
@@ -35,11 +43,39 @@ import {
 
 import { EventHub } from './events.ts'
 import { describeHubError, toRpcError } from './errors.ts'
-import { isJsonContentType, readBody, respondJson } from './http.ts'
+import {
+  deriveAllowance,
+  describeUnconfiguredBind,
+  hostHeadersOf,
+  isHostAllowed,
+  RefusalLog,
+  type HostAllowance,
+} from './host-guard.ts'
+import { isJsonContentType, readBody, respondHostRefused, respondJson } from './http.ts'
 
-export { EventHub, isOriginAllowed, type EventHubOptions } from './events.ts'
+export { EventHub, type EventHubOptions, type UpgradeRefusal } from './events.ts'
 export { RpcFailure, describeHubError, isRpcErrorCode, toRpcError } from './errors.ts'
-export { isJsonContentType, readBody, respondJson, type BodyResult } from './http.ts'
+export {
+  LOOPBACK_HOSTNAMES,
+  MAX_REPORTED_HOSTS,
+  RefusalLog,
+  deriveAllowance,
+  describeUnconfiguredBind,
+  hostHeadersOf,
+  isHostAllowed,
+  isLoopbackBind,
+  isOriginAllowed,
+  type AllowanceInput,
+  type HostAllowance,
+} from './host-guard.ts'
+export {
+  HOST_REFUSAL_BODY,
+  isJsonContentType,
+  readBody,
+  respondHostRefused,
+  respondJson,
+  type BodyResult,
+} from './http.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -78,6 +114,22 @@ export interface Config {
    * @default []
    */
   allowedOrigins?: string[]
+  /**
+   * Exact `host:port` values this deployment answers to.
+   *
+   * Empty is right for the product: a loopback bind derives `127.0.0.1:<port>`,
+   * `localhost:<port>` and `[::1]:<port>` from the port it actually bound, and
+   * that is every name a legitimate page on this machine can use. This exists
+   * for the one case that cannot be derived — a reverse proxy in front, whose
+   * public host is what the browser writes into `Host` — and a non-loopback
+   * bind refuses to start until it is set.
+   *
+   * Exact strings, compared case-insensitively after trimming. No wildcards and
+   * no suffix matching: `*.example.com` would admit
+   * `127.0.0.1.attacker.example.com`, which is the attack this guard exists for.
+   * @default []
+   */
+  allowedHosts?: string[]
 }
 
 /** The config after schemastery has filled every default in. */
@@ -87,6 +139,7 @@ interface ResolvedConfig extends Config {
   maxBodyBytes: number
   heartbeatMs: number
   allowedOrigins: string[]
+  allowedHosts: string[]
 }
 
 /** Frame shape as it arrives, before anything about it is trusted. */
@@ -121,6 +174,7 @@ export class IrisRpcHost extends Service {
     maxBodyBytes: z.natural().default(33_554_432),
     heartbeatMs: z.natural().default(30_000),
     allowedOrigins: z.array(z.string()).default([]),
+    allowedHosts: z.array(z.string()).default([]),
   })
 
   /** The carrier this transport rides on. */
@@ -129,6 +183,8 @@ export class IrisRpcHost extends Service {
   private readonly settings: ResolvedConfig
   private readonly handlers = new Map<string, (params: unknown) => Promise<unknown>>()
   private readonly hub: EventHub
+  /** One line per distinct refused header value, capped so a scan cannot flood the log. */
+  private readonly refusals = new RefusalLog()
 
   /**
    * @param ctx - context carrying `webServer`.
@@ -146,7 +202,13 @@ export class IrisRpcHost extends Service {
     this.hub = new EventHub({
       heartbeatMs: resolved.heartbeatMs,
       maxPayloadBytes: resolved.maxBodyBytes,
-      allowedOrigins: resolved.allowedOrigins,
+      // A thunk, not a value: the carrier has not listened yet, so the bound
+      // port — which is half of every entry in the set — does not exist at this
+      // point. Deriving it per upgrade is also what makes `port: 0` work.
+      allowance: () => this.allowance(),
+      onRefused: (reason, value) => {
+        this.reportRefusal(reason === 'host' ? 'Host (event-socket upgrade)' : 'Origin (event-socket upgrade)', value)
+      },
       // `.message`, not the object, so the log line is the text a reader needs.
       // (An earlier comment here blamed the logger for printing `null` — the
       // logger was innocent: the hub's send callback was reporting `null`, the
@@ -208,8 +270,86 @@ export class IrisRpcHost extends Service {
     this.hub.broadcast(event)
   }
 
+  /**
+   * The `Host` and `Origin` allow-sets as they stand right now.
+   *
+   * Derived per call rather than cached, because the bound port is the one
+   * input that is not configuration: `port: 0` and an already-taken configured
+   * port both make it a number nobody wrote down, and it is not known until
+   * after the carrier has listened. Building six strings and two sets is
+   * cheaper than any way of noticing that the port changed.
+   * @returns the sets one request is checked against.
+   */
+  allowance(): HostAllowance {
+    return deriveAllowance({
+      port: this.ctx.webServer.port,
+      allowedHosts: this.settings.allowedHosts,
+      allowedOrigins: this.settings.allowedOrigins,
+    })
+  }
+
+  /**
+   * Whether one request may be answered at all, refusing it with 403 if not.
+   *
+   * The application registers its own routes on the same carrier — avatars,
+   * the script bundle, sandbox assets, `/version` — and a rebound page reaches
+   * every one of them. So the check lives on the service rather than inside the
+   * RPC handler, and `@iris/app-service` wraps its handlers with
+   * {@link IrisRpcHost.guard}.
+   * @param req - the incoming request.
+   * @param res - the response, written only when the request is refused.
+   * @returns true when the caller should go on to answer.
+   */
+  checkHost(req: IncomingMessage, res: ServerResponse): boolean {
+    const hosts = hostHeadersOf(req)
+    if (isHostAllowed(hosts, this.allowance().hosts)) return true
+    this.reportRefusal('Host', hosts.join(', '))
+    respondHostRefused(res)
+    return false
+  }
+
+  /**
+   * Wrap a route handler so it answers only requests this host is addressed by.
+   *
+   * A wrapper rather than a line inside each handler: a handler that forgets
+   * the line looks exactly like one that has it, and there is no test that can
+   * see the omission from inside the handler's own package.
+   * @param handler - the route handler to protect.
+   * @returns a handler that refuses anything the allow-list does not admit.
+   */
+  guard(handler: WebRoute['handler']): WebRoute['handler'] {
+    return (req, res) => {
+      if (!this.checkHost(req, res)) return undefined
+      return handler(req, res)
+    }
+  }
+
+  /**
+   * Log one refusal, at most once per distinct offending value.
+   *
+   * `warn`, because both readings are worth an operator's attention: either a
+   * legitimate deployment is missing an `allowedHosts` entry, or something is
+   * asking this host to answer to a name that is not its own.
+   * @param header - which header, and where it was refused.
+   * @param value - the offending value, as it arrived.
+   */
+  private reportRefusal(header: string, value: string): void {
+    if (!this.refusals.shouldReport(value)) return
+    const line = `iris-rpc-host: refused a request — ${header} ${JSON.stringify(value)}`
+      + ' is not in this host\'s allow-list'
+    this.ctx.logger.warn(this.refusals.capped
+      ? `${line}; further distinct values will not be reported`
+      : line)
+  }
+
   /** Claim the two routes; releasing them detaches every page. */
   [Service.init](): void {
+    // Before either route exists. A bind reachable from the network cannot
+    // derive its own allow-list, and a host that answers to any name while
+    // listening on one is worse than a host that did not start.
+    const refusal = describeUnconfiguredBind(this.ctx.webServer.host, this.settings.allowedHosts)
+    if (refusal !== undefined) throw new Error(refusal)
+
     const route: WebRoute = {
       kind: 'exact',
       path: this.settings.rpcPath,
@@ -238,6 +378,10 @@ export class IrisRpcHost extends Service {
 
   /** Answer one POST. Never rejects; the carrier's own guard is a last resort. */
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // First, before the method is even looked at: a rebound page is same-origin
+    // with this host, so the content-type gate below is not in its path.
+    if (!this.checkHost(req, res)) return
+
     if (req.method !== 'POST') {
       res.writeHead(405, { allow: 'POST' })
       res.end()

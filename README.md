@@ -291,6 +291,8 @@ CI 红了不合并。分支命名、提交粒度、PR 里该写什么、我们�
 
 Iris **只绑 loopback**,默认 `127.0.0.1:8787`。这是有意的:这个 web 服务**不带 TLS、不带鉴权**,它信任自己所在的这台机器。要让别人访问,**在前面加一个反向代理,而不是改绑定地址**。
 
+**但只绑 loopback 不是一道门。** `nip.io`、`sslip.io` 这类公共通配 DNS 会把 `127.0.0.1.nip.io` 这样的名字解析到 `127.0.0.1`,于是攻击者自己的页面就能在你的浏览器里变成和这台宿主**同源**——同源之后,JSON content-type 预检、没有 CORS 头这些跨站防线全都不在路径上了,一个 `new WebSocket` 就能读到每一轮对话的每一个 token。浏览器唯一伪造不了的是 `Host` 头,所以宿主按 `Host` 应答:loopback 三个名字(`127.0.0.1` / `localhost` / `[::1]`)配上**实际绑到的**端口,加上你自己列的 `IRIS_ALLOWED_HOSTS`,其余一律 403。放在反代后面时,**反代对外的那个 `host:port` 必须列进 `IRIS_ALLOWED_HOSTS`**;把绑定改成 `0.0.0.0` 而不列,宿主会直接拒绝启动并告诉你要设什么。细节与代价见 [notes/packages/iris-rpc-host/DEVIATIONS.md](notes/packages/iris-rpc-host/DEVIATIONS.md) §1。
+
 没有构建界面时宿主照样启动、照样应答协议,只是不服页面。新检出就是这个状态。
 
 ### 环境变量
@@ -312,6 +314,7 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `IRIS_TEMPLATES` | 关 | `1` 打开卡片的 EJS 提示词模板(ST-Prompt-Template)。默认关,因为求值一次就是在跑卡作者的 JavaScript | `cordis.yml` app 行 |
 | `IRIS_BACKUP_KEEP` | `50` | 每个聊天保留多少份快照。与上游默认相同 | `cordis.yml` app 行 |
 | `IRIS_DEV_ORIGIN` | 未设 | 逗号分隔的来源白名单,给跑在另一个源上的前端开发服务器用。**更推荐**反代 `/iris/rpc` 与 `/iris/events`,那样页面仍是同源 | `cordis.yml` rpc 行 |
+| `IRIS_ALLOWED_HOSTS` | 未设 | 逗号分隔的 `host:port` 白名单,精确匹配、不支持通配。loopback + 实际端口是自动推出来的,所以本机用不着设;它是给**反向代理**用的——浏览器写进 `Host` 的是反代对外的那个名字。绑 `0.0.0.0` 而这里为空,宿主拒绝启动 | `cordis.yml` rpc 行 |
 | `IRIS_WEB_DIST` | 自动 | 界面产物的 `index.html`。**一般不要设**——有构建时 `bin.ts` 会自己填 | `apps/iris/bin.ts` |
 
 另有两个只服务于 live demo、与跑宿主无关:`DEEPSEEK_API_KEY` 与 `IRIS_LIVE_MODEL`(`apps/iris/demo/`)。
