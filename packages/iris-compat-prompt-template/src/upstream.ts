@@ -8,6 +8,15 @@
  * an opaque vendored blob: the license stays clean, each delta stays visible,
  * and re-checking after an upstream release is a diff instead of an audit.
  *
+ * **The pin is 3.1.10, one release ahead of what the extension vendors** (moved
+ * 2026-09-11). 3.1.10 is 3.1.9 plus CVE-2024-33883 — `hasOwnOnlyObject` and
+ * `createNullProtoObjWherePossible` on the options and data objects. Both
+ * preamble patches below still apply to it byte for byte, asserted by
+ * `tests/upstream.test.ts`, and the bump *narrows* the distance to upstream:
+ * `hasOwnOnlyObject` is one of the two hunks listed at the bottom of this file's
+ * ledger entry as carried by the extension and not by stock, and stock has it
+ * now.
+ *
  * The extension has `auto_update: true`. This is a snapshot of **v1.17.4.1**.
  * To re-check: extract the ejs module from
  * `src/3rdparty/ejs.js` (it is browserify module 1, ending at the
@@ -144,7 +153,7 @@ export function rethrow(
 // Both act on the preamble EJS emits under `client: true`. Exact-match, and a
 // miss throws: see `UpstreamPatchError`.
 
-/** Stock EJS 3.1.9's single-argument appender. */
+/** Stock EJS's single-argument appender. Identical in 3.1.9 and the pinned 3.1.10. */
 const STOCK_APPEND = '  function __append(s) { if (s !== undefined && s !== null) __output += s }'
 
 /**
@@ -156,7 +165,7 @@ const STOCK_APPEND = '  function __append(s) { if (s !== undefined && s !== null
  */
 const PATCHED_APPEND = '  function __append(...args) { args.filter(x => x !== undefined && x !== null).forEach(s => __output += s) }'
 
-/** Stock EJS 3.1.9's binding of `outputFunctionName`. */
+/** Stock EJS's binding of `outputFunctionName`. Identical in 3.1.9 and the pinned 3.1.10. */
 const STOCK_PRINT_BINDING = `  var ${UPSTREAM_COMPILE_OPTIONS.outputFunctionName} = __append;`
 
 /**

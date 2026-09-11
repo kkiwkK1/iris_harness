@@ -33,28 +33,45 @@ that matters is where that happens. Upstream's answer is "in the SillyTavern
 page, with the application in scope". This package's answer:
 
 ```
-host process                          child process (per batch)
+host process                          child process (one at a time, per batch)
 ─────────────────────────────         ──────────────────────────────────────
 assembles the batch                   env: {}                 ← no credentials
-pushes a JSON snapshot        ──►     --permission            ← no fs write, no spawn
+refuses an item over 1 MiB            --permission            ← no fs write, no spawn
+pushes a JSON snapshot        ──►     --max-old-space-size=128
                                       fs read: this package + ejs + lodash
 receives streamed results     ◄──     ┌──────────────────────────────────┐
 applies the change set                │ vm realm: no process, no require │
 through its own entry points          │ no working dynamic import        │
+                                      │ nothing of the child's own realm │
                                       │ lodash, and the six env members  │
                                       └──────────────────────────────────┘
 ```
 
-Only JSON crosses. The child never holds a host object, and every write it
-performs comes back *described* — so a template cannot bypass a check the host
-makes on the way in.
+Only JSON crosses the process boundary. The child never holds a host object, and
+every write it performs comes back *described* — so a template cannot bypass a
+check the host makes on the way in.
 
-Two layers, because each covers the other's gap. Node's `--permission` does not
-gate the network (there is no `--allow-net`), and deleting globals does not stop
+**Nothing of the child's own realm crosses the realm boundary either**, which is
+a separate claim and was false until 2026-09-11. Every callable a template can
+see is a frozen trampoline built inside the `vm` context; every value it receives
+is re-created there through the context's own `JSON.parse`, errors and promises
+included; lodash is evaluated in the context rather than handed across; and the
+variable state is built there once per batch, which is what keeps `getvar`'s
+reference live the way upstream's is. The reason it matters: `escapeFn.constructor`
+— EJS names that function in every template's scope — used to be the child main
+realm's `Function`, and `Function("return process")()` from there reaches
+`process`, `globalThis.fetch` and the IPC channel. `src/realm.ts` is the
+mechanism; `tests/realm.test.ts` prosecutes it member by member, with a
+deliberately unbridged function as the control that proves the probes can see an
+escape at all.
+
+Layers, because each covers the others' gap. Node's `--permission` does not gate
+the network (there is no `--allow-net`), and deleting globals does not stop
 `await import("node:net")` because `import()` is syntax, not a global — the realm
 refuses that by design. Conversely, a realm escape is a known class of bug and
 never a boundary alone, so `--permission` and an empty environment decide what an
-escape is worth.
+escape is worth. The heap ceiling, the single child and the 1 MiB item cap decide
+what a template that merely misbehaves can cost.
 
 `notes/packages/iris-compat-prompt-template/DEVIATIONS.md` lists every deliberate difference from upstream, what each was
 measured to cost, and the residual risk that is *not* zero.

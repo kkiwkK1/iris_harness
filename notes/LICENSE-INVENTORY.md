@@ -188,8 +188,12 @@ Version 1.36, provided by Punkerslut Freethought" / "AnarchistRevolt.com"），
 | **`packages/iris-compat-prompt-template/src/upstream.ts:251`** | **`src/3rdparty/ejs.js` at v1.17.4.1** | **V/近 V**：「**Transcribed from** …, **structure preserved** including the redundant final `processedTokens.length` guard」 |
 
 > **最后一条有两层要分开**：被转写的文件是 ST-Prompt-Template 仓库里**vendored 的
-> EJS**（`3rdparty/`），而 EJS 上游自己是 **Apache-2.0**（我们依赖树里的 `ejs 3.1.9`
+> EJS**（`3rdparty/`），而 EJS 上游自己是 **Apache-2.0**（我们依赖树里的 `ejs`
 > 就报 Apache-2.0）。**所以那段代码的著作权人很可能不是 zonde306。**
+>
+> **2026-09-11 补**：依赖树里的 pin 已由 `ejs 3.1.9` 升到 **`ejs 3.1.10`**
+> （CVE-2024-33883），许可证不变，仍是 Apache-2.0；下面「依赖许可证」表里的
+> `ejs 3.1.9` 同此更正。被转写的仍是扩展 vendored 的 3.1.9，这一句不受影响。
 > **⚠ 而且这台机器上核不了**：已装的 ST-Prompt-Template **只有 `dist/`、`libs/`、
 > `include/`、`docs/`、`locales/`，没有 `src/`**，所以 `src/3rdparty/ejs.js` 这个引用
 > **无法在本机复核**——它来自作者读过的 GitHub 检出。
@@ -203,7 +207,7 @@ Version 1.36, provided by Punkerslut Freethought" / "AnarchistRevolt.com"），
 | 许可证 | 包数 |
 | --- | --- |
 | MIT | 47 |
-| Apache-2.0 | 4（`ejs 3.1.9`、`filelist 1.0.6`、`jake 10.9.4`、`typescript 5.9.3`） |
+| Apache-2.0 | 4（`ejs 3.1.10`（2026-09-11 由 3.1.9 升，许可证不变）、`filelist 1.0.6`、`jake 10.9.4`、`typescript 5.9.3`） |
 | ISC | 2（`minimatch 5.1.9`、`picocolors 1.1.1`） |
 | **Python-2.0** | **1（`argparse 2.0.1`）** |
 

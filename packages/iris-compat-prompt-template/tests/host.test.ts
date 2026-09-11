@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { DEFAULT_DEADLINE_MS, childExecArgv, evaluateBatch } from '../src/index.ts'
+import {
+  CHILD_CONCURRENCY_LIMIT,
+  CHILD_MAX_OLD_SPACE_MB,
+  DEFAULT_DEADLINE_MS,
+  MAX_TEMPLATE_CHARS,
+  childConcurrency,
+  childExecArgv,
+  evaluateBatch,
+} from '../src/index.ts'
 import type { EvalItem, Snapshot } from '../src/index.ts'
 
 /**
@@ -36,13 +44,72 @@ test('the child is locked down by construction, not by convention', () => {
   // this list is only half the story and the other half is the `vm` realm
   // refusing dynamic import.
   const argv = childExecArgv()
-  assert.equal(argv[0], '--permission')
+  assert.ok(argv.includes('--permission'), 'the permission model must be on')
+  assert.equal(argv[0], `--max-old-space-size=${String(CHILD_MAX_OLD_SPACE_MB)}`)
   // Reads are confined to the package's own sources and its two dependencies.
-  const reads = argv.slice(1)
+  const reads = argv.filter(flag => flag.startsWith('--allow-fs-read='))
   assert.equal(reads.length, 3)
   for (const flag of reads) assert.match(flag, /^--allow-fs-read=.+\/\*$/)
   assert.ok(reads.some(flag => flag.includes('ejs')), 'the engine must be readable')
   assert.ok(reads.some(flag => flag.includes('lodash')), 'lodash must be readable')
+  // Three flags plus the heap ceiling plus `--permission`: nothing else.
+  assert.equal(argv.length, 5)
+})
+
+test('the heap ceiling is a measurement with a floor, and the child honours it', async () => {
+  // 46.3 MiB peak on the heaviest batch this corpus can make — the 708,022-character
+  // variable blob, 6.79 MiB of snapshot, all 203 templated world-info entries as
+  // items — doubled is 93, and the floor of 128 wins.
+  assert.equal(CHILD_MAX_OLD_SPACE_MB, 128)
+
+  // And it is in force inside the child, not merely on the command line: a
+  // template that allocates past the ceiling dies rather than taking the
+  // machine's memory with it. The item comes back failed, which is the same
+  // shape a timeout produces and needs no special case anywhere.
+  const outcome = await evaluateBatch({
+    items: [item('greedy', '<%_ var a = []; while (true) { a.push(new Array(100000).fill(7)) } _%>')],
+    snapshot: snapshot(),
+    deadlineMs: 30_000,
+  })
+  assert.equal(outcome.results[0]?.result.ok, false)
+  assert.equal(outcome.timedOut, false, 'the heap ceiling must fire before the 30s deadline')
+})
+
+test('an oversized template is refused by name rather than by SIGKILL', () => {
+  // Measured 2026-09-11 over the user's install: the largest single templated
+  // field is 19,399 characters and every templated field in the whole 19-card
+  // corpus comes to 560,233, so the cap clears the corpus by 1.87× even if one
+  // assembled message carried all of it. What it buys is the error: a 50 MiB
+  // template compiles for seconds and then dies by signal, which reaches the
+  // caller as "timed out" and names no item.
+  assert.equal(MAX_TEMPLATE_CHARS, 1_048_576)
+  const huge = `<%= 1 %>${'x'.repeat(MAX_TEMPLATE_CHARS)}`
+  return evaluateBatch({
+    items: [item('huge', huge), item('fine', '<%= 2 %>')],
+    snapshot: snapshot(),
+  }).then((outcome) => {
+    const refused = outcome.results[0]?.result as { ok: false, error: string }
+    assert.equal(refused.ok, false)
+    assert.match(refused.error, /over the 1048576 character limit/)
+    assert.match(refused.error, new RegExp(String(huge.length)))
+    // The rest of the batch is unaffected: one absurd item is not a lost batch.
+    assert.deepEqual(outcome.results[1]?.result, { ok: true, text: '2' })
+    assert.equal(outcome.timedOut, false)
+  })
+})
+
+test('two batches at once still only ever have one child', async () => {
+  // The queue, observed rather than believed. `peak` counts entries to the
+  // child-owning section, so it reads 2 the moment two batches overlap — which
+  // is what this assertion would see if the queue were removed.
+  const before = childConcurrency().peak
+  await Promise.all([
+    evaluateBatch({ items: [item('a', '<%= 1 %>')], snapshot: snapshot() }),
+    evaluateBatch({ items: [item('b', '<%= 2 %>')], snapshot: snapshot() }),
+    evaluateBatch({ items: [item('c', '<%= 3 %>')], snapshot: snapshot() }),
+  ])
+  assert.equal(childConcurrency().inFlight, 0)
+  assert.equal(Math.max(before, childConcurrency().peak), CHILD_CONCURRENCY_LIMIT)
 })
 
 test('results come back in request order, whatever order they finished in', () => {
