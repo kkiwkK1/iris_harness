@@ -1,597 +1,175 @@
-/**
- * Settings, ordered rather than pruned.
- *
- * The loudest complaint about SillyTavern is that every knob is on screen at
- * once and a newcomer cannot tell which four matter. So: the parameters that
- * change a scene are at the top, the ones tuned once per model are behind one
- * disclosure, and reading preferences — which are not model settings at all and
- * live on the device — are their own section at the bottom. Nothing was removed.
- *
- * The drawer overlays the page instead of resizing it, because reflowing a page
- * of prose while a slider is being dragged is disorienting.
- *
- * @module iris-web/app/SettingsDrawer
- */
-
-import { useState } from 'react'
+/** Settings as a navigable drawer: a directory first, one focused task at a time. */
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-
-import type { ContinuePostfix, GenerationSettings, ReasoningEffort } from '@iris/protocol'
-import { MAX_CONTEXT_WINDOW } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { Slot } from '../slots/Slot.tsx'
-import { effortInForce, effortPatch, REASONING_EFFORTS } from './composer-bar.ts'
-import { ChoiceField, CollapsibleSection, NumberField, TextField, ToggleField } from './fields.tsx'
+import type { ReadingPrefs } from '../theme/theme.ts'
+import { useLanguage } from './i18n/use-language.ts'
+import { SettingsPageSections } from './fields.tsx'
+import {
+  SETTINGS_GROUPS, SettingsCountBadge, SettingsGroup, SettingsHeader,
+  SettingsPage, SettingsRow, SettingsSearch, destinationOf, searchSettings,
+  type SettingsRoute,
+} from './SettingsNavigation.tsx'
 import { AboutCard } from './AboutCard.tsx'
+import { AppearanceCard } from './AppearanceCard.tsx'
 import { BackupPanel } from './BackupPanel.tsx'
 import { ConnectionPanel } from './ConnectionPanel.tsx'
 import { DemoActionsSection } from './DemoActionsSection.tsx'
+import { GenerationPanel } from './GenerationPanel.tsx'
 import { HostReports } from './HostReports.tsx'
+import { MemoryContextPanel } from './MemoryContextPanel.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
+import { PersonaPanel } from './PersonaPanel.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
 import { PresetRegexPanel } from './PresetRegexPanel.tsx'
-import { PersonaPanel } from './PersonaPanel.tsx'
+import { ReadingPanel } from './ReadingPanel.tsx'
 import { RegexPanel } from './RegexPanel.tsx'
+import { ReplyBehaviorPanel } from './ReplyBehaviorPanel.tsx'
 import { ScopedRegexPanel } from './ScopedRegexPanel.tsx'
 import { ScriptLibraryPanel } from './ScriptLibraryPanel.tsx'
 import { ScriptPanel } from './ScriptPanel.tsx'
-import { UsageSection } from './UsageSection.tsx'
+import { UsagePanel } from './UsagePanel.tsx'
 import { WorldbookPanel } from './WorldbookPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
-import { AppearanceCard } from './AppearanceCard.tsx'
-import { READING_LIMITS, type ReadingPrefs } from '../theme/theme.ts'
-import { useLanguage, t } from './i18n/use-language.ts'
-import type { Language, StringKey } from './i18n/strings.ts'
 
-/** The continue separator's menu words, by the wire word the setting stores. */
-const POSTFIX_LABEL: Record<ContinuePostfix, StringKey> = {
-  none: 'postfixNone',
-  space: 'postfixSpace',
-  newline: 'postfixNewline',
-  double: 'postfixDouble',
-}
-
-/** The sampling fields, for the sampling card's summary count. */
-const SAMPLING_KEYS = [
-  'temperature', 'maxTokens', 'topP', 'topK', 'minP', 'repetitionPenalty',
-  'frequencyPenalty', 'presencePenalty', 'seed', 'stop', 'contextWindow', 'reasoningEffort',
-] as const
-
-/**
- * The reply card's summary: what is shaping replies right now.
- *
- * The separator always runs (its default is upstream's), so it is the
- * summary's backbone; the two switches appear only while they are on.
- */
-function repliesSummaryOf(settings: GenerationSettings): string {
-  const parts: string[] = []
-  if (settings.trimSentences === true) parts.push(t('repliesTrim'))
-  if (settings.squashSystemMessages === true) parts.push(t('repliesSquash'))
-  // Named only when it is OFF, the mirror of the two above: this one is on by
-  // default, so its interesting state — the one a reader wants the summary to
-  // surface without opening the card — is having been switched off.
-  if (settings.cacheFriendly === false) parts.push(t('repliesCacheOff'))
-  parts.push(t('repliesContinue', { word: t(POSTFIX_LABEL[settings.continuePostfix ?? 'space']) }))
-  return parts.join(' · ')
-}
-
-/** Reading preferences and their setter, owned by the shell because they are per-device.
- *
- * The theme is not here: it moved to the appearance card, which reads the
- * theme store directly — a choice drawn as swatches wants the store, not a
- * prop drilled from the shell.
- */
 export interface ReadingControl {
   reading: ReadingPrefs
   setReading: (prefs: ReadingPrefs) => void
 }
 
-/**
- * Render the settings drawer.
- * @param props.open - whether it is showing.
- * @param props.onClose - called on the close button or Escape.
- * @param props.control - reading preferences, which do not go to the host.
- * @returns the drawer.
- */
-export function SettingsDrawer({
-  open,
-  onClose,
-  control,
-}: {
+type RegexScope = 'global' | 'preset' | 'character'
+
+export function SettingsDrawer({ open, onClose, control }: {
   open: boolean
   onClose: () => void
   control: ReadingControl
 }): ReactElement {
-  const settings = useIris(state => state.settings)
-  const chatId = useIris(state => state.chatId)
+  const [route, setRoute] = useState<SettingsRoute>('home')
+  const [query, setQuery] = useState('')
+  const [regexScope, setRegexScope] = useState<RegexScope>('global')
+  const drawer = useRef<HTMLElement>(null)
+  const { lang } = useLanguage()
   const actions = useIrisActions()
-  const [expanded, setExpanded] = useState(false)
-  // The language control, and the subscription that makes a switch repaint this
-  // drawer without a reload.
-  const { lang, setLang } = useLanguage()
+  const chatId = useIris(state => state.chatId)
+  const settings = useIris(state => state.settings)
+  const connections = useIris(state => state.connections)
+  const activeConnectionId = useIris(state => state.activeConnectionId)
+  const presets = useIris(state => state.presets)
+  const activePreset = useIris(state => state.activePreset)
+  const personas = useIris(state => state.personas)
+  const regex = useIris(state => state.regexScripts)
+  const worldbooks = useIris(state => state.worldbooks)
+  const library = useIris(state => state.library)
+  const backups = useIris(state => state.backups)
 
-  const patch = (key: string, value: number | string | boolean | null | string[]): void => {
-    void actions.patchSettings({ [key]: value })
+  useEffect(() => { if (!open) setRoute('home') }, [open])
+  useEffect(() => {
+    if (open) drawer.current?.querySelector<HTMLElement>('.iris-drawer__title')?.focus({ preventScroll: true })
+  }, [open, route])
+
+  const close = (): void => { setRoute('home'); setQuery(''); onClose() }
+  const navigate = (next: SettingsRoute): void => { setRoute(next); setQuery('') }
+  const activeConnection = connections.find(row => row.id === activeConnectionId)
+  const activePersona = personas?.personas.find(row => row.id === personas.activeId)
+  const values: Partial<Record<Exclude<SettingsRoute, 'home'>, string | undefined>> = {
+    connections: activeConnection?.label ?? activeConnection?.summary,
+    presets: activePreset,
+    persona: activePersona?.name,
+    'memory/context': settings?.contextWindow === undefined ? undefined : `${settings.contextWindow.toLocaleString()} tokens`,
+    generation: settings?.model,
+    appearance: `${control.reading.size}px`,
   }
+  const counts: Partial<Record<Exclude<SettingsRoute, 'home'>, number | undefined>> = {
+    connections: connections.length,
+    presets: presets?.length,
+    persona: personas?.personas.length,
+    regex: regex?.length,
+    worldbooks: worldbooks?.books.length,
+    scripts: library?.length,
+    backups: backups?.length,
+  }
+  const matches = useMemo(() => searchSettings(query), [query])
+  const context = chatId === undefined
+    ? (lang === 'zh' ? '新对话的默认值' : 'Defaults for new conversations')
+    : (lang === 'zh' ? '当前对话' : 'This conversation')
 
-  // Computed per render, guarded the way the branch below is: the reply card
-  // only exists when the settings exist.
-  const repliesSummary = settings === undefined ? undefined : repliesSummaryOf(settings)
+  return <aside ref={drawer} className={`iris-drawer iris-settings${open ? ' iris-drawer--open' : ''}`}
+    aria-label={lang === 'zh' ? '设置' : 'Settings'} aria-hidden={!open}
+    onKeyDown={event => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (!event.currentTarget.contains(event.target as Node)) return
+      event.preventDefault()
+      if (route === 'home') close(); else navigate('home')
+    }}>
+    <SettingsHeader route={route} lang={lang} context={context} onBack={() => navigate('home')} onClose={close} />
+    <main className="iris-settings__content">
+      <section className="iris-settings__home" hidden={route !== 'home'}>
+        <SettingsSearch value={query} lang={lang} onChange={setQuery} />
+        {SETTINGS_GROUPS.map(group => {
+          const rows = matches.filter(row => row.group === group)
+          if (rows.length === 0) return null
+          return <SettingsGroup key={group} id={group} lang={lang}>{rows.map(row =>
+            <SettingsRow key={row.route} destination={row} lang={lang} value={values[row.route]}
+              accessory={counts[row.route] === undefined ? undefined : <SettingsCountBadge count={counts[row.route] ?? 0} />}
+              onClick={() => navigate(row.route)} />,
+          )}</SettingsGroup>
+        })}
+        {matches.length === 0 ? <p className="iris-list__empty">{lang === 'zh' ? '没有匹配的设置类别。' : 'No settings category matches.'}</p> : null}
+      </section>
 
-  return (
-    <aside
-      className={`iris-drawer${open ? ' iris-drawer--open' : ''}`}
-      aria-label={t('drawerAria')}
-      aria-hidden={!open}
+      <SettingsPageSections.Provider value>
+        <SettingsPage route="connections" active={route === 'connections'}><ConnectionPanel /></SettingsPage>
+        <SettingsPage route="presets" active={route === 'presets'}><PresetPanel /></SettingsPage>
+        <SettingsPage route="persona" active={route === 'persona'}><PersonaPanel /></SettingsPage>
+        <SettingsPage route="memory/context" active={route === 'memory/context'}><PageLead route="memory/context" lang={lang} /><MemoryContextPanel /></SettingsPage>
+        <SettingsPage route="replies" active={route === 'replies'}><PageLead route="replies" lang={lang} /><ReplyBehaviorPanel /></SettingsPage>
+        <SettingsPage route="generation" active={route === 'generation'}><PageLead route="generation" lang={lang} /><GenerationPanel /></SettingsPage>
+        <SettingsPage route="regex" active={route === 'regex'}>
+          <ScopeTabs value={regexScope} lang={lang} onChange={setRegexScope} />
+          <div id="iris-regex-panel-global" role="tabpanel" aria-labelledby="iris-regex-tab-global" hidden={regexScope !== 'global'}><RegexPanel /></div>
+          <div id="iris-regex-panel-preset" role="tabpanel" aria-labelledby="iris-regex-tab-preset" hidden={regexScope !== 'preset'}><PresetRegexPanel /></div>
+          <div id="iris-regex-panel-character" role="tabpanel" aria-labelledby="iris-regex-tab-character" hidden={regexScope !== 'character'}><ScopedRegexPanel /></div>
+        </SettingsPage>
+        <SettingsPage route="worldbooks" active={route === 'worldbooks'}><WorldbookPanel /></SettingsPage>
+        <SettingsPage route="scripts" active={route === 'scripts'}><ScriptPanel /><ScriptLibraryPanel /></SettingsPage>
+        <SettingsPage route="appearance" active={route === 'appearance'}><AppearanceCard /><ReadingPanel control={control} /></SettingsPage>
+        <SettingsPage route="backups" active={route === 'backups'}><BackupPanel /></SettingsPage>
+        <SettingsPage route="usage" active={route === 'usage'}><UsagePanel embedded open={route === 'usage'} onClose={() => navigate('home')} onOpenChat={id => { close(); void actions.openChat(id) }} /></SettingsPage>
+        <SettingsPage route="diagnostics" active={route === 'diagnostics'}>
+          <HostReports /><NoticeLog /><DemoActionsSection />
+          {import.meta.env.DEV ? <SandboxProbe /> : null}{import.meta.env.DEV ? <RailPreview /> : null}
+          <Slot name="iris.settings.sections" owner={{}} />
+        </SettingsPage>
+        <SettingsPage route="about" active={route === 'about'}><AboutCard control={control} /></SettingsPage>
+      </SettingsPageSections.Provider>
+    </main>
+  </aside>
+}
+
+function PageLead({ route, lang }: { route: SettingsRoute, lang: 'en' | 'zh' }): ReactElement | null {
+  const row = destinationOf(route)
+  return row === undefined ? null : <p className="iris-settings__lead">{row[lang === 'zh' ? 'summaryZh' : 'summaryEn']}</p>
+}
+
+function ScopeTabs({ value, lang, onChange }: { value: RegexScope, lang: 'en' | 'zh', onChange: (scope: RegexScope) => void }): ReactElement {
+  const tabs: readonly [RegexScope, string][] = lang === 'zh'
+    ? [['global', '全局'], ['preset', '预设'], ['character', '角色']]
+    : [['global', 'Global'], ['preset', 'Preset'], ['character', 'Character']]
+  return <div className="iris-settings__segments" role="tablist" aria-label={lang === 'zh' ? '正则作用域' : 'Regex scope'}>
+    {tabs.map(([id, label], index) => <button key={id} id={`iris-regex-tab-${id}`} type="button" role="tab" aria-selected={value === id} aria-controls={`iris-regex-panel-${id}`} tabIndex={value === id ? 0 : -1}
+      onClick={() => onChange(id)}
       onKeyDown={event => {
-        if (event.key === 'Escape') onClose()
-      }}
-    >
-      <div className="iris-drawer__head">
-        <h2 className="iris-label iris-drawer__title">
-          {chatId === undefined ? t('defaultsForNew') : t('thisConversation')}
-        </h2>
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          {t('close')}
-        </Button>
-      </div>
-
-      <div className="iris-drawer__body">
-        {settings === undefined ? (
-          <p className="iris-list__empty">{t('settingsNotLoaded')}</p>
-        ) : (
-          <>
-            <ConnectionPanel />
-
-            {/*
-              The preset library and the prompt manager, above the per-field
-              controls: a preset switch rewrites several of the values below at
-              once (temperature, window, effort), so the reader meets the thing
-              that changes them before the things changed.
-            */}
-            <PresetPanel />
-
-            {/*
-              The global regex tier, after the presets: like a preset, it is a
-              profile-wide surface that shapes what the reader and the model see
-              on every conversation, and the drawer is where a reader looks for
-              the things that change text they did not type.
-            */}
-            <RegexPanel />
-
-            {/*
-              The active preset's own tier, between the profile's and the card's,
-              because that is where it runs: upstream's `SCRIPT_TYPES` iterates
-              global → preset → character. It sits here rather than under the
-              preset section above — which is its *subject* — because these
-              sections are read as a sequence, and a reader comparing them is
-              comparing along the axis that decides which rewrite wins.
-            */}
-            <PresetRegexPanel />
-
-            {/*
-              The card's own tier, under the other two, because that is the order
-              they run in — upstream's `SCRIPT_TYPES` iteration puts global
-              first and the card's last. A reader comparing the lists is
-              comparing them along the axis that decides which rewrite wins.
-            */}
-            <ScopedRegexPanel />
-
-            {/*
-              **The 「路由」 card is gone** (2026-09-09, with the connection
-              panel's rebuild). It was `provider` and `model` as two free-text
-              fields on the global settings layer — a third place to set the
-              route, beside the provider list above and the model capsule under
-              the composer, and the only one of the three that took a typed
-              string with nothing to check it against. That is the failure the
-              whole connection surface is built to prevent: the profile measured
-              on a real SillyTavern install was named `deepseek deepseek-chat`
-              and pointed at Gemini, and a free-text `model` is how the same
-              drift starts here. Both values are still fully settable — a
-              provider's own editor writes them together with the endpoint and
-              the credential they belong to, and `settings.set` still carries
-              them for anything that asks — so nothing is lost but the loose
-              field.
-            */}
-            <CollapsibleSection
-              id="sampling"
-              title={t('sectionSampling')}
-              summary={SAMPLING_KEYS.some(key => settings[key] !== undefined)
-                ? t('samplingSet', { count: SAMPLING_KEYS.filter(key => settings[key] !== undefined).length })
-                : t('samplingDefault')}
-            >
-              <NumberField
-                label={t('temperature')}
-                value={settings.temperature}
-                bounds={{ min: 0, max: 2, step: 0.01 }}
-                fallback={1}
-                note={t('temperatureNote')}
-                onCommit={value => patch('temperature', value)}
-              />
-              <NumberField
-                label={t('replyLengthCap')}
-                value={settings.maxTokens}
-                bounds={{ min: 128, max: 8192, step: 64 }}
-                fallback={1024}
-                decimals={0}
-                note={t('replyLengthCapNote')}
-                onCommit={value => patch('maxTokens', value)}
-              />
-              <NumberField
-                label={t('topP')}
-                value={settings.topP}
-                bounds={{ min: 0, max: 1, step: 0.01 }}
-                fallback={0.95}
-                note={t('topPNote')}
-                onCommit={value => patch('topP', value)}
-              />
-              <NumberField
-                label={t('repetitionPenalty')}
-                value={settings.repetitionPenalty}
-                bounds={{ min: 1, max: 1.5, step: 0.01 }}
-                fallback={1.05}
-                note={t('repetitionPenaltyNote')}
-                onCommit={value => patch('repetitionPenalty', value)}
-              />
-
-              <div className="iris-field">
-                <button
-                  type="button"
-                  className="iris-reason__toggle iris-field__control"
-                  aria-expanded={expanded}
-                  onClick={() => setExpanded(!expanded)}
-                >
-                  <span
-                    className={`iris-reason__chevron${expanded ? ' iris-reason__chevron--open' : ''}`}
-                    aria-hidden="true"
-                  >
-                    ▸
-                  </span>
-                  {expanded ? t('fewerParameters') : t('moreParameters')}
-                </button>
-              </div>
-
-              {expanded ? (
-                <>
-                  <NumberField
-                    label={t('topK')}
-                    value={settings.topK}
-                    bounds={{ min: 0, max: 200, step: 1 }}
-                    fallback={40}
-                    decimals={0}
-                    onCommit={value => patch('topK', value)}
-                  />
-                  <NumberField
-                    label={t('minP')}
-                    value={settings.minP}
-                    bounds={{ min: 0, max: 0.5, step: 0.005 }}
-                    fallback={0.05}
-                    decimals={3}
-                    onCommit={value => patch('minP', value)}
-                  />
-                  <NumberField
-                    label={t('frequencyPenalty')}
-                    value={settings.frequencyPenalty}
-                    bounds={{ min: -2, max: 2, step: 0.01 }}
-                    fallback={0}
-                    onCommit={value => patch('frequencyPenalty', value)}
-                  />
-                  <NumberField
-                    label={t('presencePenalty')}
-                    value={settings.presencePenalty}
-                    bounds={{ min: -2, max: 2, step: 0.01 }}
-                    fallback={0}
-                    onCommit={value => patch('presencePenalty', value)}
-                  />
-                  {/*
-                    The window and the effort a reasoning model spends. Behind
-                    the disclosure because a preset usually set them: they are
-                    shown so a switch's effect can be read and corrected, not
-                    because they are tuned every day.
-                  */}
-                  <NumberField
-                    label={t('contextWindow')}
-                    value={settings.contextWindow}
-                    /*
-                      4 000 000, which is `MAX_CONTEXT_WINDOW` — the ceiling the
-                      settings store, the probe and the wire schema all check.
-                      It was 2 000 000, which is upstream's `unlocked_max`
-                      verbatim, and that made the unlock switch below argue
-                      against a bound this control was still imposing: the
-                      reason not to borrow upstream's 2M is that it would cap a
-                      future 4M model at a 2026 constant, and the slider was
-                      capping it anyway.
-                    */
-                    bounds={{ min: 512, max: MAX_CONTEXT_WINDOW, step: 512 }}
-                    fallback={32_768}
-                    decimals={0}
-                    note={t('contextWindowNote')}
-                    onCommit={value => patch('contextWindow', value)}
-                  />
-                  {/*
-                    Beside the window and not elsewhere, because it is the other
-                    half of one decision: the number above is capped at what the
-                    model is known to accept until this is on. Upstream's
-                    `max_context_unlocked` — where it lives beside the same
-                    slider, for the same reason.
-                  */}
-                  <ToggleField
-                    label={t('contextUnlocked')}
-                    note={t('contextUnlockedNote')}
-                    value={settings.contextUnlocked === true}
-                    onToggle={next => patch('contextUnlocked', next)}
-                  />
-                  <ChoiceField
-                    label={t('reasoningEffort')}
-                    value={effortInForce(settings.reasoningEffort)}
-                    /*
-                      Upstream's own value words (`reasoning_effort_types`); they
-                      name provider request fields and stay as written. The list
-                      is `composer-bar.ts`'s, because the composer's bar offers
-                      the same ladder (web §80) and two copies of six words is
-                      how one surface comes to offer five.
-                    */
-                    options={REASONING_EFFORTS.map(effort => ({ id: effort, label: effort }))}
-                    onSelect={id => patch('reasoningEffort', effortPatch(id as ReasoningEffort))}
-                  />
-                  <p className="iris-field__note">{t('reasoningEffortNote')}</p>
-                  <NumberField
-                    label={t('seed')}
-                    value={settings.seed}
-                    bounds={{ min: 0, max: 1000000, step: 1 }}
-                    fallback={0}
-                    decimals={0}
-                    note={t('seedNote')}
-                    onCommit={value => patch('seed', value)}
-                  />
-                  <TextField
-                    label={t('stopAt')}
-                    value={(settings.stop ?? []).join(' | ')}
-                    placeholder={t('stopPlaceholder')}
-                    onCommit={value =>
-                      patch(
-                        'stop',
-                        value
-                          .split('|')
-                          .map(row => row.trim())
-                          .filter(row => row !== ''),
-                      )
-                    }
-                  />
-                </>
-              ) : null}
-            </CollapsibleSection>
-
-            {/*
-              The reply shapers — what happens to the text around the model's
-              words. Each one backs a stored setting with a real consumer: the
-              trim runs before a reply is stored, the separator rides the
-              continue request and the painted floor, and the squash changes the
-              messages a provider is sent.
-            */}
-            <CollapsibleSection id="replies" title={t('sectionReplies')} summary={repliesSummary}>
-              <ToggleField
-                label={t('trimSentences')}
-                note={t('trimSentencesNote')}
-                value={settings.trimSentences === true}
-                onToggle={next => patch('trimSentences', next)}
-              />
-              <ChoiceField<ContinuePostfix>
-                label={t('continuePostfix')}
-                value={settings.continuePostfix ?? 'space'}
-                options={[
-                  { id: 'none', label: t('postfixNone') },
-                  { id: 'space', label: t('postfixSpace') },
-                  { id: 'newline', label: t('postfixNewline') },
-                  { id: 'double', label: t('postfixDouble') },
-                ]}
-                onSelect={id => patch('continuePostfix', id)}
-              />
-              <p className="iris-field__note">{t('continuePostfixNote')}</p>
-              <ToggleField
-                label={t('squashSystemMessages')}
-                note={t('squashSystemMessagesNote')}
-                value={settings.squashSystemMessages === true}
-                onToggle={next => patch('squashSystemMessages', next)}
-              />
-              {/*
-                The one switch on this card whose **absence means on**, so the
-                value reads `!== false` rather than `=== true`. Spelled out here
-                rather than folded into a helper: the asymmetry is the fact a
-                reader of this line needs, and a helper would hide it.
-              */}
-              <ToggleField
-                label={t('cacheFriendly')}
-                note={t('cacheFriendlyNote')}
-                value={settings.cacheFriendly !== false}
-                onToggle={next => patch('cacheFriendly', next)}
-              />
-            </CollapsibleSection>
-          </>
-        )}
-
-        {/*
-          The appearance card, before the reading card: how the page is painted
-          (themes, user.css, the theme package) is the louder half of
-          "screen on the outside", and the theme choice lives here now — drawn
-          as swatches — rather than as a menu in the reading card.
-        */}
-        <AppearanceCard />
-
-        <CollapsibleSection
-          id="reading"
-          title={t('sectionReading')}
-          summary={`${control.reading.size}px`}
-        >
-          <NumberField
-            label={t('proseSize')}
-            value={control.reading.size}
-            bounds={READING_LIMITS.size}
-            fallback={17}
-            decimals={0}
-            onCommit={value => {
-              if (value !== null) control.setReading({ ...control.reading, size: value })
-            }}
-          />
-          {/*
-            **No 行宽 control here any more, and its absence is the honest
-            reading of the 「梅花」 layout.**
-
-            It was a 48-96ch slider over `--iris-measure`, which capped the prose
-            column. canvas.json removes that cap — 正文、卡的界面、输入框三者同宽
-            … 不留死槽 — so the slider went on writing a token that no longer
-            bounded anything a reader could see. A control that moves nothing is
-            worse than one that is absent: it teaches the reader that the panel
-            lies.
-
-            **What was deliberately kept**, because the token still has one real
-            consumer: `ReadingPrefs.measure`, `READING_LIMITS.measure`,
-            `DEFAULT_READING.measure`, `applyReading`'s `--iris-measure` write
-            and `settings-transfer`'s clamp all stand. The chain
-            `--iris-measure` → `--iris-column-max` → `--sheldWidth` is upstream
-            compatibility (a card's inline HTML may read SillyTavern's chat-column
-            width), so the value must keep existing and keep round-tripping
-            through an exported settings file — it just is not a knob any more.
-
-            To put a reader-visible measure back, the question to answer first is
-            which surface it caps, because capping the prose alone re-opens the
-            dead channel the artboards were drawn to close.
-          */}
-          {/*
-            The floor numbers (upstream's `mesIDDisplay_enabled`, which the
-            measured profile turned on): marginalia in the row's margin, shown
-            by a document attribute rather than per-row props.
-          */}
-          <ToggleField
-            label={t('showFloorNumbers')}
-            note={t('showFloorNumbersNote')}
-            value={control.reading.floors}
-            onToggle={next => control.setReading({ ...control.reading, floors: next })}
-          />
-          {/*
-            The interface language. Lives beside the theme because it is the same
-            kind of thing — a per-device choice about the shell's own surface
-            (notes/SETTINGS-IA.md 意图 #4, 界面本地) — and takes effect on the spot,
-            like the theme does.
-          */}
-          <ChoiceField
-            label={t('sectionLanguage')}
-            value={lang}
-            options={[
-              // Each option is shown in its own language, always: a reader who
-              // has switched to a language they cannot yet read has to be able
-              // to find their way back by shape.
-              { id: 'en', label: t('langEn') },
-              { id: 'zh', label: t('langZh') },
-            ]}
-            onSelect={(id: Language) => setLang(id)}
-          />
-        </CollapsibleSection>
-
-        <ScriptPanel />
-
-        {/*
-          The user's own scripts, after the card's. They run in the same frame,
-          under the same per-card consent and the same remote-code allowlist —
-          `ScriptPanel` above is where all three of those are governed, for
-          every script in the conversation regardless of which repository it
-          came out of, which is why the switchboard is there and this panel is
-          only the library.
-        */}
-        <ScriptLibraryPanel />
-
-        {/*
-          The world books panel, beside the script panel because it answers the
-          same kind of question from the other side: what shapes the model's
-          view of this scene. Its data is installation-wide rather than per
-          chat, which is why it sits outside the `settings === undefined`
-          branch — like the host reports below, it is meaningful with no
-          conversation open at all.
-        */}
-        <WorldbookPanel />
-
-        {/*
-          The persona panel, beside the world books because both are
-          profile-wide inputs to every prompt: who the user is, and what the
-          world knows. Outside the `settings === undefined` branch for the same
-          reason the world books are — a persona is meaningful with no
-          conversation open at all.
-        */}
-        <PersonaPanel />
-
-        {/*
-          The backups panel, beside the persona panel because both are
-          profile-wide surfaces that work with no conversation open: who the
-          user is, and the copies the host has taken of their conversations.
-          A snapshot names the chat it protects and the operation it was taken
-          in front of, so the card is where "can I undo this" is answered.
-        */}
-        <BackupPanel />
-
-        {/*
-          The usage page's entry, beside the backups card because both are
-          profile-wide readings that work with no conversation open: what the
-          host has copied, and what the host has spent. It is the third usage
-          surface and the only one that can answer *across* conversations — the
-          composer's line is one chat, and a reply's reading is one turn.
-
-          `onNavigate` is the drawer's own close: a subtotal row opens a
-          conversation, and leaving the settings panel standing over the chat
-          the reader just asked for would hide it.
-        */}
-        <UsageSection onNavigate={onClose} />
-
-        {/*
-          The host's own reports, **outside** the `settings === undefined`
-          branch above and after the card panel.
-
-          Outside, because a failed settings load makes these *more* worth
-          reading, not less — a drawer that hides its diagnostics exactly when
-          something is wrong is the shape this whole view exists to end. After
-          the card panel, because it answers a different question: `ScriptPanel`
-          is about the card in front of you and is empty in a chat with no
-          scripts, while the host trims variables and materialises books
-          regardless of whether any card is running.
-        */}
-        <HostReports />
-
-        {/*
-          The notice history, beside the host's reports because they answer the
-          same question from two sides: what did this session say, and is it
-          still sayable. The bar itself is gone in three seconds.
-        */}
-        <NoticeLog />
-
-        {/*
-          The B10 seam's demo provider and its switch — not a dev probe (it is
-          meant to be observable in a production build, which is exactly what
-          the seam's acceptance asks for), and not a feature: it contributes
-          one floor action through `iris.message.actions` and takes it back on
-          uninstall, leaving nothing behind.
-        */}
-        <DemoActionsSection />
-
-        {/*
-          The general card: startup, the settings file in and out, and the
-          credential statement — the parts of the drawer that are not about the
-          conversation at all, which is why they sit last and work with no chat
-          open.
-        */}
-        <AboutCard control={control} />
-
-        {/*
-          Dev only, and written so the branch is statically dead in a production
-          build: `import.meta.env.DEV` is replaced with `false`, so the whole
-          harness — and the runner it pulls in — drops out of the bundle.
-        */}
-        {import.meta.env.DEV ? <SandboxProbe /> : null}
-        {import.meta.env.DEV ? <RailPreview /> : null}
-
-        <Slot name="iris.settings.sections" owner={{}} />
-      </div>
-    </aside>
-  )
+        const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+        const target = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + offset + tabs.length) % tabs.length
+        if (offset === 0 && event.key !== 'Home' && event.key !== 'End') return
+        event.preventDefault()
+        const next = tabs[target]?.[0]
+        if (next === undefined) return
+        onChange(next)
+        document.getElementById(`iris-regex-tab-${next}`)?.focus()
+      }}>{label}</button>)}
+  </div>
 }

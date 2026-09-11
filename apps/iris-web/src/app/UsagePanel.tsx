@@ -76,16 +76,20 @@ type PanelState =
  * @param props.open - whether the page is showing.
  * @param props.onClose - dismissal.
  * @param props.onOpenChat - open one conversation from its subtotal row.
- * @returns the modal.
+ * @param props.embedded - place the report in a settings detail page.
+ * @returns the report, optionally wrapped in its original modal.
  */
 export function UsagePanel({
   open,
   onClose,
   onOpenChat,
+  embedded = false,
 }: {
   open: boolean
   onClose: () => void
   onOpenChat: (chatId: string) => void
+  /** Render the same report in a settings detail page instead of a modal. */
+  embedded?: boolean
 }): ReactElement {
   const actions = useIrisActions()
   const [range, setRange] = useState<UsageRange>('week')
@@ -113,6 +117,28 @@ export function UsagePanel({
     }
   }, [open, range, actions])
 
+  const content = (
+    <div className="iris-usage">
+      {state.kind === 'ready' ? (
+        <UsageReport
+          summary={state.summary}
+          range={range}
+          onRange={setRange}
+          onOpenChat={onOpenChat}
+        />
+      ) : (
+        <>
+          <Toolbar range={range} onRange={setRange} />
+          <p className="iris-usage__status">
+            {state.kind === 'error' ? state.message : t('usageCounting')}
+          </p>
+        </>
+      )}
+    </div>
+  )
+
+  if (embedded) return content
+
   return (
     <Modal
       open={open}
@@ -128,32 +154,7 @@ export function UsagePanel({
       */
       className="iris-usage-dialog"
     >
-      <div className="iris-usage">
-        {/*
-          The range switch is the report's when there is a report, and this
-          branch's while there is not — one `Toolbar`, two mutually exclusive
-          call sites, rather than one control rendered twice. It has to survive
-          a failed or pending read: a reader whose "today" answered nothing (or
-          errored) needs the switch that gets them out of it, and a toolbar that
-          only exists inside a successful reading is the one arrangement that
-          strands them.
-        */}
-        {state.kind === 'ready' ? (
-          <UsageReport
-            summary={state.summary}
-            range={range}
-            onRange={setRange}
-            onOpenChat={onOpenChat}
-          />
-        ) : (
-          <>
-            <Toolbar range={range} onRange={setRange} />
-            <p className="iris-usage__status">
-              {state.kind === 'error' ? state.message : t('usageCounting')}
-            </p>
-          </>
-        )}
-      </div>
+      {content}
     </Modal>
   )
 }

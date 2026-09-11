@@ -94,7 +94,7 @@ test('the menu builds its rows from the list, and so does the drawer', () => {
   // spell the words out. Six literals in a `.tsx` file is how one of them comes
   // to offer five.
   assert.match(COMPOSER, /REASONING_EFFORTS\.map\(/, 'the bar spells its own effort rows')
-  const drawer = source(HERE, '..', 'src', 'app', 'SettingsDrawer.tsx')
+  const drawer = source(HERE, '..', 'src', 'app', 'GenerationPanel.tsx')
   assert.match(drawer, /REASONING_EFFORTS\.map\(/, 'the drawer spells its own effort rows')
   for (const file of [COMPOSER, drawer]) {
     assert.doesNotMatch(file, /id: 'medium'/, 'an effort word is written out beside the shared list')

@@ -46,6 +46,7 @@ import {
 } from '../src/app/token-format.ts'
 import { UsageDetailCard } from '../src/app/UsagePopover.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
+import { searchSettings } from '../src/app/SettingsNavigation.tsx'
 // Aliased: `totalTokens` above is the one-generation reader, and this is the
 // aggregate one. Two functions of the same name over different types is exactly
 // the confusion the protocol drops `totalTokens` from every aggregate to avoid.
@@ -175,6 +176,12 @@ async function main(): Promise<void> {
   )
   // And the card that held the typed route has not come back.
   assert.doesNotMatch(settled, /id="iris-card-route"/, 'the route card is back — the route is typable again')
+  assert.equal(settled.match(/data-settings-destination=/g)?.length, 14, 'the settings directory should expose fourteen destinations')
+  assert.equal(settled.match(/data-settings-route=/g)?.length, 14, 'every settings destination needs one drawer-local page')
+  assert.match(settled, /aria-label="Search settings categories"/, 'the category search is missing')
+  assert.match(settled, /role="tablist" aria-label="Regex scope"/, 'the regex scopes are not an accessible segmented control')
+  assert.deepEqual(searchSettings('上下文').map(row => row.route), ['memory/context'], 'Chinese category search did not reach context')
+  assert.deepEqual(searchSettings('reading').map(row => row.route), ['appearance'], 'English category search did not reach reading')
   // Only the last reply offers a retry; more than one would mean discarding
   // history the protocol has no operation for.
   assert.equal(settled.match(/>Regenerate</g)?.length, 1, 'exactly one Regenerate expected')
