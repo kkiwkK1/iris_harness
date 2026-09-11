@@ -47,6 +47,7 @@ import { join } from 'node:path'
 import { atomicWriteFile } from './atomic.ts'
 
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
+import { redactSecrets } from '@iris/llm-openai-compat'
 import { SYSTEM_JOIN, type Role } from '@iris/pipeline'
 import { HISTORY_ITEM_PREFIX, type PromptDivergence, type PromptDivergenceItem } from '@iris/protocol'
 
@@ -131,7 +132,10 @@ export interface CacheTraceFile {
   cacheReadTokens?: number
   /**
    * Present when the reply did not complete: what surfaced in the report panel,
-   * verbatim. A trace that ends this way has no usage fields — not zero, just
+   * verbatim **except for credentials**, which {@link traceOf} takes out on the
+   * way here — a provider's refusal body can quote the request's own
+   * `Authorization` header, and this field is the copy that outlives the
+   * session. A trace that ends this way has no usage fields — not zero, just
    * absent — because the provider never reported usage for a reply it never
    * finished; zero would be a measurement of nothing, and a reader comparing
    * turns could mistake an interrupted turn for a free one.
@@ -383,7 +387,15 @@ export function traceOf(
     bytes: canonical.bytes,
     ...usage?.inputTokens === undefined ? {} : { inputTokens: usage.inputTokens },
     ...usage?.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens },
-    ...error === undefined ? {} : { error },
+    // Scrubbed on the way to disk, defensively. The adapter already scrubs the
+    // body it echoes, so in the ordinary path this is the identity; it is here
+    // because `error` is *whatever surfaced in the report panel*, this file is
+    // the only one of the two destinations that keeps it after the session, and
+    // a message that reached the host by some other path — another adapter, a
+    // plugin, a rethrow that wrapped a credential — would otherwise be written
+    // out verbatim. The patterns are the adapter's, imported rather than
+    // restated, so the two cannot drift.
+    ...error === undefined ? {} : { error: redactSecrets(error) },
     spans: attribution.spans,
     coveredBytes: attribution.spans.reduce((total, span) => total + (span.end - span.start), 0),
     attributed: attribution.attributed,

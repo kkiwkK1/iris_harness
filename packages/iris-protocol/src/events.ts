@@ -70,7 +70,26 @@ export type IrisEvent =
     view: ChatView
     reason: 'completed' | 'aborted'
   }
-  /** The turn failed. The user's message survives, so a retry is meaningful. */
+  /**
+   * The turn failed. The user's message survives, so a retry is meaningful.
+   *
+   * `code` is a string rather than a union because a host may name a layer this
+   * protocol has not heard of, and a client that meets an unknown code prints
+   * `message`. The five the host sends today:
+   *
+   * - `aborted` — the user pressed stop.
+   * - `timeout` — a phase budget expired; the adapter's message names which.
+   * - `provider-error` — the endpoint refused or broke. The detail is the
+   *   provider's own words and is the information.
+   * - `no-provider` — raised before the request left, because no saved provider
+   *   is in use (`iris-app-service` §61). The browser prints its own sentence
+   *   for this one.
+   * - `storage-error` — the reply was **generated** and could not be written to
+   *   disk (`iris-app-service` §72). The one code that does not mean "nothing
+   *   was produced": the text is on the host's in-memory log and the next save
+   *   that succeeds writes it, which is what the message says, and the
+   *   `chat.updated` frame sent just before it carries the view it is in.
+   */
   | { type: 'stream.error', chatId: string, turn: number, code: string, message: string }
   /** Something other than streaming changed this chat — an edit, a swipe, a delete. */
   | { type: 'chat.updated', chatId: string, view: ChatView }

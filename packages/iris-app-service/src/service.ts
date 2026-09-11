@@ -4804,6 +4804,23 @@ export class IrisAppService {
 
   /**
    * Record a finished generation and tell every page.
+   *
+   * **A settle that cannot store its reply is a terminal event of its own.**
+   * Everything below the generation — the variable records, the rewrite, the
+   * save — runs inside one `try`, and its `catch` used to do nothing but
+   * release the chat and file a report: on a full disk or a permission error
+   * the reply existed in memory,
+   * the report panel knew, and the page stayed in the generating state until
+   * somebody reloaded it, while every other terminal path (`#fail`'s three)
+   * broadcasts. Upstream cannot reach this state — its save is a request the
+   * browser makes *after* the generation has ended, and `saveChat`'s own catch
+   * toasts `Chat could not be saved` / `Check the server connection and reload
+   * the page to prevent data loss.` (`public/script.js:7417-7423`) while
+   * `chat[]` keeps the reply and the next successful save writes it
+   * (`saveChatConditional`, `9352-9378`, logs the failure and swallows it). So
+   * the failure is told twice here, in upstream's order: `chat.updated` carries
+   * the view the reply is *in*, then `stream.error` with `storage-error` ends
+   * the turn and puts the sentence in front of the reader.
    * @param entry - the conversation.
    * @param turn - the turn that settled.
    * @param text - the generation's visible text.
@@ -4817,6 +4834,13 @@ export class IrisAppService {
     reason: 'completed' | 'aborted',
     options: { recordVariables?: boolean } = {},
   ): Promise<void> {
+    // Whether this turn has already had its terminal event. Set **before** the
+    // `stream.end` broadcast rather than after it: once the frame is handed to
+    // the carrier every subscriber may have seen it, and a failure in what
+    // follows — `#announceChats` is a directory read, and it is inside this
+    // `try` — must then be reported rather than answered with a second terminal
+    // frame contradicting the first.
+    let terminal = false
     try {
       // The reply-shaping settings run first, before variables and storage
       // read the text: upstream applies `cleanUpMessage` before the message is
@@ -4904,6 +4928,7 @@ export class IrisAppService {
       await this.#options.chats.save(entry, message => {
         this.#report(message, { kind: 'variables', grade: 'fault', chatId: entry.chatId })
       })
+      terminal = true
       this.#options.broadcast({
         type: 'stream.end', chatId: entry.chatId, turn, view: this.#viewOf(entry), reason,
       })
@@ -4911,6 +4936,30 @@ export class IrisAppService {
     } catch (cause: unknown) {
       entry.finish()
       this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+      if (terminal) return
+      // The reply itself is not lost: it is a candidate on `entry.session`, and
+      // the entry stays in `ChatStore`'s map for as long as this host runs, so
+      // the next save that succeeds — the next turn's — writes the whole log
+      // including this turn. That is the half of the truth a page cannot see,
+      // and from its side an unsaved reply and a lost one look identical, which
+      // is why the view goes out first and the sentence says so.
+      try {
+        this.#options.broadcast({
+          type: 'chat.updated', chatId: entry.chatId, view: this.#viewOf(entry),
+        })
+      } catch {
+        // A view this host cannot project is not a reason to withhold the
+        // failure itself. The frame below is the one that must go out.
+      }
+      this.#options.broadcast({
+        type: 'stream.error',
+        chatId: entry.chatId,
+        turn,
+        code: 'storage-error',
+        message: `the reply was generated but could not be saved: `
+          + `${cause instanceof Error ? cause.message : String(cause)}`
+          + `; it is held in this host's memory and the next save that succeeds writes it`,
+      })
     }
   }
 
