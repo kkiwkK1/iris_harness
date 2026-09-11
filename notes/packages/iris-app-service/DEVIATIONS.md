@@ -6268,3 +6268,173 @@ ephemeral port asks all four routes for a refusal under
 `127.0.0.1.nip.io:<port>` and for an answer under `127.0.0.1:<port>`, and
 checks that `/sandbox/preset.js` really is served — 200 with its CORS header —
 so the accepting half is not four 404s agreeing with each other.
+
+## 72. A reply that cannot be stored ends its turn out loud, and a provider's words reach the page and the disk with the credentials taken out
+
+**Kind.** Two findings from the 2026-09-11 system audit, both low severity and
+neither of them a compatibility question: upstream cannot reach the first state
+and has never echoed a body into a stored record the way the second does.
+
+Dated 2026-09-11.
+
+### F13. The one terminal path that said nothing
+
+**What was there.** `#settle` runs the reply trim, the variable records, the
+usage and timing records, the rewrite, the prune and the save inside one `try`,
+and its `catch` did two things: `entry.finish()` and
+`#report(cause, { kind: 'host', grade: 'fault' })`. Every *other* terminal path
+in the file broadcasts — `#fail`'s impersonation branch, its interrupted branch
+and its provider-error branch all end with a `stream.error` — so a save that
+failed was the one way a turn could stop without the page being told. On a full
+disk or a permission error the reply existed, in memory, on the entry's own log;
+the report panel knew; and the page stayed in the generating state, with the
+streaming buffer it had accumulated still on screen, until somebody reloaded it.
+The report panel is not a substitute: it is a panel somebody has to open, and
+what it says is that a write failed, not that the conversation on screen is not
+the conversation on disk.
+
+**What upstream does.** It cannot be in this state. Its save is a request the
+*browser* makes after the generation has already ended, so the generation's own
+end is never in doubt; `saveChat`'s catch toasts `Chat could not be saved` /
+`Check the server connection and reload the page to prevent data loss.`
+(`public/script.js:7417-7423`) and swallows, and `saveChatConditional`
+(`:9352-9378`) logs and swallows in turn, while `chat[]` keeps the reply and the
+next save that succeeds writes it. Two facts are worth taking from that and both
+are taken: the reader is told, and the reply is not lost.
+
+**What it does now.** The `catch` keeps its report and then, when the turn has
+not already ended, broadcasts two frames in this order:
+
+1. `chat.updated` with `#viewOf(entry)` — the view the unsaved reply is *in*.
+   Not terminal (the web store sets `view` on it and deliberately does not clear
+   the streaming buffer), so it costs nothing terminal and it is what stops the
+   page from showing a failure over a conversation that appears not to have
+   answered. Wrapped in its own `try`: a view this host cannot project is not a
+   reason to withhold the failure itself.
+2. `stream.error` with the code `storage-error` and the sentence
+   `the reply was generated but could not be saved: <cause>; it is held in this
+   host's memory and the next save that succeeds writes it`.
+
+**Why a new code.** The vocabulary is `aborted`, `timeout`, `provider-error` and
+`no-provider` (`failureCode`, and `iris-protocol`'s `events.ts`, where the five
+are now documented together). None of them fits, and the misfit is not
+cosmetic: all four mean *nothing was produced*, and this is the one failure
+where something was. `provider-error` would send a reader to the endpoint for a
+fault of the disk, and `internal` — which is an RPC code, not a stream one —
+would tell them nothing at all. `storage-error` names the layer that failed, the
+way `provider-error` does.
+
+**The second half of the sentence is a measured claim, not a reassurance.** The
+candidate is on `entry.session`; `ChatStore` keeps entries in a `Map` that
+nothing evicts (`#entries` is written on open/create/branch and deleted only by
+`delete` and `restoreFile`); and `save` writes the whole log. So the next turn's
+save writes this turn too — pinned by a test that fails a save, sends again with
+the store healthy, and reads two assistant floors out of the file. The limit is
+stated in the sentence by saying *this host's* memory: a restart before the next
+successful save loses it, and there is no path that could not.
+
+**Exactly one terminal frame per turn.** `#announceChats` is inside the same
+`try`, after the `stream.end` broadcast, and it reads the chats directory — so a
+listing failure used to reach the same `catch`, and adding a broadcast there
+without a guard would have answered a settled turn with a contradiction: the
+view, and then "the reply could not be saved". A `terminal` flag is set
+immediately *before* the `stream.end` broadcast (before, because once the frame
+is handed to the carrier every subscriber may have seen it) and the `catch`
+returns after its report when the flag is set.
+
+**What this costs, and it is deliberate.** `sandbox/host-events.ts` maps every
+`stream.error` to upstream's `GENERATION_STOPPED`, so a card hears this turn as
+stopped although its text exists; and the sentence reaches the page in the
+host's English, because the web store prints `event.message` for every code but
+`no-provider`. The second was weighed and left: the OS error is the actionable
+part (a full disk and a denied permission need different acts), a code-selected
+dictionary sentence would drop it, and the file's own rule is that the host's
+words are kept wherever they are the diagnosis. **What would overturn it:** a
+`stream.error` that can carry a view, or a separate non-terminal frame for "the
+reply is here and unsaved", would let the card keep hearing `GENERATION_ENDED`;
+a reader asking what to *do* more often than what happened would move the
+sentence into both dictionaries with the cause interpolated.
+
+### F16. A provider's body is not a safe thing to quote
+
+**The mechanism.** A non-2xx answer became
+`` `${url} responded ${response.status}: ${detail}` `` with `detail` the first
+500 characters of the body, verbatim
+(`packages/iris-llm-openai-compat/src/index.ts`). That sentence travels to every
+open page as `stream.error`'s message *and* onto disk as the cache trace's
+`error` field, which outlives the session in the profile. The body is not ours:
+a provider or a proxy that echoes the request's own `Authorization` header on a
+401 — a shape that exists — would put this route's key in a broadcast and in a
+file, and nothing in the code stopped it.
+
+**Not observed, and that is not a defence.** DeepSeek answers a bad key with
+`Your api key: **** is invalid`, masked at the source (measured 2026-09-09,
+recorded in §58). The defence cannot be a promise about what providers send.
+
+**The scrub.** `src/redact.ts` exports `redactSecrets(text, secrets)`, applied in
+two places: the adapter, on the body before the sentence exists, and
+`cache-trace.ts`'s `traceOf`, on the `error` field before it is written.
+Imported rather than restated, so the two cannot drift. Three rules, in order:
+
+- **The literal credential**, longest first — the adapter passes `credential.value`
+  (`Bearer <key>` for `Authorization`), the same value without its scheme, and
+  `config.apiKey`. Compared, never logged. Literals shorter than 8 characters are
+  ignored: a three-character key is not a credential, and replacing every
+  occurrence of such a string would turn a provider's sentence into rubble.
+- **`/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi`**, for a token this process never
+  held — a relayed error, a proxy quoting another tenant's header. The header
+  *name* is left standing (`Authorization: <redacted>` says what was taken out)
+  and eight characters are required, which no key misses and which keeps the
+  English words `Bearer token` out of it.
+- **`/\bsk-[A-Za-z0-9_-]{12,}/g`**, the prefix every OpenAI-compatible provider
+  in the corpus issues under. Twelve characters, so `sk-` used as a noun and
+  DeepSeek's `sk-****` are both left alone.
+
+Replacement is the single spelling `<redacted>`.
+
+**False positives are the cost, and they are bounded on purpose.** Each pattern
+can in principle eat text a reader wanted: an error that quotes a *masked* key
+long enough to pass the floors, prose of the form `Bearer <eight word>`, an
+identifier that happens to start `sk-` and run twelve characters. All three are
+losses of a fragment inside a sentence whose URL, status and remaining words
+stand; the failure in the other direction is a credential in a file. The
+identity case is pinned rather than assumed: a body with no secret in it comes
+back byte for byte, DeepSeek's real sentence included.
+
+**Scrubbed before the cut, not after.** The 500-character cap stays where it
+was, at the call site, and the scrub runs on the full body first — cutting first
+leaves the head of a key that straddles character 500, and a truncated
+credential is still a credential's prefix. The URL and the status are composed
+*after* the scrub, so no pattern can reach them.
+
+### Held by
+
+`packages/iris-llm-openai-compat/tests/redact.test.ts` (10: the three rules, the
+floors, the identity case, and two end-to-end refusals against a loopback
+endpoint that echoes the header it was sent) and
+`packages/iris-app-service/tests/settle-storage.test.ts` (6: the failed save's
+frame and sentence, the recovery that writes the unsaved reply on the next save,
+the announcement failure that must not produce a second terminal frame, the
+healthy control, and `#fail`'s own two save sites). One case added to
+`cache-trace.test.ts` for the field written to disk. Eighteen mutations were
+run; sixteen reddened a named assertion. The two that survived are recorded
+because they say something: dropping `entry.finish()` from the `catch` changes
+nothing in *this* path (the body's own `finish()` has already run above the
+save, and the `catch`'s call is the belt for a failure higher up), and dropping
+the body's call changes nothing either because the `catch` then covers it —
+removing **both** reddens the recovery test, which is the honest statement of
+what that assertion protects.
+
+### Found and not changed
+
+- The audit named two `catch`es; the second (`#fail`'s impersonation branch,
+  which reports a failed save and says nothing more) already broadcasts
+  `stream.error` on the next line, and so does the provider-error branch below
+  it. `#settle`'s is the only silent one — and it is the one all three
+  generation entries reach, since a settle failure inside `#fail`'s
+  impersonation and interrupted paths is swallowed by `#settle` itself and never
+  reaches their `catch`. Both are pinned as they stand: the generation is what
+  failed there, the provider's words are the diagnosis, and a storage failure
+  underneath is a report rather than a relabelling of the turn.
+- `describeError`'s `COPY` table is the **RPC** code vocabulary and is untouched:
+  `storage-error` is a stream code and never arrives as a rejection.

@@ -18,11 +18,19 @@ import {
   type LlmResolvedModelInfo,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import { redactSecrets } from './redact.ts'
 import { parseSse } from './sse.ts'
 import { serializeRequest } from './serialize.ts'
 import { translate } from './translate.ts'
 
 export type { IrisSampling } from './serialize.ts'
+
+/**
+ * Exported because the adapter is not the only place a provider's words reach a
+ * reader: `iris-app-service`'s cache trace writes the same sentence to disk,
+ * and one scrub with one set of patterns is what keeps the two from drifting.
+ */
+export { REDACTED, redactSecrets } from './redact.ts'
 
 /**
  * The wire form, exported so the layer that *assembles* a request can check
@@ -240,6 +248,12 @@ export class OpenAiCompatAdapter extends LlmAdapter {
    * disarmed**, so the connect budget would keep running underneath a healthy
    * long stream and kill it on schedule. Being able to stand each timer down
    * when its phase ends is the whole mechanism.
+   * A non-2xx answer becomes `<url> responded <status>: <body>`, the body cut
+   * to 500 characters **and passed through {@link redactSecrets} first**: that
+   * sentence is what the page shows and what the cache trace writes to disk,
+   * and a proxy that echoes the request's own `Authorization` header back on a
+   * 401 — some do — would otherwise put this route's key in both. The URL and
+   * the status are composed after the scrub and are never touched by it.
    * @param options - the request, and the caller's own cancellation.
    * @returns the stream's chunks in arrival order.
    * @throws {LlmError} `TIMEOUT` when a phase's budget expires, naming the
@@ -300,7 +314,21 @@ export class OpenAiCompatAdapter extends LlmAdapter {
       }
 
       if (!response.ok || response.body === null) {
-        const detail = response.body === null ? '(no body)' : (await response.text()).slice(0, 500)
+        // Scrubbed before the cut, so a credential straddling character 500 is
+        // removed rather than halved, and scrubbed before the sentence exists,
+        // so `url` and `status` — the two parts a reader navigates by — cannot
+        // be reached by a pattern at all.
+        const detail = response.body === null
+          ? '(no body)'
+          : redactSecrets(await response.text(), [
+            // The header value, the key inside it (an `Authorization` value is
+            // `Bearer <key>`, and an endpoint may echo either form) and the
+            // configured literal, which is the one an `apiKeyEnv` route does
+            // not otherwise have in hand.
+            credential?.value,
+            credential?.value.replace(/^Bearer /u, ''),
+            this.#config.apiKey,
+          ]).slice(0, 500)
         throw new LlmError(`${url} responded ${response.status}: ${detail}`, 'TRANSPORT')
       }
 
