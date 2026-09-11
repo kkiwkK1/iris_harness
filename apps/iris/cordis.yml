@@ -85,6 +85,20 @@
 - id: app
   name: '@iris/app-service'
   config:
+    # **One host per data directory, enforced.** On startup the app service
+    # creates `<dataDir>/host.lock` with `open(path, 'wx')` and refuses to start
+    # when the pid it already names is running — every store here is a
+    # whole-file rewrite from memory, so a second host's save overwrites the
+    # first's newer file whole and silently (it has happened on this machine;
+    # `notes/packages/iris-app-service/DEVIATIONS.md` §71). A lock left by a
+    # process that is gone is stale: the next host takes it over and says so.
+    # Released on an orderly shutdown, never on a crash — that is what the
+    # liveness check is for.
+    #
+    # **There is no override flag, on purpose.** Running a second host is still
+    # supported and takes a second `IRIS_DATA_DIR`, which is a copy away. Note
+    # that this is about the *directory*, not the port: two hosts on 8787 and
+    # 8790 sharing one `./data` is exactly the case a port check cannot see.
     dataDir: !!js process.env.IRIS_DATA_DIR ?? './data'
     # Storage is profile-scoped. The default matches SillyTavern's own
     # `data/<user>/` layout, so pointing IRIS_DATA_DIR at an existing install

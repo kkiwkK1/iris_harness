@@ -10,7 +10,7 @@ import { formatChatFile, parseChatFile, type SillyTavernMessage } from '@iris/pe
 import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
-import { BackupStore, backupStamp, parseBackupStamp, rotateBackups } from '../src/backups.ts'
+import { BackupStore, backupStamp, compareBackupNames, parseBackupStamp, rotateBackups } from '../src/backups.ts'
 import { ChatStore } from '../src/chats.ts'
 import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
@@ -107,6 +107,86 @@ test('rotateBackups never deletes everything', () => {
   assert.deepEqual(rotateBackups(['a.jsonl', 'b.jsonl'], -5), ['a.jsonl'])
 })
 
+/*
+ * ── Order, when two snapshots share a millisecond ──────────────────────────
+ *
+ * A collided pair is the one case where a plain string sort says the opposite
+ * of time order: `…-save-2.jsonl` was written *after* `…-save.jsonl` and sorts
+ * before it, because `-` is 0x2D and `.` is 0x2E. At the retention edge that
+ * made rotation delete the newer of the two — the copy worth keeping, which is
+ * precisely what the suffix was added to protect.
+ *
+ * This host no longer mints the suffix; `snapshot` advances the stamp instead.
+ * The names already on disk keep it, so both halves are pinned here: the
+ * comparator orders the legacy shape correctly, and the writer produces no new
+ * one.
+ */
+
+/** The names of every collision shape this repository has ever written. */
+const LEGACY_NAMES = [
+  // Measured 2026-09-11 against the only real `backups` tree on this machine
+  // (`apps/iris/data/default-user/backups/爱衣/…`, read-only): three files, all
+  // of the unsuffixed shape, one reason, floor counts 4 and 5.
+  '20260908-163452-411-f5-delete-message.jsonl',
+  '20260908-163453-703-f4-delete-message.jsonl',
+  '20260909-163544-781-f4-delete-message.jsonl',
+  // The fixtures' shape, and the suffixes the old writer could produce.
+  '20990101-000000-000-f6-delete-message.jsonl',
+  '20260906-123456-789-f42-pre-restore.jsonl',
+  '20260906-123456-789-f42-pre-restore-2.jsonl',
+  '20260906-123456-789-f42-pre-restore-10.jsonl',
+  // A reason this build does not know is still one of ours.
+  '20260906-123456-789-f0-some-future-reason.jsonl',
+]
+
+test('every snapshot name shape already on disk still parses', () => {
+  for (const name of LEGACY_NAMES) {
+    assert.ok(
+      rotateBackups([name, 'zzz'], 1).length === 1,
+      `a name the corpus holds must still be one of ours: ${name}`,
+    )
+    // The load-bearing half: a name this build cannot take apart orders by the
+    // plain comparison, which is the behaviour the collided shape needs fixed.
+    assert.notEqual(compareBackupNames(name, name.replace('.jsonl', '-2.jsonl')), 0,
+      `${name} and its collided sibling must not compare equal`)
+  }
+})
+
+test('a collided pair sorts and rotates in time order, not in byte order', () => {
+  const first = '20260906-123456-789-f42-pre-restore.jsonl'
+  const second = '20260906-123456-789-f42-pre-restore-2.jsonl'
+  const third = '20260906-123456-789-f42-pre-restore-3.jsonl'
+
+  // The measurement this exists for: the plain comparison is backwards here.
+  assert.ok(second < first, 'the premise — `-` (0x2D) sorts before `.` (0x2E)')
+
+  assert.ok(compareBackupNames(first, second) < 0, 'the unsuffixed copy is the older of the pair')
+  assert.ok(compareBackupNames(second, third) < 0, '-2 was written before -3')
+  assert.deepEqual([third, second, first].sort(compareBackupNames), [first, second, third])
+
+  // Rotation deletes from the front, so at the retention edge the *oldest* goes.
+  assert.deepEqual(rotateBackups([third, first, second], 2), [first],
+    'keeping two of a collided triple must drop the unsuffixed one, which is the oldest')
+  assert.deepEqual(rotateBackups([third, first, second], 1), [first, second])
+})
+
+test('an earlier stamp still wins over a collision suffix', () => {
+  // The suffix orders *within* a stamp and never across one — a `-9` at
+  // 12:34:56.788 is older than an unsuffixed copy at 12:34:56.789.
+  const earlier = '20260906-123456-788-f42-pre-restore-9.jsonl'
+  const later = '20260906-123456-789-f42-pre-restore.jsonl'
+  assert.ok(compareBackupNames(earlier, later) < 0)
+  assert.deepEqual(rotateBackups([later, earlier], 1), [earlier])
+})
+
+test('names that are not ours fall back to the plain comparison', () => {
+  // `rotateBackups` is a pure function over whatever it is handed, and the
+  // suite above hands it `a.jsonl`.
+  assert.ok(compareBackupNames('a.jsonl', 'b.jsonl') < 0)
+  assert.equal(compareBackupNames('a.jsonl', 'a.jsonl'), 0)
+  assert.ok(compareBackupNames('20260906-123456-789-f42-pre-restore.jsonl', 'a.jsonl') < 0)
+})
+
 test('a snapshot stamp round-trips through UTC', () => {
   const moment = new Date('2026-09-06T08:09:10.123Z')
   const stamp = backupStamp(moment)
@@ -137,6 +217,36 @@ test('a snapshot lands under its character and chat, named with when and why', a
   const original = await readFile(join(fixed.dir, 'chats', 'long.jsonl'), 'utf8')
   const copy = await readFile(fixed.backups.locate(saved.backupId), 'utf8')
   assert.equal(copy, original)
+})
+
+test('two stores stamping the same millisecond mint no suffix: the stamp moves instead', async (t) => {
+  const fixed = await fixture(t)
+  // A frozen clock is the collision itself. Two stores, each with its own
+  // monotonic counter, is the shape the old comment named as the case it could
+  // not see — a second `BackupStore` on the one directory, which until the host
+  // lock landed was a second *process*.
+  const frozen = (): number => Date.parse('2026-09-06T12:34:56.789Z')
+  const chatsDir = join(fixed.dir, 'chats')
+  const a = new BackupStore(chatsDir, { now: frozen })
+  const b = new BackupStore(chatsDir, { now: frozen })
+  const c = new BackupStore(chatsDir, { now: frozen })
+
+  const first = await a.snapshot('long', 'pre-restore', 'aria')
+  const second = await b.snapshot('long', 'pre-restore', 'aria')
+  const third = await c.snapshot('long', 'pre-restore', 'aria')
+
+  const names = (await readdir(join(backupsDir(chatsDir), 'aria', 'long'))).sort()
+  assert.equal(names.length, 3, 'three snapshots of one millisecond must be three files, not one overwritten twice')
+  for (const name of names) {
+    assert.doesNotMatch(name, /-\d+\.jsonl$/u, `no name may carry a collision suffix any more: ${name}`)
+  }
+
+  // Written order is name order, which is what rotation reads.
+  assert.deepEqual([...names].sort(compareBackupNames), names.slice().sort(),
+    'with no suffix, the comparator and a plain sort must agree')
+  assert.ok((first.createdAt) < (second.createdAt), 'the second copy is stamped later than the first')
+  assert.ok((second.createdAt) < (third.createdAt))
+  assert.deepEqual(rotateBackups(names, 1), names.slice(0, 2), 'keeping one keeps the newest of the three')
 })
 
 test('a chat with no card files under the no-character directory', async (t) => {
@@ -228,6 +338,34 @@ test('retention deletes the oldest copies, newest survive', async (t) => {
 
   const left = await fixed.backups.list('long')
   assert.deepEqual(left.map(row => row.messageCount), [9, 8], 'retention kept something other than the newest two')
+})
+
+test('a collided pair an older build left on disk rotates oldest-first and lists newest-first', async (t) => {
+  const fixed = await fixture(t, { keep: 2 })
+  const chatDir = join(backupsDir(join(fixed.dir, 'chats')), 'aria', 'long')
+  await mkdir(chatDir, { recursive: true })
+  // The shape this host no longer mints but every profile that ran an older
+  // build may hold: one millisecond, two copies, the second suffixed `-2`. A
+  // plain sort puts `-2` first (`-` 0x2D before `.` 0x2E), so rotation at the
+  // retention edge deletes the *newer* of the two — which is the bug.
+  const older = '20260906-123456-789-f2-delete-message.jsonl'
+  const newer = '20260906-123456-789-f2-delete-message-2.jsonl'
+  await writeFile(join(chatDir, older), chatFile('long', 2, 'older', 'aria'), 'utf8')
+  await writeFile(join(chatDir, newer), chatFile('long', 3, 'newer', 'aria'), 'utf8')
+
+  const listed = await fixed.backups.list('long')
+  assert.deepEqual(listed.map(row => row.backupId.split('/')[2]), [newer, older],
+    'the list answers newest first, and the collided pair shares a createdAt so only the name can order it')
+
+  // A third snapshot takes the count to three against a retention of two, so
+  // exactly one file goes. It must be the unsuffixed one.
+  await setChatFile(fixed.dir, 'long', 9)
+  await fixed.backups.snapshot('long', 'delete-message', 'aria')
+
+  const left = (await readdir(chatDir)).sort()
+  assert.equal(left.length, 2)
+  assert.ok(!left.includes(older), 'rotation deleted something other than the oldest copy')
+  assert.ok(left.includes(newer), 'rotation deleted the newer half of the collided pair — the copy worth keeping')
 })
 
 test('a handle that would leave the store is refused, not resolved', async (t) => {

@@ -17,6 +17,8 @@ import { boot, loadEnv } from '@deepseek-ai/dsh-app-boot'
 // port so it can print a URL that is true even when the configured one was taken.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 
+import { describePortDrift, describePortInUse } from './banner.ts'
+
 const here = fileURLToPath(new URL('.', import.meta.url))
 
 // Inherited environment wins over the file, so a one-off override still works.
@@ -34,7 +36,25 @@ if (process.env.IRIS_WEB_DIST === undefined && existsSync(distIndex)) {
   process.env.IRIS_WEB_DIST = distIndex
 }
 
-const ctx = await boot('iris', fileURLToPath(new URL('./cordis.yml', import.meta.url)))
+// A boot that dies because something already holds the port reaches the person
+// as a Cordis plugin-tree stack trace naming a package they never configured.
+// One sentence instead — and anything else still gets the trace, because a
+// swallowed unknown failure is worse than an ugly one.
+//
+// The other refusal this host can make at startup — a data directory another
+// host already has open — prints its own sentence from inside the app service
+// and arrives here as an ordinary failed boot.
+const bootOrExplain = async (): Promise<Awaited<ReturnType<typeof boot>>> => {
+  try {
+    return await boot('iris', fileURLToPath(new URL('./cordis.yml', import.meta.url)))
+  } catch (error: unknown) {
+    const taken = describePortInUse(error)
+    if (taken === undefined) throw error
+    console.error(taken)
+    process.exit(1)
+  }
+}
+const ctx = await bootOrExplain()
 
 const shutdown = async (): Promise<void> => {
   await ctx.fiber.dispose()
@@ -52,9 +72,14 @@ const url = `http://${ctx.webServer.host}:${String(ctx.webServer.port)}`
 const interfaceLine = process.env.IRIS_WEB_DIST === undefined
   ? '  interface: not built — run `pnpm build:web`, then restart'
   : `  interface: ${url}`
+// Only when `IRIS_PORT` names one: the composition's default is written in
+// `cordis.yml` and restating `8787` here would be a second copy of a constant.
+const configuredPort = process.env.IRIS_PORT === undefined ? undefined : Number(process.env.IRIS_PORT)
+const driftLine = describePortDrift(configuredPort, ctx.webServer.port)
 console.log([
   'iris: host composition active.',
   `  listening: ${url}`,
+  ...driftLine === undefined ? [] : [driftLine],
   interfaceLine,
   `  endpoint:  ${endpoint}`,
   `  model:     ${model}`,

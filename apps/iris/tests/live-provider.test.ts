@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -44,6 +47,7 @@ const skip = !enabled
 const MODEL = process.env.IRIS_LIVE_MODEL ?? 'deepseek-v4-flash'
 
 let ctx: Context
+let dataDir: string
 
 before(async () => {
   if (key === undefined) return
@@ -51,11 +55,19 @@ before(async () => {
   process.env.IRIS_BASE_URL = 'https://api.deepseek.com/v1'
   process.env.IRIS_MODEL = MODEL
   process.env.IRIS_API_KEY_ENV = 'DEEPSEEK_API_KEY'
+  // An ephemeral port and a temporary data directory, because this boots the
+  // **real** composition: it defaults to 8787 and `apps/iris/data`, both of
+  // which belong to whatever host the person running this has open — and the
+  // app service now refuses to start on a data directory another host holds.
+  dataDir = await mkdtemp(join(tmpdir(), 'iris-live-'))
+  process.env.IRIS_PORT = '0'
+  process.env.IRIS_DATA_DIR = dataDir
   ctx = await boot('iris-live', fileURLToPath(new URL('../cordis.yml', import.meta.url)))
 })
 
 after(async () => {
   if (ctx !== undefined) await ctx.fiber.dispose()
+  if (dataDir !== undefined) await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
 })
 
 const CONTRIBUTIONS: Contribution[] = [

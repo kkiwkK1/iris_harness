@@ -31,6 +31,7 @@ import type { CharacterCard } from '@iris/character'
 
 import { CardStorageStore } from './card-storage.ts'
 import { DiagnosticBuffer } from './diagnostics.ts'
+import { acquireHostLock } from './host-lock.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
@@ -58,6 +59,7 @@ export {
   DEFAULT_BACKUP_KEEP,
   NO_CHARACTER,
   backupStamp,
+  compareBackupNames,
   parseBackupStamp,
   rotateBackups,
   type BackupIntent,
@@ -76,6 +78,16 @@ export {
 export { ChatEntry, lineTurns, metadataBackend, readMeta, type IrisChatMeta } from './entry.ts'
 export { AppError, busy, invalid, notFound } from './errors.ts'
 export { FavoriteStore } from './favorites.ts'
+export {
+  acquireHostLock,
+  describeHeldLock,
+  HOST_LOCK_FILE,
+  isPidAlive,
+  readLockRecord,
+  type HostLock,
+  type HostLockOptions,
+  type HostLockRecord,
+} from './host-lock.ts'
 export { applyChatOrder, ChatOrderStore } from './chat-order.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
 export {
@@ -516,6 +528,40 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const root = rootOf(ctx)
   const dataDir = resolve(root, config.dataDir ?? './data')
   const avatarPath = config.avatarPath ?? '/iris/avatar'
+
+  /*
+   * **The data directory is taken before anything reads or writes in it.**
+   *
+   * Every store here is a whole-file rewrite from in-memory state, so two hosts
+   * on one directory are two copies of the same files and the second one's save
+   * overwrites the first one's newer file whole — silently, on both sides. This
+   * is the first statement in `apply` for the same reason
+   * `refuseOverlappingInstall` is early: by the time a store has read a file the
+   * damage is already possible, and the only honest place to refuse is before
+   * the first read.
+   *
+   * The port recorded is `ctx.webServer.port`, the **bound** one. This plugin
+   * injects `webServer`, so the carrier has finished listening by the time
+   * `apply` runs and the value is the port a person would actually open —
+   * which is what the refusal sentence has to name to be actionable.
+   *
+   * The release is a fiber effect rather than a `process.on('exit')` handler:
+   * `bin.ts`'s SIGINT/SIGTERM path disposes the fiber, the tests dispose it,
+   * and an effect is the one spelling that covers both. A crash releases
+   * nothing, deliberately — see `host-lock.ts`.
+   */
+  const lock = await acquireHostLock(dataDir, { port: ctx.webServer.port })
+  if (lock.takeover !== undefined) ctx.logger.warn(lock.takeover)
+  // The disposer is `async` and its promise is returned, the way the carrier's
+  // own listen effect is: a fire-and-forget release resolves `dispose()` before
+  // the file is gone, so a supervisor that restarts the host the instant the old
+  // one exits races its own lock — measured, as a failing assertion that the
+  // file was gone after `fiber.dispose()`.
+  ctx.effect(() => async () => {
+    await lock.release().catch((error: unknown) => {
+      ctx.logger.warn(error instanceof Error ? error.message : String(error))
+    })
+  }, 'irisApp.hostLock')
 
   // Every path comes from one derivation, so a profile is one segment rather
   // than a change in five places — and so a store added later cannot be the one
