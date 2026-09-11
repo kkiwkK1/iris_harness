@@ -839,6 +839,51 @@
   color: var(--iris-ink-secondary);
 }
 
+/*
+ * ---------------------------------------------------------- prose beautify
+ *
+ * The reading surface's own typesetting, one reader switch away
+ * (`notes/FEATURE-PROSE-BEAUTIFY.md`). 段首缩进, a paragraph gap that scales
+ * with the reader's prose size, and dialogue lines set off from narration —
+ * the display-layer mechanisms a SillyTavern beautify preset ships as regex,
+ * done here as rules this stylesheet owns, for every card, rewriting nothing.
+ *
+ * Every rule gates on the root attribute the switch writes, so turning the
+ * beautify off returns the page to a rendering identical to before the
+ * feature existed; every rule is scoped to an assistant row's markdown, the
+ * prose that is the reading surface's to typeset (a user row's note has its
+ * own design above, and is not this feature's to touch).
+ *
+ * **The shell rule.** `.iris-msg__text` holds the markdown render *and* Iris
+ * machinery (interface slots, over-budget placeholders) as siblings. The one
+ * separator is `> :not([class*='iris-'])`: the markdown root's class belongs
+ * to its CSS module, and every Iris wrapper is prefixed. `prose-beautify.ts`
+ * quotes the same rule when it tags dialogue paragraphs — one concept, said
+ * twice, so the two can never disagree about what prose is.
+ *
+ * Colours are palette tokens only; the two rhythm numbers are typography
+ * tokens (`--iris-prose-indent`, `--iris-prose-para`, `tokens.css`). The one
+ * literal is the dialogue's `0.6em` pad, an em ratio like the bridge's
+ * heading scale — theme-independent structure, not a palette value.
+ */
+[data-iris-prose-beautify='on'] .iris-msg--assistant .iris-msg__text > :not([class*='iris-']) p {
+  margin-block: var(--iris-prose-para);
+  text-indent: var(--iris-prose-indent);
+  text-wrap: pretty;
+}
+
+/*
+ * The dialogue line: flush where narration indents, and carried by the same
+ * quiet plum hairline the surface already speaks — 1px `--iris-accent-quiet`,
+ * deliberately a step down from the user row's 2px `--iris-accent` bar, which
+ * is the design's one "this one is yours" and must stay alone at that weight.
+ */
+[data-iris-prose-beautify='on'] .iris-msg--assistant .iris-msg__text > :not([class*='iris-']) p[data-iris-dialogue='on'] {
+  text-indent: 0;
+  border-left: var(--iris-hairline) solid var(--iris-accent-quiet);
+  padding-left: 0.6em;
+}
+
 
 /*
  * "Show earlier", above the oldest mounted message.

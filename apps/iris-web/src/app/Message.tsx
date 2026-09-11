@@ -10,7 +10,7 @@
  * @module iris-web/app/Message
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -23,6 +23,12 @@ import { Reasoning } from './Reasoning.tsx'
 import { UsagePopover } from './UsagePopover.tsx'
 import { VariantRail } from './VariantRail.tsx'
 import { usageChipText, usageDetailRows } from './token-format.ts'
+import {
+  getProseBeautify,
+  subscribeProseBeautify,
+  tagDialogueParagraphs,
+  untagDialogueParagraphs,
+} from './prose-beautify.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /** What a message row can do, supplied by the pane that owns the chat. */
@@ -66,9 +72,39 @@ export function Message({
     if (editing) field.current?.focus()
   }, [editing])
 
+  /*
+   * The prose beautify's dialogue tag, at the one place it can live.
+   *
+   * This row — not `MessageInterfaces` — because the tagger is a display
+   * afterthought by design: it reads the paragraphs the pipeline already put
+   * on screen and writes one attribute on them, so it must sit **outside**
+   * the claim seam (that module imports nothing from `prose-beautify.ts`; a
+   * source test pins the direction). Like the claim itself, it runs only on
+   * a settled assistant row — per-token DOM walks while streaming are the
+   * cost the pipeline already ruled out once.
+   *
+   * Turning the switch off (or entering edit mode, which unmounts this div)
+   * takes the attributes back off rather than leaving them for no rule to
+   * read. Deps carry the visible reading's index and the edit mode as well
+   * as the text: a swipe or an edit cycle remounts the shell, and a remount
+   * loses attributes as surely as a changed text re-runs this effect.
+   */
+  const beautify = useSyncExternalStore(subscribeProseBeautify, getProseBeautify, getProseBeautify)
+  const textShell = useRef<HTMLDivElement>(null)
+
   const streaming = message.streaming === true
   const swipes = message.swipes
   const turn = message.turn
+
+  useEffect(() => {
+    const shell = textShell.current
+    if (shell === null) return
+    if (!beautify || editing || streaming || message.role !== 'assistant') {
+      untagDialogueParagraphs(shell)
+      return
+    }
+    tagDialogueParagraphs(shell)
+  }, [beautify, editing, streaming, message.role, message.text, swipes?.index])
 
   const beginEdit = (): void => {
     setDraft(message.text)
@@ -135,8 +171,13 @@ export function Message({
               which is what replays the slip — the animation is attached to mount
               rather than toggled by a class, so it cannot get out of step with
               the state, and streaming (same key throughout) never replays it.
+              The ref is the prose beautify's tagger seat (the effect above).
             */}
-            <div key={swipes?.index ?? 0} className="iris-msg__text iris-msg__text--enter">
+            <div
+              key={swipes?.index ?? 0}
+              ref={textShell}
+              className="iris-msg__text iris-msg__text--enter"
+            >
               {/*
                 * Every body goes through `MessageInterfaces`, which renders the
                 * prose itself and puts a card interface **in place of** the

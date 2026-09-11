@@ -13,7 +13,7 @@
  * @module iris-web/app/SettingsDrawer
  */
 
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -43,6 +43,7 @@ import { SandboxProbe } from '../dev/SandboxProbe.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
 import { AppearanceCard } from './AppearanceCard.tsx'
 import { READING_LIMITS, type ReadingPrefs } from '../theme/theme.ts'
+import { getProseBeautify, setProseBeautify, subscribeProseBeautify } from './prose-beautify.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import type { Language, StringKey } from './i18n/strings.ts'
 
@@ -112,6 +113,10 @@ export function SettingsDrawer({
   // The language control, and the subscription that makes a switch repaint this
   // drawer without a reload.
   const { lang, setLang } = useLanguage()
+  // The prose beautify's switch, subscribed for the same reason the language
+  // and the theme are: the control showing the choice must not hold a stale
+  // copy of it.
+  const beautify = useSyncExternalStore(subscribeProseBeautify, getProseBeautify, getProseBeautify)
 
   const patch = (key: string, value: number | string | boolean | null | string[]): void => {
     void actions.patchSettings({ [key]: value })
@@ -470,6 +475,19 @@ export function SettingsDrawer({
             note={t('showFloorNumbersNote')}
             value={control.reading.floors}
             onToggle={next => control.setReading({ ...control.reading, floors: next })}
+          />
+          {/*
+            The prose beautify (`prose-beautify.ts`). Its switch is a module
+            store in the theme's shape, subscribed here rather than drilled
+            from the shell, because the reading prefs travel through
+            `settings-transfer` and this one is a per-device display choice —
+            the `iris.bodyTag` kind, not a `ReadingPrefs` field.
+          */}
+          <ToggleField
+            label={t('proseBeautify')}
+            note={t('proseBeautifyNote')}
+            value={beautify}
+            onToggle={setProseBeautify}
           />
           {/*
             The interface language. Lives beside the theme because it is the same

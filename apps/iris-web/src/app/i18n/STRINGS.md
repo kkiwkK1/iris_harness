@@ -46,7 +46,7 @@
 | --- | --- | --- |
 | `fields.tsx` / `SettingsDrawer.tsx` / 各面板 | 折叠卡各区标题与卡头摘要（连接/预设/采样/回复/阅读/世界书/脚本/通用与关于——「路由」那一区 2026-09-09 删掉了，见文末；连接卡头的摘要键 2026-09-10 从 `noActiveConnection` 换成 `connNoneSelected`） | `sectionReplies sectionAbout connNoneSelected presetNoneActive worldbookSummary scriptSummary samplingDefault samplingSet repliesTrim repliesSquash repliesContinue aboutSummary` |
 | `SettingsDrawer.tsx` 回复卡 | 三个回复形态键：裁剪未完成句、续写分隔符（四选）、合并相邻注入 | `trimSentences* continuePostfix* postfix* squashSystemMessages*` |
-| `SettingsDrawer.tsx` 阅读卡 | 楼层号开关（`mesIDDisplay_enabled` 的等价物，每设备） | `showFloorNumbers*` |
+| `SettingsDrawer.tsx` 阅读卡 | 楼层号开关（`mesIDDisplay_enabled` 的等价物，每设备）、正文美化开关（`dev/feat-prose-beautify`，2026-09-11 追加，见文末） | `showFloorNumbers* proseBeautify*` |
 | `AboutCard.tsx` | 启动自动打开开关、设置导出/导入全部文案、凭据安全声明两句 | `autoOpenChat* exportSettings importSettings settingsExported settingsImport* settingsTransferNote credentialHead credentialBody credentialBodyTransport` |
 
 任务 P（角色管理操作，`dev/feat-character-mgmt`）追加：
@@ -521,3 +521,11 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 **没删任何键。** `showConversations`（☰ 的 aria）留着并且换了含义的一半：它现在是一枚
 *开合*钮而不是只会打开的钮，所以加了 `aria-expanded`；文案仍然只说打开那一半，因为在窄屏上
 读者能看到它的那一刻，侧栏正是关着的。
+
+---
+
+## 文末追记
+
+- 2026-09-11（`dev/feat-prose-beautify`）：阅读卡新增正文美化开关两键
+  `proseBeautify` / `proseBeautifyNote`（en/zh 逐键对应），来源
+  `SettingsDrawer.tsx`，机制见 `notes/FEATURE-PROSE-BEAUTIFY.md`。

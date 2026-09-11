@@ -144,6 +144,21 @@
   --iris-measure: 68ch;
 
   /*
+   * The prose beautify's two rhythm numbers (`reading.css`, the
+   * `[data-iris-prose-beautify='on']` block — `notes/FEATURE-PROSE-BEAUTIFY.md`).
+   * They sit in this block, beside `--iris-prose-size`, because they are
+   * theme-independent **structure**: em-based typesetting ratios, not palette,
+   * so they are not in `THEME_TOKENS` and a theme package neither carries nor
+   * overrides them.
+   *
+   * `--iris-prose-indent` is the 段首缩进 the CJK book expects; `--iris-prose-para`
+   * is the paragraph gap in em, so it scales with the reader's prose size where
+   * the renderer's own 16px does not.
+   */
+  --iris-prose-indent: 2em;
+  --iris-prose-para: 0.9em;
+
+  /*
    * A real scale, because restraint is only legible against contrast. The first
    * pass had exactly one size relationship on the page — 17px prose against 11px
    * labels — and everything else sat at 11-13px. With no second step, the
