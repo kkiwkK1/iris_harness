@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { atomicWriteFile, readJsonStore } from './atomic.ts'
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 
 import type { CharacterCard } from '@iris/character'
 import { fromCharacterBook, parseLorebook } from '@iris/lorebook'
@@ -88,7 +88,8 @@ export class WorldbookBindingStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
   readonly #onProblem: ((message: string) => void) | undefined
-  #bindings: Bindings = {}
+  // Keyed by character id, which is a filename — see `wireKeyedTable`.
+  #bindings: Bindings = wireKeyedTable()
   #loaded = false
 
   /**
@@ -121,7 +122,7 @@ export class WorldbookBindingStore {
     this.#loaded = true
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      this.#bindings = parsed as Bindings
+      this.#bindings = wireKeyedTable(parsed as Bindings)
     }
   }
 

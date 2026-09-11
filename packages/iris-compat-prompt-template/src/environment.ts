@@ -50,6 +50,62 @@ export class UnsupportedTemplateApiError extends Error {
   }
 }
 
+/**
+ * Raised when a template writes through one of the three reserved keys.
+ *
+ * Thrown in this realm and delivered to the template as a context `Error`, the
+ * same way {@link UnsupportedTemplateApiError} is — see `realm.ts`.
+ */
+export class ForbiddenTemplateKeyError extends Error {
+  override name = 'ForbiddenTemplateKeyError'
+  constructor(path: string, segment: string) {
+    super(`the path "${path}" walks through "${segment}", which cannot be used as a variable key`)
+  }
+}
+
+/**
+ * The three reserved key names, and the splitter that finds them in a path.
+ *
+ * **A copy of `@iris/variables`'s predicate, deliberately.** This package
+ * declares no workspace dependency on `@iris/variables`, and more to the point
+ * the lodash these closures call is the *realm's*, so the refusal has to run on
+ * this side of a boundary `@iris/variables` knows nothing about. The two lists
+ * are pinned against each other by
+ * `packages/iris-app-service/tests/forbidden-keys.test.ts`, which is the one
+ * place both packages resolve.
+ */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * The first reserved segment of a lodash path, if it has one.
+ * @param path - the path a template is writing.
+ * @returns the offending segment, or undefined.
+ */
+function forbiddenSegmentIn(path: string): string | undefined {
+  for (const raw of path.split(/[.[\]]/u)) {
+    const segment = raw.replace(/^\s*['"]|['"]\s*$/gu, '')
+    if (segment !== '' && FORBIDDEN_KEYS.has(segment)) return segment
+  }
+  return undefined
+}
+
+/**
+ * Refuse a path before it reaches the realm's `_.set`.
+ *
+ * The lodash inside the vm context is the realm's own, so a pollution here
+ * lands on the *realm's* `Object.prototype` — not the host's, but shared by
+ * every template in the batch, and a batch is a whole prompt. The host refuses
+ * the same write again when the op crosses back (`applyOps` in
+ * `@iris/app-service/template`); both are load-bearing, because a template that
+ * throws has still had its earlier writes applied.
+ * @param path - the key a template is writing.
+ * @throws {ForbiddenTemplateKeyError} when any segment is reserved.
+ */
+function assertTemplatePathWritable(path: string): void {
+  const segment = forbiddenSegmentIn(path)
+  if (segment !== undefined) throw new ForbiddenTemplateKeyError(path, segment)
+}
+
 /** Upstream accepts either an options object or a bare string shorthand. */
 export type VarOptions = string | boolean | {
   scope?: Scope | 'cache'
@@ -214,6 +270,10 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
   }
 
   const setvar = (key: string, value: unknown, rawOptions?: VarOptions): unknown => {
+    // Before anything else, including `dryRun`: the refusal is about the path,
+    // not about whether this call would have written, and a template asking
+    // "would this work" must get the same answer it would get for real.
+    assertTemplatePathWritable(key)
     const opts = normalizeOptions(rawOptions)
     const { index, flags, results, merge, dryRun } = opts
     if (index != null) {

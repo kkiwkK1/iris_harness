@@ -10,6 +10,7 @@
  * @module @iris/variables/store
  */
 
+import { assertNoForbiddenKeys } from './keys.ts'
 import { deletePath, detach, insertMissing, insertOrAssign, type DeleteResult } from './semantics.ts'
 import { VariableScopeError, type VariableOption, type Variables } from './scope.ts'
 
@@ -102,6 +103,10 @@ export class VariableStore {
    * @param option - which scope.
    */
   replaceVariables(variables: Variables, option: VariableOption): void {
+    // The one write that performs no merge, and therefore the one lodash would
+    // not have filtered for us. Guarded here so that every method on this class
+    // refuses the same tree, whichever of them a caller reached for.
+    assertNoForbiddenKeys(variables, 'variables')
     this.#backend(option).write(option, detach(variables))
   }
 

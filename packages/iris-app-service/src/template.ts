@@ -27,7 +27,7 @@ import { fromCharacterBook, type LorebookEntry } from '@iris/lorebook'
 
 import type { ResolvedWorldbook } from './worldbooks.ts'
 import { createMacroContext, expandMacros } from '@iris/macro'
-import type { Variables } from '@iris/variables'
+import { forbiddenSegmentIn, type Variables } from '@iris/variables'
 
 import { assertStorable } from './context.ts'
 import type { ChatEntry } from './entry.ts'
@@ -263,6 +263,15 @@ export function applyOps(
       continue
     }
 
+    // The key crosses back from the template realm as a string, and every one
+    // of the three ops below turns it into a lodash path. Checked once here so
+    // that `delvar` — which never reaches `writePath` — is refused too.
+    const blocked = forbiddenSegmentIn(op.key)
+    if (blocked !== undefined) {
+      throw invalid(
+        `a template wrote "${op.key}", which walks through "${blocked}" and cannot be used as a variable key`)
+    }
+
     const option = optionFor(op.scope, turn)
     if (option === undefined) {
       // `optionFor`'s own note explains why `initial` should never arrive: the
@@ -314,6 +323,16 @@ export function applyOps(
  * @returns a new table with the path written.
  */
 export function writePath(table: Variables, path: string, value: unknown): Variables {
+  // `_.set`'s behaviour includes creating what is missing on the way down, and
+  // `__proto__` is never missing: the walk below would copy `Object.prototype`
+  // into `container[key]` and then write through it. The refusal is by *segment*
+  // rather than by leaf, because `a.constructor.b` reaches the same object by a
+  // different door. `@iris/variables` owns the predicate; the message is this
+  // face's own `invalid-request`, which is what a template author sees.
+  const blocked = forbiddenSegmentIn(path)
+  if (blocked !== undefined) {
+    throw invalid(`the path "${path}" walks through "${blocked}", which cannot be used as a variable key`)
+  }
   const segments = path.split('.')
   const root: Variables = { ...table }
   let cursor: Record<string, unknown> | unknown[] = root

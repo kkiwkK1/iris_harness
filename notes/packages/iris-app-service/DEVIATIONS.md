@@ -6674,3 +6674,140 @@ what that assertion protects.
   underneath is a report rather than a relabelling of the turn.
 - `describeError`'s `COPY` table is the **RPC** code vocabulary and is untouched:
   `storage-error` is a stream code and never arrives as a rejection.
+
+---
+
+---
+
+## 73. A path walks only inside the table it addresses, a table keyed from outside this process inherits nothing, and a world-book integer has a ceiling
+
+**Date.** 2026-09-11. Three findings from the network audit (M-2, L-6, L-7) that
+share one subject: what this host accepts from a string it did not write.
+
+### The path writers
+
+**Upstream.** SillyTavern writes `chat_metadata.variables[name] = value`
+directly, with no filtering — `public/scripts/variables.js:77`, the indexed form
+at `:63`/`:66`/`:72`, the read at `:27`, the delete at `:598`. The extensions
+that give a *dotted* path its meaning are the ones Iris reimplements: Tavern
+Helper's writers and MVU's `_.set(…)` command dialect.
+
+**Iris.** `template.ts`'s `writePath(table, path, value)` creates what is
+missing on the way down, which is `_.set`'s behaviour — and `__proto__` is never
+missing, so `writePath(t, '__proto__.x', 1)` would have copied
+`Object.prototype` into the cursor and written through it, and
+`writePath(t, 'a.__proto__.b', 1)` the same one level in. It now refuses any
+path with a reserved segment before splitting, and so do `applyOps` (which
+covers `delvar`, the one op that never reaches `writePath`) and the `delete` leg
+of `script.setVariables`. The predicate is `@iris/variables`'s
+`forbiddenSegmentIn`; the message is this face's own `invalid-request`, naming
+the offending segment and the whole path. See
+`notes/packages/iris-variables/DEVIATIONS.md` §1 for the measurement and the
+full list of faces.
+
+The template environment is the one face that does **not** import the predicate.
+`@iris/compat-prompt-template` declares no dependency on `@iris/variables`, and
+adding one means an install; more to the point, the lodash its closures call is
+the **realm's**, so a pollution there lands on the vm context's own
+`Object.prototype` — not this process's, but shared by every template in the
+batch, and a batch is a whole prompt. So `environment.ts` carries a copy of the
+three names and its own `ForbiddenTemplateKeyError`, and
+`tests/forbidden-keys.test.ts` — in this package, the one place both packages
+resolve — pins the two lists against each other. The host refuses the same write
+a second time when the op crosses back, and both are load-bearing: a template
+that throws has still had its earlier writes applied, which is `applyOps`'s
+standing rule.
+
+### The wire-keyed tables
+
+Several stores here partition by a string nobody in this process chose. On a
+plain object three such strings are not keys at all. `atomic.ts` now exports
+`wireKeyedTable()`, which is `Object.create(null)` plus the copy-in a restore
+needs (`JSON.parse` *does* create `__proto__` as a real own key, so a store that
+adopted a parsed object would take the poisoned prototype straight off disk).
+`JSON.stringify` cannot tell the two apart, so every file is byte-identical and
+the persistence tests are untouched.
+
+| table | key comes from | changed |
+| --- | --- | --- |
+| `card-storage.ts` `#entries` | a card's own `localStorage.setItem(key, …)` | yes — the only one a **card** controls directly |
+| `card-storage.ts` `bytesByWriter` | character id | yes |
+| `context.ts` `ExtensionSettingsStore#partitions` | character id (a filename) | yes |
+| `script-variables.ts` `#partitions` | character id | yes |
+| `script-buttons.ts` `#partitions` | character id | yes |
+| `materialise.ts` `#bindings` | character id | yes |
+| `scripts.ts` `#file.characters` | character id | yes |
+| `scripts.ts` `#file.presets` | a preset's library name, as the user typed it | yes |
+| `initvar.ts` `initialized_lorebooks` | a world-book name | guarded rather than converted — the shape is `MvuData`, a card's own saved state; a book named one of the three is loaded and simply not recorded, so it re-runs, which is the harmless direction |
+
+Judged safe and left alone: `settings.ts:673` `set[key] = value` iterates a
+`const` list of field names, not the patch's keys; `card-storage.ts`'s
+`snapshot()` builds its result with `Object.fromEntries`, which *defines* rather
+than assigns and therefore cannot move a prototype, and the object is then
+serialized to the wire; `service.ts:406` `contexts[value]` and `:1589`
+`headers[headerName]` are keyed from a provider's model list and a connection
+profile the user saved, both read back immediately and neither persisted under
+that key; `context.ts:115` and `script-buttons.ts:131` key by a script id the
+**card declares**, which is inside the same trust boundary as the buttons
+themselves and is rebuilt from the card on every read.
+
+### The world-book integers
+
+**Upstream.** The generic binder `handleNumberInputHelper`
+(`public/scripts/world-info.js:3175-3193`) ignores its own `min` and `max`
+unless `clamp: true` (`:3180-3188`), and writes `Number($(this).val())` straight
+through (`:3188`). Only two fields pass `clamp: true` — `probability`
+(`:3093-3110`) and `groupWeight` (`:3671-3675`, clamped to `[1, 10000]`) — and
+only `scanDepth` is explicitly rejected out of range (`:3624-3645`: negative →
+toast and reset to 0; over `MAX_SCAN_DEPTH = 1000` at `:98` → reset to the
+limit). Everything else is declared in HTML and enforced nowhere, and three
+write paths skip the editor entirely with no checking at all: the
+character-book importer (`:5507-5545`), `/setentryfield` (`:1389-1440`), and
+editing the file by hand. That is how `order = 100000000` and `depth = 10000`
+came to be on this disk.
+
+**Iris.** `packages/iris-protocol/src/rpc.ts`'s world-book entry patch bounds
+each integer, in the house style of `injection_depth`
+(`z.number().int().min(0).max(1000)`). Measured over **2,856 entries** — 1,478
+live entries in 18 disk books under
+`E:/sillyTavern/SillyTavern/data/default-user/worlds/`, 1,378 in the embedded
+`character_book` of 17 cards, plus the 803-entry `originalData` mirror and the
+4-entry shipped `Eldoria.json`. No world-book JSON fixtures exist in this repo;
+its fixture values are inline, and the widest are the fake client's seed
+(`packages/iris-client-fake/src/worldbooks.ts:194-205`) and the alias defaults
+(`apps/iris-web/src/sandbox/lorebook-aliases.ts:196-224`).
+
+| field | measured min / max | extreme found in | bound | why |
+| --- | --- | --- | --- | --- |
+| `scan_depth` | 1 / 6 | `缄默之秋2.5.json` entry 10; card `终焉之刻NG.png` entry 74 | `0 … 1000` | upstream's own enforced limit, `MAX_SCAN_DEPTH` at `world-info.js:98`; `worldbook-settings.ts:117` already clamps the global setting to the same range |
+| `depth` | 0 / 10,000 | `银麒赎世.json` entries 127 and 128 | `0 … 100000` | HTML declares `min="0" max="9999"` (`public/index.html:7194`) and enforces neither; ten times the largest real value |
+| `order` | **−999** / 100,000,000 | `OVERLORD不死者之王.json` entry 0; `[SG]可攻略女主拒绝被攻略.json` entry 35 | `−1000000 … 1000000000` | the **only** field with real negatives — 16 live entries, 14 in the mirror, 18 in card books — and upstream bounds it nowhere (`:3310-3321`) |
+| `delay_until` | 0 / 0 (2 numeric; 1,476 hold boolean `false`) | `银麒赎世.json` entry 127 | `0 … 100000` | see the narrowing below |
+| `sticky` | 0 / 10 | card `终焉之刻NG.png` entry 11 | `0 … 1000000` | above upstream's *declared* `max="999999"` (`index.html:6992`), so nothing typed into SillyTavern's editor can be refused here |
+| `cooldown` | 0 / 9,999 | `魔法禁书目录_v1.0.json` entry 6 | `0 … 1000000` | as above (`index.html:7005`) |
+| `delay` | 0 / 0 | — | `0 … 1000000` | as above (`index.html:7018`) |
+| `groupWeight` | 100 / 100 (one distinct value in the whole corpus) | — | `0 … 1000000` | not on the audit's list; bounded with the rest because it is the same unbounded integer in the same object, and upstream clamps it far harder |
+
+No non-integer appears in any field in any population, and no negative outside
+`order`.
+
+**The one narrowing.** `delay_until` is refused below zero. Upstream's level
+field is `type="text"` with no bound and writes `Number(content)` unfiltered
+(`:3696-3721`), so SillyTavern would accept a negative; a negative recursion
+level names no pass, and nothing in 2,856 entries has ever written one. A real
+book carrying one overturns it. Every other bound above is *wider* than any
+value upstream can produce, so a book that round-trips through SillyTavern and
+back is accepted unchanged — which is the property that keeps this from being a
+compatibility break.
+
+**What would overturn the rest.** A book whose `order` exceeds 10⁹ or whose
+`depth` exceeds 10⁵ — both an order of magnitude past anything measured, and
+both reachable only by editing a file by hand, since neither is typeable in
+upstream's editor at that size.
+
+**Held by** `packages/iris-variables/tests/keys.test.ts` (the predicate, the
+walker, the property test), `packages/iris-app-service/tests/forbidden-keys.test.ts`
+(each host face, `writePath`'s two shapes, the realm/host pair, the
+`environment.ts` copy pinned against the exported list) and
+`packages/iris-protocol/tests/worldbook-bounds.test.ts` (each measured extreme
+accepted, one step past each bound refused).

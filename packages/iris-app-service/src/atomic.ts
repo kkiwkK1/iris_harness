@@ -235,6 +235,31 @@ export async function quarantineUnparsable(
 }
 
 /**
+ * An empty table for keys that come from outside this process.
+ *
+ * Several of this package's stores are partitioned by a string nobody here
+ * chose — a character id, which is a *filename*, a preset's library name, a key
+ * a card handed `localStorage`. On a plain object three of those strings are
+ * not keys at all: `table['__proto__'] = row` re-points the table's prototype
+ * instead of storing a row, and `table['constructor']` answers a function that
+ * was never written. `Object.create(null)` removes the whole class of question
+ * for the price of one call, and `JSON.stringify` cannot tell the difference —
+ * the file on disk is byte-identical, which is what keeps the persistence
+ * tests green.
+ *
+ * A file read back with `readJsonStore` is an *ordinary* object, so a store
+ * restoring one must copy it through here rather than adopt it: `JSON.parse`
+ * does create `__proto__` as a real own key, and adopting that object is how
+ * the poisoned prototype would arrive from disk.
+ * @param from - an existing table to copy in, e.g. one just parsed from the file.
+ * @returns a table with no prototype.
+ */
+export function wireKeyedTable<T>(from?: Record<string, T>): Record<string, T> {
+  const table = Object.create(null) as Record<string, T>
+  return from === undefined ? table : Object.assign(table, from)
+}
+
+/**
  * Read a store's JSON file, setting it aside when it will not parse.
  *
  * The three outcomes a store has to tell apart, and used to collapse into one

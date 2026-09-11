@@ -18,7 +18,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { atomicWriteFile, readJsonStore } from './atomic.ts'
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 
 /**
  * How much the whole store may hold, in bytes of keys and values.
@@ -124,7 +124,12 @@ export class CardStorageStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
   readonly #onProblem: ((message: string) => void) | undefined
-  #entries: Record<string, StoredValue> = {}
+  // Null-prototyped, because every key here is a string a card chose.
+  // `localStorage.setItem('__proto__', …)` against a plain object is not a
+  // write of a key at all but a re-pointing of this object's prototype, and
+  // `lastWriter('constructor')` against one answers a function nobody stored.
+  // A table keyed by untrusted strings should inherit nothing.
+  #entries: Record<string, StoredValue> = wireKeyedTable()
   #loaded = false
   #pending: ReturnType<typeof setTimeout> | undefined
   #writing: Promise<void> | undefined
@@ -158,7 +163,11 @@ export class CardStorageStore {
     this.#loaded = true
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      this.#entries = parsed as Record<string, StoredValue>
+      // `JSON.parse` hands back an ordinary object, so the file's keys are
+      // copied onto a null-prototyped one rather than adopted — a `__proto__`
+      // member on disk (which `JSON.parse` does create as an own key) would
+      // otherwise arrive as a table whose prototype is the attacker's value.
+      this.#entries = wireKeyedTable(parsed as Record<string, StoredValue>)
     }
   }
 
@@ -208,7 +217,7 @@ export class CardStorageStore {
    */
   async bytesByWriter(): Promise<Record<string, number>> {
     await this.#load()
-    const byWriter: Record<string, number> = {}
+    const byWriter: Record<string, number> = wireKeyedTable()
     for (const [key, held] of Object.entries(this.#entries)) {
       const who = held.characterId ?? 'unknown'
       byWriter[who] = (byWriter[who] ?? 0)
@@ -296,7 +305,7 @@ export class CardStorageStore {
         foreign: held.characterId !== undefined && held.characterId !== by.characterId,
       })
     }
-    this.#entries = {}
+    this.#entries = wireKeyedTable()
     // Nothing went, so nothing is written. A clear() over an empty store
     // would otherwise create the file on a first run, and the file existing is
     // what says "a card stored something" — remove() of a missing key already

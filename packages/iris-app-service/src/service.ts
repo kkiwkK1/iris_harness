@@ -82,6 +82,7 @@ import { cardWorldbookDigest, cardWorldbookView, charWorldbookNames, WorldbookSt
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
+import { forbiddenSegmentIn } from '@iris/variables'
 // —— family①: identity & messages ——
 import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
@@ -2402,6 +2403,13 @@ export class IrisAppService {
 
         if (op === 'delete') {
           if (path === undefined) throw invalid('a delete needs the path to remove')
+          // `_.has('a.constructor.b')` walks the prototype chain, so an
+          // unfiltered delete answers `delete_occurred` for a path that was
+          // never in the table. Refused with this face's own vocabulary.
+          const blocked = forbiddenSegmentIn(path)
+          if (blocked !== undefined) {
+            throw invalid(`the path "${path}" walks through "${blocked}", which cannot be used as a variable key`)
+          }
           entry.variables.deleteVariable(path, option)
         } else {
           if (variables === undefined) throw invalid(`"${op}" needs a variables object`)

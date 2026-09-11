@@ -19,7 +19,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { atomicWriteFile, readJsonStore } from './atomic.ts'
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 
 // —— family①: identity & messages —— `CardCharacter` and `PersonaView` join this line
 import type { CardCharacter, CharacterSummary, PersonaView, RegexScriptView, ScriptContext } from '@iris/protocol'
@@ -30,7 +30,7 @@ import { extractScripts } from '@iris/script'
 import type { SillyTavernMessage } from '@iris/persistence'
 
 import { effectiveButtons } from './script-buttons.ts'
-import type { ScopeBackend } from '@iris/variables'
+import { isForbiddenKey, type ScopeBackend } from '@iris/variables'
 
 import type { ChatEntry } from './entry.ts'
 import { lorebookSettings } from './lorebook-settings.ts'
@@ -73,7 +73,18 @@ export function assertStorable(value: unknown, path = 'value'): void {
       if (prototype !== Object.prototype && prototype !== null) {
         throw invalid(`${path} is a ${value.constructor?.name ?? 'class'} instance, which cannot be stored`)
       }
-      for (const [key, nested] of Object.entries(value)) assertStorable(nested, `${path}.${key}`)
+      for (const [key, nested] of Object.entries(value)) {
+        // Shape was all this guard ever checked, and a key *name* can be an
+        // instruction rather than data: `JSON.parse` hands back `__proto__` as
+        // an ordinary own property, and the merge waiting downstream copies it
+        // into a shared object. The predicate lives in `@iris/variables` so
+        // that this face and the ones with no access to `invalid()` refuse the
+        // same set. See `notes/packages/iris-variables/DEVIATIONS.md` §1.
+        if (isForbiddenKey(key)) {
+          throw invalid(`${path}.${key} uses the reserved key "${key}", which cannot be stored`)
+        }
+        assertStorable(nested, `${path}.${key}`)
+      }
       return
     }
     default:
@@ -547,7 +558,8 @@ const REGEX_SECTION = '.regex'
 export class ExtensionSettingsStore {
   readonly #path: string
   readonly #onProblem: ((message: string) => void) | undefined
-  #partitions: Partitions = {}
+  // Keyed by character id, which is a filename — see `wireKeyedTable`.
+  #partitions: Partitions = wireKeyedTable()
   #loaded = false
 
   /**
@@ -575,7 +587,7 @@ export class ExtensionSettingsStore {
     this.#loaded = true
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      this.#partitions = parsed as Partitions
+      this.#partitions = wireKeyedTable(parsed as Partitions)
     }
   }
 
