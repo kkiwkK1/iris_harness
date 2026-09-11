@@ -55,10 +55,29 @@ pnpm start
 
 - **`IRIS_API_KEY_ENV` 是另一个环境变量的_名字_,不是密钥本身。** 程序拿这个名字去 `process.env[...]` 取值。上例中密钥放在 `DEEPSEEK_API_KEY` 里。未设表示端点不需要鉴权(本地模型正是如此)。
 - **`IRIS_BASE_URL`** 是 OpenAI 兼容端点的根,`/chat/completions` 由程序追加;**`IRIS_MODEL`** 是新聊天默认用的模型 id。**首次启动时,这两个值(连同 `IRIS_API_KEY_ENV` 指向的密钥)会被导入成供应商列表里的第一个供应商并直接启用**——之后由列表说话,环境变量不再是一条可选的路由,见 [§3](#3-连接模型)。
-- **`IRIS_PORT`** 是 loopback 端口;**`IRIS_DATA_DIR`** 是存放 profile 的目录(默认 `./data`,已被 gitignore)。
+- **`IRIS_PORT`** 是 loopback 端口;**`IRIS_DATA_DIR`** 是存放 profile 的目录(默认 `./data`,已被 gitignore)。**一个数据目录只能有一个宿主**,见下面的「多实例」。
 - **密钥永不进仓库。** `key.txt`、`*.key`、`secrets.json`、`.env*`、`data/` 都在 `.gitignore` 里;CI 不引用任何 secret。密钥要么走 `IRIS_API_KEY_ENV` 指向的环境变量,要么由界面的连接面板保存到 `<IRIS_DATA_DIR>/<profile>/connections.json`——那个目录属于跑它的人,**不要提交或分享**。
 
 全表(数据目录、ST 安装目录、模板开关、超时、开发源白名单)、`cordis.yml` 的组合方式与故障排查,见 **[§12 宿主参考](#12-宿主参考)**。
+
+### 多实例:一个数据目录只能有一个宿主
+
+想同时跑两个宿主(比如一个跑主线、一个跑改动),**必须给第二个另一个 `IRIS_DATA_DIR`**——只换端口是不够的。
+
+```sh
+# 第二个宿主:另一个端口,**而且**另一个数据目录
+IRIS_PORT=8790 IRIS_DATA_DIR=./data-dev pnpm start
+```
+
+这是被强制执行的,不是一句建议。宿主启动时会在 `<IRIS_DATA_DIR>/host.lock` 上用 `open(path, 'wx')` 抢一个锁,锁里记着 pid、**实际绑定**的端口、启动时刻与机器名。如果那个 pid 还活着,**第二个宿主直接拒绝启动**,并打印一句话说明锁文件在哪、谁占着、它说自己绑在哪个端口,以及两条出路(停掉那个宿主,或把 `IRIS_DATA_DIR` 指到别处)。如果那个 pid 已经不在了,锁是**残留**的:新宿主接管它并在日志里说一声——那句话就是「上一个宿主不是正常退出的」这一事实的唯一信号。
+
+**为什么非拦不可。** 这里每一个存储(settings、connections、chats、script-variables……)都是「内存里一整份、有改动就整文件重写」。两个宿主开着同一个目录,就是同一批文件的两份内存副本,后写的那个会把先写的那个**更新过的**文件整个盖掉——两边都不报错。丢掉的是对方读进内存之后学到的一切:楼层、用量、脚本变量、刚存的一个供应商。这在这台机器上真的发生过,而且症状被当成产品缺陷查了三轮(`notes/packages/iris-app-service/DEVIATIONS.md` §71)。
+
+**没有绕过的开关,是故意的。** 需要绕过的那一刻,恰恰就是「这次应该没事」的那一刻,也正是出事故的那一刻。代价由我们自己承担:验收用的宿主从此跑在**拷贝出来的数据目录**上。
+
+**正常退出释放锁,崩溃不释放。** 崩溃留下的残留锁交给上面那条存活检查——这比指望一个已经死掉的进程去清理自己的文件可靠。
+
+顺带一提:**端口被占是另一回事**,而且宿主此时根本起不来(`listen` 失败,boot 失败)。现在它给的是一句人话,而不是一串指向 `@deepseek-ai/dsh-host-webserver` 的 Cordis 插件树堆栈。
 
 ## 3. 连接模型
 
@@ -305,7 +324,7 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `IRIS_BASE_URL` | `http://127.0.0.1:11434/v1` | 端点根;`/chat/completions` 由程序追加 | `cordis.yml` `llm-openai-compat` 行 |
 | `IRIS_MODEL` | `local-model` | 新聊天默认用的模型 id | `cordis.yml`,两处 |
 | `IRIS_API_KEY_ENV` | 未设 | **另一个环境变量的名字**——不是密钥本身。程序拿这个名字去 `process.env[...]` 取值。未设表示端点不需要鉴权,本地模型正是如此 | `cordis.yml` → `@iris/llm-openai-compat` 的 `credentialOf` |
-| `IRIS_DATA_DIR` | `./data` | 存放 profile 的目录。**指向一个 SillyTavern 的 `data/`,它就能就地找到那些角色卡**(但会往里写,见 §5) | `cordis.yml` app 行 |
+| `IRIS_DATA_DIR` | `./data` | 存放 profile 的目录。**指向一个 SillyTavern 的 `data/`,它就能就地找到那些角色卡**(但会往里写,见 §5)。**一个数据目录只能有一个宿主**:启动时抢 `<IRIS_DATA_DIR>/host.lock`,被活着的宿主占着就拒绝启动,没有绕过开关(见 §2 多实例) | `cordis.yml` app 行 |
 | `IRIS_PROFILE` | `default-user` | 打开 `IRIS_DATA_DIR` 里的哪个 profile | `cordis.yml` app 行 |
 | `IRIS_USER_NAME` | `User` | 新聊天里记下的你的名字 | `cordis.yml` app 行 |
 | `IRIS_CONTEXT_WINDOW` | `32768` | 预设没带上下文窗口时用这个 | `cordis.yml` app 行 |
@@ -356,6 +375,8 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 
 聊天文件就是 SillyTavern 自己的格式,所以在这里开的一局可以拿回那边打开,再拿回来。
 
+`<IRIS_DATA_DIR>/` 本身(profile 之外)只有一个文件:`host.lock`,记着当前占着这个目录的宿主的 pid、绑定端口、启动时刻与机器名。正常退出会删掉它;崩溃留下的那一把是残留锁,下一个宿主接管并在日志里说一声。见 [§2 多实例](#多实例一个数据目录只能有一个宿主)。
+
 ### 出问题时
 
 **页面打不开,但 API 有应答。** 没有界面构建。跑 `pnpm build:web`;构建放在不寻常的位置时设 `IRIS_WEB_DIST`。
@@ -372,7 +393,9 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 
 **早期楼层的变量读出来是空的。** SillyTavern 自己的变量清理是**默认开启**的,所以从一个安装里导入的长局,到手时就已经被裁过了。Iris 会报出哪一层被裁、哪一层更早的还完好,而不是回一张空表了事。
 
-**端口被占用。** 设 `IRIS_PORT`。**不要按端口或进程名杀进程**——那可能是别人起的宿主。
+**端口被占用。** 宿主会打印一句 `… is already in use, so the host did not start`,点名地址。设 `IRIS_PORT` 换一个。**不要按端口或进程名杀进程**——那可能是别人起的宿主。
+
+**宿主拒绝启动,说数据目录已被另一个宿主打开。** 这是数据目录锁,不是端口的事:`<IRIS_DATA_DIR>/host.lock` 里记着的那个 pid 还活着。停掉那个宿主,或给这一个另一个 `IRIS_DATA_DIR`(见 [§2 多实例](#多实例一个数据目录只能有一个宿主))。**没有绕过的开关。** 如果你确知那个 pid 已经不在了(比如整台机器刚重启、pid 被复用给了别的程序),删掉那个锁文件即可——宿主本来就会自动接管一把残留锁,需要手删只说明存活检查答的是「活着」。
 
 ---
 

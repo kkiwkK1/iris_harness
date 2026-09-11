@@ -6269,6 +6269,242 @@ ephemeral port asks all four routes for a refusal under
 checks that `/sandbox/preset.js` really is served — 200 with its CORS header —
 so the accepting half is not four 404s agreeing with each other.
 
+## 71. A data directory has one host, and a collided snapshot name sorts by the time it was taken
+
+**Kind.** Deliberate improvement with no upstream counterpart (the lock), and a
+correction of an Iris-only mechanism (the snapshot name). Both come out of the
+system audit's F2 and F7.
+
+Dated 2026-09-11.
+
+### What upstream does
+
+**SillyTavern has no data-directory lock.** Checked read-only against
+`E:/sillyTavern/SillyTavern` on 2026-09-11: nothing in `server.js` or `src/`
+opens a file with `wx`, `O_EXCL` or any lock library. The one `wx` in the tree
+is `src/endpoints/assets.js:237`, a download refusing to overwrite its
+destination — unrelated.
+
+What it has instead is an exclusion by **port**.
+`src/server-startup.js:238-240` turns an `EADDRINUSE` bind failure into
+
+> `Address <host:port> is already in use. Another SillyTavern instance may
+> already be running. Stop the other process or change "port" in config.yaml.`
+
+and exits. That sentence is where the belief "a second instance is already
+handled" comes from, and it is a belief about the wrong resource: two
+SillyTavern processes on two ports with `--dataRoot` pointing at one tree pass
+that check and share every file, undetected. Upstream gets away with it further
+than Iris does only because more of its writes are per-file appends rather than
+whole-file rewrites of in-memory state — but its own settings file
+(`src/endpoints/settings.js:209`) and chat file (`src/endpoints/chats.js:466`)
+are whole-file rewrites too.
+
+### The two incidents this repository recorded
+
+1. **8787 and 8790 on one checkout's `apps/iris/data`.** The 8790 host was
+   serving a stale build against the same profile the 8787 host was writing, and
+   the resulting symptoms were diagnosed as product defects for three rounds
+   before the sharing was noticed (`notes/DEVIATIONS.md`, task Z1: the
+   `errUnsupported` report and the 「指令已发送」 wording both turned out to be
+   the old build's behaviour, and the conclusion was 「8790 宿主需按 PID 重启进
+   主线 HEAD 并重建 dist」). The cost was not corruption that time; it was that
+   three rounds of diagnosis went into a phantom.
+2. **A QA host that died on `EADDRINUSE` and kept driving RPCs.** Its RPCs
+   reached the host that owned the port — the user's dev checkout — and created
+   eleven chats in that profile. The writer believed it was talking to its own
+   host the whole time.
+
+Neither incident is a failure of atomicity, so §68 does not close either. An
+atomic write makes each write whole; it does nothing to make two writers agree.
+Every store in this package holds its file in memory and replaces the file when
+something changes, so the second host's save overwrites the first's **newer**
+file whole, and neither side errors.
+
+### The rule
+
+`apply` now takes `<dataDir>/host.lock` before anything reads or writes, as the
+first statement in the function:
+
+- `open(path, 'wx')` — the one primitive where "create it if and only if nobody
+  else did" is a single operation. It records `{ pid, port, startedAt, hostname }`
+  as JSON, with `port` being `ctx.webServer.port`, the **bound** one: this
+  plugin injects `webServer`, so the carrier has finished listening by then, and
+  the configured port is the number that would send the reader nowhere.
+- `EEXIST` → read it, and probe the recorded pid with `kill(pid, 0)`.
+  **Alive → refuse to start**, with one sentence naming the lock path, the pid,
+  the port it says it holds, and the two ways forward.
+  **`ESRCH` → stale**: unlink, retake, and log a line saying whose lock it was
+  and that the host did not shut down cleanly.
+  **`EPERM` → alive.** A process with that id exists and belongs to another
+  user. A `catch { return false }` gets this exactly backwards, and backwards
+  here means taking over a lock a running host still holds, which is the
+  incident. A pid at or below zero is refused rather than probed, because
+  `kill(0, 0)` addresses the caller's own process group.
+  **Garbage inside → stale, and said so.** Bytes that name no process cannot
+  hold anything, and refusing to start over an unreadable byte string would turn
+  a crash into a directory nobody can open. The takeover line says it did not
+  parse, because that is a fact about the previous shutdown.
+- Released on an orderly shutdown and **never on a crash**. The release is a
+  fiber effect with an `async` disposer whose promise is returned, so
+  `fiber.dispose()` does not resolve before the file is gone — measured, as a
+  failing assertion under the fire-and-forget spelling, and it matters because a
+  supervisor that restarts the host the instant the old one exits would race its
+  own lock. Identity on release is `pid` **and** `startedAt`, so a recycled pid
+  cannot make a shutting-down host delete the lock of the host that started
+  after it.
+
+### No escape hatch, and who pays for that
+
+There is no `--allow-shared-data-dir`, no environment variable, no flag. The
+reason is that an override would be reached for in exactly the situation that
+produced both incidents: someone in a hurry who believes this time it is fine.
+A second host is still a supported thing to run — it takes a second
+`IRIS_DATA_DIR`, which is a copy away.
+
+The cost falls on us, not on users: **the acceptance hosts run on a copied data
+directory from now on.** The repository's own suites pay it too — three test
+files booted the real `apps/iris/cordis.yml` with no `IRIS_DATA_DIR`, which is
+to say against `apps/iris/data`, the directory belonging to whatever host the
+person running the suite has open. `end-to-end.test.ts`, `live-provider.test.ts`
+and `live-generation-kinds.test.ts` now each `mkdtemp` one (and the two live
+files gained the `IRIS_PORT=0` that `end-to-end` already had). That is a real
+finding the lock produced on its first run rather than a cost of it: the suite
+was writing into a live profile before, and nothing said so.
+
+### Port drift, and a measurement that moved it
+
+The ruling was that a configured port differing from the bound port should add a
+line to the banner saying the configured one was taken. **Measured 2026-09-11,
+that case cannot arise**: with a squatter on the configured port, the carrier's
+`listen` rejects, `boot` rejects with `EADDRINUSE` wrapped in a plugin-tree
+message, and `bin.ts` never reaches its banner. The host does not start on
+another port; it does not start at all. The only way configured and bound differ
+today is `port: 0`, which is a request being honoured rather than drift.
+
+So `apps/iris/banner.ts` carries both halves and says which is which.
+`describePortDrift(configured, bound)` is the standing net, exempting `0` and an
+absent `IRIS_PORT` (the composition's `8787` default is not restated in the bin,
+because a constant copied into two files is a constant that drifts), and it is
+dead code until the carrier gains a fall-back-to-ephemeral behaviour.
+`describePortInUse(cause)` is the half that fires today: it turns that boot
+failure into one sentence naming the address — read out of the error, since the
+error already carries the exact `host:port` — and the two ways out, instead of a
+Cordis stack trace naming a package the person never configured. Both are pure
+functions in a module of their own, because `bin.ts` boots on import and there
+is no way to ask it what it would print.
+
+### Snapshot names: the collision suffix is gone, and order is a comparator
+
+`BackupStore` stamps monotonically per store (`Math.max(now, #lastStampMs + 1)`),
+and the guard for what that cannot see — a second store, or a restart inside one
+millisecond — was a `-2`, `-3` suffix. **The suffix sorted the wrong way.**
+`…-f5-save-2.jsonl` sorts *before* `…-f5-save.jsonl` as a plain string, because
+`-` is 0x2D and `.` is 0x2E; `#rotate` is name order and deletes from the front,
+so at the retention edge the newer copy of a collided pair went first —
+precisely the copy the suffix existed to protect. Two processes each have their
+own `#lastStampMs`, so the collision was the F2 scenario wearing a different hat.
+
+**Two changes, both name-based.**
+
+1. `snapshot` mints no suffix. It advances the stamp by a millisecond until the
+   directory holds no file and **no other snapshot at that stamp** — the whole
+   stamp, not the whole name, because two snapshots of one millisecond with
+   different floor counts collide on no file name and would then be ordered by
+   `f10` against `f5`. Lexical order is time order again by construction, with
+   nothing after the stamp needing to be read.
+2. `compareBackupNames` orders by (stamp, collision ?? 1, name) and is used by
+   `rotateBackups` and `#listDir`. This is for the names **already on disk**: a
+   profile that ran an older build may hold a collided pair, and nothing
+   rewrites file names.
+
+`NAME_RE` is unchanged, so every existing shape still parses. Measured
+read-only against the one real `backups` tree on this machine
+(`apps/iris/data/default-user/backups/爱衣/爱衣-20260909-001924/`): three files,
+all unsuffixed, one reason (`delete-message`), floor counts 4 and 5 — no
+collision suffix has ever actually been written here. The fourth file under a
+`backups` directory in that tree,
+`prune-probe/default-user/backups/prune-probe-673-2026-09-03T08-05-31-012Z.jsonl`,
+matches no part of this shape and sits one level too shallow to be scanned at
+all; it is a probe artefact, not a snapshot.
+
+**Why not the two options the ruling offered.** *Counter inside the stamp
+segment before the `-f` field* does not work as stated, measured: `…-411-2-f5-…`
+against `…-411-f5-…` compares `2` (0x32) against `f` (0x66), so the collided
+copy still sorts first. It would only give time order if the counter were
+present on **every** name, which changes the shape of every name the host writes
+and still needs the regex to admit both. *Rotation deciding same-stamp groups by
+mtime* is upstream's mechanism (`removeOldBackups`, `src/util.js:642`, sorts by
+`statSync(f).mtimeMs`) and loses for the reason this module's own header already
+gives: mtime is not the snapshot's time. A copy, a restore from an archive, a
+profile moved between filesystems or a backup-of-backups rewrites it, and
+rotation would then delete by when the bytes were last touched. It also costs a
+`stat` per file to learn something the name already says.
+
+`BackupStoreOptions` gains `now?: () => number`, injectable for one reason: a
+same-millisecond collision is what the naming rule is about, and a test that
+waits for the real clock either waits forever on a fine-grained timer or passes
+without entering the branch on a coarse one.
+
+### Held by
+
+- `packages/iris-app-service/tests/host-lock.test.ts` (10): fresh acquire and
+  what the file records; a live holder refused with the four things the sentence
+  must name; a stale takeover with its log line, over a pid **measured** dead by
+  spawning a child and reusing its id after `exit` (a number picked out of the
+  air would silently turn the stale case into the held case and pass); `EPERM`
+  as alive and `ESRCH` as gone, through an injected probe because `EPERM` cannot
+  be produced on demand; pid 0 refused; garbage treated as stale and reported as
+  unparsable; release, double release, and a release that must not delete
+  someone else's lock; a recycled pid; and a source pin that the refusal
+  advertises no override flag.
+- `apps/iris/tests/host-lock.test.ts` (3): a booted composition on `port: 0`
+  holds the directory and records the **bound** port; a second composition on
+  the same temporary `dataDir` fails to boot with the sentence, on a *different*
+  ephemeral port — which is the case upstream's port check cannot see; a second
+  one on a different `dataDir` starts; and `fiber.dispose()` gives the directory
+  back so the next boot is fresh rather than a takeover.
+- `apps/iris/tests/banner.test.ts` (7): drift announced, `port: 0` exempt, an
+  absent configured port exempt, the honoured case silent; the `EADDRINUSE`
+  wrapper shape measured on this build turned into its sentence; the `cause`
+  chain walked; a cycle in that chain not hanging the bin's error path.
+- `packages/iris-app-service/tests/backups.test.ts` (+5): every name shape the
+  corpus and the fixtures hold still parses; a collided pair sorts and rotates
+  in time order; a stamp still beats a suffix across milliseconds; three stores
+  on one frozen clock write three files and none of them suffixed; and, on the
+  disk, a collided pair an older build left behind rotates oldest-first and
+  lists newest-first.
+
+Twenty-one mutations, each reddening a named assertion: EPERM read as dead; a
+live holder not refused; the refusal dropping the port; a silent takeover;
+release identifying by pid alone; release unlinking unconditionally; garbage
+read as a record; pid 0 probed; `apply` taking no lock; `apply` recording the
+configured port; the release disposer fire-and-forget; `rotateBackups` and
+`#listDir` back to a plain sort; the comparator ignoring the counter; the writer
+minting `-2` again; `list` not reversing; drift on `port: 0`; drift never
+announced; `EADDRINUSE` recognised by code only; the cause chain not walked; the
+address not read out of the message.
+
+### What would overturn this
+
+- **The lock.** A measurement that two hosts on one data directory are safe —
+  which would mean every store here had stopped being a whole-file rewrite from
+  memory. Or a supported deployment where one directory is meant to be served by
+  several processes (a read-only mirror, a fleet), which would need a real
+  protocol and not a flag. A lock file on a network share whose `wx` is not
+  atomic would weaken the guarantee without changing the argument for it.
+- **The no-escape-hatch decision.** Evidence that people are being blocked from
+  something legitimate and are deleting `host.lock` by hand to get past it. The
+  hand-deletion is the signal to watch for; it is documented in the README's
+  troubleshooting entry precisely so that doing it leaves a trace in someone's
+  memory.
+- **The snapshot ordering.** A reader other than this package that sorts these
+  names — anything that walks `backups/` with `ls`, a sync tool, a person —
+  would be an argument for making the *names* carry the counter after all, at
+  the cost of a shape migration. Nothing does today.
+
+---
+
 ## 72. A reply that cannot be stored ends its turn out loud, and a provider's words reach the page and the disk with the credentials taken out
 
 **Kind.** Two findings from the 2026-09-11 system audit, both low severity and

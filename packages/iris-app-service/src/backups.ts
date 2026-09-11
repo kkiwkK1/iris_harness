@@ -51,9 +51,14 @@ const PREVIEW_TEXT_CHARS = 200
  * One snapshot's file name, and what each part of it says.
  *
  * `20260906-123456-789-f42-save-chat.jsonl` — UTC stamp (fixed width, so the
- * names sort in time order as plain strings), floor count, reason. The
- * trailing `-2` is a same-millisecond collision suffix, which is why the
- * reason is matched lazily and digits are refused inside it.
+ * names sort in time order as plain strings), floor count, reason.
+ *
+ * The trailing `-2` is a **legacy** same-millisecond collision suffix, which is
+ * why the reason is matched lazily and digits are refused inside it. This host
+ * no longer mints it — {@link BackupStore.snapshot} advances the stamp instead
+ * — but every name already on disk must keep parsing, and such a name sorts
+ * *before* the unsuffixed one it was newer than (`-` is 0x2D, `.` is 0x2E),
+ * which is what {@link compareBackupNames} exists to correct.
  */
 const NAME_RE =
   /^(\d{8}-\d{6}-\d{3})-f(\d+)-([a-z][a-z-]*?)(?:-([2-9]\d*))?\.jsonl$/u
@@ -113,11 +118,52 @@ export function parseBackupStamp(stamp: string): number | undefined {
 }
 
 /**
+ * Oldest first, for snapshot names — including the ones a plain sort gets wrong.
+ *
+ * Our stamps are fixed-width UTC, so for every name this host writes today a
+ * plain string comparison **is** time order and this function is that
+ * comparison. The exception is the legacy collision suffix: a name ending
+ * `-f5-save-2.jsonl` was written *after* `-f5-save.jsonl` and sorts *before*
+ * it, because `-` is 0x2D and `.` is 0x2E. At the retention edge that means the
+ * newer of a collided pair is the one rotation deletes — measured, and the
+ * reason this comparator exists rather than a `.sort()`.
+ *
+ * So the order is (stamp, collision, name), with the absent suffix read as 1 —
+ * the copy the suffixed ones were collisions *with*. A name that is not one of
+ * ours (a hand-placed file, or the callers in the pure tests) falls back to the
+ * plain comparison, which is what it would have got anyway.
+ *
+ * The alternative was upstream's: `removeOldBackups` (`src/util.js:642`) sorts
+ * by `statSync(f).mtimeMs` and ignores names entirely. It loses here for a
+ * reason this module's own header already gives — mtime is not the snapshot's
+ * time. A copy, a restore from an archive, a profile moved between filesystems
+ * or a backup-of-backups rewrites it, and rotation then deletes by when the
+ * bytes were last touched rather than by when the conversation was copied. It
+ * also costs a `stat` per file per rotation to learn something the file name
+ * already says.
+ * @param left - one snapshot file name.
+ * @param right - another.
+ * @returns negative when `left` is older, positive when newer, 0 when equal.
+ */
+export function compareBackupNames(left: string, right: string): number {
+  const plain = left < right ? -1 : left > right ? 1 : 0
+  const a = parseName(left)
+  const b = parseName(right)
+  if (a === undefined || b === undefined) return plain
+  if (a.stamp !== b.stamp) return a.stamp < b.stamp ? -1 : 1
+  const ca = a.collision ?? 1
+  const cb = b.collision ?? 1
+  if (ca !== cb) return ca - cb
+  return plain
+}
+
+/**
  * Which snapshots go, given the ones there are.
  *
  * The pure half of retention, so the rule is testable without a disk: sort the
- * names, keep the newest `keep`, return the rest. Sorting is lexicographic on
- * purpose — our stamps are fixed-width UTC, so name order **is** time order.
+ * names, keep the newest `keep`, return the rest. Ordering is
+ * {@link compareBackupNames} rather than a plain sort, so a collided pair left
+ * by an older build rotates oldest-first like everything else.
  *
  * `keep` below 1 is read as 1: a retention setting that deleted everything
  * would turn every write into the deletion it was meant to protect against,
@@ -128,7 +174,7 @@ export function parseBackupStamp(stamp: string): number | undefined {
  */
 export function rotateBackups(names: readonly string[], keep: number): string[] {
   const retention = Math.max(1, Math.floor(keep))
-  const ordered = [...names].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+  const ordered = [...names].sort(compareBackupNames)
   return ordered.slice(0, Math.max(0, ordered.length - retention))
 }
 
@@ -153,6 +199,15 @@ export interface BackupStoreOptions {
   keep?: number
   /** Reports a snapshot that could not be removed during rotation. */
   onError?: (error: Error) => void
+  /**
+   * The clock the stamp is read from. Defaults to `Date.now`.
+   *
+   * Injectable for one reason: a same-millisecond collision is what the naming
+   * rule is *about*, and a test that waits for the real clock to produce one
+   * either waits forever on a fine-grained timer or passes without entering the
+   * branch on a coarse one. Frozen, it is the case itself.
+   */
+  now?: () => number
 }
 
 /**
@@ -169,6 +224,7 @@ export class BackupStore {
   readonly #chatsDir: string
   readonly #keep: number
   readonly #onError: ((error: Error) => void) | undefined
+  readonly #now: () => number
   /**
    * The millisecond the last snapshot was stamped with, so the next one is
    * stamped at least one later. Two snapshots in one millisecond used to share
@@ -188,6 +244,7 @@ export class BackupStore {
     this.#chatsDir = chatsDir
     this.#keep = options?.keep ?? DEFAULT_BACKUP_KEEP
     this.#onError = options?.onError
+    this.#now = options?.now ?? (() => Date.now())
   }
 
   /** The backups root, beside the profile's chats. */
@@ -245,20 +302,42 @@ export class BackupStore {
     }
 
     await mkdir(chatDir, { recursive: true })
-    // The stamp is monotonic per store: never earlier than the last one plus a
-    // millisecond, so names sort in the order the snapshots were taken and no
-    // two share a `createdAt`. The suffix loop below stays as the guard for the
-    // case the monotonic clock cannot see - a second store, or a restart within
-    // the same millisecond - because the one being replaced is exactly the copy
-    // worth keeping.
-    const stampedAt = Math.max(Date.now(), this.#lastStampMs + 1)
-    this.#lastStampMs = stampedAt
-    const stamp = backupStamp(new Date(stampedAt))
-    const base = `${stamp}-f${String(floors)}-${reason}`
-    let name = `${base}.jsonl`
-    for (let suffix = 2; existsSync(join(chatDir, name)); suffix += 1) {
-      name = `${base}-${String(suffix)}.jsonl`
+    /*
+     * The stamp is monotonic per store: never earlier than the last one plus a
+     * millisecond, so names sort in the order the snapshots were taken and no
+     * two share a `createdAt`. What the monotonic clock cannot see is a *second*
+     * `#lastStampMs` — a restart inside one millisecond, or a second store on
+     * this directory — and the guard for that used to be a `-2`, `-3` suffix.
+     *
+     * **The suffix is gone, and the stamp moves instead.** A suffixed name sorts
+     * *before* the one it collided with (`-` is 0x2D, `.` is 0x2E), so at the
+     * retention edge rotation deleted the newer copy of the pair — the copy
+     * worth keeping — which is exactly the failure the suffix was written to
+     * prevent. Advancing the stamp by a millisecond until the directory has no
+     * file and no other snapshot at it keeps the name's one promise: fixed-width
+     * stamp, lexical order **is** time order, with nothing after the stamp
+     * needing to be read to know which copy is older.
+     *
+     * The stamp compared is the whole stamp, not the whole name: two snapshots
+     * of the same millisecond with different floor counts collide on no file
+     * name at all, and would then be ordered by `f10` against `f5`.
+     *
+     * A millisecond of drift into the future is what monotonicity already costs
+     * and is the same order as the clock's own resolution. The *source* of the
+     * collision — two hosts on one data directory — is closed a layer up by
+     * `host-lock.ts`; what is left here is the restart case, which this handles
+     * exactly.
+     */
+    let stampedAt = Math.max(this.#now(), this.#lastStampMs + 1)
+    const stamps = new Set(existing.map(row => parseName(row.name)?.stamp))
+    let stamp = backupStamp(new Date(stampedAt))
+    let name = `${stamp}-f${String(floors)}-${reason}.jsonl`
+    while (stamps.has(stamp) || existsSync(join(chatDir, name))) {
+      stampedAt += 1
+      stamp = backupStamp(new Date(stampedAt))
+      name = `${stamp}-f${String(floors)}-${reason}.jsonl`
     }
+    this.#lastStampMs = stampedAt
     // Atomic, for a reason this store has that the others do not: a half-written
     // snapshot still matches `NAME_RE`, so `#rotate` below counts it as a copy
     // and can evict a good one at the retention edge — the crash that
@@ -303,7 +382,11 @@ export class BackupStore {
       }
       for (const chat of chats) {
         if (chatId !== undefined && chat !== chatId) continue
+        // Reversed before the sort below, which is stable: a legacy collided
+        // pair shares a stamp and therefore a `createdAt`, so the tie is broken
+        // by insertion order and this answer is newest-first there too.
         summaries.push(...(await this.#listDir(this.#chatDir(character, chat)))
+          .reverse()
           .map(row => this.#summaryOf(character, chat, row.name, row.bytes, row.floors)))
       }
     }
@@ -473,7 +556,11 @@ export class BackupStore {
   async #listDir(dir: string): Promise<{ name: string, bytes: number, floors: number }[]> {
     let names: string[]
     try {
-      names = (await readdir(dir)).filter(name => NAME_RE.test(name)).sort()
+      // `compareBackupNames`, not `.sort()`: every caller of this reads the
+      // order as time order — the dedup takes the last row as the newest, the
+      // rotation deletes from the front — and a legacy collided pair is the one
+      // case where the plain comparison says the opposite.
+      names = (await readdir(dir)).filter(name => NAME_RE.test(name)).sort(compareBackupNames)
     } catch {
       return []
     }

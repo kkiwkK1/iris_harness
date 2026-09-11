@@ -58,9 +58,15 @@ before(async () => {
   process.env.IRIS_BASE_URL = 'https://api.deepseek.com/v1'
   process.env.IRIS_MODEL = MODEL
   process.env.IRIS_API_KEY_ENV = 'DEEPSEEK_API_KEY'
+  dir = await mkdtemp(join(tmpdir(), 'iris-live-kinds-'))
+  // An ephemeral port and a temporary data directory, because this boots the
+  // **real** composition: it defaults to 8787 and `apps/iris/data`, both of
+  // which belong to whatever host the person running this has open — and the
+  // app service now refuses to start on a data directory another host holds.
+  process.env.IRIS_PORT = '0'
+  process.env.IRIS_DATA_DIR = join(dir, 'host-data')
   ctx = await boot('iris-live-kinds', fileURLToPath(new URL('../cordis.yml', import.meta.url)))
 
-  dir = await mkdtemp(join(tmpdir(), 'iris-live-kinds-'))
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), JSON.stringify({
     spec: 'chara_card_v2',

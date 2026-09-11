@@ -1,0 +1,41 @@
+# A composition for the data-directory lock test: the carrier on an ephemeral
+# port, the transport, and the application, whose `apply` takes the lock.
+#
+# `port: 0` is not incidental — the whole point of the test is that two hosts
+# with *different* ports and the *same* data directory are still refused, which
+# is the case upstream's port-based exclusion cannot see. It also keeps the
+# suite off 8787, which belongs to whatever host is running on this machine.
+#
+# `dataDir` is read from the environment at activation, so one process can boot
+# this file twice against two different directories by setting it in between.
+
+- id: webserver
+  name: '@deepseek-ai/dsh-host-webserver'
+  config:
+    host: '127.0.0.1'
+    port: 0
+
+- id: rpc
+  name: '@iris/rpc-host'
+  config:
+    heartbeatMs: 0
+
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+
+- id: llm-openai-compat
+  name: '@iris/llm-openai-compat'
+  config:
+    provider: default
+    displayName: mock
+    baseURL: 'http://127.0.0.1:1/v1'
+    models:
+      - id: mock-model
+        contextWindow: 32768
+
+- id: app
+  name: '@iris/app-service'
+  config:
+    dataDir: !!js process.env.IRIS_TEST_LOCK_DATA_DIR
+    provider: default
+    model: mock-model

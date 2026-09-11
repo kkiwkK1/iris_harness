@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { getActiveResourcesInfo } from 'node:process'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -22,6 +25,7 @@ import { startMockProvider, type MockProvider } from './mock-provider.ts'
 
 let mock: MockProvider
 let ctx: Context
+let dataDir: string
 
 before(async () => {
   mock = await startMockProvider()
@@ -31,6 +35,15 @@ before(async () => {
   // defaults to 8787: without it the suite dies with EADDRINUSE for anyone who
   // happens to have `pnpm start` running in another terminal.
   process.env.IRIS_PORT = '0'
+  // And a temporary data directory, for the same reason one step further in:
+  // the composition defaults to `apps/iris/data`, which belongs to whatever
+  // host the person running the suite has open. The app service now takes
+  // `<dataDir>/host.lock` at startup and refuses a second host on one
+  // directory, so an unset `IRIS_DATA_DIR` would make this suite either refuse
+  // to boot beside a running `pnpm start` or write into its profile — which is
+  // the incident the lock exists to close, performed by the test suite.
+  dataDir = await mkdtemp(join(tmpdir(), 'iris-e2e-'))
+  process.env.IRIS_DATA_DIR = dataDir
   // Headless: no interface, which keeps the static row out of the tree.
   delete process.env.IRIS_WEB_DIST
   ctx = await boot('iris-e2e', fileURLToPath(new URL('../cordis.yml', import.meta.url)))
@@ -48,6 +61,7 @@ after(async () => {
   // loop run down to stdio alone first; a forced exit then finds nothing
   // mid-close, the way every sibling file's exit already is.
   await quiesce()
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
 })
 
 /**
