@@ -29,8 +29,10 @@
  * @module @iris/app-service/script-buttons
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+
+import { atomicWriteFile, readJsonStore } from './atomic.ts'
 
 /** One button as both the card and the wire describe it. */
 export interface ScriptButton {
@@ -54,30 +56,36 @@ type Partitions = Record<string, Tables>
 export class ScriptButtonStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
+  readonly #onProblem: ((message: string) => void) | undefined
   #partitions: Partitions = {}
   #loaded = false
 
   /**
    * @param path - the JSON file backing the store.
    * @param onError - told when a write fails; absent means silence.
+   * @param onProblem - told when the file was there and could not be read or
+   *   parsed; see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string, onError: (error: Error) => void = () => {}) {
+  constructor(
+    path: string,
+    onError: (error: Error) => void = () => {},
+    onProblem?: (message: string) => void,
+  ) {
     this.#path = path
     this.#onError = onError
+    this.#onProblem = onProblem
   }
 
-  /** Load on first use; a missing file is an empty store, not an error. */
+  /** Load on first use; a missing file is an empty store, an unparsable one is set aside. */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        this.#partitions = parsed as Partitions
-      }
-    } catch {
-      // Absent or unreadable. An empty store means every script shows the
-      // buttons its card declared, which is the correct first-run state.
+    // An empty store means every script shows the buttons its card declared,
+    // which is the correct first-run state — and the wrong state to write over
+    // a file that only failed to parse.
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      this.#partitions = parsed as Partitions
     }
   }
 
@@ -142,7 +150,7 @@ export class ScriptButtonStore {
   async #save(): Promise<void> {
     try {
       await mkdir(dirname(this.#path), { recursive: true })
-      await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`, 'utf8')
+      await atomicWriteFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`)
     } catch (error: unknown) {
       // Reported rather than thrown: a card's button rearrangement failing to
       // persist should not fail the call that made it, but it must not be

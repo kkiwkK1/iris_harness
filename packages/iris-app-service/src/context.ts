@@ -16,8 +16,10 @@
  * @module @iris/app-service/context
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+
+import { atomicWriteFile, readJsonStore } from './atomic.ts'
 
 // —— family①: identity & messages —— `CardCharacter` and `PersonaView` join this line
 import type { CardCharacter, CharacterSummary, PersonaView, RegexScriptView, ScriptContext } from '@iris/protocol'
@@ -544,29 +546,36 @@ const REGEX_SECTION = '.regex'
 
 export class ExtensionSettingsStore {
   readonly #path: string
+  readonly #onProblem: ((message: string) => void) | undefined
   #partitions: Partitions = {}
   #loaded = false
 
   /**
    * @param path - the JSON file backing the store.
+   * @param onProblem - told when the file was there and could not be read or
+   *   parsed; see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string) {
+  constructor(path: string, onProblem?: (message: string) => void) {
     this.#path = path
+    this.#onProblem = onProblem
   }
 
-  /** Load on first use; a missing file is an empty store, not an error. */
+  /**
+   * Load on first use; a missing file is an empty store, not an error.
+   *
+   * An empty partition is the safe reading for an *absent* file: a card finds
+   * its settings missing and re-initializes them, which is a state it already
+   * has to handle on first run. It is not a safe reading for a file that is
+   * there and will not parse — this one holds the installation-wide variable
+   * scope and the user's global regex list alongside every card's partition —
+   * so that case is set aside and reported instead.
+   */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        this.#partitions = parsed as Partitions
-      }
-    } catch {
-      // Absent or unreadable. An empty partition is the safe reading: a card
-      // finds its settings missing and re-initializes them, which is a state it
-      // already has to handle on first run.
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      this.#partitions = parsed as Partitions
     }
   }
 
@@ -602,9 +611,20 @@ export class ExtensionSettingsStore {
     assertStorable(variables, 'global variables')
     await this.#load()
     this.#partitions[GLOBAL_SECTION] = { global: variables }
+    await this.#save()
+  }
+
+  /**
+   * Write the whole file, creating its directory on a first run.
+   *
+   * One writer for the four callers that used to repeat the `mkdir` and the
+   * `writeFile` line by line — which is how one of them came to carry a literal
+   * newline inside its template where the others carry `\n`. The bytes are the
+   * same either way; having four copies of the line is what let them differ.
+   */
+  async #save(): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}
-`, 'utf8')
+    await atomicWriteFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`)
   }
 
   /**
@@ -639,8 +659,7 @@ export class ExtensionSettingsStore {
     assertStorable(list, 'global regex scripts')
     await this.#load()
     this.#partitions[REGEX_SECTION] = list
-    await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`, 'utf8')
+    await this.#save()
   }
 
   /**
@@ -668,8 +687,7 @@ export class ExtensionSettingsStore {
     assertStorable(settings, 'extensionSettings')
     await this.#load()
     this.#partitions[characterId] = settings
-    await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`, 'utf8')
+    await this.#save()
   }
 
   /**
@@ -680,8 +698,7 @@ export class ExtensionSettingsStore {
     await this.#load()
     if (this.#partitions[characterId] === undefined) return
     delete this.#partitions[characterId]
-    await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`, 'utf8')
+    await this.#save()
   }
 }
 

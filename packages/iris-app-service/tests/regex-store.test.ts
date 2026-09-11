@@ -102,7 +102,12 @@ async function fixture(t: TestContext, options: {
   chatId: string
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-regex-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
+  // the Windows window 2b43efc found: a write can land a moment after the
+  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
+  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
+  // which replaced one write syscall per save with a write and a rename.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), options.card ?? cardFile(), 'utf8')
 

@@ -26,9 +26,10 @@
 
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { atomicWriteFile } from './atomic.ts'
 import { rewriteNestedSpecifiers, rewriteStylesheetUrls } from './bundle-rewrite.ts'
 import { checkScriptFetch } from '@iris/script'
 import {
@@ -493,10 +494,13 @@ export class ScriptCache {
       }
       // Body first, sidecar second: a reader requires the sidecar, so a crash
       // between the two leaves a body nobody will serve rather than a sidecar
-      // pointing at bytes that are not there.
-      await writeFile(`${base}.js`, body)
+      // pointing at bytes that are not there. The ordering is what makes the
+      // *pair* safe; each file is written atomically so that neither half can
+      // be half-there either — a truncated `.js` is a bundle the frame would
+      // execute, and its length is exactly what the sidecar swears to.
+      await atomicWriteFile(`${base}.js`, body)
       const meta: CacheMeta = { url, fetchedAt: Date.now(), bytes: body.byteLength }
-      await writeFile(`${base}.json`, `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
+      await atomicWriteFile(`${base}.json`, `${JSON.stringify(meta, null, 2)}\n`)
     } catch (error: unknown) {
       // A cache that cannot write still serves what it fetched. Reported, so a
       // permanently unwritable directory is not a silent per-open refetch.

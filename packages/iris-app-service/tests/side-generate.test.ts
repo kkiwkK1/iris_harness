@@ -64,7 +64,12 @@ interface Fixture {
 
 async function fixture(t: TestContext, reply = 'A reply.'): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-side-generate-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
+  // the Windows window 2b43efc found: a write can land a moment after the
+  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
+  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
+  // which replaced one write syscall per save with a write and a rename.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -431,7 +436,12 @@ test('a provider that reports nothing leaves no record', async (t) => {
    * `0`. This stream is the fixture's minus its `usage` chunk.
    */
   const dir = await mkdtemp(join(tmpdir(), 'iris-side-silent-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
+  // the Windows window 2b43efc found: a write can land a moment after the
+  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
+  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
+  // which replaced one write syscall per save with a write and a rename.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')

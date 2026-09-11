@@ -5832,6 +5832,207 @@ then have to become the primary. Or a card that wants to read a turn's timing,
 which needs a Tavern Helper member and a decision about which of the two rates
 it answers with.
 
+---
+
+## 68. Every file this package writes is replaced atomically, and a store's file that will not parse is set aside rather than overwritten
+
+**Kind:** compatibility recovered — this is upstream's behaviour, which Iris had
+never had — plus two rules of Iris's own on top of it (quarantine, and naming a
+damaged chat). Dated 2026-09-11.
+
+**What upstream does.** SillyTavern writes nothing with a plain `writeFile`.
+Every file it owns goes through the `write-file-atomic` package
+(`package.json:94`, `"write-file-atomic": "^5.0.1"`), imported in 22 modules and
+called at 40 sites, which write to a sibling temporary and rename over the
+target. The three that matter here:
+
+| what | where | note |
+| --- | --- | --- |
+| a chat, on every turn | `src/endpoints/chats.js:466` → `tryWriteFileSync` (`src/util.js:1491`) → `writeFileAtomicSync` | the per-turn save, the exact write this section is about |
+| the settings file | `src/endpoints/settings.js:209` | `POST /api/settings/save` |
+| a character card, in place | `src/endpoints/characters.js:259` | the same in-place rewrite `library.ts` does for a rename or a tag edit |
+
+Upstream also does something Iris deliberately does not: `trySaveChat` follows
+the write with a **throttled backup** of the same bytes
+(`src/endpoints/chats.js:467`, `getBackupFunction(handle)(…)`, a `_.throttle`
+around `backupChat` at `:41`), and it backs up the settings file before a save
+(`backupSettings`, `src/endpoints/settings.js:118`, called at `:380`). See *What
+was deliberately not done* below.
+
+On a file that will not parse, upstream is closer to what Iris did than to what
+Iris now does: `getFiles`/`readPresetsFromDirectory` catch and `// skip`
+(`src/endpoints/settings.js:66`, `:109`), the second with a `console.warn`.
+Nothing is renamed aside. The quarantine rule below is therefore Iris's, not a
+recovered behaviour.
+
+**What Iris did.** Every store wrote its whole file with `writeFile`, which
+truncates the target and then streams the new bytes into it. Between those two
+acts the file exists and is short. The sharpest instance is the chat log: it is
+rewritten in full on every turn, the largest conversation in the local corpus is
+677 floors and 19 MiB, and there is no other copy — `backups` are taken before
+*dangerous* operations (a sweep, an import overwrite), not before an ordinary
+save. A crash, a power cut, a full disk or a kill inside that window left a
+truncated file, and then `chats.ts`'s `open` parsed **outside** its `try`, so the
+raw `SyntaxError` went out on the wire, while `list` skipped the file without a
+word. From the reader's side the conversation had disappeared.
+
+The pattern was already in the package, hand-rolled, in exactly two places:
+`worldbooks.ts` (`replace` and `create`) and `cache-trace.ts`, whose module
+comment named `worldbooks.ts` as the pattern's home. So there were three
+behaviours — atomic here, atomic there, plain everywhere else — and the two
+atomic ones used `<path>.<pid>.tmp`, which two hosts sharing one profile
+directory can collide on.
+
+**What changed.** One module, `packages/iris-app-service/src/atomic.ts`:
+
+- `atomicWriteFile(path, data)` — write to `<name>.<pid>.<16 hex>.tmp` in the
+  **same directory** (`rename` is atomic only within a filesystem, and a data
+  directory on a second volume is the ordinary case on a Windows machine), then
+  rename over the target; unlink the temporary and rethrow on any failure. Two
+  overloads rather than one optional encoding, so a `Uint8Array` call site
+  cannot be handed `'utf8'`. No `fsync`, deliberately — see *not done*.
+- `quarantineCorruptFile(path, at)` / `quarantineUnparsable(path, reason, …)` —
+  rename to `<path>.corrupt-<YYYY-MM-DDTHH-mm-ss-sssZ>`, colons and the
+  milliseconds dot replaced because a Windows filename cannot hold the first and
+  a directory scan would read the second as an extension boundary.
+- `readJsonStore(path, onProblem, at)` — the three outcomes every store used to
+  collapse into one `catch`: **absent** (a first run, silent), **unreadable**
+  (present, reported, nothing moved — the bytes may be fine and only the read
+  failed), **corrupt** (quarantined and reported). Shape validation stays with
+  each store, because a file that parses but carries an older shape is a
+  different question each store already answers for itself.
+
+**The sites.** 28 writes in 19 modules, every one of them: `chats.ts` ×3 (save,
+importFile, restoreFile), `library.ts` ×4 (import, duplicate, and both arms of
+`#mutateCard` — the only write path to a user's own card file), `context.ts` ×4
+(now behind one `#save`, which is also how one of the four came to carry a
+literal newline where the others carry `\n`), `backups.ts`, `cache-trace.ts`,
+`worldbooks.ts` ×2, `script-cache.ts` ×2, `presets.ts`, `settings.ts`,
+`connections.ts`, `scripts.ts`, `script-library.ts`, `script-variables.ts`,
+`script-buttons.ts`, `card-storage.ts`, `favorites.ts`, `chat-order.ts`,
+`persona.ts`, `materialise.ts`. Three of those — `chat-order.ts`,
+`script-cache.ts` ×2 — were not in the audit that prompted this and were found
+by grepping for the call rather than by reading the list.
+
+`backups.ts` has a reason of its own beyond the general one: a half-written
+snapshot still matches `NAME_RE`, so `#rotate` counts it as a copy and can evict
+a good one at the retention edge — the crash would have *cost* a snapshot rather
+than merely failed to take one.
+
+**The quarantine rule.** Twelve JSON stores now rename their file aside before
+falling back to defaults, and report it: `SettingsStore`, `ConnectionStore`,
+`ScriptPolicyStore`, `ScriptLibraryStore`, `PersonaStore`, `FavoriteStore`,
+`ChatOrderStore`, `CardStorageStore`, `ScriptVariableStore`, `ScriptButtonStore`,
+`ExtensionSettingsStore`, `WorldbookBindingStore`. The recovery is unchanged —
+start from defaults, because a store that refused to start would take down the
+UI that fixes it — and what changed is that the bytes are no longer sitting
+where the next `save()` lands. `ConnectionStore` is the reason the rule is worth
+its cost: it sets `#loaded = true` before the read, so a parse failure was never
+retried, and the next `connection.save` wrote an empty list over every profile
+the user had, API keys included.
+
+Each store takes an `onProblem?: (message: string) => void` as its last
+constructor parameter — a new option, not a new channel: `index.ts` wires all
+twelve to one `reportStoreProblem` closure that is `IrisAppService`'s own
+`#report(message, { kind: 'host', grade: 'fault' })` written out, recording into
+the same `DiagnosticBuffer` the service is handed and warning through the same
+logger. So a quarantine appears on `debug.reports` exactly as a fault raised
+inside a generation does. It is **not** `irreversible`, because the bytes were
+kept; that flag is what pushes a report to every open page, and this one waits
+to be asked for. `DiagnosticBuffer` moved to the top of the composition for
+this, since most of these files are read lazily, long after boot.
+
+**The naming rule for chats.** `ChatStore.list(onReport?)` and `#summarize`
+report each file they cannot summarise, by path, once per listing; the service
+passes a callback into its `#chatList`. The shape of `chat.list` does not
+change — the row is still absent, because a summary that cannot be read cannot
+be rendered. `open` now parses inside a guard and throws
+`invalid('chat "<id>" could not be read (<path>): <reason>')`. It is an
+`invalid-request` and not a `not-found` on purpose: the file is *there*, and
+answering "no chat" tells the shell to forget something that still holds the
+reader's conversation.
+
+**A correction to the premise this work started from.** The audit read the two
+symptoms — "`open` throws a raw `SyntaxError`" and "`list` silently skips the
+file" — as two faces of one damaged file. They are not. `#summarize` parses only
+the **first line**, so a chat truncated anywhere after its header keeps its
+sidebar row and fails only on open; only a chat whose *header* is damaged drops
+out of the list. `tests/chat-integrity.test.ts` is split along that seam, and a
+single test asserting both of a tail-truncated file would have been asserting
+something untrue.
+
+**A measurement that changed the implementation.** Racing two `atomicWriteFile`
+calls at one path on this machine (Windows 10, Node on NTFS) made the losing
+`rename` fail with `EPERM`: while a handle is open on the target — the winner's
+pending delete, a `chat.search` scan, a backup being taken, an antivirus opening
+the new file — the target is briefly un-replaceable. A plain `writeFile` would
+have succeeded there (by producing a blended file, which is the thing this
+module exists to prevent, but it would not have *thrown*). So the rename retries
+`EPERM`/`EBUSY`/`EACCES` ten times with a doubling backoff, roughly half a
+second, which is what `graceful-fs` — the package upstream's `write-file-atomic`
+pulls in — does for the same set for the same reason. The first test for it held
+a read handle open on the target and released it after 80 ms, with a note that a
+POSIX host would pass it without exercising the retry. *Corrected the same day:*
+that note was the defect. On the Linux CI runner POSIX `rename` over an open file
+succeeds at once, so the assertion "the write finished before the handle was
+released" was false there and the run was red — a test whose teeth depend on the
+host it runs on is a claim about the machine, not the code. `atomicWriteFile`
+now takes the two platform calls (`rename`, the backoff sleep) as an optional
+`AtomicWriteOptions` seam that production never passes, and `tests/atomic.test.ts`
+drives the retry with a stand-in that refuses `EPERM` three times (four attempts,
+waits 1 / 2 / 4 ms, then the real rename), a non-retryable `ENOENT` (one attempt,
+no wait, previous bytes standing), and an `EBUSY` that never clears (ten attempts,
+nine waits, previous bytes standing, no temporary left) — the same sequence on
+every platform. The Windows measurement stays recorded above the code set in
+`atomic.ts` as the reason the retry exists.
+
+**What was deliberately not done.**
+
+1. **No snapshot before every save.** Upstream takes one (throttled) on every
+   chat save. At 19 MiB per turn for the corpus's largest conversation that is a
+   second full write per turn plus retention churn, and the failure it protects
+   against — a torn write — is the one atomicity already closes. A snapshot
+   protects against a *bad* write, which is a different problem and one the
+   existing pre-dangerous-operation snapshots already cover. Overturned by a
+   report of data lost to a well-formed but wrong save.
+2. **No `fsync`.** The rename is atomic with respect to readers, not with
+   respect to the platter. Issuing one per turn on a 19 MiB file is the cost
+   that would make people turn saving off, and the window it closes — the whole
+   machine losing power inside the rename — leaves the *old* file rather than a
+   truncated one, which is the outcome this section is about anyway.
+3. **The regex-tier defaults are unchanged, and the asymmetry is deliberate.**
+   `ScriptPolicyStore.scopedRegex` answers `record?.regexAllowed !== false` — a
+   card's own regex tier is **allowed** when nothing is recorded — while
+   `presetRegex` answers `=== true`, default-deny (commit a47b669). So a corrupt
+   policy file re-enables every card's regex tier while losing every preset
+   grant. That asymmetry is a standing ruling and is not touched here; the fix
+   for the *silence* is the quarantine, which makes the fallback visible. The
+   comment in `#load` that claimed "the default is deny, so a corrupt file loses
+   grants rather than inventing them" was true of two of the three defaults and
+   false of the third, and now says so.
+4. **A store that is merely unreadable is not quarantined.** `EACCES` on a file
+   whose bytes are perfectly good would move a good file aside for no reason. It
+   is reported instead — which `ScriptVariableStore` already did alone, and the
+   rest of the package now does too.
+
+**Held by.** `tests/atomic.test.ts` (14), `tests/store-quarantine.test.ts` (15,
+twelve of them one parametrised case per store with the covered count asserted
+as a floor), `tests/chat-integrity.test.ts` (3), and the corrected
+`tests/script-variables.test.ts` case — whose old assertion ended "saving will
+overwrite the file", a sentence that is now false and is the reason the test
+changed rather than the reason it was wrong. Eighteen mutations, each reddening
+a named assertion, are recorded in the commit message.
+
+**What would overturn any of this.** A measured cost of the retry loop on a
+loaded host (it holds the save open for up to half a second before failing). A
+platform where `rename` over an existing path is not a replace, which would make
+the whole design unsound rather than needing an adjustment. Or a report that a
+quarantined file is more confusing to a user than a lost one — in which case the
+answer is a surface that lists and offers to restore them, not a return to
+overwriting.
+
+---
+
 ## 69. One executor for every URL a card proposes: `script.fetch` stopped checking the first hop and calling `fetch`
 
 **Kind:** a security fix inside a deliberate departure. The allowlist itself is
