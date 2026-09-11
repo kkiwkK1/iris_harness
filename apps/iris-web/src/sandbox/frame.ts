@@ -20,6 +20,7 @@ import { topFrame } from './failure-attribution.ts'
 import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
 import { sameOriginTarget } from './same-origin.ts'
+import { bridgeVerdict, describeBridgeRefusal } from './bridge-paths.ts'
 import { createVirtualDocument, type NodeFactory, type ScopedRoot } from './virtual-document.ts'
 import { EXPECTED_GLOBALS } from './preset-globals.ts'
 import { isOnSillyTavernSurface } from './card-api.ts'
@@ -1839,6 +1840,27 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     const origin = new URL(env.baseUrl).origin
     const target = sameOriginTarget(specifier, env.baseUrl, origin)
     if (target === undefined) return undefined
+    /*
+     * Ours, but not necessarily ours to hand over.
+     *
+     * The bridge fetches with the **shell's** credentials, so every same-origin
+     * path the host serves was readable by any card until this check: the
+     * network audit's F11 named `/iris/avatar/<another card>`, which is another
+     * character's whole card file. A refused path is not a new failure mode —
+     * it falls through to the native fetch, exactly where it went before the
+     * bridge existed, and the frame's CSP refuses it there and reports it. What
+     * is new is the sentence saying Iris declined to relay it, which is the
+     * layer a reader has to be told about: the CSP report names the origin, and
+     * every refused path in the product shares one.
+     *
+     * `reportGap` deduplicates on the message, and the message carries the
+     * shape rather than the URL, so a card sweeping the library reports once.
+     */
+    const verdict = bridgeVerdict(target, context?.characterId)
+    if (!verdict.allowed) {
+      reportGap(describeBridgeRefusal(verdict.shape, 'frame'))
+      return undefined
+    }
     const id = `f${(nextFetch += 1)}`
     return new Promise<Response>((resolve, reject) => {
       pendingFetch.set(id, { resolve, reject })

@@ -6194,3 +6194,206 @@ rate a measurement of the proxy rather than the model; the decode row is already
 the answer, and it would then have to be promoted. Or the follow-up above
 landing: a reading that shows a duration with no bill beside it, which needs the
 popover to stop being gated on `usage`.
+
+## 94. What page access actually hands over, said in the copy; the scripts a card's markup runs without being asked about, counted; and the one same-origin path list the bridge carries
+
+**Kind:** three answers to an audit, and all three are places where Iris has a
+decision upstream does not have to make. Dated 2026-09-11. §93 belongs to a
+sibling branch landing the same week.
+
+**Why upstream has no counterpart to any of this.** A card's code upstream runs
+in an iframe with **no `sandbox` attribute at all** — `Iframe.vue:2-11` and
+`script/Iframe.vue:2` in JS-Slash-Runner 4.9.1
+(`data/default-user/extensions/JS-Slash-Runner/src/panel/`, read-only), which
+bind `srcdoc`/`src` and set `id`, `name`, `loading`, `frameborder` and nothing
+else; `grep -rn sandbox src/` over that tree returns nothing. So upstream's card
+frame is same-origin with the SillyTavern page by construction. There is no
+grant to word, because there is nothing to grant: the card already has the page.
+There is no consent state, because nothing is withheld. And there is no fetch
+bridge, because a relative `fetch` from inside a same-origin frame is simply a
+same-origin fetch — so there is no list to put on it either. Every part below is
+therefore Iris adding a boundary and then having to describe it honestly, not
+Iris diverging from a behaviour upstream ships.
+
+### 94.1 The page-access copy names all four things, not one (network audit M-3)
+
+**What the grant is.** `sandbox/policy.ts:36-43` — `frameSandbox(true)` returns
+`allow-scripts allow-same-origin`, which is the one combination in the product
+that is deliberately not a sandbox. The frame becomes same-origin with the
+shell, which means, concretely: it can read every conversation's DOM on the
+page, read the page's `localStorage`, reach the shell's own RPC client and call
+**every** host method as the user rather than only the ones the card facade
+offers — and read `input[type=password].value` in the connection panel while an
+API key is being typed or pasted into it.
+
+**What the copy said.** "your other conversations", four times over
+(`grantedNote`, `grantDialogBody`, `grantDialogAck`, and both `consentSandbox*`
+sentences). One of four. The key was the one nobody had written down, and it is
+the one whose loss is not undone by turning the grant back off.
+
+**What it says now**, in both dictionaries. `grantDialogBody` and `grantedNote`
+each list: the contents of every conversation on this page; this page's stored
+preferences; any host action in your name — generation included, which spends
+your tokens — and an API key while you type or paste it into the connection
+panel with this card open. `grantDialogAck`, the sentence a reader ticks as a
+claim about themselves, names the key too. `offNote` and both `consentSandbox*`
+sentences say the same three things in the negative, because "cannot read your
+other chats" was an incomplete reassurance in exactly the way the grant's copy
+was an incomplete warning.
+
+The register is unchanged: prose, no list markup, no new colour, no emphasis,
+and `STRINGS.md`'s glossary terms (卡片脚本 / 页面访问权 / 沙箱（隔离子沙箱）)
+kept verbatim.
+
+**Where it is pinned.** The dialog is a modal, so `check:render` can never open
+it: `grantDialogBody` and `grantDialogAck` have no rendered form to match
+against. That cost is named rather than hidden — `i18n.test.ts` asserts the five
+facts in both columns of both `grantDialogBody` and `grantedNote`, and
+`check:render` asserts the strings that *do* render (the off state, and the
+granted state, reached by actually calling `setDocumentGrant(true)`).
+
+### 94.2 Scripts embedded in a card's markup are counted and shown (system audit F9)
+
+**The finding.** `consent.ts:135-138` — `interfacesMayBuild(state, count)`
+returns true for `unasked` when `scriptCount === 0`, and the message frame puts
+the card's markup into the srcdoc body (`srcdoc.ts`), where an inline `<script>`
+runs while the document parses. So a card whose `scripts` array is empty but
+whose greeting embeds a `<script>` runs code while the panel says "This card
+ships no scripts."
+
+**Not changed, deliberately.** The `unasked && 0` branch is upstream parity and
+it is load-bearing: `ConsentAsk` renders nothing for a card with no scripts, so
+a gate demanding an answer would strand that card's greeting behind a silence no
+user action can break — measured on a real card whose greeting is a 30 KB HTML
+document. `consent.test.ts` still pins all eight `interfacesMayBuild` outcomes
+unchanged.
+
+**What changed is that the number exists.** `sandbox/markup-scripts.ts` counts
+`<script` openings inside the blocks `claimMessageSurfaces` claims — the frames'
+own claim, not a regex over the card file, so prose that merely mentions
+`<script` and unclaimed fences no frame will parse are not counted. Two rules are
+pinned, because both directions are wrong in a different way:
+
+- **A tag name is what ends it.** `<script`, `<script `, `<script/>`, `<script`
+  followed by a newline and `<SCRIPT>` count; `<scripting>` and a trailing
+  `<script` at end of text do not. `<script type="module">` counts — a module
+  script in a srcdoc body is deferred, not skipped.
+- **A `<script` inside an HTML comment counts.** It does not run, and counting
+  it is still the right direction: stripping comments correctly needs a parser,
+  and every failure of a hand-rolled one is quiet (a `<!--` inside an attribute
+  value swallows the real script after it and the count drops to zero on the one
+  card where it mattered). Over-counting shows a reader a warning about markup
+  that does not run; under-counting shows them nothing about markup that does.
+  `frontend-blocks.ts` already makes that trade one layer up, where the claim is
+  substring containment rather than parsing.
+
+The count is taken over the open conversation's messages, with the same settled
+stray-fence repair the rows and the frame budget apply, so the three agree about
+which characters a frame would parse. **It is not read from the card file**: the
+greeting is message zero and is already in that list, and a second reading would
+be a second extraction that could disagree with the one the frames use. The cost
+of that choice is named rather than buried — the number is per conversation
+rather than per card, so a model reply that emits an interface is counted too,
+which is correct for the sentence being said ("the interface markup in this
+conversation") and is not the same statement as "this card ships N".
+
+It appears in two places, and `check:render` asserts the **number of
+occurrences** rather than merely matching one, because the question is put twice
+— the banner above the conversation and the settings panel — and a match is
+satisfied by either. When the question is on screen the sentence is its last
+clause; when it has been answered, or was never put because the card carries no
+scripts, the panel says it on its own. The wording is the same either way and
+says what the answer does **not** govern: these run with their message frame
+whatever was answered.
+
+### 94.3 The same-origin fetch bridge carries four path shapes and no others (network audit F11)
+
+**The finding.** `same-origin.ts` decides whether a card's `fetch` is aimed at
+Iris, and the bridge then has the **shell page** fetch it with the shell's own
+credentials (`runner.ts` `ride`, `frame.ts` `rideFor`). Any same-origin path was
+therefore a card's to read — `/iris/avatar/<another card>`
+(`packages/iris-app-service/src/index.ts:413-469`) hands back another
+character's whole card file, PNG payload and embedded card data together. POST
+writes were already stopped twice over: the bridge carries only GET/HEAD with no
+body and no headers, and the RPC endpoint refuses anything that is not
+`application/json`.
+
+**Measured first, over the operator's install** (`E:/sillyTavern/SillyTavern`,
+ST 1.18.0, read-only; 19 cards → 47 script bodies, 173 card regexes, 65
+greetings; 31 chat files → 2,454 messages; 6 presets → 78 regex replacements; 18
+world books → 1,478 entries; 6,024 bodies, 3,207 distinct after content hashing):
+
+| layer | what the corpus reaches through the bridge |
+| --- | --- |
+| written directly in card, preset or world-book bodies | **two** relative `fetch` targets, both in one card (`萧谴写卡助手版_V4.5.1`), both dev-mode fixtures behind `window.is_dev`, and neither file exists in the install — they 404 upstream too. Zero `XMLHttpRequest`, `$.get`, `$.post`, `$.ajax`, `axios`, `sendBeacon`, `EventSource`, `WebSocket`; zero relative `src=`/`href=`/`url()`; zero reads of `location.origin`/`href`/`pathname`/`baseURI` in 3,207 bodies |
+| inside the CDN bundles cards import | `GET /version` (MagVarUpdate's `_wait_init`, reached by **13 of 19 cards**), `POST /api/backends/chat-completions/status` and `POST /api/chats/export` (the same 13, both behind buttons), and in one card's 1.15 MB Fatria bundle `GET /csrf-token`, `POST /api/worldinfo/get`, `POST /api/worldinfo/edit`, plus dynamic `import()` of `/script.js` and `/scripts/world-info.js` |
+
+The premise this corrects is the framing that the on-disk corpus would show the
+bridge's usage: **no card body writes a same-origin fetch at all**. Every real
+one arrives transitively, inside a bundle 13 of 19 cards import. A census of the
+four on-disk populations alone reports a clean zero on the paths that matter.
+
+**The list**, in `sandbox/bridge-paths.ts`: `/version` exactly; `/sandbox/` and
+`/iris/script-bundle` by prefix; and `/iris/avatar/<id>` only when the id is the
+**current card's own**, compared exactly rather than case-folded (the library
+folds case to decide whether an id is *taken*; folding here would admit a
+genuinely different card's file on a case-sensitive host, and a card never types
+this id — it comes back from `getCharAvatarPath()` as the host spells it). A
+frame that does not yet know whose card it is gets no avatar at all: failing
+open would make the leak a race, failing closed costs a picture. Images are
+unaffected either way — a card putting an avatar in `url(...)` or an `<img>` is
+`img-src`, not the bridge.
+
+**What the list costs, measured: nothing this corpus exercises.** `/version` —
+the only allow-list entry with any breadth, and the only path the corpus reaches
+— is allowed. The three refused GETs (`/csrf-token`, `/script.js`,
+`/scripts/world-info.js`) are SillyTavern's own routes, which this host does not
+serve; they 404 through the bridge today, so that one card degrades identically
+with or without the list. The POSTs never rode the bridge. The two directly
+written targets are dev-mode fixtures that 404 upstream as well. Named rather
+than waved past, because "nothing breaks" is the claim a list like this is most
+often wrong about.
+
+**Both sides, one list.** `frame.ts` consults it before a request rides, and
+`runner.ts` again before the shell honours one — the same reason the origin check
+is already doubled: the frame is the untrusted half and the shell is what holds
+the credentials, so "the frame already filtered" is not a check. The two
+refusals differ only in which layer is speaking, which is the repo rule that a
+refusal names the relaying layer. Frame-side a refused request **falls through to
+the native fetch**, exactly where it went before the bridge existed, so CSP
+refuses and reports it as it always did; what is new is a note saying Iris
+declined to relay it. Shell-side the promise rejects and the existing
+`fetch:error` message carries it — no new message type and no new error kind.
+Each refused *shape* is reported once per frame, with the avatar id folded to
+`<id>`, so a card sweeping the library leaves one line rather than one per card.
+
+**Configuration drift, named.** The three prefixes are literals here while the
+host takes them from config (`avatarPath`, `scriptBundlePath` and `sandboxPath`
+default to exactly these). That is the existing practice in this package —
+`asset-manifest.ts` already hardcodes `/sandbox/manifest.json` — and a host
+reconfigured off the defaults would refuse its own artifacts loudly rather than
+quietly, which is the safe direction. A host that starts shipping those paths to
+the shell as configuration is what would move them.
+
+**What is unchanged.** The three consent states, the storage convention,
+`forget` on delete, `interfacesMayBuild`, and everything `same-origin.ts`
+decides. `frameSandbox` is untouched: the grant still does what it did, it is
+now described.
+
+**Tested.** `apps/iris-web/tests/bridge-paths.test.ts` (the list, the own-avatar
+rule, the shape folding, the two voices), `markup-scripts.test.ts` (the tag-name
+rule, the comment decision, claimed-only counting, the F9 card's own shape),
+additions to `consent.test.ts` (the clause appended and absent) and
+`i18n.test.ts` (both dictionaries carry the facts; the zh question sentence),
+and two-sided integration in `sandbox-frame.test.ts` and `runner-fetch.test.ts`.
+The fake's seeded greeting gains a card interface with one inline `<script>`,
+because nothing in the repository rendered one before and `check:render` had no
+markup to count. Twenty named mutations, each red on at least one new assertion.
+
+**What would overturn it.** A corpus or a report showing a real card that needs a
+same-origin path this list refuses — the three Fatria GETs become an argument the
+day Iris serves anything at those paths. A ruling that 94.2's count should be per
+card, which needs a card-file extraction that agrees with the frames' claim and
+therefore needs the claim to move out of the web app. Or a design in which the
+page-access grant is narrowed rather than described, at which point 94.1's copy
+is describing a boundary that no longer exists.

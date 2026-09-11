@@ -598,7 +598,22 @@ export function seedChats(): FakeChat[] {
       name: '络络',
       candidates: [
         {
-          text: `雨从傍晚下到现在，巷口那盏灯还是没亮。\n\n她蹲在灯柱底下，手里捏着一把细口钳，听见脚步声也没回头。"你迟了两刻钟，"她说，"灯芯已经吸饱水了。"`,
+          /*
+           * The greeting, and a card interface inside it — with an inline
+           * `<script>`.
+           *
+           * Seeded deliberately, for the system audit's F9: this card's
+           * `scripts` list and its **markup** are two populations, and only the
+           * first has a question attached. A greeting whose markup embeds a
+           * script is the exact shape that runs code while the panel says
+           * nobody has been asked, and until this seed existed nothing in the
+           * repository rendered one — `check:render` could not have shown the
+           * count because the fake had no markup to count.
+           *
+           * The script itself is inert on purpose. What is being seeded is a
+           * `<script` a frame would parse, not a behaviour.
+           */
+          text: `雨从傍晚下到现在，巷口那盏灯还是没亮。\n\n她蹲在灯柱底下，手里捏着一把细口钳，听见脚步声也没回头。"你迟了两刻钟，"她说，"灯芯已经吸饱水了。"\n\n\`\`\`html\n<body>\n  <div class="lamp-state">灯芯：吸饱水</div>\n  <script>document.querySelector('.lamp-state')?.setAttribute('data-seeded', '1')</script>\n</body>\n\`\`\``,
         },
       ],
       index: 0,
