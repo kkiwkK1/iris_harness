@@ -29,11 +29,11 @@ Three statuses, and they mean different things:
   written price for closing it and a written trigger for reopening the decision,
   in `apps/iris-web/DEVIATIONS.md` §95 and in `../docs/SANDBOX.md`'s
   "Accepted gaps — 已接受的缺口 (2026-09-11)" section.
-- **Pending** — still open with an owner. Two of them, and they are different
-  kinds of pending: one is in flight on a branch, the other is a request this
+- **Pending** — still open with an owner. One remains, and it is a request this
   repository cannot fulfil from inside itself.
 
-**Counts: 28 landed, 4 accepted, 2 pending, across 34 findings.**
+**Counts: 29 landed, 4 accepted, 1 pending, across 34 findings** (F4 moved from
+pending to landed on 2026-09-11 with #77).
 
 ---
 
@@ -85,7 +85,7 @@ would make the next reader look for it.
 | F1 | 高 | Chat `jsonl` rewritten whole, non-atomically; a corrupted chat vanished silently | **Landed** — #70 | [app-service §68](packages/iris-app-service/DEVIATIONS.md) |
 | F2 | 中 | Two hosts on one data directory, no protection; whole-file writes lost each other's data | **Landed** — #72 | [app-service §71](packages/iris-app-service/DEVIATIONS.md) |
 | F3 | 中 | `script.fetch` re-checked no redirect hop and had no size cap | **Landed** — #66 | [app-service §69](packages/iris-app-service/DEVIATIONS.md) |
-| F4 | 中 | API keys stored in plaintext in `connections.json` | **Pending** — `dev/sec-key-at-rest` | app-service §75 (that branch) |
+| F4 | 中 | API keys stored in plaintext in `connections.json` | **Landed** — #77 (AES-256-GCM per key under a data key wrapped by DPAPI on Windows, a 0600 key file elsewhere; plaintext migrates on first boot) | [app-service §75](packages/iris-app-service/DEVIATIONS.md) |
 | F5 | 中 | No `Host` check on HTTP or WS; DNS rebinding defeats "loopback is trusted" | **Landed** — #68 | [rpc-host §1](packages/iris-rpc-host/DEVIATIONS.md), [app-service §70](packages/iris-app-service/DEVIATIONS.md) |
 | F6 | 中 | A corrupt JSON store degraded silently and the next write overwrote the original | **Landed** — #70 | [app-service §68](packages/iris-app-service/DEVIATIONS.md) |
 | F7 | 中 | The backup timestamp fix did not cover two processes; `-2` suffixes sorted wrong at the retention edge | **Landed** — #72 | [app-service §71](packages/iris-app-service/DEVIATIONS.md) |
@@ -102,14 +102,17 @@ would make the next reader look for it.
 
 ---
 
-## The two that are still open
+## The one that is still open
 
-**F4 — API keys at rest.** In flight on `dev/sec-key-at-rest`, landing as
-app-service §75. It is the one finding of either audit whose fix is a design
+**F4 — API keys at rest** landed as #77 (app-service §75) after this file was
+first written. It was the one finding of either audit whose fix was a design
 question rather than a patch: a key encrypted with a secret stored beside it is
-theatre, and the answers that are not theatre (an OS keychain, a passphrase at
-launch) each cost the user something at every start. This file will carry the PR
-number once it merges.
+theatre, so the data key is wrapped by the operating system's own user-bound
+store (DPAPI, `CurrentUser`) on Windows, and the non-Windows fallback — a
+`0o600` key file — is named as weaker at boot rather than passed off as the same
+thing. Measured on the machine that ran it: one PowerShell spawn per boot,
+~200 ms; the first boot after the upgrade rewrote the real profile file and
+reported `1 connection key(s) were encrypted at rest`.
 
 **L-8 — server timeouts.** Not a patch this repository can write.
 `@deepseek-ai/dsh-host-webserver` creates the `node:http` server in its own
@@ -173,7 +176,7 @@ looks for.
 It is a hand-maintained map, which is the kind of document that goes stale
 quietly. Two things reduce that: every row points at a ledger section rather than
 restating the reasoning, so a row can be wrong about *status* but not about
-*content*; and the two pending rows name what would move them, so the next person
-to touch either one has an obvious place to come back to. When `dev/sec-key-at-rest`
-merges, F4 gets a PR number. When the carrier grows a timeout hook, L-8 becomes a
-landed row and `rpc-host` §2 becomes a closed entry with a test.
+*content*; and the pending row names what would move it, so the next person to
+touch it has an obvious place to come back to. When the carrier grows a timeout
+hook, L-8 becomes a landed row and `rpc-host` §2 becomes a closed entry with a
+test.
