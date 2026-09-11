@@ -167,7 +167,8 @@ test('the consent question states both rulers in Chinese, with the grammar of th
   const oneScript = consentFigures([{ bytes: 2048, enabled: true }])
   assert.equal(
     describeConsentAsk(oneScript, kB, 'zh'),
-    '这张卡运行 1 个脚本（2 kB）。它在隔离子沙箱中运行，除非你另外授予页面访问权，否则无法读取你的其他对话。',
+    '这张卡运行 1 个脚本（2 kB）。它在隔离子沙箱中运行，读不到你的其他对话、这个页面存下的偏好设置，'
+      + '也读不到你输入的 API 密钥——页面访问权（只有你能授予，当前是关闭的）会把这三样一并解开。',
   )
 
   const partial = consentFigures([
@@ -180,6 +181,16 @@ test('the consent question states both rulers in Chinese, with the grammar of th
   assert.match(zh ?? '', /包括当前关闭的 5 kB。/)
   // Agrees with the one script that would run, like the English sentence does.
   assert.match(zh ?? '', /它在隔离子沙箱中运行/)
+  // The three things page access lifts, named. The audit's M-3 was that the
+  // sentence listed only the first of them.
+  assert.match(zh ?? '', /API 密钥/)
+
+  // The markup clause is appended, in Chinese, and only when there is one.
+  assert.equal(describeConsentAsk(oneScript, kB, 'zh')?.includes('界面标记'), false)
+  assert.match(
+    describeConsentAsk(oneScript, kB, 'zh', 3) ?? '',
+    /这个对话的界面标记里内嵌着 3 段脚本。/,
+  )
 })
 
 test('every t("key") in the sources names a real string', async () => {
@@ -253,3 +264,39 @@ async function listFiles(root: string): Promise<readonly string[]> {
   }
   return out
 }
+
+test('the page-access copy names all four things the grant hands over, in both columns', () => {
+  /*
+   * The network audit's M-3. Granting page access adds `allow-same-origin` to
+   * the frame's sandbox attribute, which makes the card's frame same-origin
+   * with the shell: it can read every conversation's DOM, the page's
+   * `localStorage`, call every host RPC as the user, and — the part the copy
+   * never said — read `input[type=password].value` in the connection panel
+   * while an API key is being typed or pasted.
+   *
+   * Checked in the dictionary, not only in `check:render`, because the dialog
+   * is a modal: a server render never opens it, so `grantDialogBody` and
+   * `grantDialogAck` have no rendered form for a check to match against. The
+   * cost of that is named rather than hidden — these assertions prove the
+   * strings say it, and the render check proves the strings that *do* render
+   * say it too.
+   */
+  const facts: readonly (readonly [RegExp, RegExp])[] = [
+    // conversations · preferences · host actions in your name · the key
+    [/every conversation on it|every conversation here/, /每一个对话/],
+    [/stored preferences|preferences it has stored/, /偏好设置/],
+    [/host action in your name/, /以你的名义执行/],
+    [/API key while you type or paste it/, /输入或粘贴的 API 密钥/],
+    [/spends your tokens/, /花你的 token/],
+  ]
+  for (const key of ['grantDialogBody', 'grantedNote'] as const) {
+    for (const [english, chinese] of facts) {
+      assert.match(en[key], english, `en["${key}"] does not say ${String(english)}`)
+      assert.match(DICTIONARIES.zh[key], chinese, `zh["${key}"] does not say ${String(chinese)}`)
+    }
+  }
+  // The acknowledgement a reader ticks has to name the key too: it is the one
+  // sentence that is read as a claim about oneself.
+  assert.match(en.grantDialogAck, /API key/)
+  assert.match(DICTIONARIES.zh.grantDialogAck, /API 密钥/)
+})

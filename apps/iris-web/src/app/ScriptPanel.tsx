@@ -17,7 +17,7 @@
  * @module iris-web/app/ScriptPanel
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button, RiskConfirmation } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ScriptView } from '@iris/protocol'
@@ -25,7 +25,9 @@ import type { ScriptView } from '@iris/protocol'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { describeBytes } from './format.ts'
 import { CollapsibleSection } from './fields.tsx'
-import { consentFigures, describeConsentAsk } from '../sandbox/consent.ts'
+import { consentFigures, describeConsentAsk, describeMarkupScripts } from '../sandbox/consent.ts'
+import { countMarkupScriptsIn } from '../sandbox/markup-scripts.ts'
+import { repairStrayFences } from './stray-fences.ts'
 import { reportRowClass } from './host-report-rows.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
@@ -35,6 +37,40 @@ import {
   summariseRuns,
   type ScriptRunState,
 } from '../sandbox/script-run-state.ts'
+
+/**
+ * How many scripts the conversation's interface markup embeds.
+ *
+ * The system audit's F9, measured where it can be seen. A card's `scripts`
+ * array and its interface markup are two populations, and only the first has a
+ * question attached: `interfacesMayBuild` builds a message frame for an
+ * **unasked** card with an empty script list, deliberately (see `consent.ts`),
+ * and the frame puts that markup in the srcdoc body, where an inline `<script>`
+ * runs at parse time. That stays; what a reader gets now is the number.
+ *
+ * Counted over the messages this conversation holds, through the frames' own
+ * claim — `countMarkupScripts` walks `claimMessageSurfaces`, the same function
+ * `MessageInterfaces` calls — with the same settled stray-fence repair the rows
+ * and the frame budget apply, so the three agree about which characters a frame
+ * would parse. A streaming row is counted unrepaired for the same reason the
+ * budget leaves it alone: its fences are still arriving.
+ *
+ * **Not read from the card file.** The greeting is message zero of the
+ * conversation and is already in this list; a second reading of the card would
+ * be a second extraction that could disagree with the one the frames use.
+ * @returns the count, zero when the chat has no messages yet.
+ */
+export function useMarkupScriptCount(): number {
+  const messages = useIris(state => state.view?.messages)
+  return useMemo(
+    () => countMarkupScriptsIn(
+      (messages ?? []).map(message => (
+        message.streaming === true ? message.text : repairStrayFences(message.text)
+      )),
+    ),
+    [messages],
+  )
+}
 
 /**
  * Render the card-script section.
@@ -53,6 +89,7 @@ export function ScriptPanel(): ReactElement | null {
 
   const [asking, setAsking] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
+  const markupScripts = useMarkupScriptCount()
   // Subscribed so a language switch re-renders the panel's words.
   useLanguage()
 
@@ -68,12 +105,33 @@ export function ScriptPanel(): ReactElement | null {
     ? undefined
     : scripts.length === 0 ? t('cardNoScripts') : t('scriptSummary', { count: scripts.length })
 
+  /*
+   * Said in the panel body whatever the consent state is, because the fact is
+   * not about consent: these scripts run whether the question was answered,
+   * declined, or — the case that produced the finding — never put at all.
+   *
+   * Suppressed only while the question is on screen, where `ConsentGate` is
+   * already carrying the same sentence as its last clause. Two copies of one
+   * sentence one paragraph apart reads as two different facts.
+   */
+  const markupNote = describeMarkupScripts(markupScripts, getLanguage())
+
   return (
     <CollapsibleSection id="scripts" title={t('sectionCardScripts')} summary={summary}>
       {!loaded ? (
         <p className="iris-list__empty">{t('readingCard')}</p>
       ) : scripts.length === 0 ? (
-        <p className="iris-list__empty">{t('cardNoScripts')}</p>
+        /*
+          The finding's own shape: "this card ships no scripts" was the whole
+          answer, and a card with an empty `scripts` array whose greeting
+          embeds a `<script>` is running code under that sentence.
+        */
+        <>
+          <p className="iris-list__empty">{t('cardNoScripts')}</p>
+          {markupNote === undefined ? null : (
+            <p className="iris-field__note">{markupNote}</p>
+          )}
+        </>
       ) : (
         <>
           {/*
@@ -89,6 +147,7 @@ export function ScriptPanel(): ReactElement | null {
           {consent === 'unasked' ? (
             <ConsentGate
               scripts={scripts}
+              markupScripts={markupScripts}
               onAnswer={allowed => void actions.answerScriptsAllowed(allowed)}
             />
           ) : consent === 'declined' ? (
@@ -106,6 +165,9 @@ export function ScriptPanel(): ReactElement | null {
             <p className="iris-field__note iris-script__summary">
               {summariseRuns(runStates, getLanguage())}
             </p>
+          )}
+          {consent === 'unasked' || markupNote === undefined ? null : (
+            <p className="iris-field__note">{markupNote}</p>
           )}
           {/*
         What the frame said about itself, as opposed to about one script: a
@@ -304,16 +366,22 @@ function ScriptRow({
  * anything the card does, which is what makes an in-card plea to allow scripts
  * recognisable as a lie. Declining is recorded, so the question is asked once and
  * not on every chat the user opens.
- * @param props.count - how many scripts would run.
- * @param props.bytes - their total size.
+ * @param props.scripts - the card's scripts, both switches as the host reports.
+ * @param props.markupScripts - how many scripts the rendered interface markup
+ *   embeds. Stated inside the question because it is the part the answer does
+ *   **not** govern: those run with their message frame either way, and a
+ *   question that implied otherwise would be collecting consent under a false
+ *   description of what saying no achieves.
  * @param props.onAnswer - called with the user's decision.
  * @returns the question.
  */
 export function ConsentGate({
   scripts,
+  markupScripts = 0,
   onAnswer,
 }: {
   scripts: readonly ScriptView[]
+  markupScripts?: number
   onAnswer: (allowed: boolean) => void
 }): ReactElement {
   // Subscribed so a language switch re-renders the question.
@@ -334,7 +402,7 @@ export function ConsentGate({
           shapes that expose those mistakes — a card whose counts diverge, and a
           card with exactly one script.
         */}
-        {describeConsentAsk(consentFigures(scripts), describeBytes, getLanguage()) ?? ''}
+        {describeConsentAsk(consentFigures(scripts), describeBytes, getLanguage(), markupScripts) ?? ''}
       </p>
       <div className="iris-grant__actions">
         <Button size="sm" onClick={() => onAnswer(true)}>

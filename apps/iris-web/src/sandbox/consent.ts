@@ -196,6 +196,34 @@ export function consentFigures(
 }
 
 /**
+ * The sentence about code the script list does not know exists.
+ *
+ * The system audit's F9: a card's interface markup can carry inline `<script>`
+ * elements, which run at parse time inside the message frame — including on a
+ * card whose `scripts` array is empty, which `interfacesMayBuild` deliberately
+ * builds without ever putting the question. That behaviour is upstream parity
+ * and is not changed; what changes is that the number is now said out loud, in
+ * the panel and inside the question, so "never asked" stops reading as "nothing
+ * runs".
+ *
+ * Separate from {@link describeConsentAsk} because it has to stand alone: the
+ * card this was found on is a card with **no** scripts, so there is no question
+ * for it to be a clause of.
+ * @param count - how many scripts the rendered interface markup embeds.
+ * @param lang - the language for the sentence.
+ * @returns the sentence, or undefined when the markup embeds none.
+ */
+export function describeMarkupScripts(count: number, lang: Language = 'en'): string | undefined {
+  // Guarded on "one or more" rather than on `!== 0`: a negative count is a
+  // caller's arithmetic mistake, and printing "-1 embedded scripts" would put
+  // it on the one screen whose job is to be believed.
+  if (count < 1) return undefined
+  return count === 1
+    ? translate(lang, 'markupScriptsOne')
+    : translate(lang, 'markupScriptsMany', { count })
+}
+
+/**
  * The sentence the question asks, both rulers included.
  *
  * Built here rather than in the component so it can be tested against the shapes
@@ -217,12 +245,16 @@ export function consentFigures(
  * @param figures - the counts and sizes, measured in one pass.
  * @param bytes - how to render a size.
  * @param lang - the language for the question.
+ * @param markupScripts - how many scripts the rendered interface markup embeds.
+ *   Defaults to none, because a caller with no measurement must not be made to
+ *   assert one; the clause is appended only when there is something to say.
  * @returns the sentence, or undefined when there is nothing to consent to.
  */
 export function describeConsentAsk(
   figures: ConsentFigures,
   bytes: (count: number) => string,
   lang: Language = 'en',
+  markupScripts = 0,
 ): string | undefined {
   if (figures.total === 0) return undefined
   const dormant = figures.totalBytes - figures.runningBytes
@@ -249,6 +281,15 @@ export function describeConsentAsk(
     figures.running === 1
       ? `${gap}${translate(lang, 'consentSandboxOne')}`
       : `${gap}${translate(lang, 'consentSandboxMany')}`
+  /*
+   * Last, and outside the count/size clauses on purpose.
+   *
+   * It is about a different population — markup the card ships, not units the
+   * script list carries — and folding it into the opening would let a reader
+   * add the two numbers. The sentence says which is which rather than relying
+   * on the position to.
+   */
+  const embedded = describeMarkupScripts(markupScripts, lang)
 
-  return `${opening}${covered}${closing}`
+  return `${opening}${covered}${closing}${embedded === undefined ? '' : `${gap}${embedded}`}`
 }
