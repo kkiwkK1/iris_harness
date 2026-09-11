@@ -1,0 +1,261 @@
+/**
+ * The one way this package replaces a file, and the one way it sets a file it
+ * could not read aside.
+ *
+ * **Why a module of its own.** Every store here wrote its file with a plain
+ * `writeFile`, which truncates the target first and then streams the new bytes
+ * into it: a crash, a power loss, a full disk or a kill between those two acts
+ * leaves the file existing, shorter than it should be, and unparsable. On the
+ * largest conversation in the local corpus — 677 floors, 19 MiB, rewritten
+ * whole on every turn — that window is not theoretical, and what it destroys is
+ * the only copy (`backups` is taken before *dangerous* operations, not before
+ * an ordinary save). Upstream SillyTavern has never written this way: every
+ * file it owns goes through `write-file-atomic`, including the per-turn chat
+ * save (`src/util.js:1491` `tryWriteFileSync` → `writeFileAtomicSync`, called
+ * from `src/endpoints/chats.js:466`) and the settings file
+ * (`src/endpoints/settings.js:209`), 61 call sites in all.
+ *
+ * Iris already had the pattern hand-rolled in two places — `worldbooks.ts` and
+ * `cache-trace.ts`, the latter's comment naming the former as its home — so
+ * there were three behaviours in one package. There is now one.
+ *
+ * **What atomicity here does and does not buy.** `rename` over an existing path
+ * is atomic on both filesystems this host runs on: POSIX `rename(2)` replaces,
+ * and Node's Windows implementation asks for `MOVEFILE_REPLACE_EXISTING`, which
+ * is why {@link atomicWriteFile} is the same call on both and why the suite
+ * pins a rename-over-existing on whatever machine it runs on rather than
+ * trusting the sentence. A reader therefore sees either every old byte or every
+ * new one. It does **not** promise the new bytes have reached the platter: no
+ * `fsync` is issued, deliberately, because the per-turn cost of one on a 19 MiB
+ * file is the thing that would make people turn saving off, and the failure it
+ * would close (the whole machine losing power inside the rename) leaves the old
+ * file, not a truncated one.
+ *
+ * @module @iris/app-service/atomic
+ */
+
+import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
+
+/**
+ * Codes a Windows rename raises for a target another handle is holding.
+ *
+ * Not a guess: measured on this machine by racing two `atomicWriteFile` calls
+ * at one path, which is the exact shape of two saves of one conversation
+ * overlapping. The second rename came back `EPERM` — the replaced file is
+ * briefly un-replaceable while the first rename's delete is pending — and the
+ * write failed where a plain `writeFile` would have succeeded (by interleaving
+ * two files' bytes, which is what this module exists to prevent, but it would
+ * not have *thrown*). `EBUSY` and `EACCES` are the same condition reported
+ * differently by different Windows versions and by an antivirus scanning the
+ * new file, and `graceful-fs` — which upstream's `write-file-atomic` pulls in —
+ * retries exactly this set for exactly this reason.
+ */
+const RETRYABLE_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES'])
+
+/**
+ * `rename`, waiting out a target another handle is holding.
+ *
+ * Ten attempts with a doubling backoff — roughly half a second in total — after
+ * which the failure is the caller's, because a rename still refused after that
+ * is a permission problem rather than a race and no amount of waiting fixes it.
+ * The atomicity is unaffected: every attempt is the same all-or-nothing
+ * replace, and a retry only ever happens when none of them has taken effect.
+ * @param from - the temporary.
+ * @param to - the file being replaced.
+ */
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(from, to)
+      return
+    } catch (error: unknown) {
+      const code = (error as { code?: string }).code
+      if (attempt >= 9 || code === undefined || !RETRYABLE_RENAME_CODES.has(code)) throw error
+      await new Promise<void>(resolve => { setTimeout(resolve, 1 << attempt) })
+    }
+  }
+}
+
+/**
+ * Replace a file's whole contents, or leave the previous contents standing.
+ *
+ * The bytes are written to a sibling temporary in the **same directory** — not
+ * the OS temp folder — because `rename` is only atomic within one filesystem,
+ * and a data directory on another volume than `%TEMP%` is the ordinary case on
+ * a Windows machine with a second disk. The temporary's name carries the
+ * process id and eight random bytes, so two hosts sharing one profile, and two
+ * writers inside one host, never collide on it.
+ *
+ * A failure of the write unlinks the temporary before rethrowing, so a full
+ * disk leaves no debris to be mistaken for a store's own file by the directory
+ * scans several of these stores run. A failure of the *rename* does the same:
+ * at that point the target is still whatever it was.
+ * @param path - the file to replace.
+ * @param data - the whole contents. A string is written as UTF-8, which is what
+ *   every call site passed explicitly before; bytes are written as they are.
+ * @throws whatever the underlying write or rename threw, after cleaning up.
+ */
+export async function atomicWriteFile(path: string, data: string | Uint8Array): Promise<void> {
+  const temporary = join(
+    dirname(path),
+    `${basename(path)}.${String(process.pid)}.${randomBytes(8).toString('hex')}.tmp`,
+  )
+  try {
+    // Two overloads rather than one call with an optional encoding: passing
+    // `'utf8'` alongside a `Uint8Array` is what the byte-writing call sites
+    // (a card's PNG, `library.ts`) must never do, and the narrowing is what
+    // makes that unexpressible here instead of a rule each caller remembers.
+    if (typeof data === 'string') await writeFile(temporary, data, 'utf8')
+    else await writeFile(temporary, data)
+    await renameWithRetry(temporary, path)
+  } catch (error: unknown) {
+    // Best-effort, and swallowed on purpose: the caller is already being told
+    // the write failed, and a cleanup that throws over it would replace that
+    // diagnosis with "ENOENT unlinking a temp file".
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
+}
+
+/**
+ * The name a file that could not be parsed is set aside under.
+ *
+ * Colons are what an ISO stamp and a Windows filename disagree about, and the
+ * dot before the milliseconds is replaced for the same reason a directory scan
+ * would otherwise read `…json.corrupt-2026-09-11T12-00-00` and `.123Z` as an
+ * extension boundary. The stamp is UTC because the question a reader asks of it
+ * is "which incident", not "what time was it here".
+ * @param path - the file being set aside.
+ * @param at - the moment, injectable so a test can pin the name.
+ * @returns the path to rename to.
+ */
+function quarantineNameFor(path: string, at: Date): string {
+  return `${path}.corrupt-${at.toISOString().replaceAll(':', '-').replace('.', '-')}`
+}
+
+/**
+ * Move a file whose contents could not be read as JSON out of the way.
+ *
+ * **This is the whole of the "a corrupt store is not overwritten" rule.** Every
+ * JSON store in this package treated a parse failure as "keep the defaults",
+ * and its next `save()` — which for most of them is the very next user action —
+ * wrote the degraded in-memory state over the original bytes. One incident
+ * therefore zeroed the settings, the connection profiles with their keys, and
+ * the consent records, with nothing left to recover from. Renaming first costs
+ * one syscall on a path that only runs when something is already wrong, and it
+ * turns an unrecoverable incident into a file with an odd name.
+ *
+ * The rename, not a copy: a copy leaves the unparsable bytes at the path the
+ * store will write to, so a reader who restarts before the first save sees the
+ * same failure again, and a reader who does not gets their evidence silently
+ * overwritten anyway.
+ * @param path - the file that failed to parse.
+ * @param at - the moment, injectable so a test can pin the name.
+ * @returns where it was moved to, or `undefined` when it could not be moved —
+ *   which is itself worth reporting, because then the next save *will* land on
+ *   top of it.
+ */
+export async function quarantineCorruptFile(path: string, at: Date = new Date()): Promise<string | undefined> {
+  const base = quarantineNameFor(path, at)
+  // Two failures inside one millisecond are not a thing this expects, but a
+  // rename onto an existing quarantine would destroy the earlier evidence,
+  // which is the one outcome this whole function exists to prevent.
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const target = attempt === 0 ? base : `${base}-${String(attempt)}`
+    // `rename` with a no-clobber flag is not portable, so the collision is
+    // closed by a check and a counter rather than by the syscall; the loser of
+    // a true race overwrites a quarantine holding bytes that failed to parse
+    // for the same reason, which is a loss of nothing.
+    if (existsSync(target)) continue
+    try {
+      await rename(path, target)
+      return target
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+/**
+ * Set aside a file that would not parse, and say so in one sentence.
+ *
+ * Separate from {@link readJsonStore} so the one store that reads its file in
+ * two steps of its own — `settings.ts`, which has to tell "no file" from "not
+ * looked yet" for a one-time migration — reports the same sentence rather than
+ * writing a second one that would drift from it.
+ * @param path - the file that failed to parse.
+ * @param reason - what the parser said.
+ * @param onProblem - told, once. Absent means silence.
+ * @param at - the moment, injectable so a test can pin the quarantine name.
+ * @returns where it was moved to, or `undefined` when it could not be moved.
+ */
+export async function quarantineUnparsable(
+  path: string,
+  reason: string,
+  onProblem?: (message: string) => void,
+  at?: Date,
+): Promise<string | undefined> {
+  const moved = await quarantineCorruptFile(path, at)
+  onProblem?.(moved === undefined
+    ? `${path} could not be read as JSON (${reason}) and could not be set aside;`
+      + ' the defaults are in use and the next save will overwrite it'
+    : `${path} could not be read as JSON (${reason}); it was kept as ${moved}`
+      + ' and the defaults are in use')
+  return moved
+}
+
+/**
+ * Read a store's JSON file, setting it aside when it will not parse.
+ *
+ * The three outcomes a store has to tell apart, and used to collapse into one
+ * `catch`: **nothing saved yet** (the state every install starts in, and not a
+ * problem), **unreadable** (a permission or an I/O failure — the bytes may be
+ * perfectly good, so nothing is moved), and **corrupt** (the bytes are there
+ * and are not JSON, which is the only case that quarantines). Every store in
+ * this package went through the first branch for all three, which is why a
+ * corrupt file was indistinguishable from a fresh profile.
+ *
+ * Shape validation stays with the store: a file that parses but carries the
+ * wrong shape is a different question — it may be a file from an older build,
+ * and each store already decides what of it to keep.
+ * @param path - the store's file.
+ * @param onProblem - told, once, when a file was set aside, could not be set
+ *   aside, or was there and could not be read. Never told about a file that is
+ *   simply absent. Absent means silence, which is what a store constructed by a
+ *   test wants.
+ * @param at - the moment, injectable so a test can pin the quarantine name.
+ * @returns the parsed value, or `undefined` when there is nothing to restore.
+ */
+export async function readJsonStore(
+  path: string,
+  onProblem?: (message: string) => void,
+  at?: Date,
+): Promise<unknown> {
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch (error: unknown) {
+    // `ENOENT` is a first run and says nothing; anything else — a permission,
+    // a lock, an I/O failure — is a file that exists and whose contents are
+    // about to be replaced by the defaults, which is the fact `script-variables`
+    // already singled out for exactly this reason and every other store here
+    // swallowed. Nothing is moved: the bytes may be perfectly good.
+    if ((error as { code?: string }).code !== 'ENOENT') {
+      onProblem?.(`${path} could not be read`
+        + ` (${error instanceof Error ? error.message : String(error)});`
+        + ' the defaults are in use and saving will overwrite the file')
+    }
+    return undefined
+  }
+  try {
+    return JSON.parse(text)
+  } catch (error: unknown) {
+    await quarantineUnparsable(
+      path, error instanceof Error ? error.message : String(error), onProblem, at)
+    return undefined
+  }
+}

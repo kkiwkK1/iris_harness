@@ -9,8 +9,10 @@
  * @module @iris/app-service/library
  */
 
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises'
 import { extname, resolve } from 'node:path'
+
+import { atomicWriteFile } from './atomic.ts'
 
 import { CharacterCardError, decodeCardPng, mutateCardPng, normalizeCard, readCardChunks, type CharacterCard } from '@iris/character'
 import type { CharacterSummary } from '@iris/protocol'
@@ -376,7 +378,7 @@ export class CharacterLibrary {
     const taken = await this.#takenIds()
     const characterId = uniqueId(toId(card.data.name.length > 0 ? card.data.name : filename), taken)
     const path = fileFor(this.#dir, characterId, extension)
-    await writeFile(path, bytes)
+    await atomicWriteFile(path, bytes)
     // The id is unique against the cards that exist, so there should be nothing
     // held under this path — but the rule is "a write forgets its path", and a
     // rule with an exception for the case that looks safe is how a stale entry
@@ -469,7 +471,7 @@ export class CharacterLibrary {
     const path = fileFor(this.#dir, freshId, ref.extension)
     // Verbatim bytes: the copy is the source card, not a re-encoding of what
     // this build happens to model about it.
-    await writeFile(path, await readFile(ref.path))
+    await atomicWriteFile(path, await readFile(ref.path))
     this.#forget(path)
     return this.summarize(await this.#refOf(freshId, ref.extension, path), card)
   }
@@ -630,10 +632,16 @@ export class CharacterLibrary {
      * left the file the same length inside one clock tick — a rename between
      * two equally long names — nothing afterwards would ever look again.
      */
+    // Atomic, and here it matters more than anywhere else in the package: this
+    // is the **only** write path to the user's own card file, it rewrites the
+    // file in place, and there is no copy of it anywhere else in the profile. A
+    // rename or a tag edit interrupted mid-write used to leave a PNG that is no
+    // longer a PNG. Upstream writes cards the same way (`writeFileAtomicSync`,
+    // `src/endpoints/characters.js:259`).
     try {
       if (ref.extension === '.png') {
         const bytes = await readFile(ref.path)
-        await writeFile(ref.path, mutateCardPng(bytes, mutate))
+        await atomicWriteFile(ref.path, mutateCardPng(bytes, mutate))
         return
       }
       if (ref.extension === '.json') {
@@ -646,7 +654,7 @@ export class CharacterLibrary {
         if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
           throw invalid('could not read the character card: the file is not a JSON object')
         }
-        await writeFile(ref.path, JSON.stringify(mutate(raw as Record<string, unknown>)))
+        await atomicWriteFile(ref.path, JSON.stringify(mutate(raw as Record<string, unknown>)))
         return
       }
       throw new AppError('unsupported', `"${ref.characterId}" is a plain image and carries no card to edit`)

@@ -18,12 +18,13 @@
  * @module @iris/app-service/connections
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import type { ConnectionProfile, GenerationSettings, HostDefaultConnection, ModelContextLength } from '@iris/protocol'
 
+import { atomicWriteFile, readJsonStore } from './atomic.ts'
 import { notFound } from './errors.ts'
 import { sanitize } from './settings.ts'
 
@@ -353,37 +354,45 @@ function toWire(profile: StoredProfile): ConnectionProfile {
 /** Reads and persists the user's saved connections. */
 export class ConnectionStore {
   readonly #path: string
+  readonly #onProblem: ((message: string) => void) | undefined
   #file: ConnectionsFile = { profiles: [] }
   #loaded = false
 
   /**
    * @param path - the JSON file backing the store.
+   * @param onProblem - told when the file was there and could not be parsed;
+   *   see {@link readJsonStore}. Absent means silence.
    */
-  constructor(path: string) {
+  constructor(path: string, onProblem?: (message: string) => void) {
     this.#path = path
+    this.#onProblem = onProblem
   }
 
-  /** Load on first use; a missing or unreadable file is an empty list. */
+  /**
+   * Load on first use; a missing file is an empty list.
+   *
+   * **The sharpest case for quarantining.** `#loaded` is set before the read,
+   * so a file that failed to parse was never retried, and the first
+   * `connection.save` after the failure wrote an empty list over every profile
+   * the user had — their endpoints and their API keys, with nothing left to
+   * recover from. The bytes now move aside before that can happen.
+   */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed = JSON.parse(await readFile(this.#path, 'utf8')) as Partial<ConnectionsFile>
-      if (Array.isArray(parsed.profiles)) {
-        this.#file = {
-          profiles: parsed.profiles,
-          ...typeof parsed.activeId === 'string' ? { activeId: parsed.activeId } : {},
-        }
+    const parsed = await readJsonStore(this.#path, this.#onProblem) as Partial<ConnectionsFile> | undefined
+    if (Array.isArray(parsed?.profiles)) {
+      this.#file = {
+        profiles: parsed.profiles,
+        ...typeof parsed.activeId === 'string' ? { activeId: parsed.activeId } : {},
       }
-    } catch {
-      // Nothing saved yet, which is the state every install starts in.
     }
   }
 
   /** Persist the file, creating its directory on a first run. */
   async #save(): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#file, null, 2)}\n`, 'utf8')
+    await atomicWriteFile(this.#path, `${JSON.stringify(this.#file, null, 2)}\n`)
   }
 
   /**

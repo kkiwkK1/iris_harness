@@ -128,7 +128,14 @@ async function fixture(t: TestContext, options: {
   seen?: GenerateOptions[]
 } = {}): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-app-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries` on every teardown in this file, the hardening
+  // `card-storage.test.ts` documents for the Windows window 2b43efc found: a
+  // write can land a moment after the last assertion, and a bare `rm` then fails
+  // the whole file with EBUSY or ENOTEMPTY. Seen on full-suite runs after the
+  // atomic-write change of 2026-09-11, which replaced one write syscall per save
+  // with a write and a rename — the same race, a slightly wider window. Only the
+  // tidy-up waits; the tests themselves are unaffected.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
 
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), options.card ?? cardFile(), 'utf8')
@@ -509,7 +516,7 @@ function failingStream(): StreamFn {
 
 test('aborting a turn keeps what the model had already written', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-app-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
 
@@ -552,7 +559,7 @@ test('aborting a turn keeps what the model had already written', async (t) => {
 
 test('a provider failure is reported and the user’s message survives', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-app-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
 
@@ -586,7 +593,7 @@ test('a provider failure is reported and the user’s message survives', async (
 
 test('an endpoint that goes silent is named a timeout, not a provider error', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-app-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
 
@@ -619,7 +626,7 @@ test('an endpoint that goes silent is named a timeout, not a provider error', as
 
 test('a timed-out turn releases the chat, so the next send is not refused as busy', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-app-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
 

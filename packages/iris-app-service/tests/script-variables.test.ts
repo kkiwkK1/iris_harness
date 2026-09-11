@@ -211,20 +211,32 @@ test('a corrupt store is not silently the same as a first run', async (t) => {
   // Absent and unparseable share one recovery — start empty — and they are not
   // the same event. A first run is routine; a file that exists and cannot be
   // read is a card's accumulated state about to be replaced by nothing, and the
-  // next save overwrites it. Merging them into one silent branch means the user
-  // is never told which happened.
+  // next save used to overwrite it. Merging them into one silent branch means
+  // the user is never told which happened.
+  //
+  // **The tail of that sentence changed on 2026-09-11 and the test says so.**
+  // The report now arrives on `onProblem` (the third argument, shared by every
+  // store in this package) rather than on `onError`, and it no longer ends in
+  // "saving will overwrite the file" — because saving no longer does. The bytes
+  // are renamed to `<path>.corrupt-<stamp>` first, which is the fact worth
+  // asserting and the reason the old wording would now be a lie.
   const quiet: string[] = []
-  const fresh = new ScriptVariableStore(path, error => { quiet.push(error.message) })
+  const fresh = new ScriptVariableStore(path, () => {}, message => { quiet.push(message) })
   assert.deepEqual(await fresh.open('aria', undefined), {})
   assert.deepEqual(quiet, [], 'a first run was reported as a problem')
 
   await writeFile(path, '{ this is not json', 'utf8')
   const corrupt: string[] = []
-  const store = new ScriptVariableStore(path, error => { corrupt.push(error.message) })
+  const store = new ScriptVariableStore(path, () => {}, message => { corrupt.push(message) })
   assert.deepEqual(await store.open('aria', undefined), {})
   assert.equal(corrupt.length, 1, 'a corrupt store started over without a word')
-  assert.match(corrupt[0] ?? '', /could not be read/u)
-  assert.match(corrupt[0] ?? '', /saving will overwrite the file/u)
+  assert.match(corrupt[0] ?? '', /could not be read as JSON/u)
+  assert.match(corrupt[0] ?? '', /it was kept as /u)
+
+  // And the bytes are actually there, under a name the store will never write.
+  const kept = (await readdir(dir)).filter(name => name.includes('.corrupt-'))
+  assert.equal(kept.length, 1, 'the unparsable file was not set aside')
+  assert.equal(await readFile(join(dir, kept[0] ?? ''), 'utf8'), '{ this is not json')
 })
 
 /**
