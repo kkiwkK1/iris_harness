@@ -6927,3 +6927,221 @@ missing `nosniff` asserted *as the gap* with `/version`'s present one on the
 same host for contrast) and `apps/iris/tests/host-allowlist.test.ts` (+1 — all
 four application routes plus the RPC POST answering `nosniff`, on the real host,
 the 404s and the 403 refusals included).
+
+## 75. A provider key is encrypted at rest, under a data key the operating system holds
+
+**Kind:** an improvement with a cost, and the cost is a real one paid by a real
+person — see *What this cost* below. Dated 2026-09-11. Found by the system audit
+as F4 (medium).
+
+**What upstream does.** SillyTavern keeps every credential in plaintext JSON.
+`src/endpoints/secrets.js:8` names the file (`secrets.json`, at the user's
+directory root); `:150` writes it — `writeFileAtomicSync(this.filePath,
+JSON.stringify(secrets, null, 4), 'utf-8')` — and `:204-223` (`writeSecret`)
+puts the value into the object exactly as it arrived, `{ id, value, label,
+active }`. `:268` reads it back the same way. The one protection upstream adds is
+about *reading over the wire*, not about the disk: `allowKeysExposure`
+(`:108`, `default/config.yaml:273`, default `false`) refuses `/view` and the
+fetch endpoint (`:542`, `:568`) unless the operator turns it on. So a process,
+a person, a backup or a folder-sync client that can read the user's directory
+has every SillyTavern key, and that is true of every install today.
+
+**What Iris did.** The same thing, with the same reasoning, and it was written
+down as a deliberate decision: `StoredProfile.apiKey` carried "the key as the
+user typed it. Stored in the file", the README said 「但它在磁盘上是明文的」, and
+the test suite asserted it — `connections.test.ts` had
+`assert.equal(file.includes(key), true, 'the key is not in its own store')`.
+The write side was already careful in every *other* respect: the key never
+reaches the wire (`toWire` projects `hasKey` + `keyTail`, pinned on real HTTP
+frames in `apps/iris/tests/rpc-transport.test.ts`), never reaches a log, and
+`HostConnection.apiKey` never leaves the process. The disk was the hole.
+
+**What Iris does now.** Envelope encryption, in one module
+(`src/key-protection.ts`) plus the store that uses it.
+
+| layer | what | where |
+| --- | --- | --- |
+| the value | AES-256-GCM, 12-byte random nonce per write, **AAD = the profile's `id`** | `encryptValue` / `decryptValue` |
+| the stored shape | `apiKeyEnc: { v: 1, iv, tag, ct }`, base64; the name `apiKey` never written | `ConnectionStore.#rowsForFile` |
+| the data key | 32 random bytes, one per profile directory | `ConnectionStore.#dataKeyForWrite` |
+| the wrapping | a `KeyProtector`, named in the key file so what wrapped it decides what may unwrap it | `connections.key`, `{ kind, wrapped }` |
+
+A row on disk now reads like this (a made-up key, `sk-example-1234`):
+
+```json
+{
+  "profiles": [
+    {
+      "id": "8f3c…",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "baseURL": "https://api.deepseek.com/v1",
+      "apiKeyEnc": {
+        "v": 1,
+        "iv": "M0nUqk5rW2tYb1Rn",
+        "tag": "8s5Qp0Tz2m1cH9Xk7Yl2Aw==",
+        "ct": "R1xk9m2bQ0tF7uN5ZQ=="
+      }
+    }
+  ],
+  "activeId": "8f3c…"
+}
+```
+
+and beside it, `connections.key`:
+
+```json
+{
+  "kind": "dpapi",
+  "wrapped": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA…"
+}
+```
+
+**The AAD is the interesting choice.** GCM does not need it to be secure; the
+attack it closes is a *file edit*, not a cryptographic one. Without it, a person
+who can read the directory can paste the expensive profile's `apiKeyEnc` onto
+their own row and generate with it. With the profile's `id` sealed in, the same
+paste fails to authenticate, and the row reads as having no key. It costs one
+call on each side and it is the difference between "the file is encrypted" and
+"a row's key belongs to that row".
+
+### Two protectors, and when each is chosen
+
+**`dpapi`** on Windows: `ProtectedData.Protect(bytes, entropy,
+DataProtectionScope.CurrentUser)` — the keystore every other local tool on that
+platform uses — reached through **one PowerShell spawn**, because Node has no
+DPAPI binding and adding a native dependency for one call is a worse trade than
+a spawn the host pays once. `powershell.exe` first, `pwsh` only when the first
+is *missing* (a PowerShell that ran and refused has given the answer; asking a
+second one would replace "this blob belongs to another account" with "pwsh is
+not installed"). The optional entropy is a fixed application string in the
+source: it is not a secret and cannot be one, it is a namespace.
+
+**The bytes go in on stdin and come back on stdout, as base64, never on the
+command line** — a command line is readable by any process of the same user
+(`Get-CimInstance Win32_Process` needs no privilege) and is what shell history
+and process monitors keep. The script itself is on the command line, contains no
+double quote, and is the same one-liner for both verbs.
+
+**`file`** everywhere else, and on Windows when neither interpreter can be
+spawned: the data key unwrapped in `connections.key` at mode `0o600`, with **one
+boot warning that names it as weaker than an OS keystore and points here**. It
+is worth exactly what it is worth — the keys are no longer in the file a person
+opens to look at their providers, and on a shared POSIX machine the other
+accounts cannot read them — and nothing more. An honest fallback beats a silent
+one, and beats a host that refuses to save a provider.
+
+**Measured on this machine 2026-09-11** (Windows 10, Node 24.13, Windows
+PowerShell 5.1 and pwsh 7.7 both present): `Protect` 289 ms, `Unprotect` 255 ms
+through `powershell.exe`; 380 ms and 375 ms through `pwsh`; a 32-byte key wraps
+to 262 bytes. In the suite, the live round trip (two spawns) takes 496 ms.
+Through the store itself, with `dpapi` chosen: **222 ms** to mint the data key
+and write the first sealed profile, **197 ms** for the next process to open the
+file and answer with the key, and **2 ms** for a later save that carries the
+ciphertext through unchanged. The host pays **one spawn per boot** (the unwrap,
+and only when a stored key exists)
+and **one per data-key creation**. Never per request, never per save after the
+first: the ciphertext is kept in memory beside the plaintext, so a save that
+changes a label re-writes the same envelope rather than re-sealing it.
+
+### The migration, which is automatic and one-way
+
+On load, a row carrying plaintext `apiKey` is adopted into memory and the file is
+rewritten **immediately** — not at the next save, because on a host that is only
+ever read "the next save" is never — with `apiKeyEnc`, atomically. One note is
+reported through the new `reportStoreNote` channel (`grade: 'note'`, not
+`'fault'`: a completed upgrade does not belong in the same list as an unreadable
+key file):
+
+```
+2 connection key(s) were encrypted at rest; the plaintext is gone from …/connections.json
+```
+
+A row carrying **both** fields: the encrypted one wins, the plaintext is dropped,
+and that is reported as a fault — a plaintext key beside a ciphertext is either a
+half-finished hand edit or somebody trying the downgrade. The drop happens
+*before* the decrypt, and a mutation proved why that ordering is load-bearing:
+when the data key will not open there is no decrypt to overwrite the plaintext,
+and a store that left it standing would adopt it as the key and seal it on the
+next save — a downgrade arriving through the one path that is supposed to refuse
+them.
+
+### Four ways this fails, and what each shows
+
+| failure | what the user sees | what is kept |
+| --- | --- | --- |
+| **the wrapped key will not open** (another Windows account, another machine, a tampered `connections.key`, no PowerShell at unwrap) | one fault naming `connections.key` and the reason the OS gave; every provider reads `hasKey: false` and the panel asks again | the key file **and** every ciphertext, byte for byte, through any number of saves |
+| **the key file is gone** while ciphertexts are not (a half-restored backup, a sync client carrying only `*.json`) | one fault naming the missing file; the same "no key" state | the ciphertexts |
+| **one ciphertext fails its tag** (a flipped byte, a row copied from another profile) | one fault naming *that profile*; only that key reads as absent | the row, the envelope, and every other key |
+| **no keystore at creation** | one boot warning naming the weaker storage and pointing here | — |
+
+Two rules run through that table. **Never plaintext**: no failure path writes a
+key back in the clear, and nothing falls back from `dpapi` to `file` at *unwrap*
+time — the fallback is allowed only when a data key is being *created*, where
+the alternative is a host that cannot store a key at all. **Never destroyed**: a
+save in the refused state carries ciphertexts it could not read through
+unchanged, and when the user answers the panel by typing a key again, the old
+wrapped key is **set aside** as `connections.key.unreadable-<stamp>` — the same
+idiom §68 gives a file that will not parse — rather than deleted or overwritten.
+That last move is the one departure from a literal reading of "the wrapped file
+is kept, never overwritten": it is kept, under another name, and only on an
+explicit act by the user, because the documented recovery ("the panel asks
+again") has to actually work or it is not a recovery.
+
+### What did not change
+
+The wire shape (`hasKey` + `keyTail`, never the key), `routeCredential` and its
+ladder, `connection.test`'s resolution order, the panel, and
+`HostConnection.apiKey` — the launch environment's key, which comes from an
+environment variable, is not stored by this store and is untouched. Everything
+downstream of the store reads the *in-memory* `apiKey` exactly as before; the
+encryption is entirely a property of the bytes on disk. Which is also why
+`toWire` needed no change: absent in memory already meant "no key", so an
+unreadable ciphertext shows up as a panel asking for a key rather than as a
+broken profile.
+
+One small thing did change outside this subject: `atomicWriteFile` grew a `mode`
+option, applied to the temporary so the bits are on the inode from its first
+byte. A `chmod` after the rename leaves a window in which the data key exists
+with the umask's bits, and closing that window is the whole reason for asking.
+
+### What this cost
+
+- **A profile folder is no longer portable on Windows.** Copy it to another
+  machine or another account and the keys do not come with it. This is the
+  protection working — someone who copies your `data/` cannot take your keys —
+  but it is also a person losing something that used to move, so it is said in
+  three places a user actually reads: README §3, the troubleshooting list, and
+  `apps/iris/.env.example`.
+- **One spawn on boot**, about 250 ms, on a Windows host that has a stored key.
+- **A second file to keep beside the profiles.** Back up `connections.key` with
+  `connections.json` or the backup restores endpoints without credentials.
+- **The `file` protector is a fallback, not a second design.** On Linux the keys
+  are as readable as before to anything running as the user; what it buys is the
+  casual read and the other accounts.
+
+### What would overturn this
+
+A DPAPI (or Keychain, or libsecret) **binding in Node** with no spawn: the
+protector interface is where it would land, one implementation, and the 250 ms
+would go. A portable-profile use case — a user who deliberately carries their
+`data/` on a stick between machines — would need a third protector (a passphrase
+the user types, which is exactly the prompt this design refused to add for
+everyone) chosen explicitly, not a downgrade of this one. And if upstream ever
+encrypts `secrets.json`, the shape it picks is worth reading before this one
+grows a second version.
+
+**Held by** `packages/iris-app-service/tests/key-at-rest.test.ts` (17: the round
+trip and the absent field name, a fresh nonce per write, the AAD binding both
+through the store and directly, a flipped `ct` byte and a flipped `tag`, the
+migration with its note and its second silent boot, both fields present, a
+plaintext beside an *unopenable* ciphertext, an unwrap failure with the key file
+and ciphertexts compared byte for byte after a later save, a missing key file
+beside sealed rows, re-entry after a failure with the old wrapped key kept
+aside, the `file` protector's warning and its `0o600`, the refusal to substitute
+a protector, and — gated on `IRIS_DPAPI=1` and `win32` — one live DPAPI round
+trip that also asserts no spawn argument contains the key),
+`packages/iris-app-service/tests/atomic.test.ts` (+1, the `mode` reaching the
+renamed file on POSIX) and `packages/iris-app-service/tests/connections.test.ts`
+(two assertions restated: the stored file has **no** plaintext key and the store
+answers with it anyway).

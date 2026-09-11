@@ -67,7 +67,24 @@ export {
   type BackupStoreOptions,
 } from './backups.ts'
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
-export { ConnectionStore, keyTailOf, summarize, routeOf, type ProfileInput } from './connections.ts'
+export {
+  ConnectionStore,
+  keyFilePathFor,
+  keyTailOf,
+  summarize,
+  routeOf,
+  type ConnectionStoreOptions,
+  type ProfileInput,
+} from './connections.ts'
+export {
+  KEY_FILE_WARNING,
+  dpapiProtector,
+  encryptValue,
+  decryptValue,
+  fileProtector,
+  type EncryptedValue,
+  type KeyProtector,
+} from './key-protection.ts'
 export type { ConnectionEndpoint } from './service.ts'
 export {
   assertStorable,
@@ -600,6 +617,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     diagnostics.record({ kind: 'host', grade: 'fault' }, message)
     ctx.logger.warn(message)
   }
+  /**
+   * What a store says when it **did** something on the user's behalf.
+   *
+   * `grade: 'note'` and `logger.info`, because the one caller today — the
+   * connection keys being encrypted at rest on the first boot after 2026-09-11
+   * (§75) — is a success. Filing it through `reportStoreProblem` would put a
+   * completed upgrade in the same list as an unreadable key file, and telling
+   * those two apart is the debug page's whole job.
+   */
+  const reportStoreNote = (message: string): void => {
+    diagnostics.record({ kind: 'host', grade: 'note' }, message)
+    ctx.logger.info(message)
+  }
 
   const library = new CharacterLibrary(paths.characters, avatarPath)
   const scriptVariables = new ScriptVariableStore(paths.scriptVariables,
@@ -752,7 +782,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // the same decision as `script-variables.json`, and for the same reason.
   const scriptButtons = new ScriptButtonStore(
     paths.scriptButtons, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
-  const connections = new ConnectionStore(paths.connections, reportStoreProblem)
+  // The keys in here are encrypted at rest (§75): the data key beside the file
+  // is wrapped by the OS where there is a keystore to wrap it with, and the
+  // first boot on an older profile migrates the plaintext away and says so
+  // through `reportStoreNote`.
+  const connections = new ConnectionStore(paths.connections, reportStoreProblem, { onNote: reportStoreNote })
   // The user's personas — who `{{user}}` is. Its own file, like the
   // connections beside it, for the same owner-separation reason.
   const personas = new PersonaStore(paths.personas, reportStoreProblem)

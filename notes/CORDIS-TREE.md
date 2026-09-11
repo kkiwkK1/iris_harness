@@ -64,7 +64,7 @@
 | `PresetStore`（presets/*.json） | **预设库**：你导入/保存的每个预设一个文件 | 预设面板的列表 |
 | persona store（personas.json） | **用户人格**：多个人设、当前激活的是谁 | 设置里的 Persona 区 |
 | favorites store（favorites.json） | **角色收藏星标**：档案级，不写进卡 | 角色库行的 ★ |
-| connections store（connections.json） | **连接配置档**：端点、模型、API key | 连接面板填的 key 和"保存这个连接" |
+| connections store（connections.json + connections.key） | **连接配置档**：端点、模型、API key——**key 存的是密文**，旁边的 `connections.key` 是开它的数据密钥（Windows 上由 DPAPI 按登录账户封起，见 DEVIATIONS §75） | 连接面板填的 key 和"保存这个连接" |
 | `ExtensionSettingsStore`（extension-settings.json） | 扩展设置：全局正则、变量 | 正则面板 |
 | `ChatStore`（chats/*.jsonl） | **所有对话**——格式和你 ST 的一模一样 | 侧栏的每个会话 |
 | `WorldbookStore`（worldbooks/*.json） | **世界书**：从卡里自动播种 + 聊天级书 | 世界书面板 |

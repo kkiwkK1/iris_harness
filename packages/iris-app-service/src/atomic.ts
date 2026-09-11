@@ -99,6 +99,18 @@ export interface AtomicWriteOptions {
   rename?: (from: string, to: string) => Promise<void>
   /** Stands in for the backoff sleep; production code never passes one. */
   wait?: (ms: number) => Promise<void>
+  /**
+   * Permission bits the new file is created with — the one option here that is
+   * not a test seam.
+   *
+   * Applied to the **temporary**, which is the only way to get them onto the
+   * inode from its first byte: a `chmod` after the rename leaves a window in
+   * which the file exists with the umask's bits, and for the one caller that
+   * asks (`key-protection.ts`, `0o600` on the wrapped data key) that window is
+   * the whole point of asking. Absent leaves it to the umask, which is what
+   * every other store here wants.
+   */
+  mode?: number
 }
 
 /**
@@ -134,8 +146,9 @@ export async function atomicWriteFile(
     // `'utf8'` alongside a `Uint8Array` is what the byte-writing call sites
     // (a card's PNG, `library.ts`) must never do, and the narrowing is what
     // makes that unexpressible here instead of a rule each caller remembers.
-    if (typeof data === 'string') await writeFile(temporary, data, 'utf8')
-    else await writeFile(temporary, data)
+    const mode = options.mode === undefined ? {} : { mode: options.mode }
+    if (typeof data === 'string') await writeFile(temporary, data, { encoding: 'utf8', ...mode })
+    else await writeFile(temporary, data, mode)
     await renameWithRetry(temporary, path, options.rename, options.wait)
   } catch (error: unknown) {
     // Best-effort, and swallowed on purpose: the caller is already being told
@@ -156,10 +169,11 @@ export async function atomicWriteFile(
  * is "which incident", not "what time was it here".
  * @param path - the file being set aside.
  * @param at - the moment, injectable so a test can pin the name.
+ * @param label - what was wrong with it, in one word.
  * @returns the path to rename to.
  */
-function quarantineNameFor(path: string, at: Date): string {
-  return `${path}.corrupt-${at.toISOString().replaceAll(':', '-').replace('.', '-')}`
+function quarantineNameFor(path: string, at: Date, label: string): string {
+  return `${path}.${label}-${at.toISOString().replaceAll(':', '-').replace('.', '-')}`
 }
 
 /**
@@ -180,12 +194,21 @@ function quarantineNameFor(path: string, at: Date): string {
  * overwritten anyway.
  * @param path - the file that failed to parse.
  * @param at - the moment, injectable so a test can pin the name.
+ * @param label - the word in the new name. `corrupt` for a file that would not
+ *   parse, which is every caller but one: `key-protection`'s wrapped data key
+ *   is set aside as `unreadable`, because bytes that are perfectly well formed
+ *   and simply belong to another Windows account are not corrupt, and a name
+ *   that said so would send the reader looking for the wrong thing.
  * @returns where it was moved to, or `undefined` when it could not be moved —
  *   which is itself worth reporting, because then the next save *will* land on
  *   top of it.
  */
-export async function quarantineCorruptFile(path: string, at: Date = new Date()): Promise<string | undefined> {
-  const base = quarantineNameFor(path, at)
+export async function quarantineCorruptFile(
+  path: string,
+  at: Date = new Date(),
+  label = 'corrupt',
+): Promise<string | undefined> {
+  const base = quarantineNameFor(path, at, label)
   // Two failures inside one millisecond are not a thing this expects, but a
   // rename onto an existing quarantine would destroy the earlier evidence,
   // which is the one outcome this whole function exists to prevent.

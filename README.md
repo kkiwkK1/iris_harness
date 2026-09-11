@@ -56,7 +56,7 @@ pnpm start
 - **`IRIS_API_KEY_ENV` 是另一个环境变量的_名字_,不是密钥本身。** 程序拿这个名字去 `process.env[...]` 取值。上例中密钥放在 `DEEPSEEK_API_KEY` 里。未设表示端点不需要鉴权(本地模型正是如此)。
 - **`IRIS_BASE_URL`** 是 OpenAI 兼容端点的根,`/chat/completions` 由程序追加;**`IRIS_MODEL`** 是新聊天默认用的模型 id。**首次启动时,这两个值(连同 `IRIS_API_KEY_ENV` 指向的密钥)会被导入成供应商列表里的第一个供应商并直接启用**——之后由列表说话,环境变量不再是一条可选的路由,见 [§3](#3-连接模型)。
 - **`IRIS_PORT`** 是 loopback 端口;**`IRIS_DATA_DIR`** 是存放 profile 的目录(默认 `./data`,已被 gitignore)。**一个数据目录只能有一个宿主**,见下面的「多实例」。
-- **密钥永不进仓库。** `key.txt`、`*.key`、`secrets.json`、`.env*`、`data/` 都在 `.gitignore` 里;CI 不引用任何 secret。密钥要么走 `IRIS_API_KEY_ENV` 指向的环境变量,要么由界面的连接面板保存到 `<IRIS_DATA_DIR>/<profile>/connections.json`——那个目录属于跑它的人,**不要提交或分享**。
+- **密钥永不进仓库。** `key.txt`、`*.key`、`secrets.json`、`.env*`、`data/` 都在 `.gitignore` 里;CI 不引用任何 secret。密钥要么走 `IRIS_API_KEY_ENV` 指向的环境变量,要么由界面的连接面板保存到 `<IRIS_DATA_DIR>/<profile>/connections.json`——**存进去是加密的**(Windows 上那把数据密钥绑定当前登录账户,所以 profile 拷到别处密钥就打不开了,见 [§3](#3-连接模型))。那个目录仍然属于跑它的人,**不要提交或分享**。
 
 全表(数据目录、ST 安装目录、模板开关、超时、开发源白名单)、`cordis.yml` 的组合方式与故障排查,见 **[§12 宿主参考](#12-宿主参考)**。
 
@@ -101,7 +101,13 @@ IRIS_PORT=8790 IRIS_DATA_DIR=./data-dev pnpm start
 
 **密钥只写不回读。** 保存后它**再也不经过网络回到界面**:读取一个 profile 只回答「有没有密钥」和最后几位做掩码。留空表示保持原样,显式清空要传空字符串。
 
-**但它在磁盘上是明文的**:连同端点、模型一起存在 `<IRIS_DATA_DIR>/<profile>/connections.json`,保护只有机器上的文件权限。想让密钥完全不进 profile,用 `IRIS_API_KEY_ENV`(见 [§2](#2-启动));界面里填过的密钥优先于环境变量,因为更具体的那个是这个人刚刚选的。
+**它在磁盘上是加密的。** 密钥和端点、模型一起存在 `<IRIS_DATA_DIR>/<profile>/connections.json`,但存进去的是密文(AES-256-GCM,每个值一个随机 nonce,绑定所属 profile 的 id),不是你敲进去的那串字符——上游 SillyTavern 的 `secrets.json` 至今是明文,这里不是。加解密用的那把数据密钥单独放在旁边的 `connections.key` 里:
+
+- **Windows**:数据密钥由系统的 DPAPI 以**当前登录账户**的身份封起来。于是有一句必须自己知道的话:**把 profile 目录拷到另一台机器、或另一个 Windows 账户下,那些密钥就打不开了**。宿主会明说(一条 fault,点名是哪个文件),每个供应商显示成「没有密钥」,连接面板会让你重新填一次;端点、模型、预设都还在,只有密钥要重来。这是这个设计付的代价,也正是它挡住的事——别人拷走你的 `data/` 拿不走你的密钥。密文和那把打不开的 `connections.key` 都会被留着,不会被覆盖;你重新填一个密钥时,旧的那把会被改名留在旁边(`connections.key.unreadable-<时刻>`)。
+- **其他平台,或 Windows 上起不了 PowerShell 时**:数据密钥以 `0600` 不加封地存在 `connections.key` 里,启动时打印一条明说「这比系统钥匙串弱」的告警。它挡住的是随手 `cat connections.json`,挡不住能读这个目录的程序。这是有意的诚实回退,不是静默降级。
+- **从旧版本升上来**:第一次启动就地把 `connections.json` 里的明文密钥加密掉,并报一条 note(`N connection key(s) were encrypted at rest`)。单向,之后磁盘上不再有明文。
+
+想让密钥完全不进 profile,用 `IRIS_API_KEY_ENV`(见 [§2](#2-启动));界面里填过的密钥优先于环境变量,因为更具体的那个是这个人刚刚选的。设计、四种失败模式与代价见 [notes/packages/iris-app-service/DEVIATIONS.md](notes/packages/iris-app-service/DEVIATIONS.md) §75。
 
 填好之后点**测试连接**。它探 `GET /models`,回答带具名判词,而不是一句「失败了」:
 
@@ -362,7 +368,8 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `worlds/` | 世界书 |
 | `presets/` | Chat Completion 预设 |
 | `settings.json` | 采样、世界书扫描参数、全局书选择 |
-| `connections.json` | 保存的端点**及其密钥** |
+| `connections.json` | 保存的端点及其密钥,**密钥是密文**(AES-256-GCM,绑定该 profile 的 id) |
+| `connections.key` | 上一行那些密文用的数据密钥。Windows 上由 DPAPI 以当前账户封起;别的平台是 `0600` 的明文,启动会告警。**换机器/换账户就打不开了**,见 [§3](#3-连接模型) |
 | `personas.json` | `{{user}}` 是谁 |
 | `favorites.json` | 收藏的角色 |
 | `script-policy.json` | 你允许过哪些卡跑脚本 |
@@ -382,6 +389,8 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 **页面打不开,但 API 有应答。** 没有界面构建。跑 `pnpm build:web`;构建放在不寻常的位置时设 `IRIS_WEB_DIST`。
 
 **`missing API key: set <名字>`。** `IRIS_API_KEY_ENV` 指的那个变量是空的或没设。这里选择**点名拒绝**而不是发一个不带鉴权的请求,因为端点对后者的回答是 401,而 401 的成因没人看得见。
+
+**连接面板里每个供应商都变成「没有密钥」,端点和模型却都在。** 数据密钥打不开了。最常见的原因是这个 profile 目录换了 Windows 账户或换了机器——DPAPI 封的那把密钥绑定当前登录账户(见 [§3](#3-连接模型))。日志里会有一条点名 `connections.key` 的 fault,说明是哪一种。**密文和那把密钥都没有被删**:重新在面板里填一次密钥即可,旧的 `connections.key` 会被改名留在旁边。宿主**不会**自作主张换成弱一点的存法——那是静默降级,这里宁可让你看见。
 
 **宿主拒绝启动,说两个目录重叠。** `IRIS_ST_DIR` 指到了 `IRIS_DATA_DIR` 里面。两者必须是分开的树——那种重叠正是「Iris 从不写你的安装」不再成立的方式。
 

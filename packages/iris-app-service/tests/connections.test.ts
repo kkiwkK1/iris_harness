@@ -296,10 +296,14 @@ test('a key is stored with its profile and never shown again', async (t) => {
   // The wire view carries no key, under any name.
   assert.equal(JSON.stringify(saved).includes(key), false, 'the response body contains the key')
 
-  // On disk the key IS there — that is the deliberate storage decision, inside
-  // the gitignored data folder, read by nothing but this store.
+  // On disk the key is **not** there as it was typed. Since §75 the store keeps
+  // it sealed under a data key the operating system wraps, so its own file
+  // carries an envelope rather than a credential — and the store still answers
+  // with the key, which is what `hasKey` and `keyTail` above just showed.
   const file = await readFile(join(dir, 'connections.json'), 'utf8')
-  assert.equal(file.includes(key), true, 'the key is not in its own store')
+  assert.equal(file.includes(key), false, 'the key is in its own store as plaintext')
+  assert.equal(file.includes('"apiKey"'), false, 'the plaintext field name is still written')
+  assert.equal(file.includes('"apiKeyEnc"'), true, 'the key was not stored at all')
 
   // And a plain re-read keeps masking it.
   const listed = await handlers['connection.list']({})
@@ -921,9 +925,15 @@ test('a first start with an empty list imports the launch environment and applie
   assert.equal(installs[0]?.endpoint.apiKey, 'sk-host-secret-9999')
 
   // The key is on disk, which is the whole point of importing rather than
-  // borrowing: a later host started without the variable still generates.
+  // borrowing: a later host started without the variable still generates. It is
+  // on disk **sealed** (§75), so the claim is made the way it now has to be —
+  // a second store opened on those bytes with no environment at all answers
+  // with the key, and the file carries no trace of it in the clear.
   const file = await readFile(join(dir, 'connections.json'), 'utf8')
-  assert.equal(file.includes('sk-host-secret-9999'), true, 'the key was borrowed rather than imported')
+  assert.equal(file.includes('sk-host-secret-9999'), false, 'the imported key is on disk in plaintext')
+  const reopened = new ConnectionStore(join(dir, 'connections.json'))
+  assert.equal((await reopened.get(id)).apiKey, 'sk-host-secret-9999',
+    'the key was borrowed rather than imported')
 })
 
 test('the boot after an import installs the route once, not twice', async (t) => {

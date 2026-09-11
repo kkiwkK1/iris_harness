@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -94,6 +94,27 @@ test('a string is written as UTF-8 and bytes are written as they are', async (t)
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe])
   await atomicWriteFile(bytes, png)
   assert.deepEqual(await readFile(bytes), png)
+})
+
+test('a mode asked for is on the file the rename leaves behind', async (t) => {
+  const dir = await scratch(t)
+  const path = join(dir, 'connections.key')
+  await atomicWriteFile(path, '{"kind":"file"}\n', { mode: 0o600 })
+  assert.equal(await readFile(path, 'utf8'), '{"kind":"file"}\n')
+  assert.deepEqual(await temporaries(dir), [], 'a temporary survived a write with a mode')
+
+  // Whether those bits *mean* anything is the platform's answer rather than
+  // this code's: Windows does not enforce them, so asserting them there would
+  // pin the operating system instead of the argument. The one caller that asks
+  // — `key-protection.ts`, for the wrapped data key — carries a source pin of
+  // its own for exactly this reason; see `key-at-rest.test.ts`.
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(path)).mode & 0o777, 0o600, 'the mode did not reach the file')
+    const plain = join(dir, 'settings.json')
+    await atomicWriteFile(plain, '{}\n')
+    assert.notEqual((await stat(plain)).mode & 0o777, 0o600,
+      'every write is 0600 now, which is not what the option asked for')
+  }
 })
 
 test('rename over an existing file replaces it, on this operating system', async (t) => {
