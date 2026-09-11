@@ -13,6 +13,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { ExtensionSettingsStore, openGlobalScope } from '../src/context.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
+import type { FetchLike } from '../src/remote-fetch.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 
@@ -59,7 +60,7 @@ async function fixture(t: TestContext, fetchRemote?: NonNullable<Parameters<type
 
 function makeService(
   dir: string,
-  fetchRemote?: (url: string) => Promise<{ ok: boolean, status: number, text: () => Promise<string>, headers: { get: (name: string) => string | null } }>,
+  fetchRemote?: FetchLike,
 ): { handlers: Handlers, policyPath: string } {
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const policyPath = join(dir, 'script-policy.json')
@@ -187,14 +188,28 @@ test('a grant cannot be stored against a character that is not there', async (t)
 
 // ── the fetch whitelist, at the boundary ────────────────────────────────────
 
-/** A fetcher that records what it was asked for. */
-function recordingFetch(body = 'export const x = 1') {
+/**
+ * A transport that records what it was asked for.
+ *
+ * A *transport*, not a fetcher: it answers one request and hands back a body
+ * stream, and the allowlist, the redirect following and the cap are the shared
+ * executor's above it. The previous shape here — `{ ok, status, text }` from a
+ * fetcher that followed redirects — is what let the handler check the first hop
+ * and serve the last one's bytes.
+ * @param body - what the upstream answers with.
+ * @returns the transport and the URLs it was asked for.
+ */
+function recordingFetch(body = 'export const x = 1'): { asked: string[], fetch: FetchLike } {
   const asked: string[] = []
   return {
     asked,
     fetch: async (url: string) => {
       asked.push(url)
-      return { ok: true, status: 200, text: async () => body, headers: { get: () => 'application/javascript' } }
+      return {
+        status: 200,
+        headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/javascript' : null) },
+        body: (async function* stream() { yield new Uint8Array(Buffer.from(body, 'utf8')) }()),
+      }
     },
   }
 }
@@ -234,12 +249,15 @@ test("a source's own failure is reported as the source's, not as a refusal", asy
   // A 404 from an allowed CDN and a blocked host are different problems, and a
   // card author debugging one must not be shown the other.
   const { handlers } = await fixture(t, async () => ({
-    ok: false, status: 404, text: async () => '', headers: { get: () => null },
+    status: 404, headers: { get: () => null }, body: null,
   }))
 
+  // The whole URL now, not just its host: with redirects followed by this host
+  // the failing address is not necessarily the one that was asked for, and
+  // naming only the host would leave a reader unable to tell which.
   await assert.rejects(
     handlers['script.fetch']({ url: 'https://cdn.jsdelivr.net/gh/o/r@1/missing.js' }),
-    /cdn\.jsdelivr\.net answered 404/,
+    /cdn\.jsdelivr\.net\/gh\/o\/r@1\/missing\.js answered 404/,
   )
 })
 
