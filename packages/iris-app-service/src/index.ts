@@ -308,8 +308,12 @@ export interface Config {
    *
    * Off by default, and the default is the honest one: evaluating a template is
    * running the card author's JavaScript. It runs in a child process with no
-   * environment, no filesystem writes and no host objects in reach, but that is
-   * a containment argument, not a reason to opt a user in for them.
+   * environment, no filesystem writes, a heap ceiling, one child at a time, and
+   * a `vm` realm nothing of the child's own realm reaches into — the last of
+   * those true since 2026-09-11, when the three functions EJS names in every
+   * template's scope (`escapeFn`, `include`, `rethrow`) stopped crossing raw and
+   * `escapeFn.constructor("return process")` stopped working. Containment is
+   * still a containment argument, not a reason to opt a user in for them.
    * @default false
    */
   templates?: boolean

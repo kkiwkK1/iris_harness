@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import {
   UnsupportedTemplateApiError,
   buildEnvironment,
+  createRealm,
   createState,
   findWorldInfoEntry,
   resolveLorebook,
@@ -18,7 +19,31 @@ import type { Snapshot, WorldInfoEntry } from '../src/index.ts'
  * *message* scope, the merge is shallow, and the merge order decides which scope
  * wins. All four are upstream's and all four are load-bearing for the 537
  * `getvar` sites in the corpus.
+ *
+ * This file exercises the **host-side closures**, one step before the realm
+ * bridge — which is what lets it assert `instanceof UnsupportedTemplateApiError`
+ * and read a refusal's class. Across the bridge that class is deliberately
+ * unreachable, and `realm.test.ts` is where that is prosecuted. The state,
+ * though, is the real thing: it lives inside a `vm` realm here exactly as it
+ * does in the child, so a value read back out of it is a realm object and is
+ * compared through {@link plain}.
  */
+
+/** One realm for the file. State is per-test; the realm it lives in is not. */
+const realm = createRealm()
+
+/**
+ * A host-realm copy, for `deepEqual`.
+ *
+ * `assert.deepEqual` from `node:assert/strict` compares prototypes, and a value
+ * that came out of the realm has the realm's. That is the change being made, not
+ * an accident, so the comparison says so instead of being loosened.
+ * @param value - something read out of the realm.
+ * @returns the same data with this realm's prototypes.
+ */
+function plain<T>(value: T): T {
+  return realm.release(value)
+}
 
 /** A snapshot with something in every scope, so precedence is observable. */
 function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
@@ -40,23 +65,29 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
 
 /** An environment over that snapshot, with `getwi` wired to a recording stub. */
 function environment(snap: Snapshot = snapshot(), locals?: Record<string, never>) {
-  const state = createState(snap)
+  const state = createState(snap, realm)
   const nested: { text: string, origin: string }[] = []
-  const env = buildEnvironment({
+  const { members, ops } = buildEnvironment({
     snapshot: snap,
+    realm,
     locals,
     evaluateNested: async (text, origin) => {
       nested.push({ text, origin })
       return `[evaluated ${origin}]`
     },
   }, state)
-  return { ...env, state, nested }
+  // The description flattened the way `child.ts` flattens it, minus the bridge.
+  const flat: Record<string, unknown> = { ...members.data, ...members.calls }
+  for (const [key, read] of Object.entries(members.reads)) {
+    Object.defineProperty(flat, key, { get: read, enumerable: true })
+  }
+  return { locals: flat, members, ops, state, nested }
 }
 
 test('the merged cache follows upstream\'s order, and later scopes win', () => {
   // `Object.assign({}, global, initial, local, message)` in `precacheVariables`.
   // Message last, so a message variable shadows a global of the same name.
-  const state = createState(snapshot())
+  const state = createState(snapshot(), realm)
   assert.equal(state.cache['who'], 'message')
   assert.equal(state.cache['onlyGlobal'], 1)
   assert.equal(state.cache['onlyInitial'], 2)
@@ -70,12 +101,12 @@ test('the merge is shallow, so a shadowed object is replaced whole', () => {
   // matters because a deep merge would silently resurrect stale keys.
   const snap = snapshot()
   snap.variables.message = { stat_data: { from: 'message' } }
-  const state = createState(snap)
-  assert.deepEqual(state.cache['stat_data'], { from: 'message' })
+  const state = createState(snap, realm)
+  assert.deepEqual(plain(state.cache['stat_data']), { from: 'message' })
 })
 
 test('the trace id is carried and the modify id starts at zero', () => {
-  const state = createState(snapshot())
+  const state = createState(snapshot(), realm)
   assert.equal(state.cache['_trace_id'], 7)
   assert.equal(state.cache['_modify_id'], 0)
 })
@@ -190,11 +221,11 @@ test('setvar merge concatenates arrays and deep-merges objects', () => {
 
   setvar('list', [1, 2])
   setvar('list', [3], { merge: true })
-  assert.deepEqual(getvar('list'), [1, 2, 3])
+  assert.deepEqual(plain(getvar('list')), [1, 2, 3])
 
   setvar('obj', { a: 1, nested: { x: 1 } })
   setvar('obj', { b: 2, nested: { y: 2 } }, { merge: true })
-  assert.deepEqual(getvar('obj'), { a: 1, b: 2, nested: { x: 1, y: 2 } })
+  assert.deepEqual(plain(getvar('obj')), { a: 1, b: 2, nested: { x: 1, y: 2 } })
 })
 
 test('setvar flags guard on presence in the cache', () => {
@@ -249,19 +280,21 @@ test('SillyTavern exposes chatMetadata and saveMetadata, and refuses the rest', 
   // The corpus reaches for exactly these two, 16 times each. `getContext()` is
   // the one that must not silently be undefined: it is how a card would reach
   // the whole application upstream.
-  const { locals, ops, state } = environment()
-  const sillyTavern = locals['SillyTavern'] as Record<string, unknown>
+  const { members, ops, state } = environment()
+  const sillyTavern = members.objects['SillyTavern']
+  assert.ok(sillyTavern, 'SillyTavern must be described as a guarded object')
 
-  assert.deepEqual(sillyTavern['chatMetadata'], { yinqi_story_flags: { 宋赵复合: true } })
+  assert.deepEqual(plain(sillyTavern.reads['chatMetadata']?.()), { yinqi_story_flags: { 宋赵复合: true } })
 
   ;(state.chatMetadata['yinqi_story_flags'] as Record<string, unknown>)['宋赵复合'] = false
-  ;(sillyTavern['saveMetadata'] as () => void)()
-  assert.deepEqual(ops, [{ op: 'saveMetadata', value: { yinqi_story_flags: { 宋赵复合: false } } }])
+  sillyTavern.calls['saveMetadata']?.()
+  assert.deepEqual(plain(ops), [{ op: 'saveMetadata', value: { yinqi_story_flags: { 宋赵复合: false } } }])
 
-  assert.throws(
-    () => sillyTavern['getContext'],
-    (error: unknown) => error instanceof UnsupportedTemplateApiError && /SillyTavern\.getContext/.test(error.message),
-  )
+  // The refusal is described here and thrown by the realm's proxy. What this
+  // layer owns is the class and the member name in the message.
+  const refusal = sillyTavern.refuse('getContext')
+  assert.ok(refusal instanceof UnsupportedTemplateApiError)
+  assert.match(refusal.message, /SillyTavern\.getContext/)
 })
 
 test('scalars and per-item locals reach the template', () => {

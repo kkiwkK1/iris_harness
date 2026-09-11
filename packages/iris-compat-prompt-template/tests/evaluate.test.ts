@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { createRealm, evaluate } from '../src/child.ts'
+import { buildScope, createRealm, evaluate } from '../src/child.ts'
 import { buildEnvironment, createState } from '../src/index.ts'
 import type { Snapshot } from '../src/index.ts'
 
@@ -47,14 +47,18 @@ function snapshot(): Snapshot {
 /** Render one template in a fresh realm over that snapshot. */
 async function render(text: string, locals?: Record<string, never>): Promise<string> {
   const snap = snapshot()
-  const state = createState(snap)
   const realm = createRealm()
+  const state = createState(snap, realm)
+  let scope: object = realm.create()
   const environment = buildEnvironment({
     snapshot: snap,
+    realm,
     locals,
-    evaluateNested: (nestedText, origin, nestedLocals) => evaluate(realm, nestedText, origin, nestedLocals),
+    evaluateNested: (nestedText, origin, extra) =>
+      evaluate(realm, nestedText, origin, realm.assign(scope, realm.adopt(extra))),
   }, state)
-  return await evaluate(realm, text, 'test', environment.locals)
+  scope = buildScope(realm, environment)
+  return await evaluate(realm, text, 'test', scope)
 }
 
 test('text with no tag comes back byte-identical', () => {

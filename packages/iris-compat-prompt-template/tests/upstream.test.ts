@@ -50,11 +50,23 @@ function freshEjs(): Ejs {
   return require('ejs') as Ejs
 }
 
-test('the pin is the version the extension vendors', () => {
-  // The extension bundles ejs 3.1.9 and patches it. If this pin moves, the
-  // source patches below stop matching and `applySourcePatches` throws — which
-  // is the intended failure, but the version is the thing to notice first.
-  assert.equal(freshEjs().VERSION, '3.1.9')
+test('the pin is one release ahead of the version the extension vendors', () => {
+  // The extension bundles ejs **3.1.9** and patches it. This package pins
+  // **3.1.10**, which is 3.1.9 plus CVE-2024-33883: `hasOwnOnlyObject` and
+  // `createNullProtoObjWherePossible` on the options and data objects, so a
+  // template cannot reach an option through `Object.prototype`.
+  //
+  // Deliberate, and it *narrows* the difference rather than widening it. One of
+  // the two hunks the ledger lists as "hardening, not dialect, and therefore not
+  // reproduced" was `utils.hasOwnOnlyObject` on the options object, which the
+  // extension carries and stock 3.1.9 did not. Stock 3.1.10 carries it too, so
+  // that row stopped being a divergence.
+  //
+  // The dialect patches are what has to survive the bump, and the two preamble
+  // tests below are what prove it: they assert the *stock* source 3.1.10 emits
+  // and then the patched one. If a future pin changes either, `applySourcePatches`
+  // throws `UpstreamPatchError` rather than silently running stock EJS.
+  assert.equal(freshEjs().VERSION, '3.1.10')
 })
 
 test('text without an opening delimiter is never compiled', () => {

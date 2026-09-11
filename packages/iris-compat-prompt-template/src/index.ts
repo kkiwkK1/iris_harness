@@ -9,10 +9,15 @@
  *
  * So evaluating one is running the card author's code, and the only question
  * worth asking about this package is where that happens. It happens in a child
- * process with no environment, no filesystem writes, no ability to spawn, and a
- * `vm` realm with no `process`, no `require`, and no working dynamic import.
- * Nothing the template can reach is a host object; every write it performs comes
- * back described, for the host to apply through its own entry points.
+ * process with no environment, no filesystem writes, no ability to spawn, a
+ * heap ceiling, one child at a time, and a `vm` realm with no `process`, no
+ * `require`, and no working dynamic import.
+ *
+ * Nothing the template can reach is an object of the child's main realm — every
+ * callable crosses as a frozen trampoline built inside the context and every
+ * value is re-created there, which `src/realm.ts` explains and
+ * `tests/realm.test.ts` prosecutes. Every write a template performs comes back
+ * described, for the host to apply through its own entry points.
  *
  * `notes/packages/iris-compat-prompt-template/DEVIATIONS.md` lists where this deliberately differs from upstream, and what
  * each difference was measured to cost.
@@ -21,7 +26,11 @@
  */
 
 export {
+  CHILD_CONCURRENCY_LIMIT,
+  CHILD_MAX_OLD_SPACE_MB,
   DEFAULT_DEADLINE_MS,
+  MAX_TEMPLATE_CHARS,
+  childConcurrency,
   childExecArgv,
   evaluateBatch,
   type EvaluatorOptions,
@@ -35,9 +44,17 @@ export {
   resolveLorebook,
   type BatchState,
   type Environment,
+  type EnvironmentMembers,
   type EnvironmentOptions,
   type VarOptions,
 } from './environment.ts'
+
+export {
+  createRealm,
+  type GuardedSpec,
+  type Realm,
+  type RealmLodash,
+} from './realm.ts'
 
 export {
   DEFERRED_PATCHES,

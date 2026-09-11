@@ -141,6 +141,15 @@ with `env: {}`, which is what makes that true rather than hopeful.
 Same category as "the browser frame could have a Chromium bug". Recorded, not
 pretended to zero.
 
+> **2026-09-11.** This entry was right about the residual risk and wrong about
+> where the risk was. It assumed the only way into the child's main realm was a
+> `vm` **bug**. There was a way in by construction — `escapeFn.constructor`,
+> deviation 12 below — and it needed no bug at all, so "remains open *given a
+> `vm` escape bug*" was an understatement for as long as the entry has existed.
+> The paragraph above is true again now. What it was missing is that a realm
+> boundary is a property to be built and tested, not one a `vm.createContext`
+> call confers.
+
 On Windows, `env: {}` still yields 11 OS-injected variables: `HOMEDRIVE`,
 `HOMEPATH`, `LOGONSERVER`, `PATH`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`,
 `USERDOMAIN`, `USERNAME`, `USERPROFILE`, `WINDIR`. Down from 85 inherited. No
@@ -210,11 +219,165 @@ Upstream has none either. A cycle of entries fetching each other overflows the
 stack, which lands as one failed item rather than a lost batch. An *async* cycle
 that never returns is caught by the deadline instead.
 
+### 12. Nothing of the child's own realm reaches a template — 2026-09-11
+
+Upstream hands a template the whole SillyTavern page and there is no boundary to
+speak of, so this is not a deviation *from* upstream in the usual sense. It is a
+correction to a boundary this package had claimed and did not have.
+
+**What was open.** EJS compiled with `client: true` emits a function of four
+parameters, and the extension's dialect names three of them in the template's own
+scope: `escapeFn`, `include`, `rethrow`. Until this date `child.ts` passed the
+child main realm's own functions for all three:
+
+```ts
+return await instantiated.call(locals, locals, identityEscape, stubInclude, rethrow)
+```
+
+A function carries its realm. So `escapeFn.constructor` was the **child main
+realm's** `Function`, and the code it builds runs there rather than in the `vm`
+context. Measured against the code as it stood, on this machine:
+
+| probe | what it answered |
+| --- | --- |
+| `escapeFn.constructor === (function(){}).constructor` | `false` — a foreign `Function` |
+| `escapeFn.constructor('return process.pid')()` | `11904` — the child's real pid |
+| `escapeFn.constructor('return typeof fetch')()` | `function` |
+| `include.constructor` / `rethrow.constructor` | same reach |
+| `getvar.constructor` / `setvar.constructor` | same reach — every `locals` member was a closure of this realm |
+| `getvar('obj').constructor.constructor` | same reach — a **value** carries its realm too |
+| `this.constructor.constructor` | same reach — so did the `locals` receiver |
+| `SillyTavern.chatMetadata.constructor.constructor` | same reach |
+
+From the child's main realm, `globalThis.fetch` is a function, `process` is an
+object, and `process.send` is the IPC channel this package's protocol rides — so
+a template could also have forged an `item` or `done` frame back to the host.
+`import('node:https')` happened to fail from a `Function`-constructed body (no
+referrer), but `fetch` needs no import. The `vm` context's refusal of dynamic
+import, which deviation 7 calls "the thing that closes that door", was irrelevant:
+the escape was not in the context.
+
+Reachable whenever `IRIS_TEMPLATES=1`, because `script.evalTemplate` is in
+`CARD_METHODS` — so any card with script consent, not only a card whose fields
+are evaluated during a generation.
+
+**The mechanism, in `src/realm.ts`.** Structural rather than a list of patched
+names, because a list is exactly what missed `getvar('obj').constructor` the
+first time:
+
+- **Every callable crosses as a trampoline built inside the context.** A factory
+  compiled with `vm.runInContext` in strict mode returns `function (...args) {
+  return body(this, args) }`, frozen. `trampoline.constructor` is the context's
+  `Function`; the host closure `body` lives only in a closure variable; `caller`
+  and `arguments` are poisoned accessors on a strict function and
+  `arguments.callee` throws.
+- **Every value crosses re-created**, through the context's own `JSON.parse` on a
+  serialisation, so its prototype chain is the context's. Primitives cross
+  unchanged, because a number carries no realm.
+- **Errors and promises are values.** A host refusal reaches template code as a
+  context `Error` with the same `name` and `message` (and a stack trimmed to
+  those two, so this package's file paths do not travel); a host promise is
+  adopted into a context `Promise`. Otherwise `catch (e) { e.constructor }` and
+  `getwi(…).constructor` are the same escape in different clothes.
+- **Libraries are instantiated in the context.** lodash already was. That also
+  fixed a quieter bug: lodash's `isPlainObject` compares against *its own*
+  realm's `Object.prototype`, so a host lodash asked about a template's object
+  literal answers `false` — which is `getwi`'s overload test and `setvar`'s merge
+  test.
+- **`instanceof RegExp` is gone** from `matchesEntry` for the same reason. The
+  corpus's one computed `getwi` target is ``new RegExp(`^${charName}$`)``, built
+  in the template's realm, so the branch never fired for the regexes that
+  actually arrive — and where it did fire it took `RegExp.test` while upstream
+  takes `String.match`. One predicate now, upstream's, for every realm.
+
+**Where the state lives, and what it cost.** The obvious reading of "re-create
+every value that crosses" is to convert on each `getvar` return. That is both
+slower and *wrong*: upstream's `getvar('stat_data')` hands back a live reference,
+so a card writing `getvar('stat_data').hp = 5` writes the cache, and a per-call
+copy drops that silently. So the variable state is built **inside** the realm
+once per batch — `createState` parses the pushed JSON with the context's
+`JSON.parse` and mutates it with the context's lodash — and `getvar` keeps
+handing out live references.
+
+Measured 2026-09-11 on this install's heaviest chat, a **708,022-character**
+variable blob:
+
+| | round 1 | round 2 | round 3 |
+| --- | --- | --- | --- |
+| `createState` **inside the realm** | 9.6 ms | 10.9 ms | 10.2 ms |
+| the host-realm `_.cloneDeep` it replaced | 9.7 ms | 9.9 ms | — |
+
+So the realm re-creation is free to within the noise of the deep clone that was
+already there, and is **0.5% of the 2000 ms deadline**. The heaviest batch this
+install can produce at all — that blob, all 1,478 world-info entries (6.79 MiB of
+snapshot) and all 203 templated entries as items — runs end to end through a real
+forked child in **257–276 ms**, 201 of 203 items rendering. World info is *not*
+converted wholesale: only the entry a `getwi` actually matched crosses, and
+`entry.content` is a string.
+
+**The three limits.** Each is a measurement, not a round number:
+
+| limit | value | basis |
+| --- | --- | --- |
+| child heap | `--max-old-space-size=128` | peak `heapUsed` on the heaviest batch above was **46.3 MiB** (22.4 MiB old space), two rounds agreeing to 0.2 MiB. 2× is 93; the 128 MiB floor wins, kept as a floor so the flag is never tighter than Node needs to boot. |
+| children at once | 1 | a fork plus a multi-megabyte snapshot plus a heap ceiling, N times over, for work that is not latency-critical. A second batch waits; the queue survives a rejected batch. |
+| item text | 1,048,576 characters | largest single templated field in the corpus **19,399** (`命定之诗与黄昏之歌v3.0.4`, entry «双子星的咏叹调-本体»); heaviest book's templated entries **356,328** in total; every templated field in all 19 cards **560,233**. An item is an assembled *message*, so the sum is the number to clear: the cap is 1.87× all of it, and ~260k tokens of prompt. |
+
+The cap refuses by name — `template text is N characters, over the 1048576
+character limit for one item` — rather than leaving it to the deadline, because a
+huge template compiles for seconds and then dies by `SIGKILL`, which reaches the
+caller as "timed out" and names no item. The other items in the batch are
+unaffected.
+
+**What would overturn this.** Any of:
+
+- A measurement showing `createState` inside the realm costing a meaningful share
+  of the deadline on a real snapshot — the alternative would be to re-create per
+  crossing and accept the loss of the live reference, which is a compatibility
+  cost and would need its own entry.
+- A corpus template that depends on holding a host object — there is no such
+  thing today, and by construction there cannot be one that is also compatible
+  with upstream, since upstream's "host objects" are page objects.
+- A real prompt item over 1 MiB, or a real batch peaking over 64 MiB of heap.
+  Both are measurements this entry can be re-run against.
+- Node gaining an `--allow-net` (or a `vm` API that refuses network by
+  construction), which would make the realm boundary the second line rather than
+  the only one.
+
+Pinned by `tests/realm.test.ts` (35 tests): 24 constructor probes, a promise probe, a
+rejection probe, the `arguments.callee.caller` walk, the freeze, the guarded
+object's refusal, an `import('node:https')` route through a bridged function's
+constructor, and a sweep that walks the whole scope asserting every reachable
+object belongs to the context with a floor on how many it visited. The **control**
+is `probes the harness itself`: the same probe run against `identityEscape`
+installed on the scope unbridged — it must come back `foreign` and must actually
+reach `process`, or every `context` above would be a claim about a blind probe.
+Twelve mutations, each reddening a named test, are recorded in the commit.
+
 ## Engine patches that **are** installed
 
 The extension does not run stock EJS. It vendors 3.1.9 and patches it: six hunks,
 92 lines. Three change behaviour in ways reachable from a template, and all three
-are reproduced in `src/upstream.ts`:
+are reproduced in `src/upstream.ts`.
+
+**The pin is `ejs` 3.1.10, moved 2026-09-11** — one release ahead of what the
+extension vendors. 3.1.10 is 3.1.9 plus CVE-2024-33883: `utils.hasOwnOnlyObject`
+and `utils.createNullProtoObjWherePossible` applied to the options and data
+objects, so nothing reaches an option through `Object.prototype`. Re-checked
+against the table below and nothing in it moved:
+
+| what | 3.1.9 | 3.1.10 |
+| --- | --- | --- |
+| `applySourcePatches` anchors (`function __append(s) …`, `var print = __append;`) | match | **match** — both preamble patches apply byte for byte, asserted by `tests/upstream.test.ts` |
+| `installNestedDelimiters` (`Template.prototype` shape, `opts.delimiter` reads) | applies | **applies** — `this.opts` is now a null-prototype object, which the patch reads the same way |
+| `stripLintHint` (the EJS-Lint message) | strips | **strips** |
+| `utils.hasOwnOnlyObject` on options | extension-only | **stock has it** — the row below moves |
+
+That last row is the only diff with a consequence, and it is a *narrowing*:
+`hasOwnOnlyObject` was one of the two hunks listed below as "hardening rather
+than dialect and therefore not reproduced". Stock now carries it, so the distance
+between the pinned engine and the extension's is one hunk smaller than the
+paragraph below describes.
 
 | Patch | Stock | Upstream | Corpus sites |
 |---|---|---|---|
@@ -241,6 +404,11 @@ Two patches are hardening or plumbing rather than dialect and are not reproduced
 `utils.hasOwnOnlyObject` on the options object (this package owns the options) and
 `e.src` on compile errors (the origin is reported instead).
 
+**2026-09-11:** the first of those two is no longer a difference at all. Stock
+3.1.10 — the pinned version — applies `hasOwnOnlyObject` itself, as part of
+CVE-2024-33883, so the pinned engine and the extension's now agree on it. One
+unreproduced hunk remains, `e.src`.
+
 ## Re-checking after an upstream release
 
 `auto_update: true` means the extension moves without asking. To re-diff:
@@ -252,7 +420,9 @@ Two patches are hardening or plumbing rather than dialect and are not reproduced
 3. Diff against `node_modules/ejs/lib/ejs.js` with `diff -u -w -B`, which drops
    the bundle's own reindentation and leaves the real hunks.
 4. Check the version in the bundle's embedded `package.json` module (module 6)
-   against this package's pin.
+   against this package's pin. They are **not** expected to be equal: the pin is
+   deliberately 3.1.10 against the extension's 3.1.9, so the question is whether
+   the extension has moved past 3.1.10, not whether the two match.
 
 If a patch here can no longer be applied, `applySourcePatches` throws
 `UpstreamPatchError` rather than silently leaving stock behaviour in place. That
