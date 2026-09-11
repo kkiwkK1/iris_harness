@@ -41,12 +41,13 @@
  * @module @iris/app-service/script-library
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 
 import type { ScriptView, UserScript, UserScriptView } from '@iris/protocol'
 
+import { atomicWriteFile, readJsonStore } from './atomic.ts'
 import { assertStorable } from './context.ts'
 import { invalid, notFound } from './errors.ts'
 
@@ -135,40 +136,46 @@ function listOf(value: unknown): UserScript[] {
  */
 export class ScriptLibraryStore {
   readonly #path: string
+  readonly #onProblem: ((message: string) => void) | undefined
   #file: LibraryFile = { global: [], characters: {} }
   #loaded = false
 
   /**
    * @param path - the JSON file backing the store.
+   * @param onProblem - told when the file was there and could not be parsed;
+   *   see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string) {
+  constructor(path: string, onProblem?: (message: string) => void) {
     this.#path = path
+    this.#onProblem = onProblem
   }
 
-  /** Load on first use; a missing file is an empty library, not an error. */
+  /**
+   * Load on first use; a missing file is an empty library, not an error.
+   *
+   * An empty library is the safe reading and the safe *direction*: the default
+   * is "nothing of the user's runs", so a corrupt file loses scripts rather
+   * than running code nobody can see. Safe is not the same as free — the
+   * scripts are the user's own work — so the file is set aside and reported
+   * rather than quietly replaced by the next edit.
+   */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return
-      const file = parsed as Record<string, unknown>
-      const characters: Record<string, UserScript[]> = {}
-      const stored = file['characters']
-      if (typeof stored === 'object' && stored !== null && !Array.isArray(stored)) {
-        for (const [id, rows] of Object.entries(stored)) characters[id] = listOf(rows)
-      }
-      this.#file = { global: listOf(file['global']), characters }
-    } catch {
-      // Absent or unreadable. An empty library is the safe reading and the safe
-      // *direction*: the default is "nothing of the user's runs", so a corrupt
-      // file loses scripts rather than running code nobody can see.
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return
+    const file = parsed as Record<string, unknown>
+    const characters: Record<string, UserScript[]> = {}
+    const stored = file['characters']
+    if (typeof stored === 'object' && stored !== null && !Array.isArray(stored)) {
+      for (const [id, rows] of Object.entries(stored)) characters[id] = listOf(rows)
     }
+    this.#file = { global: listOf(file['global']), characters }
   }
 
   async #save(): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#file, undefined, 2)}\n`, 'utf8')
+    await atomicWriteFile(this.#path, `${JSON.stringify(this.#file, undefined, 2)}\n`)
   }
 
   /**

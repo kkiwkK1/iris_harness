@@ -31,7 +31,9 @@
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
+
+import { atomicWriteFile } from './atomic.ts'
 
 import { fromCharacterBook, parseLorebook, type Lorebook, type LorebookEntry } from '@iris/lorebook'
 import type { CharacterCard } from '@iris/character'
@@ -514,9 +516,11 @@ export class WorldbookStore {
     })
 
     const path = fileFor(this.dir, name, '.json')
-    const temporary = `${path}.${String(process.pid)}.tmp`
-    await writeFile(temporary, JSON.stringify({ entries: stored }, null, 2), 'utf8')
-    await rename(temporary, path)
+    // Through `atomic.ts`, which is where this store's own tmp+rename pattern
+    // moved when every other write in the package was brought onto it. The
+    // temporary's name now also carries eight random bytes, so two hosts
+    // sharing one profile directory cannot collide on the process id alone.
+    await atomicWriteFile(path, JSON.stringify({ entries: stored }, null, 2))
 
     return this.get(name)
   }
@@ -546,13 +550,11 @@ export class WorldbookStore {
 
     const text = JSON.stringify({ entries: stored }, null, 2)
     await mkdir(this.dir, { recursive: true })
-    const temporary = `${path}.${String(process.pid)}.tmp`
-    await writeFile(temporary, text, 'utf8')
     // `rename` over a path checked absent above: two materialisations racing for
     // one name would both pass the check, and the loser's book would vanish
     // without a word. The check narrows the window; the binding table is what
     // actually closes it, by never reusing a name it did not record.
-    await rename(temporary, path)
+    await atomicWriteFile(path, text)
     return text
   }
 

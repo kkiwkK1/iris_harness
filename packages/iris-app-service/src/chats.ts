@@ -10,7 +10,7 @@
  * @module @iris/app-service/chats
  */
 
-import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
@@ -30,6 +30,7 @@ import type { RegexScript } from '@iris/regex'
 import type { PresetRegexTier, ScopedRegexPolicy } from './regex.ts'
 import type { ScopeBackend, Variables } from '@iris/variables'
 
+import { atomicWriteFile } from './atomic.ts'
 import { BackupStore } from './backups.ts'
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
@@ -280,9 +281,19 @@ export class ChatStore {
    *
    * A file that cannot be parsed is skipped rather than failing the listing: one
    * corrupt chat must not make every other conversation unreachable.
+   *
+   * **Skipped is not the same as unmentioned, and it used to be.** A file whose
+   * header line would not parse simply did not appear, so a conversation that a
+   * truncated save had damaged looked deleted — no row, no error, nothing in
+   * the log. The shape of the answer is unchanged (the row is still absent,
+   * because a summary that cannot be read cannot be rendered); what is new is
+   * that the caller is told, by name, once per listing, and can put that on the
+   * report channel where a reader will find it.
+   * @param onReport - told the path of each file that could not be summarised.
+   *   Absent means silence, which is what the store's own internal callers want.
    * @returns summaries, newest activity first.
    */
-  async list(): Promise<ChatSummary[]> {
+  async list(onReport?: (message: string) => void): Promise<ChatSummary[]> {
     const rows: ImportedRow[] = []
     for (const chatId of await this.ids()) {
       const live = this.#entries.get(chatId)
@@ -290,7 +301,7 @@ export class ChatStore {
         rows.push({ summary: live.toSummary(), mainChat: mainChatOf(live.header) })
         continue
       }
-      const row = await this.#summarize(chatId)
+      const row = await this.#summarize(chatId, onReport)
       if (row !== undefined) rows.push(row)
     }
     return linkImportedParents(rows).sort((a, b) => b.updatedAt - a.updatedAt)
@@ -473,7 +484,22 @@ export class ChatStore {
       throw notFound(`no chat "${chatId}"`)
     }
 
-    const file = parseChatFile(text)
+    // Parsed inside a guard, which it was not: the parse sat outside the
+    // `try` above, so a truncated file — the exact thing a non-atomic save
+    // could leave behind — reached the wire as a raw `SyntaxError`
+    // ("Unexpected token … in JSON at position 3812"), a sentence naming
+    // neither the conversation nor what a reader should do. The refusal now
+    // names the file and carries the parser's reason behind it, and it is an
+    // `invalid-request` rather than a `not-found`: the chat is *there*, and
+    // answering "no chat" would tell the shell to forget a file that still
+    // holds the reader's conversation.
+    let file: SillyTavernChat
+    try {
+      file = parseChatFile(text)
+    } catch (error: unknown) {
+      throw invalid(`chat "${chatId}" could not be read (${path}): `
+        + (error instanceof Error ? error.message : String(error)))
+    }
     const meta = readMeta(file.header)
     const card = meta.characterId === undefined
       ? undefined
@@ -755,7 +781,7 @@ export class ChatStore {
     if (existsSync(target)) {
       await this.#backups.snapshot(chatId, 'import-overwrite', characterId)
     }
-    await writeFile(target, formatChatFile(chat), 'utf8')
+    await atomicWriteFile(target, formatChatFile(chat))
     return {
       chatId,
       title,
@@ -827,12 +853,28 @@ export class ChatStore {
 
   /**
    * Write a conversation to disk.
+   *
+   * **The one write in this host whose failure mode was the product's whole
+   * value.** The file is rewritten in full on every turn — the corpus's largest
+   * conversation is 677 floors and 19 MiB — and a plain `writeFile` truncates
+   * before it streams, so a crash, a power loss, a full disk or a kill inside
+   * that window left a file that exists, parses as far as its last complete
+   * line and then throws. `open` surfaced the raw `SyntaxError`, `list` skipped
+   * the file silently, and the conversation read as gone. Snapshots are taken
+   * before *dangerous* operations, not before an ordinary save, so there was
+   * nothing beside it either.
+   *
+   * Through `atomicWriteFile`, a reader now sees either the previous turn's
+   * file or this one's. Upstream has always written it this way
+   * (`src/endpoints/chats.js:466` → `tryWriteFileSync` → `writeFileAtomicSync`).
    * @param entry - the live conversation.
+   * @param onReport - passed through to the projection, which uses it to say
+   *   what it dropped.
    */
   async save(entry: ChatEntry, onReport?: (message: string) => void): Promise<void> {
     await this.ensure()
     const path = fileFor(this.#dir, entry.chatId, '.jsonl')
-    await writeFile(path, formatChatFile(entry.toFile(onReport)), 'utf8')
+    await atomicWriteFile(path, formatChatFile(entry.toFile(onReport)))
   }
 
   /**
@@ -874,7 +916,7 @@ export class ChatStore {
   async restoreFile(chatId: string, text: string): Promise<void> {
     this.#entries.delete(chatId)
     await this.ensure()
-    await writeFile(fileFor(this.#dir, chatId, '.jsonl'), text, 'utf8')
+    await atomicWriteFile(fileFor(this.#dir, chatId, '.jsonl'), text)
   }
 
   /**
@@ -892,11 +934,19 @@ export class ChatStore {
     this.#entries.delete(chatId)
   }
 
-  /** Read one chat's header without materializing its log. */
-  async #summarize(chatId: string): Promise<ImportedRow | undefined> {
+  /**
+   * Read one chat's header without materializing its log.
+   * @param chatId - the conversation.
+   * @param onReport - told when the file is there and its header will not
+   *   parse. A file that has *gone* says nothing: the directory listing and
+   *   this read are two moments, and a chat deleted between them is not a fault.
+   * @returns the row, or undefined when it could not be summarised.
+   */
+  async #summarize(chatId: string, onReport?: (message: string) => void): Promise<ImportedRow | undefined> {
+    const path = fileFor(this.#dir, chatId, '.jsonl')
     let text: string
     try {
-      text = await readFile(fileFor(this.#dir, chatId, '.jsonl'), 'utf8')
+      text = await readFile(path, 'utf8')
     } catch {
       return undefined
     }
@@ -915,7 +965,9 @@ export class ChatStore {
         },
         mainChat: mainChatOf(header),
       }
-    } catch {
+    } catch (error: unknown) {
+      onReport?.(`chat "${chatId}" is not listed: its file (${path}) could not be read — `
+        + (error instanceof Error ? error.message : String(error)))
       return undefined
     }
   }

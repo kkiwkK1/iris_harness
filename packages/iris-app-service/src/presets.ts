@@ -15,8 +15,10 @@
  * @module @iris/app-service/presets
  */
 
-import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+
+import { atomicWriteFile } from './atomic.ts'
 
 import {
   toTavernHelperPreset,
@@ -336,7 +338,7 @@ export class PresetStore {
     // Four-space indent, because that is what upstream's endpoint writes
     // (`presets.js`) and what every preset on a user's disk is formatted with —
     // a round trip through this store should not show as a full-file diff.
-    await writeFile(path, `${JSON.stringify(preset, null, 4)}\n`, 'utf8')
+    await atomicWriteFile(path, `${JSON.stringify(preset, null, 4)}\n`)
   }
 
   /**

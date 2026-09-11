@@ -25,8 +25,10 @@
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, unlink } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
+
+import { atomicWriteFile } from './atomic.ts'
 
 import type { BackupPreview, BackupPreviewFloor, BackupReason, BackupSummary } from '@iris/protocol'
 
@@ -257,7 +259,13 @@ export class BackupStore {
     for (let suffix = 2; existsSync(join(chatDir, name)); suffix += 1) {
       name = `${base}-${String(suffix)}.jsonl`
     }
-    await writeFile(join(chatDir, name), text, 'utf8')
+    // Atomic, for a reason this store has that the others do not: a half-written
+    // snapshot still matches `NAME_RE`, so `#rotate` below counts it as a copy
+    // and can evict a good one at the retention edge — the crash that
+    // interrupted the write would then have cost a snapshot rather than merely
+    // failed to take one. Through the temporary, the file appears whole or not
+    // at all, and `#rotate`'s scan never sees a partial name.
+    await atomicWriteFile(join(chatDir, name), text)
 
     await this.#rotate(chatDir)
 

@@ -4634,7 +4634,13 @@ export class IrisAppService {
    * @returns the summaries in display order.
    */
   async #chatList(): Promise<ChatSummary[]> {
-    const rows = await this.#options.chats.list()
+    // The listing's own report channel. A chat file that cannot be summarised
+    // is still left out of the answer — the shape of `chat.list` does not
+    // change — but it is no longer left out *silently*: a conversation damaged
+    // by a truncated save used to vanish from the sidebar with nothing said
+    // anywhere, which reads as a deletion nobody performed.
+    const rows = await this.#options.chats.list(
+      message => { this.#report(message, { kind: 'host', grade: 'fault' }) })
     const store = this.#options.chatOrder
     if (store === undefined) return rows
     return applyChatOrder(rows, await store.list())

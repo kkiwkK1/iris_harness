@@ -523,10 +523,41 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const paths = profilePaths(dataDir, config.profile ?? DEFAULT_PROFILE)
   warnOnPreProfileLayout(ctx, dataDir, paths.root)
 
+  // Retention for the diagnostic bus. Reports already reached the logger and
+  // stopped there, so a debug page had nothing to ask for; this keeps a bounded
+  // window of them in memory. Not persisted deliberately — a restart empties it
+  // and says so through `oldest`.
+  //
+  // **Constructed first**, before any store, because the stores now report
+  // through it: a store's file is read on first use, which for most of them is
+  // after boot, and a report that arrives then has to land in the same buffer
+  // the service's own `#report` writes to or the debug page would be showing
+  // two different histories of one host.
+  const diagnostics = new DiagnosticBuffer()
+  /**
+   * What a store says when its file was there and could not be used.
+   *
+   * The service's `#report(message, { kind, grade })` in two lines, because
+   * this runs before the service exists and the stores it belongs to are
+   * constructed here. Same buffer, same logger, so the record reaches
+   * `debug.reports` exactly as a fault raised inside a generation does.
+   *
+   * `grade: 'fault'` — the call that triggered the load was served, with
+   * defaults, which is precisely the thing worth flagging. Not `irreversible`:
+   * the bytes were set aside rather than lost, and that is the whole point of
+   * quarantining them, so this waits to be asked for instead of interrupting
+   * every open page.
+   */
+  const reportStoreProblem = (message: string): void => {
+    diagnostics.record({ kind: 'host', grade: 'fault' }, message)
+    ctx.logger.warn(message)
+  }
+
   const library = new CharacterLibrary(paths.characters, avatarPath)
   const scriptVariables = new ScriptVariableStore(paths.scriptVariables,
-    error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) })
-  const extensionSettingsStore = new ExtensionSettingsStore(paths.extensionSettings)
+    error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) },
+    reportStoreProblem)
+  const extensionSettingsStore = new ExtensionSettingsStore(paths.extensionSettings, reportStoreProblem)
   // Loaded before the chats, because the `global` scope is read synchronously by
   // a card and a synchronous read cannot wait for a file.
   const globalScope = await openGlobalScope(extensionSettingsStore, error => { ctx.logger.warn(error.message) })
@@ -538,12 +569,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
-  })
+  }, reportStoreProblem)
   // Which named book each card's embedded book became. Beside the installation
   // rather than in the card, so a card exported back to SillyTavern is
   // unchanged — the same decision as `script-variables.json`.
   const worldbookBindings = new WorldbookBindingStore(
-    paths.worldbookBindings, error => { ctx.logger.warn(error.message) })
+    paths.worldbookBindings, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
 
   /**
    * Materialise a card's embedded book, once, however the card first arrives.
@@ -596,10 +627,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Constructed **before** the chat store, because the chat store composes each
   // conversation's regex from it: the user's allow switch for a card's own tier
   // and their switches over its individual rules.
-  const scripts = new ScriptPolicyStore(paths.scriptPolicy)
+  const scripts = new ScriptPolicyStore(paths.scriptPolicy, reportStoreProblem)
   // The user's own scripts. Beside the policy file rather than inside it, and
   // beside the cards rather than inside them — see `paths.scriptLibrary`.
-  const scriptLibrary = new ScriptLibraryStore(paths.scriptLibrary)
+  const scriptLibrary = new ScriptLibraryStore(paths.scriptLibrary, reportStoreProblem)
 
   /**
    * The last malformed-row report, so one preset is said once rather than on
@@ -672,21 +703,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Runtime button tables, beside the installation rather than in the card —
   // the same decision as `script-variables.json`, and for the same reason.
   const scriptButtons = new ScriptButtonStore(
-    paths.scriptButtons, error => { ctx.logger.warn(error.message) })
-  const connections = new ConnectionStore(paths.connections)
+    paths.scriptButtons, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
+  const connections = new ConnectionStore(paths.connections, reportStoreProblem)
   // The user's personas — who `{{user}}` is. Its own file, like the
   // connections beside it, for the same owner-separation reason.
-  const personas = new PersonaStore(paths.personas)
+  const personas = new PersonaStore(paths.personas, reportStoreProblem)
   // The characters this profile has starred. Profile-level rather than the
   // card's `fav`, on the standing rule that runtime state stays out of shared
   // card files — an exported card carries no trace of the stars it earned here.
-  const favorites = new FavoriteStore(paths.favorites)
+  const favorites = new FavoriteStore(paths.favorites, reportStoreProblem)
   // The order the reader put their conversations in — beside the stars, for the
   // same reason: both are decisions about this profile's own shelf rather than
   // settings a chat is using. Upstream keeps no manual chat order at all, so
   // both the file and its name are Iris's (`chat-order.ts`), and a profile that
   // has never dragged a row never gets the file.
-  const chatOrder = new ChatOrderStore(paths.chatOrder)
+  const chatOrder = new ChatOrderStore(paths.chatOrder, reportStoreProblem)
   // Runtime adapter installs, one per provider route this plugin has claimed.
   //
   // `connection.activate` and boot-time restoration both come through here: a
@@ -731,12 +762,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // origin. Not partitioned per card, and deliberately not forgotten when a
   // card is deleted — see `character.delete`.
   const cardStorage = new CardStorageStore(
-    paths.cardStorage, error => { ctx.logger.warn(error.message) })
-  // Retention for the diagnostic bus. Reports already reached the logger and
-  // stopped there, so a debug page had nothing to ask for; this keeps a bounded
-  // window of them in memory. Not persisted deliberately — a restart empties it
-  // and says so through `oldest`.
-  const diagnostics = new DiagnosticBuffer()
+    paths.cardStorage, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a

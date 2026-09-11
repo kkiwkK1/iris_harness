@@ -26,9 +26,12 @@
  *    {@link fileFor}, so a chat id off the wire cannot name a file outside
  *    `cache-trace/`. The store never deletes anything it did not write: rotation
  *    only removes files whose names it can parse as its own.
- * 3. **Atomically, or not at all.** Written to `<seq>.json.<pid>.tmp` and
- *    renamed, the pattern `worldbooks.ts` uses. A half-written trace is worse
- *    than no trace: it reads as a request that diverged from itself.
+ * 3. **Atomically, or not at all.** Written to a sibling temporary and renamed
+ *    over the target, through `atomic.ts`'s `atomicWriteFile` — which is where
+ *    this pattern lives now, and no longer in `worldbooks.ts`: the two
+ *    hand-rolled copies (this one and that one) became one helper when every
+ *    other write in the package was brought onto it. A half-written trace is
+ *    worse than no trace: it reads as a request that diverged from itself.
  *
  * And one rule about failure: **a trace must never cost a generation.** Every
  * write is wrapped, and a failure is reported and dropped. The record exists to
@@ -38,8 +41,10 @@
  * @module @iris/app-service/cache-trace
  */
 
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
+
+import { atomicWriteFile } from './atomic.ts'
 
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { SYSTEM_JOIN, type Role } from '@iris/pipeline'
@@ -626,9 +631,7 @@ export class CacheTraceStore {
       const seq = await this.#claim(trace.chatId)
       await mkdir(dir, { recursive: true })
       const path = join(dir, `${String(seq)}.json`)
-      const temporary = `${path}.${String(process.pid)}.tmp`
-      await writeFile(temporary, JSON.stringify({ ...trace, seq }), 'utf8')
-      await rename(temporary, path)
+      await atomicWriteFile(path, JSON.stringify({ ...trace, seq }))
       await this.#rotate(trace.chatId, dir)
       return seq
     } catch (error: unknown) {
