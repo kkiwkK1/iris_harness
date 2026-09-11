@@ -129,7 +129,11 @@ commit corrects an earlier decision, say which one and why it moved.
 - **Keys and secrets of any kind** — `key.txt`, `*.key`, `secrets.json`,
   `.env` and `.env.*` (only `.env.example` is tracked). Not in fixtures, not in
   commit messages, not in a test's expected output. `key.txt` is never read
-  or printed by tooling either.
+  or printed by tooling either — and that sentence has a test behind it now
+  (`apps/iris/tests/key-file.test.ts`), because it was false when it was
+  written: the demo and both live-provider tests read the file as a fallback
+  after `DEEPSEEK_API_KEY`. The environment variable is the only source a
+  provider key reaches this repository through.
 - **`data/`** — characters, chats, presets, world books, `connections.json`.
   That is the user's content and it contains API keys.
 - **`测试用卡/`** — test cards are other people's work; the tests that read

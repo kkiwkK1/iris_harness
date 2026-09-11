@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,15 +24,17 @@ import type { Contribution } from '@iris/pipeline'
  * fail for reasons that have nothing to do with Iris.
  */
 
-const KEY_FILE = fileURLToPath(new URL('../../../key.txt', import.meta.url))
-
-/** The key, from the environment or the gitignored file. Never logged. */
+/**
+ * The key, from the environment and nowhere else. Never logged.
+ *
+ * A plaintext key file at the repository root used to be the fallback. It is
+ * gone deliberately — see `apps/iris/tests/key-file.test.ts`, which pins that
+ * no source under `apps/`, `packages/` or `scripts/` names that file, and the
+ * sentence in `CONTRIBUTING.md` the pin makes true.
+ */
 function apiKey(): string | undefined {
   const fromEnv = process.env.DEEPSEEK_API_KEY?.trim()
-  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv
-  if (!existsSync(KEY_FILE)) return undefined
-  const fromFile = readFileSync(KEY_FILE, 'utf8').trim()
-  return fromFile.length > 0 ? fromFile : undefined
+  return fromEnv !== undefined && fromEnv.length > 0 ? fromEnv : undefined
 }
 
 const enabled = process.env.IRIS_LIVE === '1'
@@ -41,7 +42,7 @@ const key = enabled ? apiKey() : undefined
 const skip = !enabled
   ? 'live provider tests are opt-in: run `pnpm test:live`'
   : key === undefined
-    ? 'no provider key available (set DEEPSEEK_API_KEY or add key.txt)'
+    ? 'no provider key available (set DEEPSEEK_API_KEY)'
     : false
 
 const MODEL = process.env.IRIS_LIVE_MODEL ?? 'deepseek-v4-flash'

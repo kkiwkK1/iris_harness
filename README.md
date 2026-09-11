@@ -269,7 +269,7 @@ pnpm build:web                            # 构建界面产物
 
 **两种 tsc,两个都要跑。** 根 `tsconfig.json` 只收 `packages/*`、`apps/iris`、`scripts/`;界面在 `apps/iris-web` 里有自己的 `tsconfig.json`,由 `npm run typecheck` 检查。而 `node --test` 用类型剥离运行,它**不做类型检查**——一个带真实类型错误的测试文件照样通过,只有 `tsc --noEmit` 看得见。
 
-`pnpm test` 是离线的:唯一需要网络的测试默认跳过。要对真实 provider 跑用 `pnpm test:live`,它需要 `DEEPSEEK_API_KEY` 或仓库根的 `key.txt`(都已 gitignore)。加这个开关而不是「有密钥就跑」,是因为工作区里躺着一个密钥不该让 `pnpm test` 悄悄变成花钱且断网即失败的东西。
+`pnpm test` 是离线的:唯一需要网络的测试默认跳过。要对真实 provider 跑用 `pnpm test:live`,它需要环境变量 `DEEPSEEK_API_KEY`——**只**认环境变量,仓库里没有任何工具会去读一个放密钥的文件(`apps/iris/tests/key-file.test.ts` 钉住这一点)。加这个开关而不是「有密钥就跑」,是因为工作区里躺着一个密钥不该让 `pnpm test` 悄悄变成花钱且断网即失败的东西。
 
 **宿主从源码跑,界面是构建产物。** 所以改了 `apps/iris-web` 之后必须重跑 `pnpm build:web`,否则宿主服出去的还是上一份。
 

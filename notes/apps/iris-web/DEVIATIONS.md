@@ -6565,3 +6565,144 @@ card, which needs a card-file extraction that agrees with the frames' claim and
 therefore needs the claim to move out of the web app. Or a design in which the
 page-access grant is narrowed rather than described, at which point 94.1's copy
 is describing a boundary that no longer exists.
+
+## 95. Four audit findings accepted rather than closed, with the price of closing each one written down
+
+Dated 2026-09-11. **No code changed** — this section and the `docs/SANDBOX.md`
+"Accepted gaps — 已接受的缺口" section it backs are the whole deliverable. The
+four come from `AUDIT-SYSTEM-SECURITY-DATA.md` (F8, F15, F17) and
+`审计报告-网络安全工程.md` §5 (L-5); the other findings of those two reports were
+either fixed (§93, §94, and the host-side sections of
+`notes/packages/iris-app-service/DEVIATIONS.md` and
+`notes/packages/iris-rpc-host/DEVIATIONS.md`) or are still open with an owner,
+which `notes/SECURITY-REMEDIATION.md` tabulates.
+
+Acceptance is a decision, not a shrug, and the reason it gets a ledger section
+is that the three ways it goes wrong are all quiet. It gets forgotten, so the
+next audit reports it again and the next engineer rediscovers the reasoning
+from scratch. It gets remembered as "safe", so the condition it rested on
+lapses without anyone noticing that it was a condition. Or it gets treated as
+permanent, so a cheap fix that arrives later is never taken. Each entry below is
+therefore three things — what is open, what closing it would cost, and the
+observation that would make the answer different — and the last of those is what
+makes this a decision with a date on it rather than an opinion.
+
+### 95.1 F8 — a network grant does not govern `script-src`, and a code fetch's URL is a channel
+
+**What the audit found.** The frame's code allow-list is open regardless of the
+network grant (`apps/iris-web/src/sandbox/srcdoc.ts:165`,
+`apps/iris-web/src/sandbox/policy.ts:77`,
+`packages/iris-script/src/remote.ts:31-34`), and a dynamic `import()` is a
+script fetch whose *path* the card writes. So an import of
+`https://testingcf.jsdelivr.net/gh/a/b@main/` plus a data string plus `/x.js`
+puts that data in a request which leaves the machine; the 404 that comes back
+fails the import and changes nothing about that. The audit rated it 中 and said
+so in the words that matter: it 绕开了用户以为在决策的那个开关 — it goes around the
+very switch the user believes they are deciding with.
+
+**Why it is accepted.** The closure the audit priced and then advised against is
+putting `script-src` inside the grant. That is not a hardening of this product,
+it is a different product: measured over the operator's install, 13 of 19 cards
+import MagVarUpdate from jsDelivr before they can paint anything, so a gated
+code allow-list means a consent question standing between every card and its
+first frame. A question whose only workable answer is yes does not inform
+anybody; it trains them to answer yes to the next one, which is the question
+that was worth asking.
+
+**What the acceptance actually changes.** The promise. The comment at
+`apps/iris-web/src/sandbox/srcdoc.ts:104-119` described the grant as closing the
+way out, and that reading was too strong — the grant governs `connect-src` and
+`img-src`, the two channels a card would use for anything bulk or two-way, and
+it never governed the code allow-list. Saying that plainly is the deliverable: a
+boundary described accurately is worth more than one described generously,
+because the generous description is what a later decision gets built on.
+
+**What would reopen it.** A corpus measurement finding a real card with a
+non-literal `import()` specifier — the shape is a specifier built by
+concatenation rather than written whole, and the census reader can look for it.
+Or the middle option the audit named and this project has not built: report the
+first such specifier per frame instead of refusing it, which costs the ecosystem
+nothing and turns a silent channel into a visible one. That is the change to
+make if anything here moves.
+
+### 95.2 L-5 — `showdown` 2.1.0 is advisory-flagged with no fixed release, and it lives inside the frame
+
+**What the audit found.** `npm audit` flags showdown 2.1.0
+(`apps/iris-web/package.json:37`) for a ReDoS and two XSS paths, and upstream has
+published nothing to upgrade to. The audit checked the reach itself and recorded
+the conclusion in the finding: showdown is provided to cards as a sandbox global
+(`apps/iris-web/src/sandbox/preset-entry.ts:200`) and the shell does not render
+its output, so the impact is frame-local — 关注上游；不必紧急.
+
+**Why it is accepted.** There is no fixed version to move to, so the only actions
+available are removing the global or forking. Removing it breaks upstream cards
+that expect a `showdown.Converter` to exist, which is why it is there. And
+inside a frame whose `default-src` is `'none'` and whose origin is opaque, an XSS
+in showdown buys the attacker what a card can already do by writing the script
+itself — the frame is the boundary, and this is inside it. The ReDoS hangs the
+frame that ran it.
+
+**What would reopen it.** A fixed release, at which point this is a version bump
+rather than a decision. Or — and this is the one to watch — any shell-side code
+rendering markdown through this library. The whole argument rests on
+"frame-only"; the day the shell converts something with showdown, the two XSS
+advisories are shell XSS and §93's policy is what stands between them and the
+RPC surface.
+
+### 95.3 F15 — the bundle proxy is a GET, and a GET needs no permission from anybody
+
+**What the audit found.** The bundle route takes no preflight, so any page open
+in the user's browser can drive this host into fetching an allow-listed URL and
+writing the body to disk. The audit recorded it as 低，已缓解在案 — low, and
+already mitigated on the record — because the module had already priced it:
+`packages/iris-app-service/src/script-cache.ts:64-88` states the exposure and
+calls it bounded disk fill.
+
+**Why it is accepted.** The bound is real and the audit re-derived it rather than
+taking the comment's word: the allow-list check runs on every request and on
+every one of at most five redirect hops, https only, the two CDNs by dotted
+suffix and exact match, so the reachable target set is two public CDNs and not
+the local network — this is not an SSRF surface. A body is capped at 8 MiB, the
+directory at 256 MiB, and over budget the cache **refuses to write instead of
+evicting**, which is the detail that matters: eviction would let a hostile page
+push a real dependency out and turn disk fill into cache poisoning. And the
+preflight that would close it cannot be required, because requiring a preflight
+means requiring a header, and a module `script` tag — the thing this route
+exists to be loadable by — cannot send one.
+
+**What would reopen it.** The allow-list admitting anything that is not a public
+CDN, or the budget policy changing from refuse-to-write to evict. Either one
+moves this from a bounded annoyance to a real finding, and both are one-line
+changes, which is why they are written here rather than left to be noticed.
+
+### 95.4 F17 — the stylesheet rewrite's regex truncates, and the truncation fails closed
+
+**What the audit found.** The link-rewriting pass at
+`apps/iris-web/src/sandbox/srcdoc.ts:232-242` matches a tag with a negated
+character class that stops at the first `>` — including one inside a quoted
+attribute value — so such a link is not rewritten. The audit's own note says the
+direction is safe and rates the fix S.
+
+**Why it is accepted.** Direction is the whole argument. An unrewritten link
+keeps its remote href, `style-src` does not admit remotes, the browser refuses it
+and the existing reporter names the sheet — the outcome is the outcome the card
+would have had if the rewrite did not exist, which is the behaviour this frame
+had before the convenience was added. The fix is a real attribute scanner
+replacing two regexes, and a hand-rolled HTML scanner fails *quietly* where a
+regex fails loudly; `frontend-blocks.ts` already took that trade deliberately one
+layer up, for the same reason.
+
+**What would reopen it.** A card in the corpus whose link tag carries a `>`
+inside an attribute value — there is none. Or, more importantly, the rewrite
+ceasing to be a convenience: if a future policy admitted remote stylesheets and
+used the rewrite to *route* them, a missed rewrite would be a bypass rather than
+a refusal, and the scanner would be worth every bit of its cost.
+
+### Where this is recorded
+
+`docs/SANDBOX.md`, "Accepted gaps — 已接受的缺口 (2026-09-11)", carries the same
+four in the frame's own document, because that is the file a person reading the
+sandbox policy has open. This section is the ledger entry with the audit's
+wording and the reasoning; that one is the operational note. They are expected to
+agree, and the day they stop, the ledger is the one that was written first and
+the document is the one someone edited without looking here.

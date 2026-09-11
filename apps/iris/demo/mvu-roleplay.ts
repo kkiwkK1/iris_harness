@@ -11,7 +11,6 @@
  * Run: `node apps/iris/demo/mvu-roleplay.ts`
  */
 
-import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { boot } from '@deepseek-ai/dsh-app-boot'
@@ -21,20 +20,25 @@ import type { Contribution } from '@iris/pipeline'
 import { historyFromSession, TurnDriver } from '@iris/turn'
 import { memoryBackend, sessionMessageBackend, VariableStore } from '@iris/variables'
 
-const KEY_FILE = fileURLToPath(new URL('../../../key.txt', import.meta.url))
-
-/** The key, from the environment or the gitignored file. Never printed. */
+/**
+ * The key, from the environment and nowhere else. Never printed.
+ *
+ * There used to be a second source — a plaintext key file at the repository
+ * root, read when the variable was unset. It is gone deliberately: a file the
+ * tooling reads is a file the tooling can print, and `CONTRIBUTING.md` promises
+ * that nothing here reads it. A promise with a reader in the tree is not a
+ * promise; `apps/iris/tests/key-file.test.ts` is what makes it one.
+ * The environment variable is the one source, which is also what the connection
+ * panel and `IRIS_API_KEY_ENV` already describe.
+ */
 function apiKey(): string | undefined {
   const fromEnv = process.env.DEEPSEEK_API_KEY?.trim()
-  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv
-  if (!existsSync(KEY_FILE)) return undefined
-  const fromFile = readFileSync(KEY_FILE, 'utf8').trim()
-  return fromFile.length > 0 ? fromFile : undefined
+  return fromEnv !== undefined && fromEnv.length > 0 ? fromEnv : undefined
 }
 
 const key = apiKey()
 if (key === undefined) {
-  console.error('demo: no provider key. Set DEEPSEEK_API_KEY or add key.txt at the repo root.')
+  console.error('demo: no provider key. Set DEEPSEEK_API_KEY in the environment.')
   process.exit(1)
 }
 

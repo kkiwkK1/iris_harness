@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,14 +25,10 @@ import { SettingsStore } from '../../../packages/iris-app-service/src/settings.t
  * closed with — never what the model chose to write.
  */
 
-const KEY_FILE = fileURLToPath(new URL('../../../../key.txt', import.meta.url))
-
+/** The key, from the environment and nowhere else — see `live-provider.test.ts`. */
 function apiKey(): string | undefined {
   const fromEnv = process.env.DEEPSEEK_API_KEY?.trim()
-  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv
-  if (!existsSync(KEY_FILE)) return undefined
-  const fromFile = readFileSync(KEY_FILE, 'utf8').trim()
-  return fromFile.length > 0 ? fromFile : undefined
+  return fromEnv !== undefined && fromEnv.length > 0 ? fromEnv : undefined
 }
 
 const enabled = process.env.IRIS_LIVE === '1'
@@ -41,7 +36,7 @@ const key = enabled ? apiKey() : undefined
 const skip = !enabled
   ? 'live generation-kind tests are opt-in: run with IRIS_LIVE=1'
   : key === undefined
-    ? 'no provider key available (set DEEPSEEK_API_KEY or add key.txt)'
+    ? 'no provider key available (set DEEPSEEK_API_KEY)'
     : false
 
 const MODEL = process.env.IRIS_LIVE_MODEL ?? 'deepseek-v4-flash'

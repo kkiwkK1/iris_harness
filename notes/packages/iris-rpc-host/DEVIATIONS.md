@@ -186,3 +186,110 @@ only deployment it would inconvenience is one that has to be configured anyway.
   the exploit end to end, the four application routes refusing a foreign `Host`
   and answering the real one, the dev origin still connecting, and the sandbox
   asset still served with its CORS header.
+
+---
+
+## 2. The HTTP server's slow-drip timeouts are Node's defaults, because the carrier owns the server and does not lend it out
+
+**Kind.** Accepted gap with an upstream request attached. **No code changed.**
+
+Dated 2026-09-11. Audit L-8 (`审计报告-网络安全工程.md` §5, "webserver | 无显式
+server 超时，慢速滴注 body 最长约 5 分钟/连接（环回绑定下低危）| 设 headers/request
+超时").
+
+### What the exposure is
+
+`@deepseek-ai/dsh-host-webserver@0.1.1-rc.2` creates the `node:http` server in
+its own constructor (`lib/index.js:197`, `this.server = createServer(...)`) and
+never configures a timeout, so every connection this host answers runs on
+Node's defaults. Measured on the Node this repository requires (v24.13.0,
+`http.createServer()` with no options):
+
+| property | default | what it bounds |
+| --- | --- | --- |
+| `headersTimeout` | 60 000 ms | time to finish sending request *headers* |
+| `requestTimeout` | 300 000 ms | time to finish the whole request, body included |
+| `keepAliveTimeout` | 5 000 ms | idle time on a connection between requests |
+| `timeout` | 0 | socket inactivity — disabled, as it has been since Node 13 |
+
+So a client that opens a connection and drips one byte of body every few
+seconds holds a socket, and the file descriptor and buffers behind it, for up to
+five minutes — and can hold as many as it can open, because the carrier sets no
+connection cap either. That is the classic Slowloris shape, and the RPC body
+cap (`packages/iris-rpc-host/src/http.ts`, 32 MB counted by wire bytes rather
+than trusted from `Content-Length`) does not touch it: the cap refuses a body
+that is too *large*, not one that is too *slow*.
+
+It is low severity here and the reason is the bind, not the timeout. The host
+listens on `127.0.0.1` (`apps/iris/cordis.yml:59`), so the client has to already
+be on the machine — and a process on the machine has cheaper ways to spend the
+user's resources than exhausting one Node server's sockets. The one remote shape
+is a browser page the user visits driving many `fetch` calls at the loopback
+host, and that page is already bounded by the browser's own per-origin
+connection limit and now refused by §1's `Host` allow-list before a handler
+runs. What remains is a local denial of service against a local UI.
+
+### Why nothing changed here
+
+`headersTimeout` and `requestTimeout` are properties of the `http.Server`
+object, and this repository has no reference to it. The carrier declares the
+field **private** — `lib/types/index.d.ts:72`, `private server;` — and its
+`Config` is two keys, `host` and `port` (`lib/types/index.d.ts:50-55`,
+`lib/index.js:98-101`): no timeout option, no accessor, no event carrying the
+server. The only reachable server property is `get port()` (`:76`).
+
+Reaching in anyway would mean `(ctx.webServer as unknown as { server: Server }).server`
+— a cast past a `private` the package wrote deliberately, against a field name
+that is not part of its published surface and that an `-rc` version is entitled
+to rename in a patch release. It would typecheck, it would work today, and it
+would fail silently the first time the field moved: the cast would yield
+`undefined`, the property assignment would go to nowhere, and the timeouts would
+be back at their defaults with nothing red. A security setting that can revert
+without a test noticing is worse than a documented gap, because the gap is at
+least known to be open. Iris does not reach into another package's private
+state anywhere else, and this is not the finding to start with.
+
+### The request to make upstream
+
+To `@deepseek-ai/dsh-host-webserver`, one of these two, in preference order:
+
+1. **Config keys**, which is the smaller change and the one that needs no new
+   surface: add optional `headersTimeout`, `requestTimeout` and
+   `keepAliveTimeout` (milliseconds) to `Config`, applied to the server
+   immediately after `createServer` and before `listen`. Defaults unchanged, so
+   no composition moves unless it asks.
+2. **A configuration hook**, if the package would rather not grow a key per
+   Node option: expose the server for configuration once at construction —
+   `configureServer?: (server: Server) => void` in `Config`, or a
+   `'webserver/created'` event carrying the server — so a composition can set
+   anything `http.Server` supports without the field becoming public API.
+
+Either would let Iris set the loopback-appropriate values (headers 10 s, request
+30 s, keep-alive 5 s) in `apps/iris/cordis.yml` beside `host` and `port`, where
+the rest of this host's transport posture already lives. Until then this entry
+is the record that the defaults are a decision that was read rather than one
+that was never looked at.
+
+### What would overturn it
+
+- **The carrier grows either hook.** Then this becomes code: three config keys
+  and a test that boots the composition and reads `server.requestTimeout` back
+  through whatever surface the package exposes.
+- **A bind other than loopback becoming ordinary.** §1 already refuses to start
+  on `0.0.0.0` without an explicit `allowedHosts`, so a network bind is a
+  deliberate act — but a deployment that makes it routine moves this from "a
+  local process can annoy a local UI" to a real remote denial of service, and
+  the answer then is a fork or a reverse proxy in front, not a cast.
+- **A measurement showing the defaults cost something today.** The shape to
+  look for is the host running out of file descriptors or memory while the
+  interface is idle. Nothing has reported one; this is a reading of the code and
+  of Node's documented defaults, not of an incident.
+
+### Where it is pinned
+
+Nowhere, deliberately: there is no behaviour to pin. A test asserting that the
+carrier still declares `server` private would be a test about somebody else's
+`.d.ts` that goes red on an upgrade that *fixes* this, which is the wrong
+direction to be sensitive in. What holds the entry is this file and the
+remediation record (`notes/SECURITY-REMEDIATION.md`), where L-8 is listed as
+pending on the upstream request above.
