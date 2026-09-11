@@ -7145,3 +7145,79 @@ trip that also asserts no spawn argument contains the key),
 renamed file on POSIX) and `packages/iris-app-service/tests/connections.test.ts`
 (two assertions restated: the stored file has **no** plaintext key and the store
 answers with it anyway).
+
+## 76. The rename retry learns the code the two-host incident actually failed with, and the boot sweeps the temporaries a dead host left behind
+
+**Kind.** Completion of two mechanisms §68 and §71 built, measured against the
+failure log §71's incident produced. Dated 2026-09-11.
+
+**The incident this is measured against.** §71 records the two-host event as a
+diagnosis phantom; its storage half has a log line the lock alone does not
+answer. The 8790 host (pid 1664) lost `replaceWorldbook` three times in a row
+against the 8787 host's handles on the same `apps/iris/data`:
+
+1. `ENOENT: rename '…worlds\扣扣审判1.0.json.1664.tmp' -> '…worlds\扣扣审判1.0.json'`
+2. `EPERM` on the same rename
+3. and, as part of the card's `[MVU] Reinitialization failed`, the same `EPERM`
+   again — with the `ENOENT` of 1. being a temporary that existed when its write
+   finished and did not exist when the rename ran, because the competing host's
+   own failure path unlinked files while the directory entry was in flux.
+
+`atomicWriteFile` already retried the rename by then — but for `EPERM`,
+`EBUSY` and `EACCES` only. The code the first failure actually carried,
+`ENOENT`, was in the not-retried class, so the very failure shape the retry was
+built for went through it. And the `.1664.tmp` of failure 1 stayed in the real
+`worlds` directory: nothing reads a `.tmp`, so the debris of a killed or
+racing host sits in the data directory forever.
+
+### What Iris does now
+
+- **`ENOENT` joins the retryable rename codes** (`src/atomic.ts`,
+  `RETRYABLE_RENAME_CODES`). The reasoning is not "retry everything": a rename
+  refused with `ENOENT` naming the temporary is a directory entry in flux —
+  the one failure the two-host cleanup race produced — and it closes by
+  itself, which is all a bounded retry needs. The hopeless case is bounded
+  too: a temporary genuinely gone is gone for every attempt, the retry costs
+  its ~½ second of backoff, and the last error is thrown unchanged, still
+  naming both paths exactly as the platform spells them. `EISDIR` replaces
+  `ENOENT` as the not-retried example in the tests, because a directory is not
+  a race no matter how long one waits.
+- **The boot sweeps what the boot cannot prevent.** Holding the lock (§71)
+  makes one moment safe: right after `acquireHostLock` and before a store is
+  constructed, `apply` walks the data directory once
+  (`sweepStaleTemporaries`, `src/atomic.ts`) and unlinks every file matching
+  the shapes this package's temporaries have ever carried —
+  `<name>.<pid>.<16 hex>.tmp` today, `<name>.<pid>.tmp` before the random
+  suffix, which is the incident's spelling. The claim rule is §71's own
+  liveness probe pointed at a filename: a temporary is claimed when its
+  recorded pid is this process's own (ids are recycled; a leftover naming our
+  id would fail the dead check and sit forever) or when no process with that
+  id is running. A temporary of a pid that is alive and not ours is left
+  exactly where it is — the sweep stays correct on its own terms rather than
+  borrowing the lock's guarantee. A name that parses as nobody's temporary (no
+  pid segment, or hex letters where the pid would be) is never touched, and
+  the walk does not follow symlinks. One log line when something was removed,
+  silence when the directory was clean.
+
+### What would overturn this
+
+A rename failure carrying `ENOENT` for the *target* being genuinely absent
+(someone deleted the profile mid-write) now waits out its ~½ second before
+reporting; if that ever shows up as a real latency complaint, the retry can
+distinguish the two by probing the temporary's existence first, at the cost of
+a check that is wrong exactly as often as the window it looks for. The sweep's
+pattern is tied to this package's temporary spellings; if a third shape is
+ever introduced, `temporaryPid` is the one place that must learn it, and the
+`sweep claims the temporaries … in both shapes` test is where the omission
+turns red.
+
+**Held by** `packages/iris-app-service/tests/atomic.test.ts` (+5, 22 in the
+file: the flux case waited out in three attempts, the gone-for-good case
+exhausting the bound with both paths in the message and every attempt renaming
+the same temporary, the sweep claiming both shapes at depth while leaving the
+store's own file and nobody's-temporaries alone, the alive-foreign versus
+own-pid pair, the absent root) and
+`apps/iris/tests/host-lock.test.ts` (+1, 4 in the file: a booted host removes
+a stale temporary from its data directory while taking the lock, which is the
+composition-level pin that `apply` runs the sweep, not merely that the
+function exists).

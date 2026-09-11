@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -114,4 +115,25 @@ test('an orderly shutdown gives the directory back, and the next host takes it f
   const second = await host('iris-lock-again', dir)
   assert.equal((JSON.parse(await readFile(lockPath, 'utf8')) as { pid?: number }).pid, process.pid)
   assert.ok(second.webServer.port > 0)
+})
+
+test('the boot that takes the directory also sweeps the temporaries a dead host left in it', async () => {
+  const dir = await dataDir()
+  // The debris of the 2026-09-11 incident, in the current spelling: a world
+  // book's temporary, named for a process id that cannot exist anywhere this
+  // suite runs — past every pid_max, and odd where Windows ids are multiples
+  // of four. `packages/iris-app-service` tests the sweep's rules; this one
+  // pins that the composition runs it, the way the lock tests above pin that
+  // `apply` takes the lock rather than merely exporting it.
+  const worlds = join(dir, 'default-user', 'worlds')
+  await mkdir(worlds, { recursive: true })
+  const debris = join(worlds, `扣扣审判1.0.json.2147483647.${'ab'.repeat(8)}.tmp`)
+  await writeFile(debris, '{}')
+
+  await host('iris-lock-sweep', dir)
+
+  assert.equal(existsSync(debris), false,
+    'the stale temporary survived a boot that took the data directory')
+  assert.ok((await stat(join(dir, HOST_LOCK_FILE))).isFile(),
+    'the sweep disturbed the lock it runs beside')
 })

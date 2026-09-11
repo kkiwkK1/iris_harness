@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import {
-  atomicWriteFile, quarantineCorruptFile, quarantineUnparsable, readJsonStore,
+  atomicWriteFile, quarantineCorruptFile, quarantineUnparsable, readJsonStore, sweepStaleTemporaries,
 } from '../src/atomic.ts'
 
 /**
@@ -296,18 +296,87 @@ test('a replace the platform refuses for a moment is waited out, not failed', as
   assert.deepEqual(await temporaries(dir), [], 'a retried rename left its temporary behind')
 })
 
-test('a refusal that is not a busy target is not retried, and the previous bytes stand', async (t) => {
+test('a refusal that is not a race is not retried, and the previous bytes stand', async (t) => {
   const dir = await scratch(t)
   const path = join(dir, 'chat.jsonl')
   await writeFile(path, 'ORIGINAL\n', 'utf8')
 
-  const platform = refusing('ENOENT', 99)
-  await assert.rejects(atomicWriteFile(path, 'REPLACED\n', platform), { code: 'ENOENT' })
+  // `EISDIR` — the target is a directory, and no amount of waiting turns it
+  // into a file. It stands in here for the whole non-retryable class; `ENOENT`
+  // used to be the example until the 2026-09-11 incident moved it into the
+  // retryable set (the temporary really was reported gone by a rename that
+  // succeeded on the next attempt's shape of the world — see the test below).
+  const platform = refusing('EISDIR', 99)
+  await assert.rejects(atomicWriteFile(path, 'REPLACED\n', platform), { code: 'EISDIR' })
 
   assert.equal(platform.attempts, 1, 'a code outside the retryable set was retried')
   assert.deepEqual(platform.waits, [], 'a non-retryable refusal was waited on')
   assert.equal(await readFile(path, 'utf8'), 'ORIGINAL\n', 'the failed replace touched the target')
   assert.deepEqual(await temporaries(dir), [], 'a failed rename left its temporary behind')
+})
+
+test('a rename refused because the entry was in flux is waited out, like a busy target', async (t) => {
+  const dir = await scratch(t)
+  const path = join(dir, '扣扣审判1.0.json')
+  await writeFile(path, 'ORIGINAL\n', 'utf8')
+
+  // The third failure of the 2026-09-11 incident, reproduced by code: the
+  // rename comes back `ENOENT` — "the temporary is not there" — for attempts
+  // made while a competing cleanup had the directory entry in flux, and then
+  // the world settles and the same rename is possible. Every attempt here
+  // renames the same temporary the write just made; the stand-in's success
+  // path is the real rename, so a success is a real replace.
+  const platform = refusing('ENOENT', 2)
+  await atomicWriteFile(path, 'REPLACED\n', platform)
+
+  assert.equal(platform.attempts, 3, 'two absences and the success are three attempts')
+  assert.deepEqual(platform.waits, [1, 2], 'the backoff doubles from one millisecond')
+  assert.equal(await readFile(path, 'utf8'), 'REPLACED\n')
+  assert.deepEqual(await temporaries(dir), [], 'a retried rename left its temporary behind')
+})
+
+test('a temporary that is genuinely gone fails after the bound, and the error still names both paths', async (t) => {
+  const dir = await scratch(t)
+  const path = join(dir, '扣扣审判1.0.json')
+  await writeFile(path, 'ORIGINAL\n', 'utf8')
+
+  // The hopeless half of the same incident, and the half that must stay
+  // legible: the temporary is not coming back, so every attempt fails, and
+  // what the caller finally holds is the last error — unchanged, which is the
+  // point. The stand-in builds its message the way the platform builds `rename`
+  // errors, from the two paths it was handed, because that is the sentence a
+  // person diagnoses from (`ENOENT: rename '…json.1664.tmp' -> '…json'` was
+  // the whole of what the incident log offered).
+  const seen: [string, string][] = []
+  let attempts = 0
+  const vanishing = {
+    async rename(from: string, to: string): Promise<void> {
+      attempts += 1
+      seen.push([from, to])
+      throw Object.assign(
+        new Error(`ENOENT: no such file or directory, rename '${from}' -> '${to}'`),
+        { code: 'ENOENT' },
+      )
+    },
+    async wait(): Promise<void> {},
+  }
+
+  let caught: NodeJS.ErrnoException | undefined
+  await assert.rejects(atomicWriteFile(path, 'REPLACED\n', vanishing),
+    (error: NodeJS.ErrnoException) => {
+      caught = error
+      return error.code === 'ENOENT'
+    })
+  const error = caught!
+
+  assert.equal(attempts, 10, 'the retry did not stop at ten attempts')
+  assert.ok(seen.length === 10 && seen.every(([from]) => from === seen[0]![0]),
+    'a retry is another roll of the same rename, not a new temporary')
+  assert.match(error.message, /ENOENT: no such file or directory, rename/u)
+  assert.ok(error.message.includes(seen[0]![0]), 'the error does not name the temporary')
+  assert.ok(error.message.includes(seen[0]![1]), 'the error does not name the target')
+  assert.equal(await readFile(path, 'utf8'), 'ORIGINAL\n', 'a still-failing replace touched the target')
+  assert.deepEqual(await temporaries(dir), [], 'an exhausted retry left its temporary behind')
 })
 
 test('a target still refused after ten attempts fails as the caller’s problem, cleanly', async (t) => {
@@ -322,6 +391,64 @@ test('a target still refused after ten attempts fails as the caller’s problem,
   assert.deepEqual(platform.waits, [1, 2, 4, 8, 16, 32, 64, 128, 256], 'nine waits between ten attempts')
   assert.equal(await readFile(path, 'utf8'), 'ORIGINAL\n', 'a still-refused replace touched the target')
   assert.deepEqual(await temporaries(dir), [], 'an exhausted retry left its temporary behind')
+})
+
+test('a sweep claims the temporaries of processes that are gone, at any depth, in both shapes this package has written', async (t) => {
+  const dir = await scratch(t)
+  const worlds = join(dir, 'default-user', 'worlds')
+  const chats = join(dir, 'default-user', 'chats', 'Aria - 2026-01-18@05h53m41s311ms')
+  await mkdir(worlds, { recursive: true })
+  await mkdir(chats, { recursive: true })
+
+  // The names are the record. `…1664.tmp` is the debris the 2026-09-11
+  // two-host incident actually left in a real `worlds` directory — the spelling
+  // before the random suffix was added, pid alone. The other two are the
+  // current shape, including one four levels down beside a chat, where a
+  // temporary lives because a temporary lives beside its target.
+  const incident = join(worlds, '扣扣审判1.0.json.1664.tmp')
+  const current = join(worlds, `扣扣审判1.0.json.2147483647.${'ab'.repeat(8)}.tmp`)
+  const chatTemporary = join(chats, `chat.jsonl.2147483647.${'ab'.repeat(8)}.tmp`)
+  // The store's own file, and two shapes that are nobody's temporary: a name
+  // with no pid segment at all, and one whose pid segment carries hex letters
+  // and so was never a process id.
+  const book = join(worlds, '扣扣审判1.0.json')
+  const stray = join(worlds, 'stray.tmp')
+  const notAPid = join(worlds, 'x.json.deadbeef.tmp')
+  await Promise.all([
+    writeFile(incident, '{}'), writeFile(current, '{}'), writeFile(chatTemporary, '{}'),
+    writeFile(book, '{}'), writeFile(stray, '{}'), writeFile(notAPid, '{}'),
+  ])
+
+  const removed = await sweepStaleTemporaries(dir, { isAlive: () => false })
+
+  assert.deepEqual([...removed].sort(), [chatTemporary, current, incident].sort(),
+    'the sweep did not remove exactly the three claimable temporaries')
+  assert.ok(existsSync(book), 'the sweep touched a store\'s own file')
+  assert.ok(existsSync(stray) && existsSync(notAPid),
+    'the sweep claimed a name that parses as nobody\'s temporary')
+})
+
+test('a temporary of a running process stays, and one naming this very process is claimed even though it is alive', async (t) => {
+  const dir = await scratch(t)
+  // A pid this probe swears is alive, and one that is ours — which the claim
+  // rule takes regardless of the probe, because ids are recycled and a
+  // leftover naming *our* id would otherwise sit forever.
+  const foreign = `settings.json.987654.${'ab'.repeat(8)}.tmp`
+  const own = `settings.json.${String(process.pid)}.${'cd'.repeat(8)}.tmp`
+  await writeFile(join(dir, foreign), '{}')
+  await writeFile(join(dir, own), '{}')
+
+  const removed = await sweepStaleTemporaries(dir, { isAlive: () => true })
+
+  assert.deepEqual(removed, [join(dir, own)],
+    'the sweep claimed a live process\'s temporary, or kept this process\'s own')
+  assert.ok(existsSync(join(dir, foreign)),
+    'the sweep removed a temporary whose process is still running')
+})
+
+test('a first boot sweeps an absent directory into an empty answer', async (t) => {
+  const dir = await scratch(t)
+  assert.deepEqual(await sweepStaleTemporaries(join(dir, 'absent')), [])
 })
 
 test('a file that will not parse is set aside under a name no store writes', async (t) => {

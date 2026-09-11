@@ -35,9 +35,11 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { existsSync, type Dirent } from 'node:fs'
+import { readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+
+import { isPidAlive } from './host-lock.ts'
 
 /**
  * Codes a Windows rename raises for a target another handle is holding.
@@ -52,11 +54,26 @@ import { basename, dirname, join } from 'node:path'
  * differently by different Windows versions and by an antivirus scanning the
  * new file, and `graceful-fs` — which upstream's `write-file-atomic` pulls in —
  * retries exactly this set for exactly this reason.
+ *
+ * `ENOENT` is here for a different, measured reason. The 2026-09-11 incident
+ * this file's sibling `host-lock.ts` closes produced a failure triple on one
+ * card call: `replaceWorldbook` lost a rename with `EPERM` (the other host held
+ * the target open), then again, and the third attempt failed with
+ * `ENOENT: rename '…\扣扣审判1.0.json.1664.tmp' -> '…\扣扣审判1.0.json'` — the
+ * temporary was there when it was written and gone by rename time, unlinked by
+ * the competing host's own failure cleanup. When two writers each tidy up their
+ * temporaries, a rename can observe the directory entry in flux: a path that
+ * existed when the write finished is reported absent in the window while the
+ * other side's unlink settles. That window closes by itself, which is all a
+ * bounded retry needs. The bound also bounds the cost of the hopeless case — a
+ * temporary genuinely gone is gone for every attempt, and the last error is
+ * thrown unchanged, still naming both paths.
  */
-const RETRYABLE_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES'])
+const RETRYABLE_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOENT'])
 
 /**
- * `rename`, waiting out a target another handle is holding.
+ * `rename`, waiting out a target another handle is holding — or a directory
+ * entry another writer is still settling.
  *
  * Ten attempts with a doubling backoff — roughly half a second in total — after
  * which the failure is the caller's, because a rename still refused after that
@@ -157,6 +174,105 @@ export async function atomicWriteFile(
     await unlink(temporary).catch(() => {})
     throw error
   }
+}
+
+/**
+ * The process id a temporary's name carries, or undefined when it is not one.
+ *
+ * Both shapes this package has ever written are claimed. The current one appends
+ * `.<pid>.<16 hex>.tmp` ({@link atomicWriteFile}'s own spelling); the one before
+ * it appended `.<pid>.tmp` alone — and `…\扣扣审判1.0.json.1664.tmp` from the
+ * 2026-09-11 two-host incident is sitting in a real `worlds` directory in
+ * exactly that shape. Anything else — a `stray.tmp`, a `.tmp` whose pid segment
+ * carries hex letters and so was never a process id — parses as nobody's, and
+ * nobody's debris is not this function's to remove.
+ * @param name - a file name, not a path.
+ * @returns the process id the name records, when it has one.
+ */
+function temporaryPid(name: string): number | undefined {
+  const parsed = /^(?:.+)\.(\d+)(?:\.[0-9a-f]{16})?\.tmp$/u.exec(name)
+  // `exec` answers `null` — not `undefined` — when the name does not match.
+  if (parsed === null) return undefined
+  const pid = Number(parsed[1])
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined
+}
+
+/** Options, injectable so a test never depends on which ids are running. */
+export interface StaleTemporarySweepOptions {
+  /** This process's id. Defaults to `process.pid`. */
+  pid?: number
+  /** The liveness probe. Defaults to {@link isPidAlive}. */
+  isAlive?: (pid: number) => boolean
+}
+
+/**
+ * Remove the stale temporaries this package's own writes left behind.
+ *
+ * **Why a sweep at all.** Every `atomicWriteFile` failure unlinks its own
+ * temporary, and a crash that lands *between* the write and the rename is
+ * rare — but a data directory outlives processes, and the temporaries a killed
+ * host never got to clean up stay in it forever: in `worlds/`, in `chats/`,
+ * beside every store's file. Nothing reads a `.tmp`, so the debris is invisible
+ * until a directory listing or a backup has to step over it. Measured debris:
+ * the two-host incident left `扣扣审判1.0.json.1664.tmp` in the real
+ * `apps/iris/data/…/worlds` — pid 1664, a process that no longer existed when
+ * the failure triple was read off the log.
+ *
+ * **The claim rule is the lock's own liveness probe, pointed at a filename.** A
+ * temporary is removed when its recorded pid is this process's own (ids are
+ * recycled: a leftover naming *our* id would fail the dead check and otherwise
+ * sit forever), or when no process with that id is running. A temporary whose
+ * pid is somebody else's *and* alive is left exactly where it is — under the
+ * host lock a second host cannot hold this directory, but this sweep should
+ * stay correct on its own terms, not borrow that guarantee.
+ *
+ * **Where it runs is what makes it safe.** The one caller is `apply`, right
+ * after the host lock is taken and before a store is constructed — so nothing
+ * in this process has a temporary in flight, and no other process legitimately
+ * does either. The walk is recursive (a temporary lives beside its target, and
+ * targets live four levels down), does not follow symlinks, and answers an
+ * absent root with an empty list rather than an error: a first boot has no
+ * profile to sweep.
+ * @param root - the data directory to sweep, recursively.
+ * @param options - the identity and probe, for tests.
+ * @returns the absolute paths removed, in walk order.
+ */
+export async function sweepStaleTemporaries(
+  root: string,
+  options: StaleTemporarySweepOptions = {},
+): Promise<string[]> {
+  const ownPid = options.pid ?? process.pid
+  const isAlive = options.isAlive ?? (pid => isPidAlive(pid))
+  const removed: string[] = []
+
+  const walk = async (dir: string): Promise<void> => {
+    let entries: Dirent[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      // Absent or unreadable is nothing to sweep. A first boot has no profile
+      // yet, and an unreadable subtree is not this call's diagnosis to make.
+      return
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry.name)
+      // `isDirectory` is false for a symlink to a directory, so a link out of
+      // the tree is never followed; its target is not ours to walk.
+      if (entry.isDirectory()) {
+        await walk(path)
+        continue
+      }
+      if (!entry.isFile()) continue
+      const pid = temporaryPid(entry.name)
+      if (pid === undefined || (pid !== ownPid && isAlive(pid))) continue
+      // A failed unlink — a permission, a race — leaves the file for the next
+      // boot rather than failing the boot over it.
+      if (await unlink(path).then(() => true, () => false)) removed.push(path)
+    }
+  }
+
+  await walk(root)
+  return removed
 }
 
 /**

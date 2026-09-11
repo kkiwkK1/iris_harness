@@ -12,7 +12,7 @@
 
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 
@@ -22,6 +22,7 @@ import type { ChatCompletionPreset } from '@iris/preset'
 import { DEFAULT_TIMEOUTS, OpenAiCompatAdapter } from '@iris/llm-openai-compat'
 import { versionRoute } from './version.ts'
 
+import { sweepStaleTemporaries } from './atomic.ts'
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { CacheTraceStore, DEFAULT_CACHE_TRACE_KEEP } from './cache-trace.ts'
 import { ChatStore } from './chats.ts'
@@ -581,6 +582,29 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.logger.warn(error instanceof Error ? error.message : String(error))
     })
   }, 'irisApp.hostLock')
+
+  /*
+   * **The debris the lock cannot prevent is swept now, once, before a store
+   * exists.** A host killed between writing a temporary and renaming it leaves
+   * that file behind forever — nothing reads a `.tmp`, so the accumulation is
+   * invisible until a listing or a backup steps over it, and the 2026-09-11
+   * two-host incident left one in the real `worlds` directory
+   * (`扣扣审判1.0.json.1664.tmp`, named for a process that was already gone).
+   * Holding the lock is what makes this moment safe: no store of ours is
+   * constructed yet, so nothing in this process has a temporary in flight, and
+   * no other host can legitimately hold one here either. A temporary whose
+   * recorded pid is alive and not ours is left alone regardless — the sweep
+   * stays correct on its own terms rather than borrowing the lock's; see
+   * `atomic.ts`. One line when something was removed, silence when the
+   * directory was clean, the way the store-problem reports below behave.
+   */
+  const swept = await sweepStaleTemporaries(dataDir)
+  if (swept.length > 0) {
+    const listed = swept.length <= 5 ? swept : [...swept.slice(0, 5), `… and ${String(swept.length - 5)} more`]
+    ctx.logger.warn(`iris: removed ${String(swept.length)} stale temporary file(s) under ${dataDir}, `
+      + 'left behind by hosts that died between writing a temporary and renaming it: '
+      + listed.map(path => basename(path)).join(', '))
+  }
 
   // Every path comes from one derivation, so a profile is one segment rather
   // than a change in five places — and so a store added later cannot be the one
