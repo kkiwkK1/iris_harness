@@ -129,7 +129,11 @@ commit corrects an earlier decision, say which one and why it moved.
 - **Keys and secrets of any kind** — `key.txt`, `*.key`, `secrets.json`,
   `.env` and `.env.*` (only `.env.example` is tracked). Not in fixtures, not in
   commit messages, not in a test's expected output. `key.txt` is never read
-  or printed by tooling either.
+  or printed by tooling either — and that sentence has a test behind it now
+  (`apps/iris/tests/key-file.test.ts`), because it was false when it was
+  written: the demo and both live-provider tests read the file as a fallback
+  after `DEEPSEEK_API_KEY`. The environment variable is the only source a
+  provider key reaches this repository through.
 - **`data/`** — characters, chats, presets, world books, `connections.json`.
   That is the user's content and it contains API keys.
 - **`测试用卡/`** — test cards are other people's work; the tests that read
@@ -142,9 +146,11 @@ commit corrects an earlier decision, say which one and why it moved.
 These are decisions with tests behind them; a change to any of them is a PR
 that says so in its title.
 
-- **Remote script code loads from two places only**: any hostname under
-  `jsdelivr.net`, and exactly `raw.githubusercontent.com` (not the
-  `githubusercontent.com` suffix, which would also cover user-upload hosts).
+- **Remote script code loads from two places only**: any hostname *under*
+  `jsdelivr.net` — a subdomain, not the bare apex, which is what the frame's
+  `https://*.jsdelivr.net` has always meant and which no card in the corpus asks
+  for — and exactly `raw.githubusercontent.com` (not the `githubusercontent.com`
+  suffix, which would also cover user-upload hosts).
   The list is `ALLOWED` in `packages/iris-script/src/remote.ts`, and a drift
   test compares it against the sandbox's `script-src` line.
 - **The host binds loopback.** `apps/iris/cordis.yml` sets the webserver row to

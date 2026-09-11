@@ -18,13 +18,27 @@
  * @module @iris/app-service/connections
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import type { spawn } from 'node:child_process'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 
 import type { ConnectionProfile, GenerationSettings, HostDefaultConnection, ModelContextLength } from '@iris/protocol'
 
+import { atomicWriteFile, quarantineCorruptFile, readJsonStore } from './atomic.ts'
 import { notFound } from './errors.ts'
+import {
+  DATA_KEY_BYTES,
+  decryptValue,
+  encryptValue,
+  isEncryptedValue,
+  protectorForKind,
+  readKeyFile,
+  wrapNewDataKey,
+  writeKeyFile,
+  type EncryptedValue,
+  type KeyProtector,
+} from './key-protection.ts'
 import { sanitize } from './settings.ts'
 
 /**
@@ -48,8 +62,31 @@ interface StoredProfile {
   sampling?: Partial<GenerationSettings>
   /** The endpoint this profile generates through. Absent rides the host's route. */
   baseURL?: string
-  /** The key as the user typed it. Stored in the file; never projected to the wire. */
+  /**
+   * The key as the user typed it — **in memory only**.
+   *
+   * Until 2026-09-11 this was the field the file carried, which is what
+   * upstream still does (`src/endpoints/secrets.js:150`). It is now the
+   * decrypted form of {@link apiKeyEnc}, written by `#load` and read by
+   * `routeCredential`, `toWire`'s mask and the probe ladder; the serializer
+   * deletes it, so the name cannot reach the file even by accident. Absent on a
+   * row whose ciphertext this host could not open — which is why every reader
+   * of it already treats absent as "no key", and why an unreadable key shows up
+   * as a panel asking for it again rather than as a broken profile.
+   */
   apiKey?: string
+  /**
+   * The key as the file carries it: AES-256-GCM under the profile's data key,
+   * with this row's `id` as the additional authenticated data.
+   *
+   * Kept in memory beside the plaintext rather than re-derived on every write,
+   * for two reasons that are both about *not* touching it: a save that changes
+   * a label rewrites the file byte-identically where the key is concerned, and
+   * a row whose ciphertext could not be opened travels through that same save
+   * unchanged instead of being silently dropped by a serializer that only knew
+   * how to write what it could read.
+   */
+  apiKeyEnc?: EncryptedValue
   /** The header the key is sent in. Absent means the OpenAI-compatible default. */
   apiKeyHeader?: string
   /**
@@ -350,40 +387,316 @@ function toWire(profile: StoredProfile): ConnectionProfile {
   }
 }
 
+/**
+ * Where the wrapped data key sits, given where the profiles sit.
+ *
+ * Beside them, under the store's own name with a different extension, rather
+ * than a second entry in `paths.ts`: it is not a store — nothing else reads it,
+ * it has no shape a future feature would want, and a profile directory listing
+ * should say plainly which file belongs to which. Derived rather than passed so
+ * a test that points a store at a temporary directory cannot forget it.
+ * @param storePath - the connections file.
+ * @returns the key file beside it.
+ */
+export function keyFilePathFor(storePath: string): string {
+  return `${storePath.replace(/\.json$/u, '')}.key`
+}
+
+/** The seams and the one real option {@link ConnectionStore} takes. */
+export interface ConnectionStoreOptions {
+  /**
+   * Stands in for the operating system's key store.
+   *
+   * Production passes none and the platform decides
+   * ({@link wrapNewDataKey} / {@link protectorForKind}). Every test that is not
+   * *about* DPAPI passes a deterministic fake, because a suite that spawns a
+   * PowerShell per case would be measuring Windows rather than this store.
+   */
+  protector?: KeyProtector
+  /**
+   * Told once when something was **done** rather than when something failed —
+   * today, only the migration of plaintext keys. Absent means silence.
+   *
+   * Apart from `onProblem` because the two are different acts: a note is the
+   * host saying what it did on the user's behalf, and filing it as a fault
+   * would put a successful upgrade in the same list as an unreadable key.
+   */
+  onNote?: (message: string) => void
+  /** Stands in for `process.platform` when a data key is created. */
+  platform?: string
+  /** Stands in for `child_process.spawn`; production code never passes one. */
+  spawn?: typeof spawn
+}
+
 /** Reads and persists the user's saved connections. */
 export class ConnectionStore {
   readonly #path: string
+  readonly #keyPath: string
+  readonly #onProblem: ((message: string) => void) | undefined
+  readonly #options: ConnectionStoreOptions
   #file: ConnectionsFile = { profiles: [] }
-  #loaded = false
+  #loading: Promise<void> | undefined
+  /** The opened data key, once something has needed it. */
+  #dataKey: Uint8Array | undefined
+  /**
+   * How the data key stands.
+   *
+   * `absent` and `refused` are the two the first draft of this collapsed, and a
+   * test caught it in the minute it took to run: **no key file is a first run**
+   * — the state every install and every migration starts in — while a key file
+   * that will not open is an incident. Collapsed, the ordinary first save
+   * reported a fault about a missing file and then a second one about replacing
+   * it.
+   */
+  #keyState: 'unknown' | 'absent' | 'open' | 'refused' = 'unknown'
+  /** Why the stored data key would not open, when it would not. */
+  #keyRefused: string | undefined
+  /** So a store with several sealed rows and no key file says it once. */
+  #saidKeyFileMissing = false
 
   /**
    * @param path - the JSON file backing the store.
+   * @param onProblem - told when the file was there and could not be parsed
+   *   (see {@link readJsonStore}), and when a stored key could not be read.
+   *   Absent means silence.
+   * @param options - the protector seam and the note channel.
    */
-  constructor(path: string) {
+  constructor(path: string, onProblem?: (message: string) => void, options: ConnectionStoreOptions = {}) {
     this.#path = path
+    this.#keyPath = keyFilePathFor(path)
+    this.#onProblem = onProblem
+    this.#options = options
   }
 
-  /** Load on first use; a missing or unreadable file is an empty list. */
+  /**
+   * Load on first use; a missing file is an empty list.
+   *
+   * **The sharpest case for quarantining.** The load is attempted exactly once,
+   * so a file that failed to parse is never retried, and the first
+   * `connection.save` after the failure used to write an empty list over every
+   * profile the user had — their endpoints and their API keys, with nothing
+   * left to recover from. The bytes now move aside before that can happen.
+   *
+   * The *promise* is what is memoised, not a flag set before the read. With a
+   * flag, a second caller arriving during the read — which is the ordinary boot
+   * now that opening the data key can cost a PowerShell spawn — sailed past an
+   * empty list and could write it back; with this, it waits for the same load
+   * and the once-only property is unchanged.
+   */
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
-    try {
-      const parsed = JSON.parse(await readFile(this.#path, 'utf8')) as Partial<ConnectionsFile>
-      if (Array.isArray(parsed.profiles)) {
-        this.#file = {
-          profiles: parsed.profiles,
-          ...typeof parsed.activeId === 'string' ? { activeId: parsed.activeId } : {},
-        }
-      }
-    } catch {
-      // Nothing saved yet, which is the state every install starts in.
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
+    const parsed = await readJsonStore(this.#path, this.#onProblem) as Partial<ConnectionsFile> | undefined
+    if (!Array.isArray(parsed?.profiles)) return
+    this.#file = {
+      profiles: parsed.profiles,
+      ...typeof parsed.activeId === 'string' ? { activeId: parsed.activeId } : {},
     }
+    await this.#adoptKeys()
+  }
+
+  /**
+   * Bring every row's key into memory, and get the plaintext off the disk.
+   *
+   * Four states per row, and each gets its own answer rather than a shared
+   * `catch`:
+   *
+   * - **encrypted** — opened with the data key, or reported and left absent, so
+   *   the panel asks for it again instead of a profile silently generating with
+   *   nothing;
+   * - **encrypted *and* plaintext** — the encrypted one wins and the plaintext
+   *   is dropped, reported, because a plaintext key beside a ciphertext is
+   *   either a half-finished hand edit or someone trying the downgrade;
+   * - **plaintext only** — the file from before 2026-09-11. Adopted and
+   *   rewritten *now*, not at the next save, because "the next save" on a host
+   *   that is only ever read is never;
+   * - **an envelope this build cannot read** — left exactly as it is. A newer
+   *   build wrote it, and dropping it would destroy a key to make a display
+   *   tidier.
+   */
+  async #adoptKeys(): Promise<void> {
+    let migrated = 0
+    let rewrite = false
+    for (const row of this.#file.profiles) {
+      const sealed: unknown = row.apiKeyEnc
+      if (sealed === undefined) {
+        // The file from before 2026-09-11, or a row that never had a key.
+        if (typeof row.apiKey !== 'string' || row.apiKey.length === 0) {
+          delete row.apiKey
+          continue
+        }
+        // `rewrite` is not set beside this: a migration is already a reason to
+        // write, and setting both would have made one of the two unfalsifiable
+        // — which is exactly what a mutation of it showed, staying green.
+        migrated += 1
+        continue
+      }
+      if (row.apiKey !== undefined) {
+        // Dropped **here**, before the decrypt below can overwrite it, and not
+        // left to that overwrite: when the data key will not open, the decrypt
+        // never runs, and a plaintext left standing would be adopted as the
+        // key and then sealed by the next save — a downgrade arriving through
+        // the one path that is supposed to refuse them.
+        delete row.apiKey
+        rewrite = true
+        this.#onProblem?.(`connection profile "${row.id}" carried a plaintext key beside its encrypted one;`
+          + ` the encrypted key was kept and the plaintext dropped (${this.#path})`)
+      }
+      if (!isEncryptedValue(sealed)) {
+        this.#onProblem?.(`the stored key of connection profile "${row.id}" is in an envelope this build`
+          + ` cannot read; it is kept as it is and reads as absent (${this.#path})`)
+        continue
+      }
+      const key = await this.#openDataKey()
+      if (key === undefined) {
+        // `refused` has already said its piece, once, with the reason. This is
+        // the other way a sealed row has nothing to open it: the key file is
+        // gone while the ciphertexts are not, which a half-restored backup and
+        // a sync client carrying only `*.json` both produce.
+        if (this.#keyState === 'absent' && !this.#saidKeyFileMissing) {
+          this.#saidKeyFileMissing = true
+          this.#onProblem?.(`${this.#keyPath} is missing while stored connection keys are encrypted with it;`
+            + ' every one of them reads as absent and the panel will ask for them again')
+        }
+        continue
+      }
+      try {
+        row.apiKey = decryptValue(key, row.id, sealed)
+      } catch (error: unknown) {
+        this.#onProblem?.(`the stored key of connection profile "${row.id}" could not be decrypted`
+          + ` (${error instanceof Error ? error.message : String(error)});`
+          + ' it reads as absent and the panel will ask for it again')
+      }
+    }
+    if (rewrite || migrated > 0) await this.#save()
+    if (migrated > 0) {
+      this.#options.onNote?.(`${String(migrated)} connection key(s) were encrypted at rest;`
+        + ` the plaintext is gone from ${this.#path}`)
+    }
+  }
+
+  /**
+   * The data key, opened once — or `undefined`, once, with a reason reported.
+   *
+   * **No downgrade lives here.** A key file naming `dpapi` is opened by DPAPI
+   * or not at all: a machine that cannot is a different account, a different
+   * machine or a tampered file, and each of those is a thing to say out loud.
+   * Answering it by writing a `file`-kind key instead would turn the one
+   * detection this design has into a silent weakening.
+   *
+   * A key file that is simply **not there** is not a refusal and reports
+   * nothing: that is a first run, and it is the caller finding a sealed row
+   * with no key to open it that has something to say.
+   * @returns the raw bytes, or `undefined` when they cannot be had.
+   */
+  async #openDataKey(): Promise<Uint8Array | undefined> {
+    if (this.#keyState === 'open') return this.#dataKey
+    if (this.#keyState !== 'unknown') return undefined
+    try {
+      const file = await readKeyFile(this.#keyPath)
+      if (file === undefined) {
+        this.#keyState = 'absent'
+        return undefined
+      }
+      const protector = this.#options.protector ?? protectorForKind(file.kind, this.#options.spawn)
+      const opened = await protector.unwrap(file.wrapped)
+      if (opened.length !== DATA_KEY_BYTES) {
+        throw new Error(`it unwrapped to ${String(opened.length)} bytes, not ${String(DATA_KEY_BYTES)}`)
+      }
+      this.#dataKey = opened
+      this.#keyState = 'open'
+      return opened
+    } catch (error: unknown) {
+      this.#keyState = 'refused'
+      this.#keyRefused = error instanceof Error ? error.message : String(error)
+      this.#onProblem?.(`${this.#keyPath} could not be unwrapped (${this.#keyRefused});`
+        + ' every stored connection key reads as absent and the panel will ask for them again.'
+        + ' The key file and the encrypted keys were kept, not replaced')
+      return undefined
+    }
+  }
+
+  /**
+   * The data key to encrypt with, minting and wrapping one if there is none.
+   *
+   * The refused case is the interesting one. The keys under the old data key
+   * are unreadable on this machine for good — that is what DPAPI's account
+   * binding *is* — so a user who answers the panel's request by typing a key
+   * again must get a working store out of it, or the documented recovery is not
+   * a recovery. The old wrapped key is therefore **set aside, never deleted**,
+   * under the same idiom a file that would not parse gets, and the rows sealed
+   * against it travel on untouched and keep reading as absent.
+   * @returns the raw bytes; a wrap failure throws rather than storing plaintext.
+   */
+  async #dataKeyForWrite(): Promise<Uint8Array> {
+    const opened = await this.#openDataKey()
+    if (opened !== undefined) return opened
+
+    // Only a *refused* key is set aside. An absent one is the first save of a
+    // new profile, and there is nothing to keep.
+    const stale = this.#keyState === 'refused' ? this.#keyRefused : undefined
+    const created = randomBytes(DATA_KEY_BYTES)
+    const wrapped = this.#options.protector === undefined
+      ? await wrapNewDataKey(created, {
+        ...this.#options.platform === undefined ? {} : { platform: this.#options.platform },
+        ...this.#options.spawn === undefined ? {} : { spawnFn: this.#options.spawn },
+        ...this.#onProblem === undefined ? {} : { onWarn: this.#onProblem },
+      })
+      : { kind: this.#options.protector.kind, wrapped: await this.#options.protector.wrap(created) }
+
+    await mkdir(dirname(this.#keyPath), { recursive: true })
+    if (stale !== undefined) {
+      const kept = await quarantineCorruptFile(this.#keyPath, new Date(), 'unreadable')
+      this.#onProblem?.(`a new connection data key was created because the old one could not be opened;`
+        + ` the old one was ${kept === undefined ? 'left in place and overwritten' : `kept as ${kept}`}`
+        + ' and the keys stored under it stay unreadable')
+    }
+    await writeKeyFile(this.#keyPath, wrapped)
+    this.#dataKey = created
+    this.#keyState = 'open'
+    this.#keyRefused = undefined
+    return created
+  }
+
+  /**
+   * The file's rows: every plaintext key sealed, and the field name gone.
+   *
+   * A row is encrypted **only** when it has a plaintext key and no ciphertext
+   * for it, which is exactly a key the user just typed or one being migrated.
+   * Everything else is carried through byte for byte — including a ciphertext
+   * this host could not open, which is the whole of "a save must not destroy
+   * what it could not read".
+   * @returns rows safe to write.
+   */
+  async #rowsForFile(): Promise<StoredProfile[]> {
+    const rows: StoredProfile[] = []
+    for (const profile of this.#file.profiles) {
+      if (profile.apiKey !== undefined && profile.apiKey.length > 0 && profile.apiKeyEnc === undefined) {
+        profile.apiKeyEnc = encryptValue(await this.#dataKeyForWrite(), profile.id, profile.apiKey)
+      }
+      const row: StoredProfile = { ...profile }
+      // `delete` rather than building the row field by field: the fields here
+      // grow, and a serializer that lists them is one merge away from dropping
+      // a new one silently. This way the one field that must never be written
+      // is the one field named.
+      delete row.apiKey
+      rows.push(row)
+    }
+    return rows
   }
 
   /** Persist the file, creating its directory on a first run. */
   async #save(): Promise<void> {
+    const rows = await this.#rowsForFile()
     await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#file, null, 2)}\n`, 'utf8')
+    await atomicWriteFile(this.#path, `${JSON.stringify({
+      profiles: rows,
+      ...this.#file.activeId === undefined ? {} : { activeId: this.#file.activeId },
+    }, null, 2)}\n`)
   }
 
   /**
@@ -428,10 +741,16 @@ export class ConnectionStore {
     // caller replacing a profile cannot send it back — treating absent as
     // "clear it" would silently disarm a profile whose label someone edited.
     // `''` is the explicit clear; anything else replaces.
+    // The ciphertext travels with the plaintext, and on its own when there is
+    // no plaintext to travel with: a row whose key this host could not open is
+    // still that row's key, and an edit of its label must not be the act that
+    // throws it away. A *new* key carries no ciphertext forward — the
+    // serializer seals it, which is also what gives it a fresh nonce.
     const at = this.#file.profiles.findIndex(profile => profile.id === stored.id)
     const previous = at === -1 ? undefined : this.#file.profiles[at]
     if (input.apiKey === undefined) {
       if (previous?.apiKey !== undefined) stored.apiKey = previous.apiKey
+      if (previous?.apiKeyEnc !== undefined) stored.apiKeyEnc = previous.apiKeyEnc
     } else if (input.apiKey.length > 0) {
       stored.apiKey = input.apiKey
     }

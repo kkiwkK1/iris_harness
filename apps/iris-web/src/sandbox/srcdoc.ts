@@ -184,6 +184,18 @@ export function framePolicy(networkGranted: boolean, selfOrigin: string): string
     // a frame whose whole purpose is not having any.
     "frame-src 'none'",
     "form-action 'none'",
+    /*
+     * `base-uri` has **no fallback to `default-src`**, so until this line the
+     * `default-src 'none'` above left it wide open and a card could write
+     * `<base href="https://…">` and re-point every relative URL in its own
+     * document. Measured harmless on the corpus as it stands — the frame's
+     * relative URLs are the sandbox artifacts, which are absolute, and
+     * `script-src` would refuse code from a re-pointed origin anyway — so this
+     * closes a door nothing is currently walking through. It is here because
+     * "nothing walks through it today" is a fact about today's cards, and this
+     * directive costs the frames nothing at all. (`docs/SANDBOX.md`, F10.)
+     */
+    "base-uri 'none'",
   ].join('; ')
 }
 

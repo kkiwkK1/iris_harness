@@ -55,10 +55,29 @@ pnpm start
 
 - **`IRIS_API_KEY_ENV` 是另一个环境变量的_名字_,不是密钥本身。** 程序拿这个名字去 `process.env[...]` 取值。上例中密钥放在 `DEEPSEEK_API_KEY` 里。未设表示端点不需要鉴权(本地模型正是如此)。
 - **`IRIS_BASE_URL`** 是 OpenAI 兼容端点的根,`/chat/completions` 由程序追加;**`IRIS_MODEL`** 是新聊天默认用的模型 id。**首次启动时,这两个值(连同 `IRIS_API_KEY_ENV` 指向的密钥)会被导入成供应商列表里的第一个供应商并直接启用**——之后由列表说话,环境变量不再是一条可选的路由,见 [§3](#3-连接模型)。
-- **`IRIS_PORT`** 是 loopback 端口;**`IRIS_DATA_DIR`** 是存放 profile 的目录(默认 `./data`,已被 gitignore)。
-- **密钥永不进仓库。** `key.txt`、`*.key`、`secrets.json`、`.env*`、`data/` 都在 `.gitignore` 里;CI 不引用任何 secret。密钥要么走 `IRIS_API_KEY_ENV` 指向的环境变量,要么由界面的连接面板保存到 `<IRIS_DATA_DIR>/<profile>/connections.json`——那个目录属于跑它的人,**不要提交或分享**。
+- **`IRIS_PORT`** 是 loopback 端口;**`IRIS_DATA_DIR`** 是存放 profile 的目录(默认 `./data`,已被 gitignore)。**一个数据目录只能有一个宿主**,见下面的「多实例」。
+- **密钥永不进仓库。** `key.txt`、`*.key`、`secrets.json`、`.env*`、`data/` 都在 `.gitignore` 里;CI 不引用任何 secret。密钥要么走 `IRIS_API_KEY_ENV` 指向的环境变量,要么由界面的连接面板保存到 `<IRIS_DATA_DIR>/<profile>/connections.json`——**存进去是加密的**(Windows 上那把数据密钥绑定当前登录账户,所以 profile 拷到别处密钥就打不开了,见 [§3](#3-连接模型))。那个目录仍然属于跑它的人,**不要提交或分享**。
 
 全表(数据目录、ST 安装目录、模板开关、超时、开发源白名单)、`cordis.yml` 的组合方式与故障排查,见 **[§12 宿主参考](#12-宿主参考)**。
+
+### 多实例:一个数据目录只能有一个宿主
+
+想同时跑两个宿主(比如一个跑主线、一个跑改动),**必须给第二个另一个 `IRIS_DATA_DIR`**——只换端口是不够的。
+
+```sh
+# 第二个宿主:另一个端口,**而且**另一个数据目录
+IRIS_PORT=8790 IRIS_DATA_DIR=./data-dev pnpm start
+```
+
+这是被强制执行的,不是一句建议。宿主启动时会在 `<IRIS_DATA_DIR>/host.lock` 上用 `open(path, 'wx')` 抢一个锁,锁里记着 pid、**实际绑定**的端口、启动时刻与机器名。如果那个 pid 还活着,**第二个宿主直接拒绝启动**,并打印一句话说明锁文件在哪、谁占着、它说自己绑在哪个端口,以及两条出路(停掉那个宿主,或把 `IRIS_DATA_DIR` 指到别处)。如果那个 pid 已经不在了,锁是**残留**的:新宿主接管它并在日志里说一声——那句话就是「上一个宿主不是正常退出的」这一事实的唯一信号。
+
+**为什么非拦不可。** 这里每一个存储(settings、connections、chats、script-variables……)都是「内存里一整份、有改动就整文件重写」。两个宿主开着同一个目录,就是同一批文件的两份内存副本,后写的那个会把先写的那个**更新过的**文件整个盖掉——两边都不报错。丢掉的是对方读进内存之后学到的一切:楼层、用量、脚本变量、刚存的一个供应商。这在这台机器上真的发生过,而且症状被当成产品缺陷查了三轮(`notes/packages/iris-app-service/DEVIATIONS.md` §71)。
+
+**没有绕过的开关,是故意的。** 需要绕过的那一刻,恰恰就是「这次应该没事」的那一刻,也正是出事故的那一刻。代价由我们自己承担:验收用的宿主从此跑在**拷贝出来的数据目录**上。
+
+**正常退出释放锁,崩溃不释放。** 崩溃留下的残留锁交给上面那条存活检查——这比指望一个已经死掉的进程去清理自己的文件可靠。
+
+顺带一提:**端口被占是另一回事**,而且宿主此时根本起不来(`listen` 失败,boot 失败)。现在它给的是一句人话,而不是一串指向 `@deepseek-ai/dsh-host-webserver` 的 Cordis 插件树堆栈。
 
 ## 3. 连接模型
 
@@ -82,7 +101,13 @@ pnpm start
 
 **密钥只写不回读。** 保存后它**再也不经过网络回到界面**:读取一个 profile 只回答「有没有密钥」和最后几位做掩码。留空表示保持原样,显式清空要传空字符串。
 
-**但它在磁盘上是明文的**:连同端点、模型一起存在 `<IRIS_DATA_DIR>/<profile>/connections.json`,保护只有机器上的文件权限。想让密钥完全不进 profile,用 `IRIS_API_KEY_ENV`(见 [§2](#2-启动));界面里填过的密钥优先于环境变量,因为更具体的那个是这个人刚刚选的。
+**它在磁盘上是加密的。** 密钥和端点、模型一起存在 `<IRIS_DATA_DIR>/<profile>/connections.json`,但存进去的是密文(AES-256-GCM,每个值一个随机 nonce,绑定所属 profile 的 id),不是你敲进去的那串字符——上游 SillyTavern 的 `secrets.json` 至今是明文,这里不是。加解密用的那把数据密钥单独放在旁边的 `connections.key` 里:
+
+- **Windows**:数据密钥由系统的 DPAPI 以**当前登录账户**的身份封起来。于是有一句必须自己知道的话:**把 profile 目录拷到另一台机器、或另一个 Windows 账户下,那些密钥就打不开了**。宿主会明说(一条 fault,点名是哪个文件),每个供应商显示成「没有密钥」,连接面板会让你重新填一次;端点、模型、预设都还在,只有密钥要重来。这是这个设计付的代价,也正是它挡住的事——别人拷走你的 `data/` 拿不走你的密钥。密文和那把打不开的 `connections.key` 都会被留着,不会被覆盖;你重新填一个密钥时,旧的那把会被改名留在旁边(`connections.key.unreadable-<时刻>`)。
+- **其他平台,或 Windows 上起不了 PowerShell 时**:数据密钥以 `0600` 不加封地存在 `connections.key` 里,启动时打印一条明说「这比系统钥匙串弱」的告警。它挡住的是随手 `cat connections.json`,挡不住能读这个目录的程序。这是有意的诚实回退,不是静默降级。
+- **从旧版本升上来**:第一次启动就地把 `connections.json` 里的明文密钥加密掉,并报一条 note(`N connection key(s) were encrypted at rest`)。单向,之后磁盘上不再有明文。
+
+想让密钥完全不进 profile,用 `IRIS_API_KEY_ENV`(见 [§2](#2-启动));界面里填过的密钥优先于环境变量,因为更具体的那个是这个人刚刚选的。设计、四种失败模式与代价见 [notes/packages/iris-app-service/DEVIATIONS.md](notes/packages/iris-app-service/DEVIATIONS.md) §75。
 
 填好之后点**测试连接**。它探 `GET /models`,回答带具名判词,而不是一句「失败了」:
 
@@ -250,7 +275,7 @@ pnpm build:web                            # 构建界面产物
 
 **两种 tsc,两个都要跑。** 根 `tsconfig.json` 只收 `packages/*`、`apps/iris`、`scripts/`;界面在 `apps/iris-web` 里有自己的 `tsconfig.json`,由 `npm run typecheck` 检查。而 `node --test` 用类型剥离运行,它**不做类型检查**——一个带真实类型错误的测试文件照样通过,只有 `tsc --noEmit` 看得见。
 
-`pnpm test` 是离线的:唯一需要网络的测试默认跳过。要对真实 provider 跑用 `pnpm test:live`,它需要 `DEEPSEEK_API_KEY` 或仓库根的 `key.txt`(都已 gitignore)。加这个开关而不是「有密钥就跑」,是因为工作区里躺着一个密钥不该让 `pnpm test` 悄悄变成花钱且断网即失败的东西。
+`pnpm test` 是离线的:唯一需要网络的测试默认跳过。要对真实 provider 跑用 `pnpm test:live`,它需要环境变量 `DEEPSEEK_API_KEY`——**只**认环境变量,仓库里没有任何工具会去读一个放密钥的文件(`apps/iris/tests/key-file.test.ts` 钉住这一点)。加这个开关而不是「有密钥就跑」,是因为工作区里躺着一个密钥不该让 `pnpm test` 悄悄变成花钱且断网即失败的东西。
 
 **宿主从源码跑,界面是构建产物。** 所以改了 `apps/iris-web` 之后必须重跑 `pnpm build:web`,否则宿主服出去的还是上一份。
 
@@ -291,6 +316,8 @@ CI 红了不合并。分支命名、提交粒度、PR 里该写什么、我们�
 
 Iris **只绑 loopback**,默认 `127.0.0.1:8787`。这是有意的:这个 web 服务**不带 TLS、不带鉴权**,它信任自己所在的这台机器。要让别人访问,**在前面加一个反向代理,而不是改绑定地址**。
 
+**但只绑 loopback 不是一道门。** `nip.io`、`sslip.io` 这类公共通配 DNS 会把 `127.0.0.1.nip.io` 这样的名字解析到 `127.0.0.1`,于是攻击者自己的页面就能在你的浏览器里变成和这台宿主**同源**——同源之后,JSON content-type 预检、没有 CORS 头这些跨站防线全都不在路径上了,一个 `new WebSocket` 就能读到每一轮对话的每一个 token。浏览器唯一伪造不了的是 `Host` 头,所以宿主按 `Host` 应答:loopback 三个名字(`127.0.0.1` / `localhost` / `[::1]`)配上**实际绑到的**端口,加上你自己列的 `IRIS_ALLOWED_HOSTS`,其余一律 403。放在反代后面时,**反代对外的那个 `host:port` 必须列进 `IRIS_ALLOWED_HOSTS`**;把绑定改成 `0.0.0.0` 而不列,宿主会直接拒绝启动并告诉你要设什么。细节与代价见 [notes/packages/iris-rpc-host/DEVIATIONS.md](notes/packages/iris-rpc-host/DEVIATIONS.md) §1。
+
 没有构建界面时宿主照样启动、照样应答协议,只是不服页面。新检出就是这个状态。
 
 ### 环境变量
@@ -303,7 +330,7 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `IRIS_BASE_URL` | `http://127.0.0.1:11434/v1` | 端点根;`/chat/completions` 由程序追加 | `cordis.yml` `llm-openai-compat` 行 |
 | `IRIS_MODEL` | `local-model` | 新聊天默认用的模型 id | `cordis.yml`,两处 |
 | `IRIS_API_KEY_ENV` | 未设 | **另一个环境变量的名字**——不是密钥本身。程序拿这个名字去 `process.env[...]` 取值。未设表示端点不需要鉴权,本地模型正是如此 | `cordis.yml` → `@iris/llm-openai-compat` 的 `credentialOf` |
-| `IRIS_DATA_DIR` | `./data` | 存放 profile 的目录。**指向一个 SillyTavern 的 `data/`,它就能就地找到那些角色卡**(但会往里写,见 §5) | `cordis.yml` app 行 |
+| `IRIS_DATA_DIR` | `./data` | 存放 profile 的目录。**指向一个 SillyTavern 的 `data/`,它就能就地找到那些角色卡**(但会往里写,见 §5)。**一个数据目录只能有一个宿主**:启动时抢 `<IRIS_DATA_DIR>/host.lock`,被活着的宿主占着就拒绝启动,没有绕过开关(见 §2 多实例) | `cordis.yml` app 行 |
 | `IRIS_PROFILE` | `default-user` | 打开 `IRIS_DATA_DIR` 里的哪个 profile | `cordis.yml` app 行 |
 | `IRIS_USER_NAME` | `User` | 新聊天里记下的你的名字 | `cordis.yml` app 行 |
 | `IRIS_CONTEXT_WINDOW` | `32768` | 预设没带上下文窗口时用这个 | `cordis.yml` app 行 |
@@ -312,6 +339,7 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `IRIS_TEMPLATES` | 关 | `1` 打开卡片的 EJS 提示词模板(ST-Prompt-Template)。默认关,因为求值一次就是在跑卡作者的 JavaScript | `cordis.yml` app 行 |
 | `IRIS_BACKUP_KEEP` | `50` | 每个聊天保留多少份快照。与上游默认相同 | `cordis.yml` app 行 |
 | `IRIS_DEV_ORIGIN` | 未设 | 逗号分隔的来源白名单,给跑在另一个源上的前端开发服务器用。**更推荐**反代 `/iris/rpc` 与 `/iris/events`,那样页面仍是同源 | `cordis.yml` rpc 行 |
+| `IRIS_ALLOWED_HOSTS` | 未设 | 逗号分隔的 `host:port` 白名单,精确匹配、不支持通配。loopback + 实际端口是自动推出来的,所以本机用不着设;它是给**反向代理**用的——浏览器写进 `Host` 的是反代对外的那个名字。绑 `0.0.0.0` 而这里为空,宿主拒绝启动 | `cordis.yml` rpc 行 |
 | `IRIS_WEB_DIST` | 自动 | 界面产物的 `index.html`。**一般不要设**——有构建时 `bin.ts` 会自己填 | `apps/iris/bin.ts` |
 
 另有两个只服务于 live demo、与跑宿主无关:`DEEPSEEK_API_KEY` 与 `IRIS_LIVE_MODEL`(`apps/iris/demo/`)。
@@ -340,7 +368,8 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `worlds/` | 世界书 |
 | `presets/` | Chat Completion 预设 |
 | `settings.json` | 采样、世界书扫描参数、全局书选择 |
-| `connections.json` | 保存的端点**及其密钥** |
+| `connections.json` | 保存的端点及其密钥,**密钥是密文**(AES-256-GCM,绑定该 profile 的 id) |
+| `connections.key` | 上一行那些密文用的数据密钥。Windows 上由 DPAPI 以当前账户封起;别的平台是 `0600` 的明文,启动会告警。**换机器/换账户就打不开了**,见 [§3](#3-连接模型) |
 | `personas.json` | `{{user}}` 是谁 |
 | `favorites.json` | 收藏的角色 |
 | `script-policy.json` | 你允许过哪些卡跑脚本 |
@@ -353,11 +382,15 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 
 聊天文件就是 SillyTavern 自己的格式,所以在这里开的一局可以拿回那边打开,再拿回来。
 
+`<IRIS_DATA_DIR>/` 本身(profile 之外)只有一个文件:`host.lock`,记着当前占着这个目录的宿主的 pid、绑定端口、启动时刻与机器名。正常退出会删掉它;崩溃留下的那一把是残留锁,下一个宿主接管并在日志里说一声。见 [§2 多实例](#多实例一个数据目录只能有一个宿主)。
+
 ### 出问题时
 
 **页面打不开,但 API 有应答。** 没有界面构建。跑 `pnpm build:web`;构建放在不寻常的位置时设 `IRIS_WEB_DIST`。
 
 **`missing API key: set <名字>`。** `IRIS_API_KEY_ENV` 指的那个变量是空的或没设。这里选择**点名拒绝**而不是发一个不带鉴权的请求,因为端点对后者的回答是 401,而 401 的成因没人看得见。
+
+**连接面板里每个供应商都变成「没有密钥」,端点和模型却都在。** 数据密钥打不开了。最常见的原因是这个 profile 目录换了 Windows 账户或换了机器——DPAPI 封的那把密钥绑定当前登录账户(见 [§3](#3-连接模型))。日志里会有一条点名 `connections.key` 的 fault,说明是哪一种。**密文和那把密钥都没有被删**:重新在面板里填一次密钥即可,旧的 `connections.key` 会被改名留在旁边。宿主**不会**自作主张换成弱一点的存法——那是静默降级,这里宁可让你看见。
 
 **宿主拒绝启动,说两个目录重叠。** `IRIS_ST_DIR` 指到了 `IRIS_DATA_DIR` 里面。两者必须是分开的树——那种重叠正是「Iris 从不写你的安装」不再成立的方式。
 
@@ -369,7 +402,9 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 
 **早期楼层的变量读出来是空的。** SillyTavern 自己的变量清理是**默认开启**的,所以从一个安装里导入的长局,到手时就已经被裁过了。Iris 会报出哪一层被裁、哪一层更早的还完好,而不是回一张空表了事。
 
-**端口被占用。** 设 `IRIS_PORT`。**不要按端口或进程名杀进程**——那可能是别人起的宿主。
+**端口被占用。** 宿主会打印一句 `… is already in use, so the host did not start`,点名地址。设 `IRIS_PORT` 换一个。**不要按端口或进程名杀进程**——那可能是别人起的宿主。
+
+**宿主拒绝启动,说数据目录已被另一个宿主打开。** 这是数据目录锁,不是端口的事:`<IRIS_DATA_DIR>/host.lock` 里记着的那个 pid 还活着。停掉那个宿主,或给这一个另一个 `IRIS_DATA_DIR`(见 [§2 多实例](#多实例一个数据目录只能有一个宿主))。**没有绕过的开关。** 如果你确知那个 pid 已经不在了(比如整台机器刚重启、pid 被复用给了别的程序),删掉那个锁文件即可——宿主本来就会自动接管一把残留锁,需要手删只说明存活检查答的是「活着」。
 
 ---
 

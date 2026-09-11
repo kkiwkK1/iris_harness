@@ -27,7 +27,7 @@ import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { shouldAsk } from '../sandbox/consent.ts'
-import { ConsentGate } from './ScriptPanel.tsx'
+import { ConsentGate, useMarkupScriptCount } from './ScriptPanel.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -40,9 +40,11 @@ export function ConsentAsk(): ReactElement | null {
   const scriptsFor = useIris(state => state.scriptsFor)
   const consent = useIris(state => state.scriptsAllowed)
   const actions = useIrisActions()
-  // Subscribed so a language switch re-renders the question. Before the early
-  // returns: hook order must not depend on what is on screen.
+  // Before the early returns, both of them: hook order must not depend on what
+  // is on screen. `useLanguage` subscribes so a language switch re-renders the
+  // question; the count is what the question's last clause states.
   useLanguage()
+  const markupScripts = useMarkupScriptCount()
 
   // Only once the list for *this* card has arrived: asking about a card whose
   // scripts are still loading would show a count that is about to change.
@@ -63,6 +65,7 @@ export function ConsentAsk(): ReactElement | null {
     <div className="iris-notice iris-notice--info" role="region" aria-label={t('sectionCardScripts')}>
       <ConsentGate
         scripts={scripts}
+        markupScripts={markupScripts}
         onAnswer={allowed => void actions.answerScriptsAllowed(allowed)}
       />
     </div>

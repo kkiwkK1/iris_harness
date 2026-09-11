@@ -108,3 +108,39 @@ test('an UpdateVariable block in a greeting is applied on top instead', () => {
 test('a greeting with no override says so', () => {
   assert.equal(extractGreetingOverride('只是普通的开场白。'), undefined)
 })
+
+test('an [InitVar] body naming a reserved key fails that entry, and the book still loads', () => {
+  // The declared tree is merged into the chat's state by `mergeWith`, which is
+  // the pollution site the network audit named. A world book is a file someone
+  // downloaded, so this is refused where the other body problems are refused —
+  // the entry is reported and the rest of the book still loads, rather than one
+  // bad entry taking a card's whole opening state with it.
+  const poisoned = {
+    name: '主世界书',
+    entries: [
+      { comment: '[InitVar]坏条目', content: '__proto__:\n  polluted: 1' },
+      { comment: '[InitVar]好条目', content: '好感度: 5' },
+    ],
+  }
+  const result = loadInitVars([poisoned], fresh())
+
+  assert.equal(result.failures.length, 1, 'exactly the bad entry fails')
+  assert.match(result.failures[0]?.reason ?? '', /__proto__/)
+  assert.equal(result.failures[0]?.comment, '[InitVar]坏条目')
+  assert.equal(result.data.stat_data['好感度'], 5, 'the other entry still loaded')
+  assert.deepEqual(result.loaded, ['主世界书'])
+  assert.equal(({} as Record<string, unknown>)['polluted'], undefined, 'Object.prototype was written')
+})
+
+test('a book whose name is a reserved key loads without recording itself', () => {
+  // `initialized_lorebooks[name] = []` is a wire string used as a plain object
+  // key. The bookkeeping is not worth a prototype write, so such a book is
+  // loaded and simply not recorded — it re-runs, which is the harmless
+  // direction of this failure.
+  const result = loadInitVars([{ name: '__proto__', entries: [{ comment: '[InitVar]', content: '好感度: 1' }] }], fresh())
+
+  assert.equal(result.data.stat_data['好感度'], 1)
+  assert.deepEqual(result.loaded, ['__proto__'], 'it is still reported as loaded')
+  assert.equal(Object.getPrototypeOf(result.data.initialized_lorebooks), Object.prototype)
+  assert.equal(({} as Record<string, unknown>)['length'], undefined)
+})

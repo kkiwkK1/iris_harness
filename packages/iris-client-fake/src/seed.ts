@@ -11,6 +11,7 @@
 
 import type { CharacterSummary, GenerationSettings, RegexScriptView, TurnUsage, UserScript } from '@iris/protocol'
 
+import { generationTimingFor } from './state.ts'
 import type { FakeChat, FakeMessage } from './state.ts'
 
 /**
@@ -542,6 +543,13 @@ export function seedCharacters(): CharacterSummary[] {
  * one that reported a cost and one that did not — which is what a real turn
  * looks like after a provider switch, and what the conversation total has to
  * add up correctly over.
+ *
+ * `timed` is positional the same way and answers a different question: which
+ * readings still have a stopwatch. The host stores a generation's timing in
+ * SillyTavern's own one-per-line `gen_started` / `gen_finished` pair, so a
+ * reloaded turn has a timer for the reading its file was showing and none for
+ * the others — a turn where swipe 0 has a speed and swipe 1 has only a cost is
+ * the ordinary state, not an edge case.
  */
 function exchange(
   turn: number,
@@ -549,6 +557,7 @@ function exchange(
   ask: string,
   replies: readonly string[],
   usage: readonly (TurnUsage | undefined)[] = [],
+  timed: readonly boolean[] = [],
 ): FakeMessage[] {
   return [
     { role: 'user', name: 'You', candidates: [{ text: ask }], index: 0, turn },
@@ -557,7 +566,17 @@ function exchange(
       name,
       candidates: replies.map((text, at) => {
         const cost = usage[at]
-        return { text, ...cost === undefined ? {} : { usage: cost } }
+        // Derived from the cost rather than invented beside it, so the seeded
+        // rate is the seeded output count divided by the seeded seconds and a
+        // reader checking the arithmetic on screen gets the same answer.
+        const timing = timed[at] === true && cost !== undefined
+          ? generationTimingFor(cost.outputTokens, cost.reasoningTokens, Date.now())
+          : undefined
+        return {
+          text,
+          ...cost === undefined ? {} : { usage: cost },
+          ...timing === undefined ? {} : { generation: timing },
+        }
       }),
       index: 0,
       turn,
@@ -579,7 +598,22 @@ export function seedChats(): FakeChat[] {
       name: '络络',
       candidates: [
         {
-          text: `雨从傍晚下到现在，巷口那盏灯还是没亮。\n\n她蹲在灯柱底下，手里捏着一把细口钳，听见脚步声也没回头。"你迟了两刻钟，"她说，"灯芯已经吸饱水了。"`,
+          /*
+           * The greeting, and a card interface inside it — with an inline
+           * `<script>`.
+           *
+           * Seeded deliberately, for the system audit's F9: this card's
+           * `scripts` list and its **markup** are two populations, and only the
+           * first has a question attached. A greeting whose markup embeds a
+           * script is the exact shape that runs code while the panel says
+           * nobody has been asked, and until this seed existed nothing in the
+           * repository rendered one — `check:render` could not have shown the
+           * count because the fake had no markup to count.
+           *
+           * The script itself is inert on purpose. What is being seeded is a
+           * `<script` a frame would parse, not a behaviour.
+           */
+          text: `雨从傍晚下到现在，巷口那盏灯还是没亮。\n\n她蹲在灯柱底下，手里捏着一把细口钳，听见脚步声也没回头。"你迟了两刻钟，"她说，"灯芯已经吸饱水了。"\n\n\`\`\`html\n<body>\n  <div class="lamp-state">灯芯：吸饱水</div>\n  <script>document.querySelector('.lamp-state')?.setAttribute('data-seeded', '1')</script>\n</body>\n\`\`\``,
         },
       ],
       index: 0,
@@ -606,9 +640,20 @@ export function seedChats(): FakeChat[] {
       // conversation as one route.
       routed(UNCACHED, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 2 * DAY_MS),
       routed(SILENT_CACHE, { model: 'local/qwen3-8b', provider: 'openai-compat' }, booted - 2 * DAY_MS),
+    ], [
+      // Only swipe 0 keeps a stopwatch, which is what a reloaded turn looks
+      // like: the file has one timer and it belongs to the reading it was
+      // showing. So this turn renders a speed, and swiping to the other reading
+      // renders a cost with no speed beside it.
+      true, false,
     ]),
     ...exchange(2, '络络', '在数人。第三次了。', [
       `她把钳子插回围裙的皮套，动作比刚才慢了半拍——这是她唯一泄露出来的东西。\n\n"第三次。"她说，"那就不是巡检了。巡检只数一次，数完就填表。数三次的人是在等一个对不上的数。"`,
+    // No stopwatch on this one, deliberately: a reply generated before the host
+    // measured anything, or imported from a SillyTavern chat whose line carried
+    // no timer, has a cost and no speed for ever. Both renderings are therefore
+    // on screen at once in this conversation — the chip with `· N tok/s` on the
+    // turn above and the bare total here.
     ], [routed(CACHED, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 5 * 60 * 1_000)]),
   ]
 

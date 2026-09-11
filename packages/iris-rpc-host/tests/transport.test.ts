@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
+import net from 'node:net'
 import { test, type TestContext } from 'node:test'
 
 import { Context } from '@deepseek-ai/cordis'
@@ -47,6 +48,44 @@ interface Host {
   rpc: IrisRpcHost
   origin: string
   wsUrl: string
+  port: number
+}
+
+/**
+ * Speak one request this host by hand and read the response head back.
+ *
+ * `fetch` forbids setting `Host` and `ws` writes its own, so the header the
+ * allow-list is *about* is the one no client library will let a test choose.
+ * @param port - the bound port to dial.
+ * @param request - the full request text, CRLF line endings included.
+ * @returns the bytes read back.
+ */
+async function raw(port: number, request: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, '127.0.0.1', () => { socket.write(request) })
+    let seen = ''
+    socket.on('data', (chunk: Buffer) => {
+      seen += chunk.toString('utf8')
+      if (seen.includes('\r\n\r\n')) { socket.destroy(); resolve(seen) }
+    })
+    socket.on('error', reject)
+    socket.on('close', () => { resolve(seen) })
+  })
+}
+
+/** The numeric status of a raw response. */
+function statusOf(response: string): number {
+  return Number(response.split(' ')[1] ?? '0')
+}
+
+/** POST one frame under a chosen `Host`. */
+async function postAs(host: Host, hostHeader: string, frame: unknown): Promise<string> {
+  const body = JSON.stringify(frame)
+  return raw(
+    host.port,
+    `POST ${host.rpc.rpcPath} HTTP/1.1\r\nHost: ${hostHeader}\r\ncontent-type: application/json\r\n`
+    + `content-length: ${String(Buffer.byteLength(body))}\r\nConnection: close\r\n\r\n${body}`,
+  )
 }
 
 /** Boot a Context with the carrier and the transport, disposed when the test ends. */
@@ -57,7 +96,7 @@ async function startHost(t: TestContext, config: Partial<Config> = {}): Promise<
   t.after(async () => { await ctx.fiber.dispose() })
 
   const origin = `http://127.0.0.1:${String(port)}`
-  return { ctx, rpc: ctx.irisRpc, origin, wsUrl: `ws://127.0.0.1:${String(port)}${ctx.irisRpc.eventsPath}` }
+  return { ctx, rpc: ctx.irisRpc, origin, port, wsUrl: `ws://127.0.0.1:${String(port)}${ctx.irisRpc.eventsPath}` }
 }
 
 /** POST one raw body, so a test can send frames the client library would refuse to build. */
@@ -266,6 +305,140 @@ test('an upgrade from a foreign origin is refused', async (t) => {
 
   assert.match(error.message, /403/)
   assert.equal(host.rpc.connections, 0)
+})
+
+test('a POST whose Host is a rebinding name is refused before any handler', async (t) => {
+  /*
+   * The exploit at transport level. `127.0.0.1.nip.io` is a public wildcard DNS
+   * name that resolves to loopback, so this is a page an attacker serves,
+   * running in the victim's browser, reaching the victim's own host — and after
+   * the browser accepts that name the page is *same-origin*, so the JSON
+   * content-type gate two tests above is not in its path at all. The `Host`
+   * header is the one thing it cannot forge.
+   *
+   * Measured on the code before this: `200 OK`, and the handler ran.
+   */
+  const host = await startHost(t)
+  let reached = false
+  host.rpc.register('chat.delete', () => { reached = true; return {} })
+
+  const refused = await postAs(host, `127.0.0.1.nip.io:${String(host.port)}`, {
+    id: 'evil-1', method: 'chat.delete', params: { chatId: 'c1' },
+  })
+
+  assert.equal(statusOf(refused), 403)
+  assert.equal(reached, false, 'a refused request must not have side effects')
+  assert.match(refused, /allow-list/, 'the body names the rule')
+
+  // And the same call under the host's real name still works, so the 403 above
+  // is the guard rather than a broken route.
+  const accepted = await postAs(host, `127.0.0.1:${String(host.port)}`, {
+    id: 'ok-1', method: 'chat.delete', params: { chatId: 'c1' },
+  })
+  assert.equal(statusOf(accepted), 200)
+  assert.equal(reached, true)
+})
+
+test('an upgrade whose Host is a rebinding name is refused, Origin or no Origin', async (t) => {
+  const host = await startHost(t)
+  const evil = `127.0.0.1.nip.io:${String(host.port)}`
+  const handshake = (hostHeader: string, origin?: string): Promise<string> => raw(
+    host.port,
+    `GET ${host.rpc.eventsPath} HTTP/1.1\r\nHost: ${hostHeader}\r\nUpgrade: websocket\r\n`
+    + 'Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n'
+    + (origin === undefined ? '' : `Origin: ${origin}\r\n`) + '\r\n',
+  )
+
+  // The pair a rebound page sends. The old rule was "these two agree", which
+  // this satisfies — it answered 101 and attached.
+  assert.equal(statusOf(await handshake(evil, `http://${evil}`)), 403)
+  // An absent Origin used to be allowed outright. It still is, but only after
+  // the Host guard, so it is no longer a way in.
+  assert.equal(statusOf(await handshake(evil)), 403)
+  assert.equal(host.rpc.connections, 0)
+
+  assert.equal(statusOf(await handshake(`127.0.0.1:${String(host.port)}`)), 101, 'a local tool still connects')
+})
+
+test('a configured allowedHosts entry is answered, and its neighbours are not', async (t) => {
+  const host = await startHost(t, { allowedHosts: ['iris.example.com:4321'] })
+  host.rpc.register('chat.abort', () => ({}))
+
+  const frame = { id: 'req-1', method: 'chat.abort', params: { chatId: 'c1' } }
+  assert.equal(statusOf(await postAs(host, 'iris.example.com:4321', frame)), 200)
+  assert.equal(statusOf(await postAs(host, 'IRIS.EXAMPLE.COM:4321', frame)), 200, 'host names are case-insensitive')
+  assert.equal(statusOf(await postAs(host, 'iris.example.com:4322', frame)), 403, 'a different port is not the entry')
+  assert.equal(statusOf(await postAs(host, 'evil.iris.example.com:4321', frame)), 403, 'no suffix matching')
+})
+
+/** A carrier that claims a network bind without opening one. */
+interface StandInCarrier {
+  host: string
+  port: number
+  register: () => () => void
+  registerUpgrade: () => () => void
+}
+
+test('a network bind with no allowedHosts fails the fiber instead of mounting a route', async () => {
+  /*
+   * A **stand-in carrier**, not a real `0.0.0.0` listen: binding every
+   * interface on a development machine is a real exposure for the lifetime of
+   * the test, and the behaviour under test happens before any socket is
+   * touched — `[Service.init]` reads `ctx.webServer.host` and throws, which
+   * fails the fiber.
+   *
+   * What the stand-in buys over calling `describeUnconfiguredBind` directly is
+   * the **mounting**: it counts registrations, so a version of the service that
+   * computed the refusal and then registered the routes anyway goes red here.
+   */
+  const ctx = new Context()
+  let mounted = 0
+  const carrier: StandInCarrier = {
+    host: '0.0.0.0',
+    port: 8787,
+    register: () => { mounted += 1; return () => {} },
+    registerUpgrade: () => { mounted += 1; return () => {} },
+  }
+  ctx.provide('webServer', carrier as never)
+
+  // Wrapped in a function: `ctx.plugin` hands back a `Fiber`, which is awaitable
+  // but is not a `Promise`, and `assert.rejects` refuses to take it directly.
+  await assert.rejects(
+    async () => { await ctx.plugin(IrisRpcHost, { heartbeatMs: 0 }) },
+    (error: Error) => {
+      assert.match(error.message, /allowedHosts/, 'the sentence names the config to set')
+      assert.match(error.message, /reverse proxy/, 'and why a proxied deployment needs it')
+      return true
+    },
+  )
+  assert.equal(mounted, 0, 'nothing was served while the composition was in that state')
+
+  await ctx.fiber.dispose()
+})
+
+test('a network bind that names its hosts starts, and answers exactly those', async () => {
+  const ctx = new Context()
+  let mounted = 0
+  const carrier: StandInCarrier = {
+    host: '0.0.0.0',
+    port: 8787,
+    register: () => { mounted += 1; return () => {} },
+    registerUpgrade: () => { mounted += 1; return () => {} },
+  }
+  ctx.provide('webServer', carrier as never)
+
+  await ctx.plugin(IrisRpcHost, { heartbeatMs: 0, allowedHosts: ['iris.example.com'] })
+  assert.equal(mounted, 2, 'the POST route and the upgrade route')
+
+  // A network bind derives loopback for its own port too — that is harmless,
+  // because on a machine reachable from outside the dangerous name is the one
+  // an attacker can put in a URL, and `127.0.0.1:8787` in a victim's browser
+  // reaches the victim's own machine, not this one.
+  const { hosts } = ctx.irisRpc.allowance()
+  assert.equal(hosts.has('iris.example.com'), true)
+  assert.equal(hosts.has('evil.example.com'), false)
+
+  await ctx.fiber.dispose()
 })
 
 test('an upgrade from an explicitly allowed origin is accepted', async (t) => {

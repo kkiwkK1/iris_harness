@@ -1789,6 +1789,15 @@ What upstream *does* show per message is `extra.token_count`: **its own tokenize
 - **The breakdown was a native `title`; it is now a styled hover card, and this bullet is the record of that landing.** Both readings that carried one — the per-turn chip in a reply's actions row and the composer's session strip — open the same card (`app/UsagePopover.tsx`): anchored below the trigger by `useAnchoredPosition` from `@deepseek-ai/dsh-client-ui-primitives` (the model menu's own package; the strip lives at the viewport's bottom edge and the reading pane scrolls, so the card is portaled rather than CSS-positioned like the context card), clamped inside the viewport, drawn only in `--iris-*` tokens at the dropdown layer. It opens on hover (after a dwell) and on keyboard focus at once, closes on Escape, pointer-out (with the menus' 200ms grace, so the trip onto the portaled card does not close it) and an outside press, and its rows are a two-column `<dl>` a screen reader reads as pairs. The touch semantics are the honest trade: touch has no hover, so a tap **toggles** the card and an outside tap closes it — a press-and-hold or a second tap on the trigger is how a touch reader dismisses it, which is less discoverable than a hover-out but reachable, which the `title` was not. The plain-text assembly (`usageDetailText`) is deleted rather than kept beside the card: the rows are built once (`usageDetailRows` for the turn, `usageSummaryRows` for the session, the strip's own line being `usageSummaryRows` flattened by `usageLineGroups`), so the copy cannot drift between the line, the card, and the two languages. On the composer card those rows are joined by the card-script share as a `note` under them — the split the strip's `title` used to own, riding the card rather than a fourth group in the line (the composer's card-share divergence, §70).
 
 **What would overturn it.** A ruling that Iris should also carry upstream's estimate — which is a *different* entry, not this one: it would mean computing a count for imported floors so that a migrated conversation is not blank, and it would need its own word in the interface. Or a provider population where the reported figures are unreliable enough that showing them is worse than showing nothing; nothing measured so far suggests that.
+
+**Postscript, 2026-09-11.** The sentence above about upstream's timer tooltip —
+that it carries a rate derived from upstream's estimate, "not a usage
+breakdown" — is still an accurate reading of upstream and is no longer a
+statement that Iris shows no rate. Each turn's chip now carries one, over
+upstream's own window and with the provider's `outputTokens` as the numerator,
+and the hover card carries the timing rows beside the bucket rows. §92 records
+the definitions and the two departures; this entry's ruling — reported figures
+where upstream estimates — is what the numerator follows from.
 ## 48. The world book panel groups books by whose card they are; upstream lays every book out flat
 
 **Kind:** deliberate improvement.
@@ -6088,9 +6097,643 @@ bare Vite port is this, not a regression.
   this change: four branches are adding members to that table concurrently, and
   the conflict cost would swamp the benefit.
 
+## 92. Each turn's reading carries its output speed, and there are two rates because they answer two questions
+
+**Kind:** compatibility in the definition (the primary rate is upstream's, to
+the digit), with two departures — the numerator, and one extra row upstream has
+no counterpart for. Dated 2026-09-11.
+
+**The request**, verbatim: 「加一个功能在每轮对话的用量中就是 token 输出速度」.
+The per-turn reading was already there — `用量 7.2K` at the end of a reply's
+action row with the breakdown in a hover card (§47) — and it had no time in it,
+because nothing in the host recorded any. The host half is
+`notes/packages/iris-app-service/DEVIATIONS.md` §67.
+
+**What upstream shows.** A message timer, and a rate inside its tooltip:
+`formatGenerationTimer` (`public/script.js:2681`) puts `{seconds}s` on the
+message block and a five-line title behind it — `Generation queued`, `Reply
+received`, `Time to generate`, `Time to first token`, `Time to think`,
+`Token rate: {n} t/s`. The rate is `tokenCount / seconds` where `seconds` is
+`gen_finished - gen_started` (`:2688`, `:2697`), printed to three decimals, and
+`tokenCount` is `mes.extra.token_count` — **upstream's own tokenizer estimate of
+the reply text** (`:3638`). §47 already records that Iris shows the provider's
+reported figures where upstream shows that estimate; this section is what
+follows for the rate.
+
+**What Iris shows.** The chip becomes `用量 1.1K · 75.0 tok/s` (`usageTurnRate`,
+built by `usageChipText` in `app/token-format.ts`), and the hover card gains
+five rows after the token rows, in upstream's own tooltip order and with
+upstream's own English words:
+
+| row | value | present when |
+| --- | --- | --- |
+| 用时 / Time to generate | `durationMs`, one decimal of a second | there is a timing at all |
+| 首字 / Time to first token | `firstTokenMs` | the host saw an output-carrying chunk |
+| 思考 / Time to think | `reasoningMs` | it is present **and above zero** — upstream's own `reasoningDuration > 0` gate |
+| 输出速度 / Token rate | `outputTokens ÷ (durationMs / 1000)` | both are usable |
+| 纯输出 / Decode rate | `outputTokens ÷ ((durationMs − firstTokenMs) / 1000)` | `firstTokenMs` is known and above zero |
+
+The timing rows sit *after* the token rows and are never mixed into them,
+because they are a different measurement by a different measurer — the host's
+clock against the provider's counters — and a reader has to be able to see
+which half of the table came from where.
+
+**The definitions, stated because the whole risk here is confusing them.**
+
+- **输出速度 / Token rate is upstream's number.** The *whole* window: the
+  provider's queue, the first connection and the decode are all inside it, and
+  the denominator is exactly `gen_finished - gen_started` as SillyTavern
+  divides it. So the figure Iris prints is the figure SillyTavern would print
+  for the same reply, and `token-format.test.ts` asserts the arithmetic against
+  upstream's own expression rather than against a recorded output.
+- **纯输出 / Decode rate is Iris's own.** The same tokens over the time after
+  the first one arrived. It answers what the whole-window rate cannot: whether a
+  slow reply was a slow *model* or a slow *start*. Two seconds of queue in front
+  of a two-second decode and a fast start in front of a four-second decode give
+  the same `Token rate` and are different providers to live with.
+- They can differ by a factor, which is why they are two labelled rows rather
+  than one number that changes meaning, and why the chip carries the
+  **whole-window** one: the chip is the figure a reader compares across hosts.
+
+**Formatting** lives in `app/token-format.ts` beside `usageDetailRows`, whose
+signature grew a third parameter rather than gaining a sibling builder: the rows
+belong to one generation and one card, and a second builder would be a second
+place for the order and the wording to drift — the drift that function's own
+history is a record of (§47's last bullet).
+
+- rates: one decimal at ten and above, two below. The band from a hosted
+  reasoning model to a local 7B is three orders of magnitude, and one precision
+  across it either prints noise (`312.47`) or erases the difference between
+  `4.2` and `4.8`. Upstream's three decimals are fine in a tooltip nobody reads
+  at a glance; this string sits beside the reply.
+- seconds: one decimal, upstream's own precision — but computed in **integer
+  tenths**, not `(ms / 1000).toFixed(1)`. `4050ms` is `4.05` seconds, `4.05` is
+  not representable, and `toFixed` prints `4.0` — wrong by a tenth in the one
+  place a reader would check. The module's own house rule (see its opening
+  comment about integer arithmetic) applied to one more figure.
+- **absent is never zero**, the rule §47 states for the buckets: no timing means
+  no timing rows at all; no time-to-first-token means no decode row, rather
+  than a decode rate that silently equals the row above it; an unusable
+  duration means no rate, rather than `∞ tok/s` or a large finite number a
+  reader would believe.
+
+**What it costs.**
+
+- **The chip's speed is gated on `usage`, not on the timing.** The numerator is
+  the provider's `outputTokens`, so a turn the host clocked through an endpoint
+  that reports no usage shows neither a cost nor a speed — and shows no
+  duration either, because the whole popover hangs off `message.usage`. That is
+  a real gap: the host *has* the duration (§67 stores it for every generation),
+  and a reader of such a turn is told nothing rather than "3.4s, tokens
+  unknown". Left as a follow-up rather than fixed here, because it means the
+  reading no longer being a *usage* chip at all.
+- **A reloaded turn shows a speed only for the reading its file was showing.**
+  The host stores the timer in SillyTavern's one-per-line `gen_started` /
+  `gen_finished` pair, so the other swipes come back with a cost and no
+  stopwatch (§67's second departure). The interface renders that as no speed,
+  and the fake's seeded conversation is deliberately in that state so the
+  rendering is exercised without a reload.
+- **No live rate while a reply streams.** A duration that grows makes a rate
+  that starts absurd and settles, so the host projects no timing onto a
+  streaming row and neither does the fake. A streaming figure would need its own
+  definition — tokens per second *so far*, over a window that has not closed —
+  and its own word, and the number that matters is the final one. Follow-up.
+- **Two more words in a table that was already six rows.** The card is now up to
+  eleven rows on a reasoning turn with a cache. It is a hover card a reader
+  opened on purpose; the chip stayed one line.
+
+**Held by** `tests/token-format.test.ts` (five new tests: no timing → no timing
+rows; the row order and upstream's reading of "Time to think"; the two rates on
+a slow start, checked against upstream's own expression; a zero thinking
+duration dropped; the precision thresholds and the chip agreeing with the card
+to the digit) and `packages/iris-client-fake/tests/usage.test.ts` (the fake's
+timing shape, and the seeded turn with one clocked reading and one not). Every
+new assertion was shown red under a named mutation.
+
+**What would overturn it.** A ruling that the chip should carry the decode rate
+instead — which is a claim that a reader cares more about the model than about
+the wait, and would break comparability with SillyTavern's own number. A
+provider population where a proxy buffers whole replies, making the whole-window
+rate a measurement of the proxy rather than the model; the decode row is already
+the answer, and it would then have to be promoted. Or the follow-up above
+landing: a reading that shows a duration with no bill beside it, which needs the
+popover to stop being gated on `usage`.
+
+## 93. The shell page carries a policy of its own, refuses to be framed, and cannot carry the strict policy the audit asked for — because a `srcdoc` card frame inherits it
+
+**Kind:** a layer upstream does not have at all, built smaller than it was asked
+for by a browser measurement that overturned the ask. Dated 2026-09-11. The host
+half — the tap that injects it, and `nosniff` on every route Iris owns — is
+`notes/packages/iris-app-service/DEVIATIONS.md` §74.
+
+**The findings.** A network audit (M-1, L-1) and a system audit (F10), all three
+defence-in-depth:
+
+- **M-1.** `apps/iris-web/index.html` carried no `Content-Security-Policy` — 0
+  CSP meta elements, two inline `<script>` blocks and a module entry. The
+  shell's one HTML sink (`CardPopup.tsx:223`) is guarded by DOMPurify, an
+  independent audit pass and a fail-closed branch, but a DOMPurify bypass (mXSS)
+  would then own the whole page: every host RPC, the connection profiles,
+  `script.generate` spending the user's tokens. The card frames' own policy is
+  complete (`sandbox/srcdoc.ts`, `framePolicy`); the shell had no layer of its
+  own.
+- **L-1.** No `X-Content-Type-Options: nosniff`, no
+  `frame-ancestors`/`X-Frame-Options` — an unauthenticated local UI can be put
+  in a frame by a hostile page and clicked through — and no `no-store` on the
+  index.
+- **F10.** The frame policy had no `base-uri`, and the host's allow-list
+  accepted the bare `jsdelivr.net` where the CSP side spells
+  `https://*.jsdelivr.net`, which does not match an apex.
+
+**What upstream does.** SillyTavern mounts `helmet()` at
+`src/server-main.js:104-106` — with `contentSecurityPolicy: false`. So upstream
+has **no CSP at all**, on any page, by default; helmet 8's remaining defaults
+still put `X-Content-Type-Options: nosniff` and `X-Frame-Options: SAMEORIGIN` on
+every response, index and assets included (the two middlewares are pushed at
+`node_modules/helmet/index.cjs:400-407` and `:445-459` when their options are
+absent). That is the honest comparison and it cuts both ways: Iris gains a
+policy upstream does not have, and loses the two *header-level* protections
+upstream gets for free, because the response that carries this page is written
+by an external package (below).
+
+### The measurement that decided the policy, and what it overturns
+
+The ruling asked for the textbook shell policy: `default-src 'self'`,
+`script-src 'self' 'nonce-…'` with **no** `'unsafe-inline'` and no
+`'unsafe-eval'`, `connect-src 'self'`, `img-src 'self' data: blob:`, `style-src`
+measured, `frame-src` measured, `object-src 'none'`, `base-uri 'none'`,
+`form-action 'none'`.
+
+**It cannot ship, and the reason is structural.** A card interface is an
+`<iframe srcdoc>` (`src/sandbox/runner.ts:363`). `about:srcdoc` is a *local
+scheme*, and a document with a local-scheme URL **inherits the CSP of its
+embedder**, which the browser then enforces *alongside* the document's own
+`<meta>` policy. The frame's own policy is the permissive one card code needs —
+`'unsafe-inline' 'unsafe-eval' blob:` plus the CDN allow-list — and intersecting
+it with a strict shell policy leaves nothing that runs.
+
+Measured in headless Chrome, 2026-09-11, one card-shaped `srcdoc` frame
+carrying the real frame policy in its `<meta>` and
+`sandbox="allow-scripts"` (what `frameSandbox` writes for an ungranted card),
+mounted under four parent documents:
+
+| the shell's policy | the frame's parse-time inline script | `new Function` |
+| --- | --- | --- |
+| none (the shipping state before this change) | **runs** | `2` |
+| `default-src 'self'; script-src 'self' 'nonce-…'` | **never runs** | — |
+| the same plus `frame-src 'none'` | **never runs**; the frame is still created and its markup parses | — |
+| `default-src 'self'; script-src 'self' 'unsafe-inline'` | runs | **blocked**, and the refusal quotes the *shell's* directive |
+
+The first row is the control: the same frame document, byte for byte, runs when
+the parent carries no policy. The last row names the mechanism out loud — Chrome
+refused the frame's `new Function` citing `script-src 'self' 'unsafe-inline'`, a
+string that appears nowhere in the frame's own policy.
+
+Three consequences:
+
+1. **No fetch directives in the shell policy.** `default-src`, `script-src`,
+   `style-src`, `img-src`, `font-src` and `connect-src` each narrow every card
+   frame. The only `script-src` that would not is a union wide enough for the
+   frames — `'unsafe-inline' 'unsafe-eval' blob:` plus two CDNs — which is to say
+   no protection against the threat M-1 is about. A nonce cannot rescue it
+   either: a `script-src` carrying a nonce makes browsers *ignore*
+   `'unsafe-inline'`, so "nonce for the shell, unsafe-inline for the frames" is
+   not a policy that exists.
+2. **`frame-src` is omitted, not set.** The same measurement shows Chrome does
+   not apply `frame-src` to a `srcdoc` navigation — under `frame-src 'none'` the
+   frame was still created and parsed. Every value is therefore either a no-op
+   today or, if a browser started enforcing it, the one line that kills every
+   card interface at once, since no source expression matches `about:srcdoc`. An
+   omitted directive says that honestly; a written one would be a landmine with
+   a green test beside it.
+3. **Nonce versus hash is moot, and the caching fact is recorded anyway.**
+   `@deepseek-ai/dsh-host-frontend-static` re-reads `distIndex` and calls
+   `ctx.webServer.renderIndex` **per response** — nothing is cached per process —
+   so a per-response nonce would have been sound. With no `script-src` there is
+   nothing for a nonce to authorise, so none is generated and no `<script>` is
+   stamped.
+
+**The shipped set**, `SHELL_CSP_DIRECTIVES` in
+`packages/iris-app-service/src/shell-csp.ts`:
+
+```
+object-src 'none'; base-uri 'none'; form-action 'none'
+```
+
+Each one is free, and each one is real. The shell uses no `<form>`, `<object>`,
+`<embed>` or `<base>` anywhere in `apps/iris-web/src` (measured). A card frame
+already enforces `object-src` and `form-action` on itself by way of
+`default-src 'none'`. `base-uri` has **no fallback to `default-src`**, so the
+frame was unrestricted there — which is F10, closed on both sides at once. What
+they buy against an mXSS payload: `<object data>`/`<embed>` execute script in
+several engines, `<base href>` re-points every relative URL on the page (the
+shell's own module bundle is loaded as `./assets/…`), and a form posting
+somewhere else is how an injected credential prompt gets its answer out without
+needing `fetch`.
+
+### Click-jacking: the page refuses, and a header would be stronger
+
+`frame-ancestors` is ignored in a `<meta>` by definition, and no header on this
+response is Iris's to set. So `index.html`'s **first** script is now a guard: if
+`window.top !== window.self` it calls `window.stop()`, empties the document and
+writes one sentence into a fresh `<body data-iris-framed="refused">`.
+
+This is honestly weaker than a header and the ledger says so: a header stops the
+browser *before* the document exists, while this runs after the document has
+been fetched and parsed this far, and it depends on the page's own script
+running at all. It is what can be done from inside a document.
+
+### The recorded gaps
+
+- **Headers on the index and the built assets.** `nosniff`, `frame-ancestors` /
+  `X-Frame-Options` and `Cache-Control: no-store` are headers, and the fallback
+  seat that writes those responses belongs to
+  `@deepseek-ai/dsh-host-frontend-static`, which writes `content-type` and
+  nothing else and offers no hook. Routes Iris *does* own now answer `nosniff`
+  (§74). Upstream has these, through helmet, on every response.
+- **`script-src` itself**, for the reason above.
+
+### What would overturn this
+
+One thing, and it is nameable: **a card frame's document ceasing to be
+`srcdoc`** — served from a real same-origin URL, still sandboxed to an opaque
+origin, its policy in its own response's header. A non-local-scheme document
+does not inherit, and on that day the whole strict set becomes available in one
+edit to `SHELL_CSP_DIRECTIVES`. The cost is not small: §91's premise — a card's
+first parse-time script sees the bridge — is a property of the body arriving
+*as* the response, so that move needs the body to reach the frame without a
+post-load channel, and it needs its own measurement.
+
+Also overturning: any browser change to srcdoc CSP inheritance, which is exactly
+what the second live test would announce by going red.
+
+**Held by** `packages/iris-app-service/tests/shell-csp.test.ts` (8 — the tap's
+output, the single meta, the position ahead of the first script, the refusal on
+a page that already has a policy, idempotence, and a **forbidden-directive**
+assertion naming the six that would break the cards),
+`apps/iris/tests/shell-index.test.ts` (4 — the policy on a booted host's served
+index, the file on disk untouched, every response tapped, and the index's
+missing `nosniff` recorded as the gap with `/version`'s present one beside it),
+`apps/iris-web/tests/shell-page.test.ts` (+1 — the framing guard is the page's
+first script and stops the parser),
+`apps/iris-web/tests/sandbox-srcdoc.test.ts` (+1 — `base-uri 'none'` on both
+grant branches), `apps/iris-web/tests/allowlist-drift.test.ts` (+1 — a `*.`
+entry excludes the apex, on this half and in the document), and
+`apps/iris/tests/shell-csp-live.test.ts` (4, `IRIS_BROWSER=1`) — the real shell
+on a real host with zero `securitypolicyviolation` and a card frame still
+running inside it; the strict policy stopping that same frame, against a control
+page carrying none; the framed shell refusing; and `connect-src 'self'` admitting
+a same-origin WebSocket while refusing a cross-origin one.
+
 ---
 
-## 92. The surface list is read off the registration table now, not the declarations — the reconciliation that found the singular
+## 94. What page access actually hands over, said in the copy; the scripts a card's markup runs without being asked about, counted; and the one same-origin path list the bridge carries
+
+**Kind:** three answers to an audit, and all three are places where Iris has a
+decision upstream does not have to make. Dated 2026-09-11. §93 belongs to a
+sibling branch landing the same week.
+
+**Why upstream has no counterpart to any of this.** A card's code upstream runs
+in an iframe with **no `sandbox` attribute at all** — `Iframe.vue:2-11` and
+`script/Iframe.vue:2` in JS-Slash-Runner 4.9.1
+(`data/default-user/extensions/JS-Slash-Runner/src/panel/`, read-only), which
+bind `srcdoc`/`src` and set `id`, `name`, `loading`, `frameborder` and nothing
+else; `grep -rn sandbox src/` over that tree returns nothing. So upstream's card
+frame is same-origin with the SillyTavern page by construction. There is no
+grant to word, because there is nothing to grant: the card already has the page.
+There is no consent state, because nothing is withheld. And there is no fetch
+bridge, because a relative `fetch` from inside a same-origin frame is simply a
+same-origin fetch — so there is no list to put on it either. Every part below is
+therefore Iris adding a boundary and then having to describe it honestly, not
+Iris diverging from a behaviour upstream ships.
+
+### 94.1 The page-access copy names all four things, not one (network audit M-3)
+
+**What the grant is.** `sandbox/policy.ts:36-43` — `frameSandbox(true)` returns
+`allow-scripts allow-same-origin`, which is the one combination in the product
+that is deliberately not a sandbox. The frame becomes same-origin with the
+shell, which means, concretely: it can read every conversation's DOM on the
+page, read the page's `localStorage`, reach the shell's own RPC client and call
+**every** host method as the user rather than only the ones the card facade
+offers — and read `input[type=password].value` in the connection panel while an
+API key is being typed or pasted into it.
+
+**What the copy said.** "your other conversations", four times over
+(`grantedNote`, `grantDialogBody`, `grantDialogAck`, and both `consentSandbox*`
+sentences). One of four. The key was the one nobody had written down, and it is
+the one whose loss is not undone by turning the grant back off.
+
+**What it says now**, in both dictionaries. `grantDialogBody` and `grantedNote`
+each list: the contents of every conversation on this page; this page's stored
+preferences; any host action in your name — generation included, which spends
+your tokens — and an API key while you type or paste it into the connection
+panel with this card open. `grantDialogAck`, the sentence a reader ticks as a
+claim about themselves, names the key too. `offNote` and both `consentSandbox*`
+sentences say the same three things in the negative, because "cannot read your
+other chats" was an incomplete reassurance in exactly the way the grant's copy
+was an incomplete warning.
+
+The register is unchanged: prose, no list markup, no new colour, no emphasis,
+and `STRINGS.md`'s glossary terms (卡片脚本 / 页面访问权 / 沙箱（隔离子沙箱）)
+kept verbatim.
+
+**Where it is pinned.** The dialog is a modal, so `check:render` can never open
+it: `grantDialogBody` and `grantDialogAck` have no rendered form to match
+against. That cost is named rather than hidden — `i18n.test.ts` asserts the five
+facts in both columns of both `grantDialogBody` and `grantedNote`, and
+`check:render` asserts the strings that *do* render (the off state, and the
+granted state, reached by actually calling `setDocumentGrant(true)`).
+
+### 94.2 Scripts embedded in a card's markup are counted and shown (system audit F9)
+
+**The finding.** `consent.ts:135-138` — `interfacesMayBuild(state, count)`
+returns true for `unasked` when `scriptCount === 0`, and the message frame puts
+the card's markup into the srcdoc body (`srcdoc.ts`), where an inline `<script>`
+runs while the document parses. So a card whose `scripts` array is empty but
+whose greeting embeds a `<script>` runs code while the panel says "This card
+ships no scripts."
+
+**Not changed, deliberately.** The `unasked && 0` branch is upstream parity and
+it is load-bearing: `ConsentAsk` renders nothing for a card with no scripts, so
+a gate demanding an answer would strand that card's greeting behind a silence no
+user action can break — measured on a real card whose greeting is a 30 KB HTML
+document. `consent.test.ts` still pins all eight `interfacesMayBuild` outcomes
+unchanged.
+
+**What changed is that the number exists.** `sandbox/markup-scripts.ts` counts
+`<script` openings inside the blocks `claimMessageSurfaces` claims — the frames'
+own claim, not a regex over the card file, so prose that merely mentions
+`<script` and unclaimed fences no frame will parse are not counted. Two rules are
+pinned, because both directions are wrong in a different way:
+
+- **A tag name is what ends it.** `<script`, `<script `, `<script/>`, `<script`
+  followed by a newline and `<SCRIPT>` count; `<scripting>` and a trailing
+  `<script` at end of text do not. `<script type="module">` counts — a module
+  script in a srcdoc body is deferred, not skipped.
+- **A `<script` inside an HTML comment counts.** It does not run, and counting
+  it is still the right direction: stripping comments correctly needs a parser,
+  and every failure of a hand-rolled one is quiet (a `<!--` inside an attribute
+  value swallows the real script after it and the count drops to zero on the one
+  card where it mattered). Over-counting shows a reader a warning about markup
+  that does not run; under-counting shows them nothing about markup that does.
+  `frontend-blocks.ts` already makes that trade one layer up, where the claim is
+  substring containment rather than parsing.
+
+The count is taken over the open conversation's messages, with the same settled
+stray-fence repair the rows and the frame budget apply, so the three agree about
+which characters a frame would parse. **It is not read from the card file**: the
+greeting is message zero and is already in that list, and a second reading would
+be a second extraction that could disagree with the one the frames use. The cost
+of that choice is named rather than buried — the number is per conversation
+rather than per card, so a model reply that emits an interface is counted too,
+which is correct for the sentence being said ("the interface markup in this
+conversation") and is not the same statement as "this card ships N".
+
+It appears in two places, and `check:render` asserts the **number of
+occurrences** rather than merely matching one, because the question is put twice
+— the banner above the conversation and the settings panel — and a match is
+satisfied by either. When the question is on screen the sentence is its last
+clause; when it has been answered, or was never put because the card carries no
+scripts, the panel says it on its own. The wording is the same either way and
+says what the answer does **not** govern: these run with their message frame
+whatever was answered.
+
+### 94.3 The same-origin fetch bridge carries four path shapes and no others (network audit F11)
+
+**The finding.** `same-origin.ts` decides whether a card's `fetch` is aimed at
+Iris, and the bridge then has the **shell page** fetch it with the shell's own
+credentials (`runner.ts` `ride`, `frame.ts` `rideFor`). Any same-origin path was
+therefore a card's to read — `/iris/avatar/<another card>`
+(`packages/iris-app-service/src/index.ts:413-469`) hands back another
+character's whole card file, PNG payload and embedded card data together. POST
+writes were already stopped twice over: the bridge carries only GET/HEAD with no
+body and no headers, and the RPC endpoint refuses anything that is not
+`application/json`.
+
+**Measured first, over the operator's install** (`E:/sillyTavern/SillyTavern`,
+ST 1.18.0, read-only; 19 cards → 47 script bodies, 173 card regexes, 65
+greetings; 31 chat files → 2,454 messages; 6 presets → 78 regex replacements; 18
+world books → 1,478 entries; 6,024 bodies, 3,207 distinct after content hashing):
+
+| layer | what the corpus reaches through the bridge |
+| --- | --- |
+| written directly in card, preset or world-book bodies | **two** relative `fetch` targets, both in one card (`萧谴写卡助手版_V4.5.1`), both dev-mode fixtures behind `window.is_dev`, and neither file exists in the install — they 404 upstream too. Zero `XMLHttpRequest`, `$.get`, `$.post`, `$.ajax`, `axios`, `sendBeacon`, `EventSource`, `WebSocket`; zero relative `src=`/`href=`/`url()`; zero reads of `location.origin`/`href`/`pathname`/`baseURI` in 3,207 bodies |
+| inside the CDN bundles cards import | `GET /version` (MagVarUpdate's `_wait_init`, reached by **13 of 19 cards**), `POST /api/backends/chat-completions/status` and `POST /api/chats/export` (the same 13, both behind buttons), and in one card's 1.15 MB Fatria bundle `GET /csrf-token`, `POST /api/worldinfo/get`, `POST /api/worldinfo/edit`, plus dynamic `import()` of `/script.js` and `/scripts/world-info.js` |
+
+The premise this corrects is the framing that the on-disk corpus would show the
+bridge's usage: **no card body writes a same-origin fetch at all**. Every real
+one arrives transitively, inside a bundle 13 of 19 cards import. A census of the
+four on-disk populations alone reports a clean zero on the paths that matter.
+
+**The list**, in `sandbox/bridge-paths.ts`: `/version` exactly; `/sandbox/` and
+`/iris/script-bundle` by prefix; and `/iris/avatar/<id>` only when the id is the
+**current card's own**, compared exactly rather than case-folded (the library
+folds case to decide whether an id is *taken*; folding here would admit a
+genuinely different card's file on a case-sensitive host, and a card never types
+this id — it comes back from `getCharAvatarPath()` as the host spells it). A
+frame that does not yet know whose card it is gets no avatar at all: failing
+open would make the leak a race, failing closed costs a picture. Images are
+unaffected either way — a card putting an avatar in `url(...)` or an `<img>` is
+`img-src`, not the bridge.
+
+**What the list costs, measured: nothing this corpus exercises.** `/version` —
+the only allow-list entry with any breadth, and the only path the corpus reaches
+— is allowed. The three refused GETs (`/csrf-token`, `/script.js`,
+`/scripts/world-info.js`) are SillyTavern's own routes, which this host does not
+serve; they 404 through the bridge today, so that one card degrades identically
+with or without the list. The POSTs never rode the bridge. The two directly
+written targets are dev-mode fixtures that 404 upstream as well. Named rather
+than waved past, because "nothing breaks" is the claim a list like this is most
+often wrong about.
+
+**Both sides, one list.** `frame.ts` consults it before a request rides, and
+`runner.ts` again before the shell honours one — the same reason the origin check
+is already doubled: the frame is the untrusted half and the shell is what holds
+the credentials, so "the frame already filtered" is not a check. The two
+refusals differ only in which layer is speaking, which is the repo rule that a
+refusal names the relaying layer. Frame-side a refused request **falls through to
+the native fetch**, exactly where it went before the bridge existed, so CSP
+refuses and reports it as it always did; what is new is a note saying Iris
+declined to relay it. Shell-side the promise rejects and the existing
+`fetch:error` message carries it — no new message type and no new error kind.
+Each refused *shape* is reported once per frame, with the avatar id folded to
+`<id>`, so a card sweeping the library leaves one line rather than one per card.
+
+**Configuration drift, named.** The three prefixes are literals here while the
+host takes them from config (`avatarPath`, `scriptBundlePath` and `sandboxPath`
+default to exactly these). That is the existing practice in this package —
+`asset-manifest.ts` already hardcodes `/sandbox/manifest.json` — and a host
+reconfigured off the defaults would refuse its own artifacts loudly rather than
+quietly, which is the safe direction. A host that starts shipping those paths to
+the shell as configuration is what would move them.
+
+**What is unchanged.** The three consent states, the storage convention,
+`forget` on delete, `interfacesMayBuild`, and everything `same-origin.ts`
+decides. `frameSandbox` is untouched: the grant still does what it did, it is
+now described.
+
+**Tested.** `apps/iris-web/tests/bridge-paths.test.ts` (the list, the own-avatar
+rule, the shape folding, the two voices), `markup-scripts.test.ts` (the tag-name
+rule, the comment decision, claimed-only counting, the F9 card's own shape),
+additions to `consent.test.ts` (the clause appended and absent) and
+`i18n.test.ts` (both dictionaries carry the facts; the zh question sentence),
+and two-sided integration in `sandbox-frame.test.ts` and `runner-fetch.test.ts`.
+The fake's seeded greeting gains a card interface with one inline `<script>`,
+because nothing in the repository rendered one before and `check:render` had no
+markup to count. Twenty named mutations, each red on at least one new assertion.
+
+**What would overturn it.** A corpus or a report showing a real card that needs a
+same-origin path this list refuses — the three Fatria GETs become an argument the
+day Iris serves anything at those paths. A ruling that 94.2's count should be per
+card, which needs a card-file extraction that agrees with the frames' claim and
+therefore needs the claim to move out of the web app. Or a design in which the
+page-access grant is narrowed rather than described, at which point 94.1's copy
+is describing a boundary that no longer exists.
+
+## 95. Four audit findings accepted rather than closed, with the price of closing each one written down
+
+Dated 2026-09-11. **No code changed** — this section and the `docs/SANDBOX.md`
+"Accepted gaps — 已接受的缺口" section it backs are the whole deliverable. The
+four come from `AUDIT-SYSTEM-SECURITY-DATA.md` (F8, F15, F17) and
+`审计报告-网络安全工程.md` §5 (L-5); the other findings of those two reports were
+either fixed (§93, §94, and the host-side sections of
+`notes/packages/iris-app-service/DEVIATIONS.md` and
+`notes/packages/iris-rpc-host/DEVIATIONS.md`) or are still open with an owner,
+which `notes/SECURITY-REMEDIATION.md` tabulates.
+
+Acceptance is a decision, not a shrug, and the reason it gets a ledger section
+is that the three ways it goes wrong are all quiet. It gets forgotten, so the
+next audit reports it again and the next engineer rediscovers the reasoning
+from scratch. It gets remembered as "safe", so the condition it rested on
+lapses without anyone noticing that it was a condition. Or it gets treated as
+permanent, so a cheap fix that arrives later is never taken. Each entry below is
+therefore three things — what is open, what closing it would cost, and the
+observation that would make the answer different — and the last of those is what
+makes this a decision with a date on it rather than an opinion.
+
+### 95.1 F8 — a network grant does not govern `script-src`, and a code fetch's URL is a channel
+
+**What the audit found.** The frame's code allow-list is open regardless of the
+network grant (`apps/iris-web/src/sandbox/srcdoc.ts:165`,
+`apps/iris-web/src/sandbox/policy.ts:77`,
+`packages/iris-script/src/remote.ts:31-34`), and a dynamic `import()` is a
+script fetch whose *path* the card writes. So an import of
+`https://testingcf.jsdelivr.net/gh/a/b@main/` plus a data string plus `/x.js`
+puts that data in a request which leaves the machine; the 404 that comes back
+fails the import and changes nothing about that. The audit rated it 中 and said
+so in the words that matter: it 绕开了用户以为在决策的那个开关 — it goes around the
+very switch the user believes they are deciding with.
+
+**Why it is accepted.** The closure the audit priced and then advised against is
+putting `script-src` inside the grant. That is not a hardening of this product,
+it is a different product: measured over the operator's install, 13 of 19 cards
+import MagVarUpdate from jsDelivr before they can paint anything, so a gated
+code allow-list means a consent question standing between every card and its
+first frame. A question whose only workable answer is yes does not inform
+anybody; it trains them to answer yes to the next one, which is the question
+that was worth asking.
+
+**What the acceptance actually changes.** The promise. The comment at
+`apps/iris-web/src/sandbox/srcdoc.ts:104-119` described the grant as closing the
+way out, and that reading was too strong — the grant governs `connect-src` and
+`img-src`, the two channels a card would use for anything bulk or two-way, and
+it never governed the code allow-list. Saying that plainly is the deliverable: a
+boundary described accurately is worth more than one described generously,
+because the generous description is what a later decision gets built on.
+
+**What would reopen it.** A corpus measurement finding a real card with a
+non-literal `import()` specifier — the shape is a specifier built by
+concatenation rather than written whole, and the census reader can look for it.
+Or the middle option the audit named and this project has not built: report the
+first such specifier per frame instead of refusing it, which costs the ecosystem
+nothing and turns a silent channel into a visible one. That is the change to
+make if anything here moves.
+
+### 95.2 L-5 — `showdown` 2.1.0 is advisory-flagged with no fixed release, and it lives inside the frame
+
+**What the audit found.** `npm audit` flags showdown 2.1.0
+(`apps/iris-web/package.json:37`) for a ReDoS and two XSS paths, and upstream has
+published nothing to upgrade to. The audit checked the reach itself and recorded
+the conclusion in the finding: showdown is provided to cards as a sandbox global
+(`apps/iris-web/src/sandbox/preset-entry.ts:200`) and the shell does not render
+its output, so the impact is frame-local — 关注上游；不必紧急.
+
+**Why it is accepted.** There is no fixed version to move to, so the only actions
+available are removing the global or forking. Removing it breaks upstream cards
+that expect a `showdown.Converter` to exist, which is why it is there. And
+inside a frame whose `default-src` is `'none'` and whose origin is opaque, an XSS
+in showdown buys the attacker what a card can already do by writing the script
+itself — the frame is the boundary, and this is inside it. The ReDoS hangs the
+frame that ran it.
+
+**What would reopen it.** A fixed release, at which point this is a version bump
+rather than a decision. Or — and this is the one to watch — any shell-side code
+rendering markdown through this library. The whole argument rests on
+"frame-only"; the day the shell converts something with showdown, the two XSS
+advisories are shell XSS and §93's policy is what stands between them and the
+RPC surface.
+
+### 95.3 F15 — the bundle proxy is a GET, and a GET needs no permission from anybody
+
+**What the audit found.** The bundle route takes no preflight, so any page open
+in the user's browser can drive this host into fetching an allow-listed URL and
+writing the body to disk. The audit recorded it as 低，已缓解在案 — low, and
+already mitigated on the record — because the module had already priced it:
+`packages/iris-app-service/src/script-cache.ts:64-88` states the exposure and
+calls it bounded disk fill.
+
+**Why it is accepted.** The bound is real and the audit re-derived it rather than
+taking the comment's word: the allow-list check runs on every request and on
+every one of at most five redirect hops, https only, the two CDNs by dotted
+suffix and exact match, so the reachable target set is two public CDNs and not
+the local network — this is not an SSRF surface. A body is capped at 8 MiB, the
+directory at 256 MiB, and over budget the cache **refuses to write instead of
+evicting**, which is the detail that matters: eviction would let a hostile page
+push a real dependency out and turn disk fill into cache poisoning. And the
+preflight that would close it cannot be required, because requiring a preflight
+means requiring a header, and a module `script` tag — the thing this route
+exists to be loadable by — cannot send one.
+
+**What would reopen it.** The allow-list admitting anything that is not a public
+CDN, or the budget policy changing from refuse-to-write to evict. Either one
+moves this from a bounded annoyance to a real finding, and both are one-line
+changes, which is why they are written here rather than left to be noticed.
+
+### 95.4 F17 — the stylesheet rewrite's regex truncates, and the truncation fails closed
+
+**What the audit found.** The link-rewriting pass at
+`apps/iris-web/src/sandbox/srcdoc.ts:232-242` matches a tag with a negated
+character class that stops at the first `>` — including one inside a quoted
+attribute value — so such a link is not rewritten. The audit's own note says the
+direction is safe and rates the fix S.
+
+**Why it is accepted.** Direction is the whole argument. An unrewritten link
+keeps its remote href, `style-src` does not admit remotes, the browser refuses it
+and the existing reporter names the sheet — the outcome is the outcome the card
+would have had if the rewrite did not exist, which is the behaviour this frame
+had before the convenience was added. The fix is a real attribute scanner
+replacing two regexes, and a hand-rolled HTML scanner fails *quietly* where a
+regex fails loudly; `frontend-blocks.ts` already took that trade deliberately one
+layer up, for the same reason.
+
+**What would reopen it.** A card in the corpus whose link tag carries a `>`
+inside an attribute value — there is none. Or, more importantly, the rewrite
+ceasing to be a convenience: if a future policy admitted remote stylesheets and
+used the rewrite to *route* them, a missed rewrite would be a bypass rather than
+a refusal, and the scanner would be worth every bit of its cost.
+
+### Where this is recorded
+
+`docs/SANDBOX.md`, "Accepted gaps — 已接受的缺口 (2026-09-11)", carries the same
+four in the frame's own document, because that is the file a person reading the
+sandbox policy has open. This section is the ledger entry with the audit's
+wording and the reasoning; that one is the operational note. They are expected to
+agree, and the day they stop, the ledger is the one that was written first and
+the document is the one someone edited without looking here.
+
+---
+
+## 96. The surface list is read off the registration table now, not the declarations — the reconciliation that found the singular
 
 **Kind:** enumeration source corrected, with the diff accounted name by name.
 

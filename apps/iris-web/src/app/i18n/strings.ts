@@ -1056,14 +1056,14 @@ export const en = {
   pageAccess: 'Page access',
   granted: 'granted',
   off: 'off',
-  grantedNote: 'This card can read and change anything on screen, including your other conversations. It stays this way until you turn it off.',
-  offNote: 'This card’s scripts can only touch their own panel. They cannot read your other conversations.',
+  grantedNote: 'This card is part of this page. It can read the contents of every conversation here and this page’s stored preferences, take any host action in your name — generation included, which spends your tokens — and read an API key while you type or paste it into the connection panel with this card open. It stays this way until you turn it off.',
+  offNote: 'This card’s scripts can only touch their own panel. They cannot read your other conversations, this page’s stored preferences, or anything you type into the connection panel.',
   onlyYouNote: 'Only you can turn this on. A card has no way to ask — if one tells you to enable something, that text came from the card.',
   turnOffPageAccess: 'Turn off page access',
   givePageAccess: 'Give this card page access…',
   grantDialogTitle: 'Let this card read and change the whole page?',
-  grantDialogBody: 'Its scripts will be able to read and alter anything on screen — your other conversations, the text you are typing, your settings. Iris cannot limit what it does once this is on, and it stays on until you turn it off. Turn it on only for a card you trust and have a reason to.',
-  grantDialogAck: 'I understand this card will be able to read my other conversations',
+  grantDialogBody: 'Its scripts stop being sandboxed and run as part of this page. They will be able to read the contents of every conversation on it and the preferences it has stored; take any host action in your name, not only the ones a card is normally offered — generation included, which spends your tokens; and read an API key while you type or paste it into the connection panel with this card open. Iris cannot limit what it does once this is on, and it stays on until you turn it off. Turn it on only for a card you trust and have a reason to.',
+  grantDialogAck: 'I understand this card will be able to read my other conversations, and an API key I type while it is open',
   grantDialogCancel: 'Keep it off',
   grantDialogConfirm: 'Grant page access',
   runsWithCard: 'Runs with this card',
@@ -1075,8 +1075,15 @@ export const en = {
   consentOne: 'This card runs 1 script ({size}).',
   consentPart: '{running} of {total} scripts would run now ({size}).',
   consentCovered: 'Your answer covers all {total}, including {size} switched off today.',
-  consentSandboxOne: 'It runs in an isolated sandbox and cannot read your other chats unless you also grant page access.',
-  consentSandboxMany: 'They run in an isolated sandbox and cannot read your other chats unless you also grant page access.',
+  consentSandboxOne: 'It runs in an isolated sandbox and cannot read your other chats, this page’s stored preferences, or an API key you type — page access, which only you can grant and which is off, lifts all three at once.',
+  consentSandboxMany: 'They run in an isolated sandbox and cannot read your other chats, this page’s stored preferences, or an API key you type — page access, which only you can grant and which is off, lifts all three at once.',
+
+  /**
+   * Scripts embedded in a card's interface markup, which the question above
+   * does not cover — the system audit's F9, made visible rather than gated.
+   */
+  markupScriptsOne: 'The interface markup in this conversation carries 1 embedded script. It runs with the message frame that renders it, and the scripts question does not cover it.',
+  markupScriptsMany: 'The interface markup in this conversation carries {count} embedded scripts. They run with the message frames that render them, and the scripts question does not cover them.',
 
   /** Script run sentences (`describeRun` / `summariseRuns`). */
   runStarting: 'starting…',
@@ -1227,6 +1234,12 @@ export const en = {
   usageCacheHit: 'Cache hit {percent}%',
   /** The reading in a reply's action row, and the heading of its hover table. */
   usageTurn: 'Usage {total}',
+  /** The same reading once the host also measured how long the reply took. The
+      word 「用量」 stays, because it is what says these are provider figures and
+      not the prompt panel's estimate (`STRINGS.md` §三); the speed is appended
+      to it rather than replacing it. `{rate}` arrives with its own unit on it,
+      the way `usageCount`'s `{count}` arrives already grouped. */
+  usageTurnRate: 'Usage {total} · {rate}',
   usageTurnTitle: 'Turn usage',
   /* The hover table's rows. "Uncached input" says what it says because the
      three prompt-side buckets are disjoint: what the cache served is not in
@@ -1238,6 +1251,30 @@ export const en = {
   usageDetailOutput: 'Output',
   /** Reasoning is part of the output it follows, not a fourth bucket beside it. */
   usageDetailReasoning: ' ({tokens} reasoning)',
+  /* The same table's timing rows, in the order upstream's own message-timer
+     tooltip states them (`public/script.js:2681`): how long, how long to the
+     first token, how long thinking. The English words are upstream's own
+     ("Time to generate", "Time to first token", "Time to think") so that a
+     reader who knows SillyTavern meets the same names for the same numbers.
+
+     `usageDetailRate` is upstream's `Token rate` — the provider's output count
+     over the *whole* window, queue included, which is what makes the figure
+     comparable with the one SillyTavern prints. `usageDetailDecodeRate` is
+     Iris's own addition and a different number: the same tokens over the time
+     after the first one arrived. Two labels that could not be read as each
+     other, because the two rates can differ by a factor of two on a slow first
+     connection and a reader comparing hosts must know which they are holding.
+     `notes/apps/iris-web/DEVIATIONS.md` §92. */
+  usageDetailDuration: 'Time to generate',
+  usageDetailFirstToken: 'Time to first token',
+  usageDetailThinking: 'Time to think',
+  usageDetailRate: 'Token rate',
+  usageDetailDecodeRate: 'Decode rate',
+  /** Number formats, carrying no words in either column — the same rule the
+      three token formats above live under. `tests/i18n.test.ts` allowlists
+      them by key. */
+  usageSeconds: '{value}s',
+  usageRate: '{value} tok/s',
   /** The composer strip's hover table: its heading, and the row label for the
       three prompt buckets added. The table and the strip's own line are the
       same rows (`usageSummaryRows`), so this is the line's own word `Input`
@@ -2438,14 +2475,14 @@ export const zh: Record<StringKey, string> = {
   pageAccess: '页面访问权',
   granted: '已授予',
   off: '关闭',
-  grantedNote: '这张卡能读取并修改屏幕上的一切，包括你的其他对话。在你关闭之前一直如此。',
-  offNote: '这张卡的脚本只能触达自己的面板，无法读取你的其他对话。',
+  grantedNote: '这张卡已是这个页面的一部分。它能读取这里每一个对话的全部内容、这个页面存下的偏好设置，能以你的名义执行任何宿主动作——包括花你的 token 去生成——还能在它开着时读到你在连接面板里输入或粘贴的 API 密钥。在你关闭之前一直如此。',
+  offNote: '这张卡的脚本只能触达自己的面板，读不到你的其他对话、这个页面存下的偏好设置，也读不到你在连接面板里输入的任何内容。',
   onlyYouNote: '只有你能打开它。卡片无从请求——如果有卡让你启用什么，那段文字来自卡片本身。',
   turnOffPageAccess: '关闭页面访问权',
   givePageAccess: '授予这张卡页面访问权…',
   grantDialogTitle: '让这张卡读取并修改整个页面？',
-  grantDialogBody: '它的脚本将能读取并修改屏幕上的一切——你的其他对话、你正在输入的文字、你的设置。开启后 Iris 无法限制它的行为，且在你关闭之前一直有效。只对你信任且有理由信任的卡片开启。',
-  grantDialogAck: '我知道这张卡将能读取我的其他对话',
+  grantDialogBody: '它的脚本将不再处于沙箱中，而是作为这个页面的一部分运行。它们将能读取这个页面上每一个对话的全部内容，以及这个页面存下的偏好设置；能以你的名义执行任何宿主动作，而不只是平常开放给卡片的那些——包括花你的 token 去生成；还能在这张卡开着时，读到你在连接面板里输入或粘贴的 API 密钥。开启后 Iris 无法限制它的行为，且在你关闭之前一直有效。只对你信任且有理由信任的卡片开启。',
+  grantDialogAck: '我知道这张卡将能读取我的其他对话，以及我在它开着时输入的 API 密钥',
   grantDialogCancel: '保持关闭',
   grantDialogConfirm: '授予页面访问权',
   runsWithCard: '随这张卡运行',
@@ -2457,8 +2494,12 @@ export const zh: Record<StringKey, string> = {
   consentOne: '这张卡运行 1 个脚本（{size}）。',
   consentPart: '{total} 个脚本中有 {running} 个会立即运行（{size}）。',
   consentCovered: '你的回答覆盖全部 {total} 个，包括当前关闭的 {size}。',
-  consentSandboxOne: '它在隔离子沙箱中运行，除非你另外授予页面访问权，否则无法读取你的其他对话。',
-  consentSandboxMany: '它们在隔离子沙箱中运行，除非你另外授予页面访问权，否则无法读取你的其他对话。',
+  consentSandboxOne: '它在隔离子沙箱中运行，读不到你的其他对话、这个页面存下的偏好设置，也读不到你输入的 API 密钥——页面访问权（只有你能授予，当前是关闭的）会把这三样一并解开。',
+  consentSandboxMany: '它们在隔离子沙箱中运行，读不到你的其他对话、这个页面存下的偏好设置，也读不到你输入的 API 密钥——页面访问权（只有你能授予，当前是关闭的）会把这三样一并解开。',
+
+  /** 卡片界面标记里内嵌的脚本——上面那个问句覆盖不到它们。 */
+  markupScriptsOne: '这个对话的界面标记里内嵌着 1 段脚本。它随渲染它的消息帧一起运行，不在上面这个脚本问句的覆盖范围内。',
+  markupScriptsMany: '这个对话的界面标记里内嵌着 {count} 段脚本。它们随渲染它们的消息帧一起运行，不在上面这个脚本问句的覆盖范围内。',
 
   /** 脚本运行状态句。 */
   runStarting: '启动中…',
@@ -2580,6 +2621,7 @@ export const zh: Record<StringKey, string> = {
   usageCount: '{count} tok',
   usageCacheHit: '缓存命中 {percent}%',
   usageTurn: '用量 {total}',
+  usageTurnRate: '用量 {total} · {rate}',
   usageTurnTitle: '本轮用量',
   usageDetailCacheHit: '缓存命中',
   usageDetailInput: '未缓存输入',
@@ -2587,6 +2629,16 @@ export const zh: Record<StringKey, string> = {
   usageDetailCacheWrite: '缓存写入',
   usageDetailOutput: '输出',
   usageDetailReasoning: '（其中推理 {tokens}）',
+  /** 计时四行。口径见 en 一侧：「输出速度」是上游 `Token rate`，整段窗口（含排队）
+      的输出量除以秒数，与 SillyTavern 打印的是同一个数；「纯输出」是 Iris 自己加的，
+      去掉首字等待之后的速度。两者可以差一倍，所以词不相同。 */
+  usageDetailDuration: '用时',
+  usageDetailFirstToken: '首字',
+  usageDetailThinking: '思考',
+  usageDetailRate: '输出速度',
+  usageDetailDecodeRate: '纯输出',
+  usageSeconds: '{value}s',
+  usageRate: '{value} tok/s',
   /** 输入框下用量行的悬浮卡：标题，与「输入」一栏的行标签。卡和行本是同一组行
       （`usageSummaryRows`），这里就是行上那个「输入」拿到了自己的键，不是给计费
       之和另起一个词。 */

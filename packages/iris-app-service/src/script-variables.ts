@@ -47,13 +47,14 @@
  * @module @iris/app-service/script-variables
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { CharacterCard } from '@iris/character'
 import { extractScripts } from '@iris/script'
 import type { ScopeBackend, VariableOption, Variables } from '@iris/variables'
 
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 import { assertStorable } from './context.ts'
 import { invalid } from './errors.ts'
 
@@ -93,7 +94,9 @@ export function scriptIdOf(option: VariableOption): string {
 export class ScriptVariableStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
-  #partitions: Partitions = {}
+  readonly #onProblem: ((message: string) => void) | undefined
+  // Keyed by character id, which is a filename — see `wireKeyedTable`.
+  #partitions: Partitions = wireKeyedTable()
   #loaded = false
   /** Writes are serialised through one chain so two flushes cannot interleave. */
   #queue: Promise<void> = Promise.resolve()
@@ -101,34 +104,35 @@ export class ScriptVariableStore {
   /**
    * @param path - the JSON file backing the store.
    * @param onError - reports a flush that failed; a write is not awaited by its caller.
+   * @param onProblem - told when the file was there and could not be read or
+   *   parsed; see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string, onError: (error: Error) => void = () => {}) {
+  constructor(
+    path: string,
+    onError: (error: Error) => void = () => {},
+    onProblem?: (message: string) => void,
+  ) {
     this.#path = path
     this.#onError = onError
+    this.#onProblem = onProblem
   }
 
-  /** Load on first use; a missing file is an empty store, not an error. */
+  /**
+   * Load on first use; a missing file is an empty store, not an error.
+   *
+   * This store was already the one that told the two events apart — a file that
+   * is not there is a first run, while a file that is there and cannot be read
+   * is **a card's accumulated script state about to be silently replaced by
+   * nothing**. That distinction now lives in `readJsonStore`, where every store
+   * gets it, and a file that is there and does not *parse* is moved aside
+   * rather than merely announced.
+   */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        this.#partitions = parsed as Partitions
-      }
-    } catch (error: unknown) {
-      // Two different events share this branch and only one of them is routine.
-      // A file that is not there is a first run, and an empty store is the right
-      // answer. A file that is there and cannot be parsed is **a card's
-      // accumulated script state about to be silently replaced by nothing** —
-      // the same recovery, a completely different fact, and the user is the one
-      // who loses by not hearing it.
-      if ((error as { code?: string }).code !== 'ENOENT') {
-        this.#onError(new Error(
-          `${this.#path} could not be read (${error instanceof Error ? error.message : String(error)});`
-          + ' every card starts from its shipped defaults this session, and saving will overwrite the file',
-        ))
-      }
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      this.#partitions = wireKeyedTable(parsed as Partitions)
     }
   }
 
@@ -188,7 +192,7 @@ export class ScriptVariableStore {
   #flush(): void {
     this.#queue = this.#queue.then(async () => {
       await mkdir(dirname(this.#path), { recursive: true })
-      await writeFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`, 'utf8')
+      await atomicWriteFile(this.#path, `${JSON.stringify(this.#partitions, null, 2)}\n`)
     }).catch((error: unknown) => {
       this.#onError(error instanceof Error ? error : new Error(String(error)))
     })

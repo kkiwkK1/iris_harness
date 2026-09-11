@@ -1,0 +1,48 @@
+# A composition for the shell index test: the carrier, the transport, the
+# application — which registers the index tap that writes the page's
+# Content-Security-Policy — and the static front-end row that takes the
+# webserver's fallback seat and is the only thing that ever calls `renderIndex`.
+#
+# Separate from `host-allowlist.cordis.yml` because that one deliberately has no
+# fallback seat: with one claimed, an unmatched path answers 200 instead of 404
+# and every "a foreign Host is refused" assertion there would be reading a
+# different route. Here the fallback is the subject.
+
+- id: webserver
+  name: '@deepseek-ai/dsh-host-webserver'
+  config:
+    host: '127.0.0.1'
+    port: 0
+
+- id: rpc
+  name: '@iris/rpc-host'
+  config:
+    heartbeatMs: 0
+
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+
+- id: llm-openai-compat
+  name: '@iris/llm-openai-compat'
+  config:
+    provider: default
+    displayName: mock
+    baseURL: 'http://127.0.0.1:1/v1'
+    models:
+      - id: mock-model
+        contextWindow: 32768
+
+- id: app
+  name: '@iris/app-service'
+  config:
+    dataDir: !!js process.env.IRIS_TEST_DATA_DIR
+    provider: default
+    model: mock-model
+    userName: Traveller
+    # The gate on both the sandbox route and the index tap.
+    webDistIndex: !!js process.env.IRIS_TEST_WEB_DIST
+
+- id: frontend
+  name: '@deepseek-ai/dsh-host-frontend-static'
+  config:
+    distIndex: !!js process.env.IRIS_TEST_WEB_DIST

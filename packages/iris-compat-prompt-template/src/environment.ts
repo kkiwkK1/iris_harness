@@ -12,14 +12,23 @@
  * policy decision for a missing value and fail somewhere later with no trace of
  * why.
  *
- * Everything here runs in the child's own realm, over data the host pushed.
- * Nothing in it can reach the host.
+ * **What this module does not do is hand any of it to a template.** It returns a
+ * *description* — data, live reads, callables, guarded objects — and `child.ts`
+ * builds the template's scope out of it inside the `vm` realm, so that every
+ * function a template can see is a context trampoline and every object a
+ * context object. A closure from this file reaching template code directly is
+ * `escapeFn.constructor("return process")`, which is `realm.ts`'s whole subject.
+ *
+ * The state these closures read and write is itself made **inside** the realm —
+ * {@link createState} builds it with the realm's `JSON.parse` and mutates it
+ * with the realm's lodash — so `getvar` can keep returning a live reference the
+ * way upstream does, instead of a copy that silently drops a template's
+ * `getvar('stat_data').hp = 5`.
  *
  * @module @iris/compat-prompt-template/environment
  */
 
-import _ from 'lodash'
-
+import type { GuardedSpec, Realm, RealmLodash } from './realm.ts'
 import type { Json, Op, Scope, Snapshot, WorldInfoEntry } from './types.ts'
 
 /**
@@ -29,12 +38,72 @@ import type { Json, Op, Scope, Snapshot, WorldInfoEntry } from './types.ts'
  * Names the member, because the card author's next question is always "which
  * one", and a card that fails this way is a measurement: it tells us which part
  * of the surface the corpus did not predict.
+ *
+ * It is thrown in **this** realm and reaches the template as a context `Error`
+ * carrying the same `name` and `message` — see `realm.ts`. So a template can
+ * read what it says and cannot use it as a bridge back here.
  */
 export class UnsupportedTemplateApiError extends Error {
   override name = 'UnsupportedTemplateApiError'
   constructor(member: string, detail?: string) {
     super(`${member} is not available to Iris templates${detail ? `: ${detail}` : ''}`)
   }
+}
+
+/**
+ * Raised when a template writes through one of the three reserved keys.
+ *
+ * Thrown in this realm and delivered to the template as a context `Error`, the
+ * same way {@link UnsupportedTemplateApiError} is — see `realm.ts`.
+ */
+export class ForbiddenTemplateKeyError extends Error {
+  override name = 'ForbiddenTemplateKeyError'
+  constructor(path: string, segment: string) {
+    super(`the path "${path}" walks through "${segment}", which cannot be used as a variable key`)
+  }
+}
+
+/**
+ * The three reserved key names, and the splitter that finds them in a path.
+ *
+ * **A copy of `@iris/variables`'s predicate, deliberately.** This package
+ * declares no workspace dependency on `@iris/variables`, and more to the point
+ * the lodash these closures call is the *realm's*, so the refusal has to run on
+ * this side of a boundary `@iris/variables` knows nothing about. The two lists
+ * are pinned against each other by
+ * `packages/iris-app-service/tests/forbidden-keys.test.ts`, which is the one
+ * place both packages resolve.
+ */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * The first reserved segment of a lodash path, if it has one.
+ * @param path - the path a template is writing.
+ * @returns the offending segment, or undefined.
+ */
+function forbiddenSegmentIn(path: string): string | undefined {
+  for (const raw of path.split(/[.[\]]/u)) {
+    const segment = raw.replace(/^\s*['"]|['"]\s*$/gu, '')
+    if (segment !== '' && FORBIDDEN_KEYS.has(segment)) return segment
+  }
+  return undefined
+}
+
+/**
+ * Refuse a path before it reaches the realm's `_.set`.
+ *
+ * The lodash inside the vm context is the realm's own, so a pollution here
+ * lands on the *realm's* `Object.prototype` — not the host's, but shared by
+ * every template in the batch, and a batch is a whole prompt. The host refuses
+ * the same write again when the op crosses back (`applyOps` in
+ * `@iris/app-service/template`); both are load-bearing, because a template that
+ * throws has still had its earlier writes applied.
+ * @param path - the key a template is writing.
+ * @throws {ForbiddenTemplateKeyError} when any segment is reserved.
+ */
+function assertTemplatePathWritable(path: string): void {
+  const segment = forbiddenSegmentIn(path)
+  if (segment !== undefined) throw new ForbiddenTemplateKeyError(path, segment)
 }
 
 /** Upstream accepts either an options object or a bare string shorthand. */
@@ -110,20 +179,38 @@ function asObject(options: VarOptions): Normalized {
 
 /**
  * `_.get` with upstream's null-key behaviour.
+ * @param lodash - the realm's lodash, so a miss builds nothing of this realm.
  * @param object - the store to read.
  * @param key - a lodash path, or null for the whole store.
  * @param defaults - what to return when the path is absent.
  * @returns the value at the path.
  */
-function get(object: object, key: string | number | null, defaults?: unknown): unknown {
+function get(lodash: RealmLodash, object: object, key: string | number | null, defaults?: unknown): unknown {
   if (key == null) return object
-  return _.get(object, key, defaults)
+  return lodash.get(object, key, defaults)
 }
 
-/** A live, mutable copy of the pushed variables, plus the writes performed on it. */
+/**
+ * One template scope, described rather than built.
+ *
+ * Split by how each member has to cross into the realm: data is re-created,
+ * reads and calls become trampolines, guarded objects become context proxies.
+ */
+export interface EnvironmentMembers {
+  /** Plain JSON the host pushed: the scalars and this item's own locals. */
+  data: Record<string, Json>
+  /** Members whose value is read from live batch state on every access. */
+  reads: Record<string, () => unknown>
+  /** Host callables the template invokes. */
+  calls: Record<string, (...args: never[]) => unknown>
+  /** Objects with a closed member list and a named refusal for everything else. */
+  objects: Record<string, GuardedSpec>
+}
+
+/** A description of the template scope, plus the writes performed through it. */
 export interface Environment {
-  /** What the template's `locals` are: this object is passed as EJS's `locals`. */
-  locals: Record<string, unknown>
+  /** What `child.ts` builds the template's scope out of. */
+  members: EnvironmentMembers
   /** Writes performed so far, in order. Read after each item. */
   ops: Op[]
 }
@@ -131,6 +218,8 @@ export interface Environment {
 /** How to build one. */
 export interface EnvironmentOptions {
   snapshot: Snapshot
+  /** The realm the state lives in and the template will run in. */
+  realm: Pick<Realm, 'lodash'>
   /** Per-item additions — a world-info entry supplies its own `world_info`. */
   locals?: Record<string, Json> | undefined
   /**
@@ -138,8 +227,11 @@ export interface EnvironmentOptions {
    *
    * Injected rather than imported so this module stays free of the engine: the
    * recursion is `getwi`'s business, and where the compiler lives is `child.ts`'s.
+   * The third argument is what the nested evaluation adds *on top of* the
+   * calling item's scope; composing the two is the caller's job, because the
+   * composition has to happen inside the realm.
    */
-  evaluateNested: (text: string, origin: string, locals: Record<string, unknown>) => Promise<string>
+  evaluateNested: (text: string, origin: string, extra: Record<string, unknown>) => Promise<string>
 }
 
 /**
@@ -148,12 +240,13 @@ export interface EnvironmentOptions {
  * Each item gets a fresh `ops` array and its own view, but they share the
  * mutable variable state so that a write in item 3 is visible to item 4 — which
  * is how upstream behaves, because upstream is writing to the live application.
- * @param options - the snapshot, per-item locals, and the nested evaluator.
+ * @param options - the snapshot, the realm, per-item locals, and the nested evaluator.
  * @param state - variable state shared across the batch. Created by `createState`.
  * @returns the environment.
  */
 export function buildEnvironment(options: EnvironmentOptions, state: BatchState): Environment {
-  const { snapshot, locals: itemLocals, evaluateNested } = options
+  const { snapshot, realm, locals: itemLocals, evaluateNested } = options
+  const lodash = realm.lodash
   const ops: Op[] = []
 
   const readScope = (scope: Scope | 'cache'): Record<string, unknown> =>
@@ -165,17 +258,22 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
     const store = readScope(opts.scope ?? opts.inscope ?? 'cache')
 
     if (index != null) {
-      // Upstream stores indexed values as JSON strings inside the variable.
-      const raw = get(store, key, '{}')
-      const data = JSON.parse(typeof raw === 'string' && raw ? raw : '{}') as object
+      // Upstream stores indexed values as JSON strings inside the variable. The
+      // realm's `JSON.parse`, so the object handed back is the realm's.
+      const raw = get(lodash, store, key, '{}')
+      const data = state.parse(typeof raw === 'string' && raw ? raw : '{}') as object
       const idx = Number(index)
-      return get(data, Number.isNaN(idx) ? index : idx, defaults)
+      return get(lodash, data, Number.isNaN(idx) ? index : idx, defaults)
     }
-    const result = get(store, key, defaults)
-    return clone ? _.cloneDeep(result) : result
+    const result = get(lodash, store, key, defaults)
+    return clone ? lodash.cloneDeep(result) : result
   }
 
   const setvar = (key: string, value: unknown, rawOptions?: VarOptions): unknown => {
+    // Before anything else, including `dryRun`: the refusal is about the path,
+    // not about whether this call would have written, and a template asking
+    // "would this work" must get the same answer it would get for real.
+    assertTemplatePathWritable(key)
     const opts = normalizeOptions(rawOptions)
     const { index, flags, results, merge, dryRun } = opts
     if (index != null) {
@@ -183,31 +281,31 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
     }
     if (dryRun) return undefined
 
-    if (flags === 'nx' && _.has(state.cache, key)) return undefined
-    if (flags === 'xx' && !_.has(state.cache, key)) return undefined
+    if (flags === 'nx' && lodash.has(state.cache, key)) return undefined
+    if (flags === 'xx' && !lodash.has(state.cache, key)) return undefined
     if (flags === 'nxs' && getvar(key, rawOptions) !== undefined) return undefined
     if (flags === 'xxs' && getvar(key, rawOptions) === undefined) return undefined
 
     let oldValue: unknown
     let newValue = value
-    if (results === 'old' || merge) oldValue = get(state.cache, key, undefined)
+    if (results === 'old' || merge) oldValue = get(lodash, state.cache, key, undefined)
 
     if (merge) {
-      if ((oldValue === undefined || _.isArray(oldValue)) && _.isArray(value)) {
-        newValue = _.concat((oldValue ?? []) as unknown[], value)
+      if ((oldValue === undefined || lodash.isArray(oldValue)) && lodash.isArray(value)) {
+        newValue = lodash.concat((oldValue ?? []) as unknown[], value)
       } else {
-        newValue = _.mergeWith(
-          _.cloneDeep(oldValue ?? {}),
+        newValue = lodash.mergeWith(
+          lodash.cloneDeep(oldValue ?? state.empty()),
           value,
-          (_dst: unknown, src: unknown) => (_.isArray(src) ? src : undefined),
+          (_dst: unknown, src: unknown) => (lodash.isArray(src) ? src : undefined),
         )
       }
     }
 
     // Upstream writes the cache first, then the backing scope. Both, always:
     // the cache is what the rest of the batch reads.
-    if (newValue === undefined) _.unset(state.cache, key)
-    else _.set(state.cache, key, newValue)
+    if (newValue === undefined) lodash.unset(state.cache, key)
+    else lodash.set(state.cache, key, newValue)
 
     // Upstream's default write scope is `message`, not the read default `cache`.
     const scope = (opts.scope ?? opts.outscope ?? 'message') as Scope | 'cache'
@@ -226,8 +324,8 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
         'initial variables come from the card file and are not writable at runtime',
       )
     }
-    if (newValue === undefined) _.unset(state.scopes[scope], key)
-    else _.set(state.scopes[scope], key, newValue)
+    if (newValue === undefined) lodash.unset(state.scopes[scope], key)
+    else lodash.set(state.scopes[scope], key, newValue)
 
     ops.push(
       newValue === undefined
@@ -257,7 +355,10 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
   ): Promise<string> => {
     let explicitBook: string | null
     let target: string | RegExp | number
-    if (_.isPlainObject(entryOrData)) {
+    // The realm's `isPlainObject`, because the object under test was made by the
+    // template: a host lodash compares against a host `Object.prototype` and
+    // answers `false` for every one of them.
+    if (lodash.isPlainObject(entryOrData)) {
       explicitBook = null
       target = worldOrEntry as string | RegExp
       data = entryOrData as Record<string, unknown>
@@ -274,7 +375,7 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
     return await evaluateNested(
       entry.content,
       `worldinfo/${entry.world}/${entry.uid}-${entry.comment}`,
-      { ...env, ...data, world_info: entry },
+      { ...data, world_info: entry },
     )
   }
 
@@ -282,25 +383,22 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
    * The two members of `SillyTavern` the corpus uses, and a wall behind them.
    *
    * `saveMetadata` records the write rather than performing it; the host applies
-   * it, like every other write.
+   * it, like every other write. The wall is described here and built as a
+   * context `Proxy` by `realm.ts`, so a template that catches the refusal holds
+   * an error of its own realm.
    */
-  const sillyTavern = new Proxy({
-    get chatMetadata(): unknown { return state.chatMetadata },
-    saveMetadata(): void {
-      ops.push({ op: 'saveMetadata', value: _.cloneDeep(state.chatMetadata) as Json })
+  const sillyTavern: GuardedSpec = {
+    reads: { chatMetadata: () => state.chatMetadata },
+    calls: {
+      saveMetadata: () => {
+        ops.push({ op: 'saveMetadata', value: lodash.cloneDeep(state.chatMetadata) as Json })
+      },
     },
-  }, {
-    get(target, property, receiver): unknown {
-      if (property === 'chatMetadata' || property === 'saveMetadata') {
-        return Reflect.get(target, property, receiver)
-      }
-      if (typeof property === 'symbol') return Reflect.get(target, property, receiver)
-      throw new UnsupportedTemplateApiError(
-        `SillyTavern.${property}`,
-        'only chatMetadata and saveMetadata are bridged',
-      )
-    },
-  })
+    refuse: member => new UnsupportedTemplateApiError(
+      `SillyTavern.${member}`,
+      'only chatMetadata and saveMetadata are bridged',
+    ),
+  }
 
   /**
    * Upstream's per-scope shorthands.
@@ -321,21 +419,22 @@ export function buildEnvironment(options: EnvironmentOptions, state: BatchState)
     setMessageVar: (key: string, value: unknown, options: VarOptions = {}) => setvar(key, value, { ...asObject(options), scope: 'message' }),
   }
 
-  const env: Record<string, unknown> = {
-    ...snapshot.scalars,
-    ...itemLocals,
-    get variables(): unknown { return state.cache },
-    getvar,
-    getVariable: getvar,
-    setvar,
-    setVariable: setvar,
-    ...scoped,
-    getwi,
-    getWorldInfo: getwi,
-    SillyTavern: sillyTavern,
+  const members: EnvironmentMembers = {
+    data: { ...snapshot.scalars, ...itemLocals },
+    reads: { variables: () => state.cache },
+    calls: {
+      getvar,
+      getVariable: getvar,
+      setvar,
+      setVariable: setvar,
+      ...scoped,
+      getwi,
+      getWorldInfo: getwi,
+    } as EnvironmentMembers['calls'],
+    objects: { SillyTavern: sillyTavern },
   }
 
-  return { locals: env, ops }
+  return { members, ops }
 }
 
 /**
@@ -398,12 +497,19 @@ export function findWorldInfoEntry(
 
 /**
  * Upstream's three-way match, evaluated per entry rather than in passes.
+ *
+ * There is no `target instanceof RegExp` shortcut here, and there used to be.
+ * ``getwi(null, new RegExp(`^${charName}$`))`` — the corpus's one computed
+ * target — builds its regex inside the **template's** realm, where `instanceof`
+ * compares against this realm's `RegExp.prototype` and answers `false`. So the
+ * branch never fired for the regexes that actually arrive, and the ones it did
+ * fire for took `RegExp.test` where upstream takes `String.match`. Dropping it
+ * leaves one predicate, upstream's, for every realm.
  * @param entry - the candidate.
  * @param target - what `getwi` was given.
  * @returns whether upstream would return this entry.
  */
 function matchesEntry(entry: WorldInfoEntry, target: string | RegExp | number): boolean {
-  if (target instanceof RegExp) return target.test(entry.comment)
   if (entry.comment === String(target) || entry.uid === String(target)) return true
   // `String.match(number)` is null, which upstream notes and relies on.
   if (typeof target === 'number') return false
@@ -417,33 +523,63 @@ export interface BatchState {
   /** The four backing stores, which is what a scoped read or write touches. */
   scopes: Record<Scope, Record<string, unknown>>
   chatMetadata: Record<string, unknown>
+  /** The realm's `JSON.parse`, for `getvar`'s indexed form. */
+  parse: (text: string) => unknown
+  /** A fresh object of the realm this state lives in. */
+  empty: () => object
 }
 
 /**
- * Recreate upstream's variable cache.
+ * Recreate upstream's variable cache, **inside the realm**.
  *
  * `Object.assign` in this order, then a deep clone — a **shallow** merge, so a
  * key present in two scopes is taken whole from the later one rather than merged
  * key-by-key. Transcribed from `precacheVariables`; the order is load-bearing
  * and is the reason the scopes are pushed unmerged.
+ *
+ * Every object here is built by the realm: `realm.adopt` re-parses the pushed
+ * JSON with the context's own `JSON.parse`, the merge is the context's
+ * `Object.assign`, and the clone is the context's lodash.
+ *
+ * **Once per batch is the whole cost of the realm rule.** Re-creating each value
+ * as it crosses would have been the obvious reading, and it is both slower and
+ * wrong: `getvar('stat_data')` hands upstream's template a live reference, so a
+ * card writing `getvar('stat_data').hp = 5` writes the cache, and a per-call
+ * copy would drop that silently. Building the state inside the realm instead
+ * keeps the reference live and pays the conversion here.
+ *
+ * Measured 2026-09-11 on the corpus's heaviest chat — a 708,022-character
+ * variable blob — over three rounds: **9.6, 10.9, 10.2 ms**, against the 9.7 and
+ * 9.9 ms the host-realm `_.cloneDeep` it replaced cost on the same input. So the
+ * realm re-creation is free to within the noise of the deep clone that was
+ * already there, and is 0.5% of the 2000 ms batch deadline. The same install's
+ * heaviest possible batch — that blob, all 1,478 world-info entries (6.79 MiB of
+ * snapshot) and all 203 templated entries as items — runs end to end through a
+ * real forked child in 257–276 ms.
  * @param snapshot - what the host pushed.
+ * @param realm - where the state is to live.
  * @returns state for one batch.
  */
-export function createState(snapshot: Snapshot): BatchState {
+export function createState(snapshot: Snapshot, realm: Realm): BatchState {
   const scopes: Record<Scope, Record<string, unknown>> = {
-    global: _.cloneDeep(snapshot.variables.global ?? {}) as Record<string, unknown>,
-    initial: _.cloneDeep(snapshot.variables.initial ?? {}) as Record<string, unknown>,
-    local: _.cloneDeep(snapshot.variables.local ?? {}) as Record<string, unknown>,
-    message: _.cloneDeep(snapshot.variables.message ?? {}) as Record<string, unknown>,
+    global: realm.adopt(snapshot.variables.global ?? {}) as Record<string, unknown>,
+    initial: realm.adopt(snapshot.variables.initial ?? {}) as Record<string, unknown>,
+    local: realm.adopt(snapshot.variables.local ?? {}) as Record<string, unknown>,
+    message: realm.adopt(snapshot.variables.message ?? {}) as Record<string, unknown>,
   }
-  const cache = _.cloneDeep(Object.assign(
-    {},
+  const cache = realm.lodash.cloneDeep(realm.assign(
     scopes.global,
     scopes.initial,
     scopes.local,
     scopes.message,
-    { _trace_id: snapshot.traceId, _modify_id: 0 },
+    realm.adopt({ _trace_id: snapshot.traceId, _modify_id: 0 }),
   )) as Record<string, unknown>
 
-  return { cache, scopes, chatMetadata: _.cloneDeep(snapshot.chatMetadata ?? {}) as Record<string, unknown> }
+  return {
+    cache,
+    scopes,
+    chatMetadata: realm.adopt(snapshot.chatMetadata ?? {}) as Record<string, unknown>,
+    parse: realm.parse,
+    empty: realm.create,
+  }
 }

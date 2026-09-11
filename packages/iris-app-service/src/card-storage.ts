@@ -15,8 +15,10 @@
  * @module @iris/app-service/card-storage
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 
 /**
  * How much the whole store may hold, in bytes of keys and values.
@@ -121,7 +123,13 @@ export interface RemovalReport {
 export class CardStorageStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
-  #entries: Record<string, StoredValue> = {}
+  readonly #onProblem: ((message: string) => void) | undefined
+  // Null-prototyped, because every key here is a string a card chose.
+  // `localStorage.setItem('__proto__', …)` against a plain object is not a
+  // write of a key at all but a re-pointing of this object's prototype, and
+  // `lastWriter('constructor')` against one answers a function nobody stored.
+  // A table keyed by untrusted strings should inherit nothing.
+  #entries: Record<string, StoredValue> = wireKeyedTable()
   #loaded = false
   #pending: ReturnType<typeof setTimeout> | undefined
   #writing: Promise<void> | undefined
@@ -129,23 +137,37 @@ export class CardStorageStore {
   /**
    * @param path - the JSON file backing the store.
    * @param onError - told when a write fails; absent means silence.
+   * @param onProblem - told when the file was there and could not be read or
+   *   parsed; see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string, onError: (error: Error) => void = () => {}) {
+  constructor(
+    path: string,
+    onError: (error: Error) => void = () => {},
+    onProblem?: (message: string) => void,
+  ) {
     this.#path = path
     this.#onError = onError
+    this.#onProblem = onProblem
   }
 
+  /**
+   * Load on first use.
+   *
+   * Absent is an empty store, which is the correct first-run state and what
+   * every existing profile is in. A file that is there and does not parse is
+   * every card's `localStorage` for this profile, and the debounced save a few
+   * seconds later used to write `{}` over it.
+   */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        this.#entries = parsed as Record<string, StoredValue>
-      }
-    } catch {
-      // Absent or unreadable is an empty store, which is the correct first-run
-      // state and what every existing profile is in.
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      // `JSON.parse` hands back an ordinary object, so the file's keys are
+      // copied onto a null-prototyped one rather than adopted — a `__proto__`
+      // member on disk (which `JSON.parse` does create as an own key) would
+      // otherwise arrive as a table whose prototype is the attacker's value.
+      this.#entries = wireKeyedTable(parsed as Record<string, StoredValue>)
     }
   }
 
@@ -195,7 +217,7 @@ export class CardStorageStore {
    */
   async bytesByWriter(): Promise<Record<string, number>> {
     await this.#load()
-    const byWriter: Record<string, number> = {}
+    const byWriter: Record<string, number> = wireKeyedTable()
     for (const [key, held] of Object.entries(this.#entries)) {
       const who = held.characterId ?? 'unknown'
       byWriter[who] = (byWriter[who] ?? 0)
@@ -283,7 +305,7 @@ export class CardStorageStore {
         foreign: held.characterId !== undefined && held.characterId !== by.characterId,
       })
     }
-    this.#entries = {}
+    this.#entries = wireKeyedTable()
     // Nothing went, so nothing is written. A clear() over an empty store
     // would otherwise create the file on a first run, and the file existing is
     // what says "a card stored something" — remove() of a missing key already
@@ -328,7 +350,7 @@ export class CardStorageStore {
   async #save(): Promise<void> {
     try {
       await mkdir(dirname(this.#path), { recursive: true })
-      await writeFile(this.#path, `${JSON.stringify(this.#entries, null, 2)}\n`, 'utf8')
+      await atomicWriteFile(this.#path, `${JSON.stringify(this.#entries, null, 2)}\n`)
     } catch (error: unknown) {
       // Reported rather than thrown: a card's write failing to persist must not
       // fail the call that made it, but it must not be silent either — the

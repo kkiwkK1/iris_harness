@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import { cacheKey, nodeFetch, ScriptCache, type FetchLike } from '../src/script-cache.ts'
+import { cacheKey, ScriptCache } from '../src/script-cache.ts'
+import { nodeFetch } from '../src/remote-fetch.ts'
+import { fakeRemote } from './support/fake-remote.ts'
 import { listenOnFetchablePort } from './support/fetchable-port.ts'
 
 /**
@@ -17,25 +19,14 @@ import { listenOnFetchablePort } from './support/fetchable-port.ts'
  * fetch once — is asserted by counting requests rather than by timing anything.
  */
 
-/** An upstream that answers from a table and counts what it was asked. */
-function upstream(
-  routes: Record<string, { status: number, body?: string, location?: string }>,
-): { fetch: FetchLike, asked: string[] } {
-  const asked: string[] = []
-  const fetch: FetchLike = async (url) => {
-    asked.push(url)
-    const route = routes[url] ?? { status: 404 }
-    return {
-      status: route.status,
-      headers: { get: (name: string) => (name.toLowerCase() === 'location' ? route.location ?? null : null) },
-      arrayBuffer: async () => {
-        const bytes = Buffer.from(route.body ?? '', 'utf8')
-        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-      },
-    }
-  }
-  return { fetch, asked }
-}
+/**
+ * The upstream is `support/fake-remote.ts`, shared with `script-fetch.test.ts`.
+ *
+ * Both routes now fetch through one executor, so their tests inject one
+ * transport: a second fake here with its own idea of what a redirect or a body
+ * is would let the two sides drift apart again in the place they last did.
+ */
+const upstream = fakeRemote
 
 async function cacheIn(
   t: TestContext,
@@ -224,19 +215,28 @@ test('the default upstream adapter behaves the way the cache assumes', async (t)
   t.after(() => { server.close() })
   const base = `http://127.0.0.1:${String(port)}`
 
-  const redirected = await nodeFetch(`${base}/redir`, { redirect: 'manual', headers: { accept: '*/*' } })
+  const init = { redirect: 'manual', credentials: 'omit', headers: { accept: '*/*' } } as const
+  const redirected = await nodeFetch(`${base}/redir`, init)
   assert.equal(redirected.status, 302, 'the redirect was followed or hidden')
   assert.equal(redirected.headers.get('location'), '/target', 'the location header was not readable')
 
-  const ok = await nodeFetch(`${base}/target`, { redirect: 'manual', headers: { accept: '*/*' } })
+  const ok = await nodeFetch(`${base}/target`, init)
   assert.equal(ok.status, 200)
-  assert.equal(Buffer.from(await ok.arrayBuffer()).toString('utf8'), 'BODY-OK')
+  // The third runtime assumption, added when the cap moved to an incremental
+  // read: `response.body` is async-iterable, so a body can be abandoned partway.
+  // If undici ever handed back something that is not, the cap would silently
+  // stop being a cap — `for await` over a non-iterable throws, and the executor
+  // would report an unreachable upstream for a body it could have read.
+  assert.notEqual(ok.body, null, 'the adapter handed back no body to read')
+  const chunks: Buffer[] = []
+  for await (const chunk of ok.body ?? []) chunks.push(Buffer.from(chunk))
+  assert.equal(Buffer.concat(chunks).toString('utf8'), 'BODY-OK')
 
   // A dead socket must reject rather than resolve with something falsy, because
   // the caller turns a rejection into a named 502 and would otherwise report
   // success with an empty body.
   server.close()
-  await assert.rejects(() => nodeFetch(`${base}/target`, { redirect: 'manual', headers: { accept: '*/*' } }))
+  await assert.rejects(() => nodeFetch(`${base}/target`, init))
 })
 
 test('asking why something failed does not repeat the failure', async (t) => {

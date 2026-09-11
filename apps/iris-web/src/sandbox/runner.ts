@@ -21,6 +21,7 @@ import { frameSandbox } from './policy.ts'
 import type { PopupAnswer, PopupPlan } from './popup.ts'
 import { mintToken, parseFromFrame, type FromFrame, type ToFrame } from './protocol.ts'
 import { sameOriginTarget } from './same-origin.ts'
+import { bridgeVerdict, describeBridgeRefusal } from './bridge-paths.ts'
 import { buildSrcdoc } from './srcdoc.ts'
 import { rewriteViewportUnits } from './viewport-units.ts'
 import { rewriteBundleImports } from './bundle-proxy.ts'
@@ -493,15 +494,47 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
    * the untrusted side and the shell is what actually holds the credentials;
    * `host.fetch` stays the enforcement for everything else, allowlisted remote
    * dependencies included.
+   *
+   * And the **path** check runs here for the same reason — `bridge-paths.ts`
+   * holds the list and both sides consult it. A frame that skipped its own copy
+   * (or ran an older build of it) reaches a shell that has not: the audit's F11
+   * is a credentialed GET, and a credentialed GET is refused by whoever holds
+   * the credentials or it is not refused at all.
    * @param message - the frame's request, carrying the URL it resolved.
    * @returns the body and the response facts worth carrying back.
    */
+  /**
+   * Bridge path shapes this frame has already been refused.
+   *
+   * Per frame, not per module: two conversations open on the same card are two
+   * frames, and a reader looking at one of them has not seen the other's report.
+   */
+  const refusedShapes = new Set<string>()
+
   const ride = (
     message: Extract<FromFrame, { type: 'fetch' }>,
   ): Promise<{ content: string, status?: number, contentType?: string }> => {
     const target = sameOriginTarget(message.url, view.location.href, view.location.origin)
     if (target === undefined) {
       return host.fetch(message.url).then(content => ({ content }))
+    }
+    const verdict = bridgeVerdict(target, host.context.characterId)
+    if (!verdict.allowed) {
+      /*
+       * Rejected, which the caller already turns into the `fetch:error` the
+       * frame has always understood — not a new message type and not a new
+       * error kind. The card's `fetch` rejects the way a refused request
+       * rejects, and the sentence names this layer rather than the frame's.
+       *
+       * Reported once per shape through the note channel a frame's own reports
+       * use, so a card sweeping a list leaves one line rather than a screenful.
+       */
+      const note = describeBridgeRefusal(verdict.shape, 'shell')
+      if (!refusedShapes.has(verdict.shape)) {
+        refusedShapes.add(verdict.shape)
+        host.onNote?.(note)
+      }
+      return Promise.reject(new Error(note))
     }
     return view.fetch(target).then(async response => {
       const contentType = response.headers.get('content-type')

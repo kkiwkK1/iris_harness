@@ -10,7 +10,7 @@
     "./src/*": "./src/*"
   },
   "dependencies": {
-    "ejs": "3.1.9",
+    "ejs": "3.1.10",
     "lodash": "4.18.1"
   },
   "devDependencies": {

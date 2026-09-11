@@ -5678,3 +5678,1546 @@ that starts repairing `charLore` on delete, which would make the dangling row an
 interoperability difference rather than a copied behaviour; a panel wanting to
 delete a book the reader can see is bound, which needs the two unscanned
 sources and therefore a different cost decision.
+
+## 67. Every generation is clocked, and the stopwatch is stored in SillyTavern's own four fields
+
+**Kind:** compatibility (the storage) around a measurement upstream already
+takes (the timing), with one departure in the numerator and one in what is
+*not* stored. Dated 2026-09-11.
+
+**The request**, verbatim: 「加一个功能在每轮对话的用量中就是 token 输出速度」 —
+put the token output speed into each turn's usage reading. The reading existed
+(`MessageView.usage`, §47 on the web side) and nothing in the host recorded how
+long a generation took, so there was no denominator anywhere.
+
+**What upstream does.** SillyTavern has shown this for years, as the message
+timer: `formatGenerationTimer(gen_started, gen_finished, tokenCount, reasoningDuration, timeToFirstToken)`
+(`public/script.js:2681`) renders a `{seconds}s` badge whose hover title carries
+`Generation queued`, `Reply received`, `Time to generate`, `Time to first
+token`, `Time to think` and **`Token rate: {n} t/s`**. It is called at `:2586`
+off five fields of the stored message:
+
+| field | where upstream writes it | shape |
+| --- | --- | --- |
+| `gen_started` | `chat[id].gen_started = this.timeStarted` (`:3625`) | a `Date`, so ISO 8601 with milliseconds in the file |
+| `gen_finished` | `chat[id].gen_finished = currentTime` (`:3626`) | same |
+| `extra.time_to_first_token` | `:3630`, from `now - this.createdAt` (`:3820`) | milliseconds, or `null` (initialised `null` at `:3512`) |
+| `extra.reasoning_duration` | `reasoning.js:416`, `ReasoningHandler.getDuration()` | milliseconds, or `null` when nothing was reasoned (`:381`) |
+| `extra.token_count` | `:3638`, `getTokenCountAsync(reasoning + mes, 0)` | upstream's **own tokenizer estimate** of the reply text |
+
+Two details of upstream's own semantics were read rather than assumed, because
+both decide what a number means: the reasoning clock **starts with the
+generation**, not with the first reasoning token (`ReasoningHandler`'s
+`startTime = this.initialTime`, `reasoning.js:304`/`:347`/`:445`), and its end
+is the first content delta while the state is still `Thinking` (`:448`). And
+the rate is over the **whole** window, `gen_finished - gen_started` (`:2688`),
+so a provider's queue is inside it.
+
+**Measured on the corpus** (`E:/sillyTavern/SillyTavern/data`, 13,186 message
+lines): 6,480 lines carry both ends of the window, 12,960 timestamps in all and
+**every one** of them canonical `YYYY-MM-DDTHH:mm:ss.sssZ` — so an epoch parsed
+out of one and re-serialised is byte-identical and a chat that round-trips
+through Iris does not change a character. `extra.time_to_first_token` is present
+on 6,461 lines, always a number; `extra.reasoning_duration` on 6,481, of which
+**1,260 are `null`** — which is why `null` is read as absent here and never as
+zero, and why a record with no reasoning writes nothing rather than a `0`.
+
+**What Iris does.** `TurnGeneration` (`@iris/protocol`) is `{ startedAt,
+durationMs, firstTokenMs?, reasoningMs? }`, all three durations from the one
+origin `startedAt`, and it rides on `MessageView.generation` **beside**
+`usage`, never inside it: `sumUsage` folds a `TurnUsage`'s fields into a
+conversation total, and a summed duration is not a duration while a summed
+moment is not a moment. The measurement is `service.ts`'s `#stream`, the one
+funnel all four generation entries pass through:
+
+- `startedAt` is the existing `sentAt`, reused rather than re-read, so the
+  cost's `at` and the timer's `gen_started` are one reading of one moment;
+- `firstTokenMs` is the first chunk carrying **output** — a `text-delta` or a
+  `reasoning-delta`, whichever came first, and pointedly not a `block-start`,
+  which on a reasoning model would read as an instant answer;
+- `reasoningMs` is upstream's boundary transcribed: every `reasoning-delta`
+  moves the end forward until the first `text-delta` closes it, and a stream
+  that was still reasoning when it ended keeps the last delta's moment;
+- `durationMs` runs to the **last chunk's** arrival, taken in the loop rather
+  than in the `finally`, because the `finally` runs after the consumer has
+  finished with the final chunk and would fold the assembler's and the
+  broadcast's work into the model's time.
+
+The record is parked on `pending` and filed at settle exactly as the cost is —
+`ChatEntry.noteTiming` beside `noteUsage`, `recordTiming` beside `recordUsage`,
+called from `#settle` — onto the **newest** candidate of the turn, which is by
+construction the one just waited for. `noteTiming` is one call with the whole
+record rather than one per moment, so "a record with a start and no end" is not
+a state that can reach storage.
+
+**Two records, independently absent, and that is why they are two.**
+`recordUsage` writes nothing when the provider reported nothing, which is most
+OpenAI-compatible endpoints; the *time* is the host's own measurement and exists
+either way. Folding timing into the `iris/usage` event would have made "how fast
+was that" answerable only where a bill was. So the log carries a separate
+`iris/generation-timing` event, keyed by `candidateSeq` like the other two
+per-candidate records.
+
+**Storage: upstream's four fields, and a different shape from `iris_usage`.**
+`usage.ts` had to invent a top-level array parallel to `swipes` because upstream
+has no place for a provider's bill. Here upstream has exactly the place, so:
+
+- `gen_started` / `gen_finished` / `extra.time_to_first_token` /
+  `extra.reasoning_duration` are written on the line, describing **the swipe the
+  line is showing** — which is what they mean upstream, whose per-swipe archive
+  is `swipe_info[i].{gen_started, gen_finished, extra}` (`:3648`), a structure
+  this host does not model;
+- so `#selectedTimings` writes the *selected* candidate's timing, not the
+  newest, and `hydrateTiming` reads it back onto `swipe_id`;
+- only the fields a record has are written. A timing with no `reasoningMs`
+  leaves the line's existing `reasoning_duration` alone — including upstream's
+  own `null` — because overwriting another product's record of its own work with
+  a number Iris did not measure, or dropping it from the round trip, are both
+  worse than saying nothing.
+
+`hydrateTiming` therefore reads **imported SillyTavern chats too**, and that is
+the sharpest contrast with the cost: a cost may never be back-filled for an
+imported floor because upstream never recorded one, while the *time* is
+something upstream recorded in these very fields, on half its corpus.
+
+**The two departures.**
+
+1. **The numerator is the provider's count, not an estimate.** Upstream divides
+   its own tokenizer's guess at the reply text (`extra.token_count`) into the
+   seconds; Iris divides the provider's reported `outputTokens`. Same
+   definition, better numerator — §47 rules that departure for every usage
+   figure, and the web ledger's §92 states it for this row. `extra.token_count`
+   is still never read and never written here, and the tests pin that it
+   survives untouched.
+2. **Only the selected reading's timing is stored.** The log holds every
+   candidate's while the chat is open (`#snapshotTimings` carries them across a
+   rebuild, so a `trimSentences` trim does not drop them), and a reload finds a
+   timer only for the swipe the file was showing. The alternatives were a second
+   parallel array of Iris's own — which would not appear in SillyTavern, the
+   whole reason for using these fields — or modelling `swipe_info`.
+
+**What is not measured, deliberately.** Side generations: a card's
+`TavernHelper.generate` and the host's own compaction summary run through the
+same `#stream` and are timed the same way, but they have no candidate and land
+on the chat header (`side-usage.ts`), where upstream has no timer field and Iris
+has no surface, so no record is written. A duration stored there would be a
+number nothing reads. Likewise there is **no live rate** while a reply streams:
+a duration that grows makes a rate that starts absurd and settles down, and
+`PendingTurn.timing` is deliberately not projected onto the streaming row. Both
+are follow-ups rather than gaps.
+
+**An aborted turn records what it has.** `#fail`'s partial path settles a kept
+reply through `#settle`, so `recordTiming` picks up a window that closes at the
+last thing the provider said — not when the user got round to pressing stop,
+which is also where upstream's own `gen_finished` stops moving. A generation
+that failed with no candidate records nothing, the rule the cost lives under.
+
+**Held by** `tests/generation-timing.test.ts`, eight tests on a frozen `Date.now`
+and a stream whose chunks arrive at declared offsets, so the assertions are exact
+values rather than bands — a band is exactly what a wrong origin passes. Every
+new assertion was shown red under a named mutation: the first-token moment taken
+from any chunk rather than an output-carrying one, the window closed in the
+`finally` rather than at the last chunk, the reasoning end left at the last
+reasoning delta, the record filed against `selectedCandidate` rather than the
+newest, the export writing the newest rather than the selected, the `null`
+reasoning duration read as `0`, and the record folded onto the usage event.
+
+**What would overturn it.** A ruling that Iris should model `swipe_info`, which
+would let every reading keep its timer and would make the second departure
+unnecessary. A provider population where the wall clock is dominated by
+something the person does not wait for (a proxy that buffers the whole reply
+before forwarding it), which would make the whole-window rate a number about the
+proxy — the decode rate beside it is already the answer to that, and it would
+then have to become the primary. Or a card that wants to read a turn's timing,
+which needs a Tavern Helper member and a decision about which of the two rates
+it answers with.
+
+---
+
+## 68. Every file this package writes is replaced atomically, and a store's file that will not parse is set aside rather than overwritten
+
+**Kind:** compatibility recovered — this is upstream's behaviour, which Iris had
+never had — plus two rules of Iris's own on top of it (quarantine, and naming a
+damaged chat). Dated 2026-09-11.
+
+**What upstream does.** SillyTavern writes nothing with a plain `writeFile`.
+Every file it owns goes through the `write-file-atomic` package
+(`package.json:94`, `"write-file-atomic": "^5.0.1"`), imported in 22 modules and
+called at 40 sites, which write to a sibling temporary and rename over the
+target. The three that matter here:
+
+| what | where | note |
+| --- | --- | --- |
+| a chat, on every turn | `src/endpoints/chats.js:466` → `tryWriteFileSync` (`src/util.js:1491`) → `writeFileAtomicSync` | the per-turn save, the exact write this section is about |
+| the settings file | `src/endpoints/settings.js:209` | `POST /api/settings/save` |
+| a character card, in place | `src/endpoints/characters.js:259` | the same in-place rewrite `library.ts` does for a rename or a tag edit |
+
+Upstream also does something Iris deliberately does not: `trySaveChat` follows
+the write with a **throttled backup** of the same bytes
+(`src/endpoints/chats.js:467`, `getBackupFunction(handle)(…)`, a `_.throttle`
+around `backupChat` at `:41`), and it backs up the settings file before a save
+(`backupSettings`, `src/endpoints/settings.js:118`, called at `:380`). See *What
+was deliberately not done* below.
+
+On a file that will not parse, upstream is closer to what Iris did than to what
+Iris now does: `getFiles`/`readPresetsFromDirectory` catch and `// skip`
+(`src/endpoints/settings.js:66`, `:109`), the second with a `console.warn`.
+Nothing is renamed aside. The quarantine rule below is therefore Iris's, not a
+recovered behaviour.
+
+**What Iris did.** Every store wrote its whole file with `writeFile`, which
+truncates the target and then streams the new bytes into it. Between those two
+acts the file exists and is short. The sharpest instance is the chat log: it is
+rewritten in full on every turn, the largest conversation in the local corpus is
+677 floors and 19 MiB, and there is no other copy — `backups` are taken before
+*dangerous* operations (a sweep, an import overwrite), not before an ordinary
+save. A crash, a power cut, a full disk or a kill inside that window left a
+truncated file, and then `chats.ts`'s `open` parsed **outside** its `try`, so the
+raw `SyntaxError` went out on the wire, while `list` skipped the file without a
+word. From the reader's side the conversation had disappeared.
+
+The pattern was already in the package, hand-rolled, in exactly two places:
+`worldbooks.ts` (`replace` and `create`) and `cache-trace.ts`, whose module
+comment named `worldbooks.ts` as the pattern's home. So there were three
+behaviours — atomic here, atomic there, plain everywhere else — and the two
+atomic ones used `<path>.<pid>.tmp`, which two hosts sharing one profile
+directory can collide on.
+
+**What changed.** One module, `packages/iris-app-service/src/atomic.ts`:
+
+- `atomicWriteFile(path, data)` — write to `<name>.<pid>.<16 hex>.tmp` in the
+  **same directory** (`rename` is atomic only within a filesystem, and a data
+  directory on a second volume is the ordinary case on a Windows machine), then
+  rename over the target; unlink the temporary and rethrow on any failure. Two
+  overloads rather than one optional encoding, so a `Uint8Array` call site
+  cannot be handed `'utf8'`. No `fsync`, deliberately — see *not done*.
+- `quarantineCorruptFile(path, at)` / `quarantineUnparsable(path, reason, …)` —
+  rename to `<path>.corrupt-<YYYY-MM-DDTHH-mm-ss-sssZ>`, colons and the
+  milliseconds dot replaced because a Windows filename cannot hold the first and
+  a directory scan would read the second as an extension boundary.
+- `readJsonStore(path, onProblem, at)` — the three outcomes every store used to
+  collapse into one `catch`: **absent** (a first run, silent), **unreadable**
+  (present, reported, nothing moved — the bytes may be fine and only the read
+  failed), **corrupt** (quarantined and reported). Shape validation stays with
+  each store, because a file that parses but carries an older shape is a
+  different question each store already answers for itself.
+
+**The sites.** 28 writes in 19 modules, every one of them: `chats.ts` ×3 (save,
+importFile, restoreFile), `library.ts` ×4 (import, duplicate, and both arms of
+`#mutateCard` — the only write path to a user's own card file), `context.ts` ×4
+(now behind one `#save`, which is also how one of the four came to carry a
+literal newline where the others carry `\n`), `backups.ts`, `cache-trace.ts`,
+`worldbooks.ts` ×2, `script-cache.ts` ×2, `presets.ts`, `settings.ts`,
+`connections.ts`, `scripts.ts`, `script-library.ts`, `script-variables.ts`,
+`script-buttons.ts`, `card-storage.ts`, `favorites.ts`, `chat-order.ts`,
+`persona.ts`, `materialise.ts`. Three of those — `chat-order.ts`,
+`script-cache.ts` ×2 — were not in the audit that prompted this and were found
+by grepping for the call rather than by reading the list.
+
+`backups.ts` has a reason of its own beyond the general one: a half-written
+snapshot still matches `NAME_RE`, so `#rotate` counts it as a copy and can evict
+a good one at the retention edge — the crash would have *cost* a snapshot rather
+than merely failed to take one.
+
+**The quarantine rule.** Twelve JSON stores now rename their file aside before
+falling back to defaults, and report it: `SettingsStore`, `ConnectionStore`,
+`ScriptPolicyStore`, `ScriptLibraryStore`, `PersonaStore`, `FavoriteStore`,
+`ChatOrderStore`, `CardStorageStore`, `ScriptVariableStore`, `ScriptButtonStore`,
+`ExtensionSettingsStore`, `WorldbookBindingStore`. The recovery is unchanged —
+start from defaults, because a store that refused to start would take down the
+UI that fixes it — and what changed is that the bytes are no longer sitting
+where the next `save()` lands. `ConnectionStore` is the reason the rule is worth
+its cost: it sets `#loaded = true` before the read, so a parse failure was never
+retried, and the next `connection.save` wrote an empty list over every profile
+the user had, API keys included.
+
+Each store takes an `onProblem?: (message: string) => void` as its last
+constructor parameter — a new option, not a new channel: `index.ts` wires all
+twelve to one `reportStoreProblem` closure that is `IrisAppService`'s own
+`#report(message, { kind: 'host', grade: 'fault' })` written out, recording into
+the same `DiagnosticBuffer` the service is handed and warning through the same
+logger. So a quarantine appears on `debug.reports` exactly as a fault raised
+inside a generation does. It is **not** `irreversible`, because the bytes were
+kept; that flag is what pushes a report to every open page, and this one waits
+to be asked for. `DiagnosticBuffer` moved to the top of the composition for
+this, since most of these files are read lazily, long after boot.
+
+**The naming rule for chats.** `ChatStore.list(onReport?)` and `#summarize`
+report each file they cannot summarise, by path, once per listing; the service
+passes a callback into its `#chatList`. The shape of `chat.list` does not
+change — the row is still absent, because a summary that cannot be read cannot
+be rendered. `open` now parses inside a guard and throws
+`invalid('chat "<id>" could not be read (<path>): <reason>')`. It is an
+`invalid-request` and not a `not-found` on purpose: the file is *there*, and
+answering "no chat" tells the shell to forget something that still holds the
+reader's conversation.
+
+**A correction to the premise this work started from.** The audit read the two
+symptoms — "`open` throws a raw `SyntaxError`" and "`list` silently skips the
+file" — as two faces of one damaged file. They are not. `#summarize` parses only
+the **first line**, so a chat truncated anywhere after its header keeps its
+sidebar row and fails only on open; only a chat whose *header* is damaged drops
+out of the list. `tests/chat-integrity.test.ts` is split along that seam, and a
+single test asserting both of a tail-truncated file would have been asserting
+something untrue.
+
+**A measurement that changed the implementation.** Racing two `atomicWriteFile`
+calls at one path on this machine (Windows 10, Node on NTFS) made the losing
+`rename` fail with `EPERM`: while a handle is open on the target — the winner's
+pending delete, a `chat.search` scan, a backup being taken, an antivirus opening
+the new file — the target is briefly un-replaceable. A plain `writeFile` would
+have succeeded there (by producing a blended file, which is the thing this
+module exists to prevent, but it would not have *thrown*). So the rename retries
+`EPERM`/`EBUSY`/`EACCES` ten times with a doubling backoff, roughly half a
+second, which is what `graceful-fs` — the package upstream's `write-file-atomic`
+pulls in — does for the same set for the same reason. The first test for it held
+a read handle open on the target and released it after 80 ms, with a note that a
+POSIX host would pass it without exercising the retry. *Corrected the same day:*
+that note was the defect. On the Linux CI runner POSIX `rename` over an open file
+succeeds at once, so the assertion "the write finished before the handle was
+released" was false there and the run was red — a test whose teeth depend on the
+host it runs on is a claim about the machine, not the code. `atomicWriteFile`
+now takes the two platform calls (`rename`, the backoff sleep) as an optional
+`AtomicWriteOptions` seam that production never passes, and `tests/atomic.test.ts`
+drives the retry with a stand-in that refuses `EPERM` three times (four attempts,
+waits 1 / 2 / 4 ms, then the real rename), a non-retryable `ENOENT` (one attempt,
+no wait, previous bytes standing), and an `EBUSY` that never clears (ten attempts,
+nine waits, previous bytes standing, no temporary left) — the same sequence on
+every platform. The Windows measurement stays recorded above the code set in
+`atomic.ts` as the reason the retry exists.
+
+**What was deliberately not done.**
+
+1. **No snapshot before every save.** Upstream takes one (throttled) on every
+   chat save. At 19 MiB per turn for the corpus's largest conversation that is a
+   second full write per turn plus retention churn, and the failure it protects
+   against — a torn write — is the one atomicity already closes. A snapshot
+   protects against a *bad* write, which is a different problem and one the
+   existing pre-dangerous-operation snapshots already cover. Overturned by a
+   report of data lost to a well-formed but wrong save.
+2. **No `fsync`.** The rename is atomic with respect to readers, not with
+   respect to the platter. Issuing one per turn on a 19 MiB file is the cost
+   that would make people turn saving off, and the window it closes — the whole
+   machine losing power inside the rename — leaves the *old* file rather than a
+   truncated one, which is the outcome this section is about anyway.
+3. **The regex-tier defaults are unchanged, and the asymmetry is deliberate.**
+   `ScriptPolicyStore.scopedRegex` answers `record?.regexAllowed !== false` — a
+   card's own regex tier is **allowed** when nothing is recorded — while
+   `presetRegex` answers `=== true`, default-deny (commit a47b669). So a corrupt
+   policy file re-enables every card's regex tier while losing every preset
+   grant. That asymmetry is a standing ruling and is not touched here; the fix
+   for the *silence* is the quarantine, which makes the fallback visible. The
+   comment in `#load` that claimed "the default is deny, so a corrupt file loses
+   grants rather than inventing them" was true of two of the three defaults and
+   false of the third, and now says so.
+4. **A store that is merely unreadable is not quarantined.** `EACCES` on a file
+   whose bytes are perfectly good would move a good file aside for no reason. It
+   is reported instead — which `ScriptVariableStore` already did alone, and the
+   rest of the package now does too.
+
+**Held by.** `tests/atomic.test.ts` (14), `tests/store-quarantine.test.ts` (15,
+twelve of them one parametrised case per store with the covered count asserted
+as a floor), `tests/chat-integrity.test.ts` (3), and the corrected
+`tests/script-variables.test.ts` case — whose old assertion ended "saving will
+overwrite the file", a sentence that is now false and is the reason the test
+changed rather than the reason it was wrong. Eighteen mutations, each reddening
+a named assertion, are recorded in the commit message.
+
+**What would overturn any of this.** A measured cost of the retry loop on a
+loaded host (it holds the save open for up to half a second before failing). A
+platform where `rename` over an existing path is not a replace, which would make
+the whole design unsound rather than needing an adjustment. Or a report that a
+quarantined file is more confusing to a user than a lost one — in which case the
+answer is a surface that lists and offers to restore them, not a return to
+overwriting.
+
+---
+
+## 69. One executor for every URL a card proposes: `script.fetch` stopped checking the first hop and calling `fetch`
+
+**Kind:** a security fix inside a deliberate departure. The allowlist itself is
+Iris's own — upstream has nothing like it — and this entry is about the host
+having written it out **twice**, once carefully and once not. Dated 2026-09-11.
+
+### What upstream does: nothing, because it does not have to
+
+SillyTavern runs a card's code **on its own page**, and so with the page's own
+network identity. The two installed mechanisms on this machine:
+
+- **ST-Prompt-Template's script sandbox** creates its frame with
+  `sandbox='allow-same-origin allow-scripts'`
+  (`public/scripts/extensions/third-party/ST-Prompt-Template/src/3rdparty/vm-browserify.ts:15-18`),
+  so the code runs same-origin with SillyTavern.
+- **Its interface frames** are created with no `sandbox` attribute at all —
+  `renderInFrame` sets width, height, border and scrolling and nothing else
+  (`.../src/utils/iframe.ts:9-15`) — so a rendered interface is an ordinary
+  same-origin document.
+
+A card's `fetch('https://…')` and `import('https://…')` are therefore ordinary
+browser requests made by the page: the *browser* decides, by CORS and by
+whatever CSP the page carries (SillyTavern carries none for this), and no host
+process ever sees the URL. There is no allowlist in ST core or in either
+extension — `jsdelivr`, `allowlist` and `allowedHosts` do not appear in
+`public/script.js` or `public/scripts/extensions.js`. Tavern Helper
+(JS-Slash-Runner) is not installed in this corpus and so is not cited.
+
+Iris cannot copy that. Its frames are **opaque-origin** (`docs/SANDBOX.md`), so
+a card's remote fetch has no page to borrow and the host has to make it — which
+is the moment an allowlist becomes both possible and necessary, and the moment
+the host becomes the thing that can be made to fetch a URL it was not shown.
+
+### The two executions that existed
+
+Both called `checkScriptFetch` (`packages/iris-script/src/remote.ts`: https
+only, `*.jsdelivr.net` by suffix, `raw.githubusercontent.com` exact). They are
+not the same rule:
+
+| | `ScriptCache` (`script-cache.ts`, the bundle route) | `script.fetch` (the RPC handler, `service.ts`) |
+| --- | --- | --- |
+| first hop | checked | checked |
+| **each redirect** | **checked**, `redirect: 'manual'`, followed by hand | **not checked** — `fetch(url)` follows them and `response.url` was never read |
+| hops | 5 | whatever the runtime does (20 in undici) |
+| **body size** | 8 MiB, compared after `arrayBuffer()` | **none at all** — `await response.text()` |
+| credentials | `omit`, inside the default adapter | whatever `fetch(url)` defaults to |
+
+So an allow-listed host answering `302 Location: https://evil.example/x.js` had
+its allowance transferred: the foreign body came back to the card as `content`,
+and a card turns text into a `blob:` URL and runs it — the frame's `script-src`
+already permits `blob:`. An allow-listed host serving a large file was a
+host-memory question with no limit in front of it.
+
+**The lesson is the count, not either implementation.** An allowlist is worth
+its weakest evaluator, and nothing made the weak one visible: both call sites
+read correctly on their own screen, both name the same function, and the
+difference is in what happens *after* the call. The fix is therefore not a
+better second copy.
+
+### The one that remains
+
+`packages/iris-app-service/src/remote-fetch.ts` — `fetchAllowedRemote(url,
+{fetch, maxBytes, maxHops, onError})`. Per-hop `checkScriptFetch`, redirects
+followed by this code under `redirect: 'manual'`, `MAX_HOPS` 5,
+`DEFAULT_MAX_BYTES` 8 MiB read **incrementally against a stream** — which is
+also a change for the cache, whose cap used to be checked after `arrayBuffer()`
+had already bought every byte it was meant to refuse — and `credentials: 'omit'`
+carried **in the init the transport receives** rather than set inside the
+default adapter, so it is visible at the injection point and a test can assert
+it. `ScriptCache` is one call over it plus the disk store; `script.fetch` is one
+call over it and nothing else. `AppServiceOptions.fetchRemote` changed from a
+fetcher (`(url) => {ok, status, text, headers}` defaulting to `fetch(url)`) to
+the same `FetchLike` transport the cache takes — one seam, and a transport that
+cannot follow a redirect on its own.
+
+**Refusals are named, and carry no body.** A redirect off the list answers
+`… redirected to a host that is not allowed: hop 1 would have gone to
+evil.example, and evil.example is not an allowed script source (allowed: …)`;
+the hop limit says how many and where it stopped; the cap says the limit and
+after how many bytes reading stopped. The codes split on **whose** refusal it
+is: `unsupported` is this host declining (off the list, too many hops, too big)
+and `provider-error` is the far side failing (unreachable, non-200) — the
+vocabulary this handler already used, with the two new limits landing on the
+side that was already "the host will not".
+
+### The measured basis
+
+Both corpora (`E:/sillyTavern/SillyTavern/data/default-user` plus Iris's own
+data directory, empty in a worktree), read through the product's own readers and
+the population `scripts/card-surface-census.mjs` walks — card script bodies, card
+regex source, interfaces a real chat rendered, preset regexes, world book
+entries — deduplicated by content hash: **1,694 sources** (39 script, 1,655
+interface), 169 duplicate bodies dropped.
+
+- **Remote `fetch()` call sites reaching an allow-listed host: 0.** There are 12
+  bare `fetch(` call sites in 5 sources. Three are same-origin paths
+  (`./testWorldBooks.json`), and the other nine are the two cards with a built-in
+  LLM client (银麒赎世 · 手机UI, 魔法少女的扣扣审判1.0 · 外置状态栏) fetching a
+  user-typed API base — `api.openai.com`, `https://你的API地址/v1/chat/completions`
+  — which the allowlist refuses before any request. **No corpus card fetches an
+  allow-listed URL through this handler at all.**
+- 28 distinct allow-listed URL literals appear across 14 sources (9 in scripts,
+  20 in interface text): 9 `.js`, 4 `.css`, 15 `.html`. The `.js` are
+  `import()`/`from` specifiers and the `.css` are `<link>`/`@font-face` — both go
+  to the **bundle route**, not here. The 15 `.html` are
+  `$('body').load('https://…/index.html')` in four cards' interface text, which
+  is jQuery's XHR and hits `connect-src 'none'` with no bridge at all (recorded
+  below, not changed).
+- Largest body on record through either path: MagVarUpdate's bundle, 307,765 B
+  (`script-cache.ts`'s own measurement). The cap stays **8 MiB** for both
+  callers: nothing measured argues for a smaller number on the handler's side,
+  and two limits would be the two executions again in a smaller form.
+
+**Caching: `script.fetch` stores nothing.** Ruling 4 asked how many of its
+targets repeat across cards; the honest answer is that it has no targets, so
+there is not one repeat to share. Beyond the count, the disk cache is the bundle
+route's: keyed by URL alone, a seven-day TTL, a thirty-second failure memory and
+a serve path that rewrites nested specifiers and answers
+`application/javascript`. A card fetching data through this handler would get a
+week-old copy of it, and a body typed by the other route's assumptions. Pinned —
+two calls, two requests.
+
+### The premise that was not true, and is recorded so the next reader does not re-derive it
+
+The finding described the card path as `runner.ts:494 → store.ts:2585 → this
+handler`, "how cards load dependencies". Measured on this tree: **cards load
+dependencies through the bundle route**, and the frame's `fetch` bridge posts a
+`fetch` message **only for same-origin targets** — `rideFor` returns `undefined`
+when `sameOriginTarget` does (`frame.ts:1826-1849`), so the remote branch of
+`runner.ts`'s `ride()` is unreachable from a card as the app is wired today.
+
+That does not make the defect theoretical and it does not change the fix. The
+handler is a registered RPC method (`index.ts:942`), reachable by anything that
+can reach the endpoint; `runner.ts:500-504` promises in writing that
+`host.fetch` "stays the enforcement for everything else, allowlisted remote
+dependencies included"; and the moment `networkGranted` becomes true for a
+frame — a ruled, pending piece of work (`MessageInterfaces.tsx:283`) — that
+promise starts being kept by whatever this handler does. An enforcement point
+that is currently unvisited is the cheapest possible time to fix it.
+
+### Found and deliberately not changed
+
+- **The bundle route decides "stylesheet" from the URL's `.css` suffix**
+  (`script-cache.ts`, `isStylesheetUrl`), so an allow-listed URL ending in
+  `.css` is served `text/css` whatever bytes came back, and a stylesheet served
+  from an extension-less URL is served as JavaScript and does not apply. It is
+  the route's own recorded trade (the far side's content-type is deliberately
+  not echoed, so that upstream cannot choose what the browser does with the
+  bytes) and widening it is not this change. Left as it stands.
+- **`$('body').load('https://…/index.html')`, 15 URLs in four cards**, is
+  jQuery's XHR. The frame shims `fetch` and not `XMLHttpRequest`, so these reach
+  `connect-src 'none'` and fail with no bridge and no allowlist involved. A
+  separate question, and one this change deliberately does not answer by
+  widening anything.
+- No host was added, `http:` is still refused rather than upgraded, and the
+  frame CSP is untouched.
+
+### Pinned
+
+`tests/script-fetch.test.ts` (13 tests) and the migrated `script-cache.test.ts`
+(now injecting the shared `support/fake-remote.ts`, which records what was
+asked, the init it was passed, and **how many bytes of each body were actually
+pulled**). The first test is the **control**: the pre-change handler written out
+as the four lines it was, over a redirect-following transport, asserted to hand
+back `evil.example`'s payload — without it, "the redirect is refused" would pass
+just as well on a host that could not follow a redirect at all.
+
+Every new assertion was shown red under a named mutation: follow every redirect
+without re-checking; drop the hop number from the refusal; drop the refused
+host; tell the transport `redirect: 'follow'`; tell it `credentials: 'include'`;
+remove the cap; enforce the cap *after* buying the whole body (this one leaves
+the refusal correct and reddens only the assertion that the read stopped);
+ignore the hop limit; report every refusal as `provider-error`; invent a
+content type; decode the body chunk by chunk (reddens the multi-byte
+round-trip); map the cache's allowlist refusal to 502; skip the first-hop check;
+memoise the handler's answers; return a refusal without reporting it; drop
+"where it stopped" from the hop-limit message; never follow a redirect; and read
+the redirect response's own body before judging the hop.
+
+### What would overturn it
+
+A card population that fetches allow-listed URLs through `script.fetch` — the
+`$('body').load` family becoming bridged would be exactly that — which would put
+real traffic behind the caching decision and could reverse it, and would give
+the 8 MiB cap a measured distribution instead of an inherited number. A decision
+to bridge `XMLHttpRequest` as well as `fetch`, which would route that family
+here and should route it through this same executor rather than a third. Or a
+transport requirement this shape cannot express — a POST, a request body,
+streaming a response to the card as it arrives — which would need the executor
+to grow a shape, and must not be met by letting a caller fetch around it.
+
+---
+
+---
+
+## 70. Every route this service registers answers only a `Host` this process is addressed by
+
+**Kind.** Deliberate improvement, route-side; the rule and its reasons are
+`notes/packages/iris-rpc-host/DEVIATIONS.md` §1, which is where an argument
+about it belongs.
+
+Dated 2026-09-11.
+
+**What changed.** The four routes this service puts on the carrier —
+`GET /iris/avatar/*`, `GET /version`, `GET /iris/script-bundle/*` and
+`GET /sandbox/*` — are each wrapped at their registration with
+`ctx.irisRpc.guard(...)`, the transport's `Host` allow-list. Nothing inside the
+handlers changed.
+
+**Why here and not only on the RPC endpoint.** A page served from
+`http://127.0.0.1.nip.io:8787` — public wildcard DNS resolving to loopback —
+becomes same-origin with this host, and these four routes are then as readable
+to it as `/iris/rpc` is: avatars are the user's character library, the bundle
+and the sandbox assets are the card code running in their sandbox, `/version`
+names the build. A guard that lived only in the transport would have left the
+library readable while the ledger said the host was defended.
+
+**Wrapped at the registration, not inside the handler.** A handler that forgot
+the line would look exactly like one that had it, and no test inside this
+package could see the omission — the same reason the sandbox CORS pair is
+asserted at the composition root. There are four registration sites and they
+are all in one screen of `src/index.ts`.
+
+**What it does not touch.** `Origin` is not what is being checked, so the
+sandbox route's `Access-Control-Allow-Origin: *` — which the card frames need,
+because an opaque origin is cross-origin to everything — is unchanged, and
+`apps/iris/tests/sandbox-cors.test.ts` invokes the handler directly and never
+sees the wrapper. A frame's request carries `Origin: null` and the *real*
+`Host`, which is the pair the guard admits.
+
+**Held by** `apps/iris/tests/host-allowlist.test.ts`: a booted composition on an
+ephemeral port asks all four routes for a refusal under
+`127.0.0.1.nip.io:<port>` and for an answer under `127.0.0.1:<port>`, and
+checks that `/sandbox/preset.js` really is served — 200 with its CORS header —
+so the accepting half is not four 404s agreeing with each other.
+
+## 71. A data directory has one host, and a collided snapshot name sorts by the time it was taken
+
+**Kind.** Deliberate improvement with no upstream counterpart (the lock), and a
+correction of an Iris-only mechanism (the snapshot name). Both come out of the
+system audit's F2 and F7.
+
+Dated 2026-09-11.
+
+### What upstream does
+
+**SillyTavern has no data-directory lock.** Checked read-only against
+`E:/sillyTavern/SillyTavern` on 2026-09-11: nothing in `server.js` or `src/`
+opens a file with `wx`, `O_EXCL` or any lock library. The one `wx` in the tree
+is `src/endpoints/assets.js:237`, a download refusing to overwrite its
+destination — unrelated.
+
+What it has instead is an exclusion by **port**.
+`src/server-startup.js:238-240` turns an `EADDRINUSE` bind failure into
+
+> `Address <host:port> is already in use. Another SillyTavern instance may
+> already be running. Stop the other process or change "port" in config.yaml.`
+
+and exits. That sentence is where the belief "a second instance is already
+handled" comes from, and it is a belief about the wrong resource: two
+SillyTavern processes on two ports with `--dataRoot` pointing at one tree pass
+that check and share every file, undetected. Upstream gets away with it further
+than Iris does only because more of its writes are per-file appends rather than
+whole-file rewrites of in-memory state — but its own settings file
+(`src/endpoints/settings.js:209`) and chat file (`src/endpoints/chats.js:466`)
+are whole-file rewrites too.
+
+### The two incidents this repository recorded
+
+1. **8787 and 8790 on one checkout's `apps/iris/data`.** The 8790 host was
+   serving a stale build against the same profile the 8787 host was writing, and
+   the resulting symptoms were diagnosed as product defects for three rounds
+   before the sharing was noticed (`notes/DEVIATIONS.md`, task Z1: the
+   `errUnsupported` report and the 「指令已发送」 wording both turned out to be
+   the old build's behaviour, and the conclusion was 「8790 宿主需按 PID 重启进
+   主线 HEAD 并重建 dist」). The cost was not corruption that time; it was that
+   three rounds of diagnosis went into a phantom.
+2. **A QA host that died on `EADDRINUSE` and kept driving RPCs.** Its RPCs
+   reached the host that owned the port — the user's dev checkout — and created
+   eleven chats in that profile. The writer believed it was talking to its own
+   host the whole time.
+
+Neither incident is a failure of atomicity, so §68 does not close either. An
+atomic write makes each write whole; it does nothing to make two writers agree.
+Every store in this package holds its file in memory and replaces the file when
+something changes, so the second host's save overwrites the first's **newer**
+file whole, and neither side errors.
+
+### The rule
+
+`apply` now takes `<dataDir>/host.lock` before anything reads or writes, as the
+first statement in the function:
+
+- `open(path, 'wx')` — the one primitive where "create it if and only if nobody
+  else did" is a single operation. It records `{ pid, port, startedAt, hostname }`
+  as JSON, with `port` being `ctx.webServer.port`, the **bound** one: this
+  plugin injects `webServer`, so the carrier has finished listening by then, and
+  the configured port is the number that would send the reader nowhere.
+- `EEXIST` → read it, and probe the recorded pid with `kill(pid, 0)`.
+  **Alive → refuse to start**, with one sentence naming the lock path, the pid,
+  the port it says it holds, and the two ways forward.
+  **`ESRCH` → stale**: unlink, retake, and log a line saying whose lock it was
+  and that the host did not shut down cleanly.
+  **`EPERM` → alive.** A process with that id exists and belongs to another
+  user. A `catch { return false }` gets this exactly backwards, and backwards
+  here means taking over a lock a running host still holds, which is the
+  incident. A pid at or below zero is refused rather than probed, because
+  `kill(0, 0)` addresses the caller's own process group.
+  **Garbage inside → stale, and said so.** Bytes that name no process cannot
+  hold anything, and refusing to start over an unreadable byte string would turn
+  a crash into a directory nobody can open. The takeover line says it did not
+  parse, because that is a fact about the previous shutdown.
+- Released on an orderly shutdown and **never on a crash**. The release is a
+  fiber effect with an `async` disposer whose promise is returned, so
+  `fiber.dispose()` does not resolve before the file is gone — measured, as a
+  failing assertion under the fire-and-forget spelling, and it matters because a
+  supervisor that restarts the host the instant the old one exits would race its
+  own lock. Identity on release is `pid` **and** `startedAt`, so a recycled pid
+  cannot make a shutting-down host delete the lock of the host that started
+  after it.
+
+### No escape hatch, and who pays for that
+
+There is no `--allow-shared-data-dir`, no environment variable, no flag. The
+reason is that an override would be reached for in exactly the situation that
+produced both incidents: someone in a hurry who believes this time it is fine.
+A second host is still a supported thing to run — it takes a second
+`IRIS_DATA_DIR`, which is a copy away.
+
+The cost falls on us, not on users: **the acceptance hosts run on a copied data
+directory from now on.** The repository's own suites pay it too — three test
+files booted the real `apps/iris/cordis.yml` with no `IRIS_DATA_DIR`, which is
+to say against `apps/iris/data`, the directory belonging to whatever host the
+person running the suite has open. `end-to-end.test.ts`, `live-provider.test.ts`
+and `live-generation-kinds.test.ts` now each `mkdtemp` one (and the two live
+files gained the `IRIS_PORT=0` that `end-to-end` already had). That is a real
+finding the lock produced on its first run rather than a cost of it: the suite
+was writing into a live profile before, and nothing said so.
+
+### Port drift, and a measurement that moved it
+
+The ruling was that a configured port differing from the bound port should add a
+line to the banner saying the configured one was taken. **Measured 2026-09-11,
+that case cannot arise**: with a squatter on the configured port, the carrier's
+`listen` rejects, `boot` rejects with `EADDRINUSE` wrapped in a plugin-tree
+message, and `bin.ts` never reaches its banner. The host does not start on
+another port; it does not start at all. The only way configured and bound differ
+today is `port: 0`, which is a request being honoured rather than drift.
+
+So `apps/iris/banner.ts` carries both halves and says which is which.
+`describePortDrift(configured, bound)` is the standing net, exempting `0` and an
+absent `IRIS_PORT` (the composition's `8787` default is not restated in the bin,
+because a constant copied into two files is a constant that drifts), and it is
+dead code until the carrier gains a fall-back-to-ephemeral behaviour.
+`describePortInUse(cause)` is the half that fires today: it turns that boot
+failure into one sentence naming the address — read out of the error, since the
+error already carries the exact `host:port` — and the two ways out, instead of a
+Cordis stack trace naming a package the person never configured. Both are pure
+functions in a module of their own, because `bin.ts` boots on import and there
+is no way to ask it what it would print.
+
+### Snapshot names: the collision suffix is gone, and order is a comparator
+
+`BackupStore` stamps monotonically per store (`Math.max(now, #lastStampMs + 1)`),
+and the guard for what that cannot see — a second store, or a restart inside one
+millisecond — was a `-2`, `-3` suffix. **The suffix sorted the wrong way.**
+`…-f5-save-2.jsonl` sorts *before* `…-f5-save.jsonl` as a plain string, because
+`-` is 0x2D and `.` is 0x2E; `#rotate` is name order and deletes from the front,
+so at the retention edge the newer copy of a collided pair went first —
+precisely the copy the suffix existed to protect. Two processes each have their
+own `#lastStampMs`, so the collision was the F2 scenario wearing a different hat.
+
+**Two changes, both name-based.**
+
+1. `snapshot` mints no suffix. It advances the stamp by a millisecond until the
+   directory holds no file and **no other snapshot at that stamp** — the whole
+   stamp, not the whole name, because two snapshots of one millisecond with
+   different floor counts collide on no file name and would then be ordered by
+   `f10` against `f5`. Lexical order is time order again by construction, with
+   nothing after the stamp needing to be read.
+2. `compareBackupNames` orders by (stamp, collision ?? 1, name) and is used by
+   `rotateBackups` and `#listDir`. This is for the names **already on disk**: a
+   profile that ran an older build may hold a collided pair, and nothing
+   rewrites file names.
+
+`NAME_RE` is unchanged, so every existing shape still parses. Measured
+read-only against the one real `backups` tree on this machine
+(`apps/iris/data/default-user/backups/爱衣/爱衣-20260909-001924/`): three files,
+all unsuffixed, one reason (`delete-message`), floor counts 4 and 5 — no
+collision suffix has ever actually been written here. The fourth file under a
+`backups` directory in that tree,
+`prune-probe/default-user/backups/prune-probe-673-2026-09-03T08-05-31-012Z.jsonl`,
+matches no part of this shape and sits one level too shallow to be scanned at
+all; it is a probe artefact, not a snapshot.
+
+**Why not the two options the ruling offered.** *Counter inside the stamp
+segment before the `-f` field* does not work as stated, measured: `…-411-2-f5-…`
+against `…-411-f5-…` compares `2` (0x32) against `f` (0x66), so the collided
+copy still sorts first. It would only give time order if the counter were
+present on **every** name, which changes the shape of every name the host writes
+and still needs the regex to admit both. *Rotation deciding same-stamp groups by
+mtime* is upstream's mechanism (`removeOldBackups`, `src/util.js:642`, sorts by
+`statSync(f).mtimeMs`) and loses for the reason this module's own header already
+gives: mtime is not the snapshot's time. A copy, a restore from an archive, a
+profile moved between filesystems or a backup-of-backups rewrites it, and
+rotation would then delete by when the bytes were last touched. It also costs a
+`stat` per file to learn something the name already says.
+
+`BackupStoreOptions` gains `now?: () => number`, injectable for one reason: a
+same-millisecond collision is what the naming rule is about, and a test that
+waits for the real clock either waits forever on a fine-grained timer or passes
+without entering the branch on a coarse one.
+
+### Held by
+
+- `packages/iris-app-service/tests/host-lock.test.ts` (10): fresh acquire and
+  what the file records; a live holder refused with the four things the sentence
+  must name; a stale takeover with its log line, over a pid **measured** dead by
+  spawning a child and reusing its id after `exit` (a number picked out of the
+  air would silently turn the stale case into the held case and pass); `EPERM`
+  as alive and `ESRCH` as gone, through an injected probe because `EPERM` cannot
+  be produced on demand; pid 0 refused; garbage treated as stale and reported as
+  unparsable; release, double release, and a release that must not delete
+  someone else's lock; a recycled pid; and a source pin that the refusal
+  advertises no override flag.
+- `apps/iris/tests/host-lock.test.ts` (3): a booted composition on `port: 0`
+  holds the directory and records the **bound** port; a second composition on
+  the same temporary `dataDir` fails to boot with the sentence, on a *different*
+  ephemeral port — which is the case upstream's port check cannot see; a second
+  one on a different `dataDir` starts; and `fiber.dispose()` gives the directory
+  back so the next boot is fresh rather than a takeover.
+- `apps/iris/tests/banner.test.ts` (7): drift announced, `port: 0` exempt, an
+  absent configured port exempt, the honoured case silent; the `EADDRINUSE`
+  wrapper shape measured on this build turned into its sentence; the `cause`
+  chain walked; a cycle in that chain not hanging the bin's error path.
+- `packages/iris-app-service/tests/backups.test.ts` (+5): every name shape the
+  corpus and the fixtures hold still parses; a collided pair sorts and rotates
+  in time order; a stamp still beats a suffix across milliseconds; three stores
+  on one frozen clock write three files and none of them suffixed; and, on the
+  disk, a collided pair an older build left behind rotates oldest-first and
+  lists newest-first.
+
+Twenty-one mutations, each reddening a named assertion: EPERM read as dead; a
+live holder not refused; the refusal dropping the port; a silent takeover;
+release identifying by pid alone; release unlinking unconditionally; garbage
+read as a record; pid 0 probed; `apply` taking no lock; `apply` recording the
+configured port; the release disposer fire-and-forget; `rotateBackups` and
+`#listDir` back to a plain sort; the comparator ignoring the counter; the writer
+minting `-2` again; `list` not reversing; drift on `port: 0`; drift never
+announced; `EADDRINUSE` recognised by code only; the cause chain not walked; the
+address not read out of the message.
+
+### What would overturn this
+
+- **The lock.** A measurement that two hosts on one data directory are safe —
+  which would mean every store here had stopped being a whole-file rewrite from
+  memory. Or a supported deployment where one directory is meant to be served by
+  several processes (a read-only mirror, a fleet), which would need a real
+  protocol and not a flag. A lock file on a network share whose `wx` is not
+  atomic would weaken the guarantee without changing the argument for it.
+- **The no-escape-hatch decision.** Evidence that people are being blocked from
+  something legitimate and are deleting `host.lock` by hand to get past it. The
+  hand-deletion is the signal to watch for; it is documented in the README's
+  troubleshooting entry precisely so that doing it leaves a trace in someone's
+  memory.
+- **The snapshot ordering.** A reader other than this package that sorts these
+  names — anything that walks `backups/` with `ls`, a sync tool, a person —
+  would be an argument for making the *names* carry the counter after all, at
+  the cost of a shape migration. Nothing does today.
+
+---
+
+## 72. A reply that cannot be stored ends its turn out loud, and a provider's words reach the page and the disk with the credentials taken out
+
+**Kind.** Two findings from the 2026-09-11 system audit, both low severity and
+neither of them a compatibility question: upstream cannot reach the first state
+and has never echoed a body into a stored record the way the second does.
+
+Dated 2026-09-11.
+
+### F13. The one terminal path that said nothing
+
+**What was there.** `#settle` runs the reply trim, the variable records, the
+usage and timing records, the rewrite, the prune and the save inside one `try`,
+and its `catch` did two things: `entry.finish()` and
+`#report(cause, { kind: 'host', grade: 'fault' })`. Every *other* terminal path
+in the file broadcasts — `#fail`'s impersonation branch, its interrupted branch
+and its provider-error branch all end with a `stream.error` — so a save that
+failed was the one way a turn could stop without the page being told. On a full
+disk or a permission error the reply existed, in memory, on the entry's own log;
+the report panel knew; and the page stayed in the generating state, with the
+streaming buffer it had accumulated still on screen, until somebody reloaded it.
+The report panel is not a substitute: it is a panel somebody has to open, and
+what it says is that a write failed, not that the conversation on screen is not
+the conversation on disk.
+
+**What upstream does.** It cannot be in this state. Its save is a request the
+*browser* makes after the generation has already ended, so the generation's own
+end is never in doubt; `saveChat`'s catch toasts `Chat could not be saved` /
+`Check the server connection and reload the page to prevent data loss.`
+(`public/script.js:7417-7423`) and swallows, and `saveChatConditional`
+(`:9352-9378`) logs and swallows in turn, while `chat[]` keeps the reply and the
+next save that succeeds writes it. Two facts are worth taking from that and both
+are taken: the reader is told, and the reply is not lost.
+
+**What it does now.** The `catch` keeps its report and then, when the turn has
+not already ended, broadcasts two frames in this order:
+
+1. `chat.updated` with `#viewOf(entry)` — the view the unsaved reply is *in*.
+   Not terminal (the web store sets `view` on it and deliberately does not clear
+   the streaming buffer), so it costs nothing terminal and it is what stops the
+   page from showing a failure over a conversation that appears not to have
+   answered. Wrapped in its own `try`: a view this host cannot project is not a
+   reason to withhold the failure itself.
+2. `stream.error` with the code `storage-error` and the sentence
+   `the reply was generated but could not be saved: <cause>; it is held in this
+   host's memory and the next save that succeeds writes it`.
+
+**Why a new code.** The vocabulary is `aborted`, `timeout`, `provider-error` and
+`no-provider` (`failureCode`, and `iris-protocol`'s `events.ts`, where the five
+are now documented together). None of them fits, and the misfit is not
+cosmetic: all four mean *nothing was produced*, and this is the one failure
+where something was. `provider-error` would send a reader to the endpoint for a
+fault of the disk, and `internal` — which is an RPC code, not a stream one —
+would tell them nothing at all. `storage-error` names the layer that failed, the
+way `provider-error` does.
+
+**The second half of the sentence is a measured claim, not a reassurance.** The
+candidate is on `entry.session`; `ChatStore` keeps entries in a `Map` that
+nothing evicts (`#entries` is written on open/create/branch and deleted only by
+`delete` and `restoreFile`); and `save` writes the whole log. So the next turn's
+save writes this turn too — pinned by a test that fails a save, sends again with
+the store healthy, and reads two assistant floors out of the file. The limit is
+stated in the sentence by saying *this host's* memory: a restart before the next
+successful save loses it, and there is no path that could not.
+
+**Exactly one terminal frame per turn.** `#announceChats` is inside the same
+`try`, after the `stream.end` broadcast, and it reads the chats directory — so a
+listing failure used to reach the same `catch`, and adding a broadcast there
+without a guard would have answered a settled turn with a contradiction: the
+view, and then "the reply could not be saved". A `terminal` flag is set
+immediately *before* the `stream.end` broadcast (before, because once the frame
+is handed to the carrier every subscriber may have seen it) and the `catch`
+returns after its report when the flag is set.
+
+**What this costs, and it is deliberate.** `sandbox/host-events.ts` maps every
+`stream.error` to upstream's `GENERATION_STOPPED`, so a card hears this turn as
+stopped although its text exists; and the sentence reaches the page in the
+host's English, because the web store prints `event.message` for every code but
+`no-provider`. The second was weighed and left: the OS error is the actionable
+part (a full disk and a denied permission need different acts), a code-selected
+dictionary sentence would drop it, and the file's own rule is that the host's
+words are kept wherever they are the diagnosis. **What would overturn it:** a
+`stream.error` that can carry a view, or a separate non-terminal frame for "the
+reply is here and unsaved", would let the card keep hearing `GENERATION_ENDED`;
+a reader asking what to *do* more often than what happened would move the
+sentence into both dictionaries with the cause interpolated.
+
+### F16. A provider's body is not a safe thing to quote
+
+**The mechanism.** A non-2xx answer became
+`` `${url} responded ${response.status}: ${detail}` `` with `detail` the first
+500 characters of the body, verbatim
+(`packages/iris-llm-openai-compat/src/index.ts`). That sentence travels to every
+open page as `stream.error`'s message *and* onto disk as the cache trace's
+`error` field, which outlives the session in the profile. The body is not ours:
+a provider or a proxy that echoes the request's own `Authorization` header on a
+401 — a shape that exists — would put this route's key in a broadcast and in a
+file, and nothing in the code stopped it.
+
+**Not observed, and that is not a defence.** DeepSeek answers a bad key with
+`Your api key: **** is invalid`, masked at the source (measured 2026-09-09,
+recorded in §58). The defence cannot be a promise about what providers send.
+
+**The scrub.** `src/redact.ts` exports `redactSecrets(text, secrets)`, applied in
+two places: the adapter, on the body before the sentence exists, and
+`cache-trace.ts`'s `traceOf`, on the `error` field before it is written.
+Imported rather than restated, so the two cannot drift. Three rules, in order:
+
+- **The literal credential**, longest first — the adapter passes `credential.value`
+  (`Bearer <key>` for `Authorization`), the same value without its scheme, and
+  `config.apiKey`. Compared, never logged. Literals shorter than 8 characters are
+  ignored: a three-character key is not a credential, and replacing every
+  occurrence of such a string would turn a provider's sentence into rubble.
+- **`/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi`**, for a token this process never
+  held — a relayed error, a proxy quoting another tenant's header. The header
+  *name* is left standing (`Authorization: <redacted>` says what was taken out)
+  and eight characters are required, which no key misses and which keeps the
+  English words `Bearer token` out of it.
+- **`/\bsk-[A-Za-z0-9_-]{12,}/g`**, the prefix every OpenAI-compatible provider
+  in the corpus issues under. Twelve characters, so `sk-` used as a noun and
+  DeepSeek's `sk-****` are both left alone.
+
+Replacement is the single spelling `<redacted>`.
+
+**False positives are the cost, and they are bounded on purpose.** Each pattern
+can in principle eat text a reader wanted: an error that quotes a *masked* key
+long enough to pass the floors, prose of the form `Bearer <eight word>`, an
+identifier that happens to start `sk-` and run twelve characters. All three are
+losses of a fragment inside a sentence whose URL, status and remaining words
+stand; the failure in the other direction is a credential in a file. The
+identity case is pinned rather than assumed: a body with no secret in it comes
+back byte for byte, DeepSeek's real sentence included.
+
+**Scrubbed before the cut, not after.** The 500-character cap stays where it
+was, at the call site, and the scrub runs on the full body first — cutting first
+leaves the head of a key that straddles character 500, and a truncated
+credential is still a credential's prefix. The URL and the status are composed
+*after* the scrub, so no pattern can reach them.
+
+### Held by
+
+`packages/iris-llm-openai-compat/tests/redact.test.ts` (10: the three rules, the
+floors, the identity case, and two end-to-end refusals against a loopback
+endpoint that echoes the header it was sent) and
+`packages/iris-app-service/tests/settle-storage.test.ts` (6: the failed save's
+frame and sentence, the recovery that writes the unsaved reply on the next save,
+the announcement failure that must not produce a second terminal frame, the
+healthy control, and `#fail`'s own two save sites). One case added to
+`cache-trace.test.ts` for the field written to disk. Eighteen mutations were
+run; sixteen reddened a named assertion. The two that survived are recorded
+because they say something: dropping `entry.finish()` from the `catch` changes
+nothing in *this* path (the body's own `finish()` has already run above the
+save, and the `catch`'s call is the belt for a failure higher up), and dropping
+the body's call changes nothing either because the `catch` then covers it —
+removing **both** reddens the recovery test, which is the honest statement of
+what that assertion protects.
+
+### Found and not changed
+
+- The audit named two `catch`es; the second (`#fail`'s impersonation branch,
+  which reports a failed save and says nothing more) already broadcasts
+  `stream.error` on the next line, and so does the provider-error branch below
+  it. `#settle`'s is the only silent one — and it is the one all three
+  generation entries reach, since a settle failure inside `#fail`'s
+  impersonation and interrupted paths is swallowed by `#settle` itself and never
+  reaches their `catch`. Both are pinned as they stand: the generation is what
+  failed there, the provider's words are the diagnosis, and a storage failure
+  underneath is a report rather than a relabelling of the turn.
+- `describeError`'s `COPY` table is the **RPC** code vocabulary and is untouched:
+  `storage-error` is a stream code and never arrives as a rejection.
+
+---
+
+---
+
+## 73. A path walks only inside the table it addresses, a table keyed from outside this process inherits nothing, and a world-book integer has a ceiling
+
+**Date.** 2026-09-11. Three findings from the network audit (M-2, L-6, L-7) that
+share one subject: what this host accepts from a string it did not write.
+
+### The path writers
+
+**Upstream.** SillyTavern writes `chat_metadata.variables[name] = value`
+directly, with no filtering — `public/scripts/variables.js:77`, the indexed form
+at `:63`/`:66`/`:72`, the read at `:27`, the delete at `:598`. The extensions
+that give a *dotted* path its meaning are the ones Iris reimplements: Tavern
+Helper's writers and MVU's `_.set(…)` command dialect.
+
+**Iris.** `template.ts`'s `writePath(table, path, value)` creates what is
+missing on the way down, which is `_.set`'s behaviour — and `__proto__` is never
+missing, so `writePath(t, '__proto__.x', 1)` would have copied
+`Object.prototype` into the cursor and written through it, and
+`writePath(t, 'a.__proto__.b', 1)` the same one level in. It now refuses any
+path with a reserved segment before splitting, and so do `applyOps` (which
+covers `delvar`, the one op that never reaches `writePath`) and the `delete` leg
+of `script.setVariables`. The predicate is `@iris/variables`'s
+`forbiddenSegmentIn`; the message is this face's own `invalid-request`, naming
+the offending segment and the whole path. See
+`notes/packages/iris-variables/DEVIATIONS.md` §1 for the measurement and the
+full list of faces.
+
+The template environment is the one face that does **not** import the predicate.
+`@iris/compat-prompt-template` declares no dependency on `@iris/variables`, and
+adding one means an install; more to the point, the lodash its closures call is
+the **realm's**, so a pollution there lands on the vm context's own
+`Object.prototype` — not this process's, but shared by every template in the
+batch, and a batch is a whole prompt. So `environment.ts` carries a copy of the
+three names and its own `ForbiddenTemplateKeyError`, and
+`tests/forbidden-keys.test.ts` — in this package, the one place both packages
+resolve — pins the two lists against each other. The host refuses the same write
+a second time when the op crosses back, and both are load-bearing: a template
+that throws has still had its earlier writes applied, which is `applyOps`'s
+standing rule.
+
+### The wire-keyed tables
+
+Several stores here partition by a string nobody in this process chose. On a
+plain object three such strings are not keys at all. `atomic.ts` now exports
+`wireKeyedTable()`, which is `Object.create(null)` plus the copy-in a restore
+needs (`JSON.parse` *does* create `__proto__` as a real own key, so a store that
+adopted a parsed object would take the poisoned prototype straight off disk).
+`JSON.stringify` cannot tell the two apart, so every file is byte-identical and
+the persistence tests are untouched.
+
+| table | key comes from | changed |
+| --- | --- | --- |
+| `card-storage.ts` `#entries` | a card's own `localStorage.setItem(key, …)` | yes — the only one a **card** controls directly |
+| `card-storage.ts` `bytesByWriter` | character id | yes |
+| `context.ts` `ExtensionSettingsStore#partitions` | character id (a filename) | yes |
+| `script-variables.ts` `#partitions` | character id | yes |
+| `script-buttons.ts` `#partitions` | character id | yes |
+| `materialise.ts` `#bindings` | character id | yes |
+| `scripts.ts` `#file.characters` | character id | yes |
+| `scripts.ts` `#file.presets` | a preset's library name, as the user typed it | yes |
+| `initvar.ts` `initialized_lorebooks` | a world-book name | guarded rather than converted — the shape is `MvuData`, a card's own saved state; a book named one of the three is loaded and simply not recorded, so it re-runs, which is the harmless direction |
+
+Judged safe and left alone: `settings.ts:673` `set[key] = value` iterates a
+`const` list of field names, not the patch's keys; `card-storage.ts`'s
+`snapshot()` builds its result with `Object.fromEntries`, which *defines* rather
+than assigns and therefore cannot move a prototype, and the object is then
+serialized to the wire; `service.ts:406` `contexts[value]` and `:1589`
+`headers[headerName]` are keyed from a provider's model list and a connection
+profile the user saved, both read back immediately and neither persisted under
+that key; `context.ts:115` and `script-buttons.ts:131` key by a script id the
+**card declares**, which is inside the same trust boundary as the buttons
+themselves and is rebuilt from the card on every read.
+
+### The world-book integers
+
+**Upstream.** The generic binder `handleNumberInputHelper`
+(`public/scripts/world-info.js:3175-3193`) ignores its own `min` and `max`
+unless `clamp: true` (`:3180-3188`), and writes `Number($(this).val())` straight
+through (`:3188`). Only two fields pass `clamp: true` — `probability`
+(`:3093-3110`) and `groupWeight` (`:3671-3675`, clamped to `[1, 10000]`) — and
+only `scanDepth` is explicitly rejected out of range (`:3624-3645`: negative →
+toast and reset to 0; over `MAX_SCAN_DEPTH = 1000` at `:98` → reset to the
+limit). Everything else is declared in HTML and enforced nowhere, and three
+write paths skip the editor entirely with no checking at all: the
+character-book importer (`:5507-5545`), `/setentryfield` (`:1389-1440`), and
+editing the file by hand. That is how `order = 100000000` and `depth = 10000`
+came to be on this disk.
+
+**Iris.** `packages/iris-protocol/src/rpc.ts`'s world-book entry patch bounds
+each integer, in the house style of `injection_depth`
+(`z.number().int().min(0).max(1000)`). Measured over **2,856 entries** — 1,478
+live entries in 18 disk books under
+`E:/sillyTavern/SillyTavern/data/default-user/worlds/`, 1,378 in the embedded
+`character_book` of 17 cards, plus the 803-entry `originalData` mirror and the
+4-entry shipped `Eldoria.json`. No world-book JSON fixtures exist in this repo;
+its fixture values are inline, and the widest are the fake client's seed
+(`packages/iris-client-fake/src/worldbooks.ts:194-205`) and the alias defaults
+(`apps/iris-web/src/sandbox/lorebook-aliases.ts:196-224`).
+
+| field | measured min / max | extreme found in | bound | why |
+| --- | --- | --- | --- | --- |
+| `scan_depth` | 1 / 6 | `缄默之秋2.5.json` entry 10; card `终焉之刻NG.png` entry 74 | `0 … 1000` | upstream's own enforced limit, `MAX_SCAN_DEPTH` at `world-info.js:98`; `worldbook-settings.ts:117` already clamps the global setting to the same range |
+| `depth` | 0 / 10,000 | `银麒赎世.json` entries 127 and 128 | `0 … 100000` | HTML declares `min="0" max="9999"` (`public/index.html:7194`) and enforces neither; ten times the largest real value |
+| `order` | **−999** / 100,000,000 | `OVERLORD不死者之王.json` entry 0; `[SG]可攻略女主拒绝被攻略.json` entry 35 | `−1000000 … 1000000000` | the **only** field with real negatives — 16 live entries, 14 in the mirror, 18 in card books — and upstream bounds it nowhere (`:3310-3321`) |
+| `delay_until` | 0 / 0 (2 numeric; 1,476 hold boolean `false`) | `银麒赎世.json` entry 127 | `0 … 100000` | see the narrowing below |
+| `sticky` | 0 / 10 | card `终焉之刻NG.png` entry 11 | `0 … 1000000` | above upstream's *declared* `max="999999"` (`index.html:6992`), so nothing typed into SillyTavern's editor can be refused here |
+| `cooldown` | 0 / 9,999 | `魔法禁书目录_v1.0.json` entry 6 | `0 … 1000000` | as above (`index.html:7005`) |
+| `delay` | 0 / 0 | — | `0 … 1000000` | as above (`index.html:7018`) |
+| `groupWeight` | 100 / 100 (one distinct value in the whole corpus) | — | `0 … 1000000` | not on the audit's list; bounded with the rest because it is the same unbounded integer in the same object, and upstream clamps it far harder |
+
+No non-integer appears in any field in any population, and no negative outside
+`order`.
+
+**The one narrowing.** `delay_until` is refused below zero. Upstream's level
+field is `type="text"` with no bound and writes `Number(content)` unfiltered
+(`:3696-3721`), so SillyTavern would accept a negative; a negative recursion
+level names no pass, and nothing in 2,856 entries has ever written one. A real
+book carrying one overturns it. Every other bound above is *wider* than any
+value upstream can produce, so a book that round-trips through SillyTavern and
+back is accepted unchanged — which is the property that keeps this from being a
+compatibility break.
+
+**What would overturn the rest.** A book whose `order` exceeds 10⁹ or whose
+`depth` exceeds 10⁵ — both an order of magnitude past anything measured, and
+both reachable only by editing a file by hand, since neither is typeable in
+upstream's editor at that size.
+
+**Held by** `packages/iris-variables/tests/keys.test.ts` (the predicate, the
+walker, the property test), `packages/iris-app-service/tests/forbidden-keys.test.ts`
+(each host face, `writePath`'s two shapes, the realm/host pair, the
+`environment.ts` copy pinned against the exported list) and
+`packages/iris-protocol/tests/worldbook-bounds.test.ts` (each measured extreme
+accepted, one step past each bound refused).
+
+---
+
+## 74. The shell's policy is written into the index on the way out, and every route this host owns says `nosniff`
+
+**Kind:** a layer upstream has in a different place (a header, from `helmet`)
+and a layer upstream does not have at all (a CSP). Dated 2026-09-11. The
+browser half — what the policy says, the measurement that decided it, and the
+click-jacking guard — is `notes/apps/iris-web/DEVIATIONS.md` §93.
+
+**What upstream does.** `helmet()` at `src/server-main.js:104-106`, with
+`contentSecurityPolicy: false`. So SillyTavern ships **no CSP**, and the helmet
+defaults it keeps put `X-Content-Type-Options: nosniff` and `X-Frame-Options:
+SAMEORIGIN` on *every* response — index, assets, API — because the middleware
+sits in front of the whole express app
+(`node_modules/helmet/index.cjs:400-407` and `:445-459` install them when their
+options are absent). Iris has no middleware chain: the carrier
+(`@deepseek-ai/dsh-host-webserver`) routes to handlers, and the seat that
+answers for the index and the built assets belongs to a different package
+entirely. So the two protections are split, and the split is what this section
+records.
+
+### The policy: a `tapIndex` transform, owned by this plugin
+
+The carrier offers exactly one seam for markup no structured injection row
+expresses — `tapIndex(transform: (html: string) => string)`, applied by
+`renderIndex` after the injection rows. The static seat
+(`@deepseek-ai/dsh-host-frontend-static`) calls `renderIndex` on every index it
+renders. Measured in its `lib/index.js`: `renderIndex` is
+`async () => ctx.webServer.renderIndex(await readFile(distIndex, 'utf8'))`,
+passed into `serveStatic` and awaited per request — the file is re-read and the
+taps re-run **per response**, with nothing cached per process. That fact
+decides nonce-versus-hash, and the answer turned out not to matter: the shipped
+policy carries no `script-src`, so there is nothing for a nonce to authorise
+(§93 has the measurement that took `script-src` off the table). It is recorded
+because it is the fact a future strict policy would rest on.
+
+The tap is registered by **this** plugin, not by the front-end row, because this
+plugin already holds `webDistIndex` — the same value and the same gate as the
+sandbox-asset route beside it. `packages/iris-app-service/src/shell-csp.ts`
+holds the directive list and the transform; `index.ts` wires it in one
+`ctx.effect`.
+
+`stampShellIndex` **refuses rather than adds a second policy** when the body
+already declares one. Two CSP meta elements are not a stronger policy and not
+the later one either: the browser enforces both, so the page ends up under an
+intersection neither author wrote, and the symptom is a refusal citing a
+directive that appears in neither copy. Refusing also makes the transform
+idempotent for free, which matters because taps run in registration order and
+nothing stops a future row from rendering an index twice. The refusal is warned
+**once**, not per response: it is a property of a file, and a line per page load
+is a log nobody reads.
+
+**The dev server runs without this policy, deliberately.** `vite.config.ts`
+serves `index.html` itself, with no carrier and therefore no tap. Adding an
+equivalent meta to the source file would put a *different* policy in front of a
+different set of scripts (Vite's HMR client is injected inline and its socket is
+another origin), and a policy that only exists in the environment nobody ships
+is worse than none — it would either be loosened until it passed or silently
+diverge. `apps/iris/tests/shell-index.test.ts` pins that the file on disk
+carries no policy and the served bytes do, so that split stays a decision.
+
+### `nosniff`: one wrapper, not a line per route
+
+`IrisRpcHost.guard` — the wrapper §70 and rpc-host §1 added for the `Host`
+allow-list — now also sets `X-Content-Type-Options: nosniff` before the handler
+runs, and **the RPC POST is registered through it** instead of calling
+`checkHost` from inside `handleRequest`. That is the change that makes the
+sentence true: one function, six routes (the POST, avatar, `/version`, the
+script bundle, the sandbox assets), and a handler cannot forget what it never
+had to remember. The ordering the old comment insisted on is unchanged — the
+wrapper runs before the method, the content type, or anything else is looked at.
+
+`setHeader` rather than a header at each `writeHead`, because Node merges the
+two with `writeHead` winning: a handler that writes its own headers keeps them
+and still gets this one. It reaches the 404s and the 403 refusals too, which is
+deliberate — a response whose body nothing would sniff is not a reason to skip
+the header, it is the reason the header must come from the wrapper rather than
+from whichever branch happens to write the body.
+
+What it buys: every one of these routes answers bytes this machine produced but
+did not author — an avatar is a file out of a downloaded card, a script bundle
+is a card author's JavaScript, an RPC frame is conversation text — and without
+the header a browser is free to decide a response is really HTML and run it as a
+document at Iris's own origin.
+
+### The two gaps, recorded rather than papered over
+
+- **The index and the built assets carry no `nosniff`, no
+  `frame-ancestors`/`X-Frame-Options`, and no `Cache-Control: no-store`.** Those
+  are headers on a response written by `@deepseek-ai/dsh-host-frontend-static`,
+  which sets `content-type` and nothing else and exposes no hook. The same seat
+  is already the recorded gap in rpc-host §1 for the `Host` allow-list, for the
+  same reason. Upstream has all three, through helmet, on every response. What
+  would close it: a header hook on that package, or Iris taking the fallback
+  seat itself — which is a bigger decision than it looks, because that seat is
+  also what makes the dist swappable.
+- **`frame-ancestors` cannot be delivered in a `<meta>` at all**, so the
+  click-jacking answer is the page's own first script refusing to render framed
+  (§93). Weaker than a header, and said so there.
+
+### What would overturn this
+
+A header hook on the static package closes the first gap and makes the
+click-jacking guard redundant. A card frame that stops being `srcdoc` unlocks
+the strict policy §93 could not ship. Neither changes the shape here: the tap
+and the wrapper are the two places, and both would gain lines rather than move.
+
+**Held by** `packages/iris-app-service/tests/shell-csp.test.ts` (8),
+`apps/iris/tests/shell-index.test.ts` (4 — a booted composition with the static
+seat claimed, the served index carrying exactly one policy ahead of its first
+script, the source file untouched, every response tapped, and the index's
+missing `nosniff` asserted *as the gap* with `/version`'s present one on the
+same host for contrast) and `apps/iris/tests/host-allowlist.test.ts` (+1 — all
+four application routes plus the RPC POST answering `nosniff`, on the real host,
+the 404s and the 403 refusals included).
+
+## 75. A provider key is encrypted at rest, under a data key the operating system holds
+
+**Kind:** an improvement with a cost, and the cost is a real one paid by a real
+person — see *What this cost* below. Dated 2026-09-11. Found by the system audit
+as F4 (medium).
+
+**What upstream does.** SillyTavern keeps every credential in plaintext JSON.
+`src/endpoints/secrets.js:8` names the file (`secrets.json`, at the user's
+directory root); `:150` writes it — `writeFileAtomicSync(this.filePath,
+JSON.stringify(secrets, null, 4), 'utf-8')` — and `:204-223` (`writeSecret`)
+puts the value into the object exactly as it arrived, `{ id, value, label,
+active }`. `:268` reads it back the same way. The one protection upstream adds is
+about *reading over the wire*, not about the disk: `allowKeysExposure`
+(`:108`, `default/config.yaml:273`, default `false`) refuses `/view` and the
+fetch endpoint (`:542`, `:568`) unless the operator turns it on. So a process,
+a person, a backup or a folder-sync client that can read the user's directory
+has every SillyTavern key, and that is true of every install today.
+
+**What Iris did.** The same thing, with the same reasoning, and it was written
+down as a deliberate decision: `StoredProfile.apiKey` carried "the key as the
+user typed it. Stored in the file", the README said 「但它在磁盘上是明文的」, and
+the test suite asserted it — `connections.test.ts` had
+`assert.equal(file.includes(key), true, 'the key is not in its own store')`.
+The write side was already careful in every *other* respect: the key never
+reaches the wire (`toWire` projects `hasKey` + `keyTail`, pinned on real HTTP
+frames in `apps/iris/tests/rpc-transport.test.ts`), never reaches a log, and
+`HostConnection.apiKey` never leaves the process. The disk was the hole.
+
+**What Iris does now.** Envelope encryption, in one module
+(`src/key-protection.ts`) plus the store that uses it.
+
+| layer | what | where |
+| --- | --- | --- |
+| the value | AES-256-GCM, 12-byte random nonce per write, **AAD = the profile's `id`** | `encryptValue` / `decryptValue` |
+| the stored shape | `apiKeyEnc: { v: 1, iv, tag, ct }`, base64; the name `apiKey` never written | `ConnectionStore.#rowsForFile` |
+| the data key | 32 random bytes, one per profile directory | `ConnectionStore.#dataKeyForWrite` |
+| the wrapping | a `KeyProtector`, named in the key file so what wrapped it decides what may unwrap it | `connections.key`, `{ kind, wrapped }` |
+
+A row on disk now reads like this (a made-up key, `sk-example-1234`):
+
+```json
+{
+  "profiles": [
+    {
+      "id": "8f3c…",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "baseURL": "https://api.deepseek.com/v1",
+      "apiKeyEnc": {
+        "v": 1,
+        "iv": "M0nUqk5rW2tYb1Rn",
+        "tag": "8s5Qp0Tz2m1cH9Xk7Yl2Aw==",
+        "ct": "R1xk9m2bQ0tF7uN5ZQ=="
+      }
+    }
+  ],
+  "activeId": "8f3c…"
+}
+```
+
+and beside it, `connections.key`:
+
+```json
+{
+  "kind": "dpapi",
+  "wrapped": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA…"
+}
+```
+
+**The AAD is the interesting choice.** GCM does not need it to be secure; the
+attack it closes is a *file edit*, not a cryptographic one. Without it, a person
+who can read the directory can paste the expensive profile's `apiKeyEnc` onto
+their own row and generate with it. With the profile's `id` sealed in, the same
+paste fails to authenticate, and the row reads as having no key. It costs one
+call on each side and it is the difference between "the file is encrypted" and
+"a row's key belongs to that row".
+
+### Two protectors, and when each is chosen
+
+**`dpapi`** on Windows: `ProtectedData.Protect(bytes, entropy,
+DataProtectionScope.CurrentUser)` — the keystore every other local tool on that
+platform uses — reached through **one PowerShell spawn**, because Node has no
+DPAPI binding and adding a native dependency for one call is a worse trade than
+a spawn the host pays once. `powershell.exe` first, `pwsh` only when the first
+is *missing* (a PowerShell that ran and refused has given the answer; asking a
+second one would replace "this blob belongs to another account" with "pwsh is
+not installed"). The optional entropy is a fixed application string in the
+source: it is not a secret and cannot be one, it is a namespace.
+
+**The bytes go in on stdin and come back on stdout, as base64, never on the
+command line** — a command line is readable by any process of the same user
+(`Get-CimInstance Win32_Process` needs no privilege) and is what shell history
+and process monitors keep. The script itself is on the command line, contains no
+double quote, and is the same one-liner for both verbs.
+
+**`file`** everywhere else, and on Windows when neither interpreter can be
+spawned: the data key unwrapped in `connections.key` at mode `0o600`, with **one
+boot warning that names it as weaker than an OS keystore and points here**. It
+is worth exactly what it is worth — the keys are no longer in the file a person
+opens to look at their providers, and on a shared POSIX machine the other
+accounts cannot read them — and nothing more. An honest fallback beats a silent
+one, and beats a host that refuses to save a provider.
+
+**Measured on this machine 2026-09-11** (Windows 10, Node 24.13, Windows
+PowerShell 5.1 and pwsh 7.7 both present): `Protect` 289 ms, `Unprotect` 255 ms
+through `powershell.exe`; 380 ms and 375 ms through `pwsh`; a 32-byte key wraps
+to 262 bytes. In the suite, the live round trip (two spawns) takes 496 ms.
+Through the store itself, with `dpapi` chosen: **222 ms** to mint the data key
+and write the first sealed profile, **197 ms** for the next process to open the
+file and answer with the key, and **2 ms** for a later save that carries the
+ciphertext through unchanged. The host pays **one spawn per boot** (the unwrap,
+and only when a stored key exists)
+and **one per data-key creation**. Never per request, never per save after the
+first: the ciphertext is kept in memory beside the plaintext, so a save that
+changes a label re-writes the same envelope rather than re-sealing it.
+
+### The migration, which is automatic and one-way
+
+On load, a row carrying plaintext `apiKey` is adopted into memory and the file is
+rewritten **immediately** — not at the next save, because on a host that is only
+ever read "the next save" is never — with `apiKeyEnc`, atomically. One note is
+reported through the new `reportStoreNote` channel (`grade: 'note'`, not
+`'fault'`: a completed upgrade does not belong in the same list as an unreadable
+key file):
+
+```
+2 connection key(s) were encrypted at rest; the plaintext is gone from …/connections.json
+```
+
+A row carrying **both** fields: the encrypted one wins, the plaintext is dropped,
+and that is reported as a fault — a plaintext key beside a ciphertext is either a
+half-finished hand edit or somebody trying the downgrade. The drop happens
+*before* the decrypt, and a mutation proved why that ordering is load-bearing:
+when the data key will not open there is no decrypt to overwrite the plaintext,
+and a store that left it standing would adopt it as the key and seal it on the
+next save — a downgrade arriving through the one path that is supposed to refuse
+them.
+
+### Four ways this fails, and what each shows
+
+| failure | what the user sees | what is kept |
+| --- | --- | --- |
+| **the wrapped key will not open** (another Windows account, another machine, a tampered `connections.key`, no PowerShell at unwrap) | one fault naming `connections.key` and the reason the OS gave; every provider reads `hasKey: false` and the panel asks again | the key file **and** every ciphertext, byte for byte, through any number of saves |
+| **the key file is gone** while ciphertexts are not (a half-restored backup, a sync client carrying only `*.json`) | one fault naming the missing file; the same "no key" state | the ciphertexts |
+| **one ciphertext fails its tag** (a flipped byte, a row copied from another profile) | one fault naming *that profile*; only that key reads as absent | the row, the envelope, and every other key |
+| **no keystore at creation** | one boot warning naming the weaker storage and pointing here | — |
+
+Two rules run through that table. **Never plaintext**: no failure path writes a
+key back in the clear, and nothing falls back from `dpapi` to `file` at *unwrap*
+time — the fallback is allowed only when a data key is being *created*, where
+the alternative is a host that cannot store a key at all. **Never destroyed**: a
+save in the refused state carries ciphertexts it could not read through
+unchanged, and when the user answers the panel by typing a key again, the old
+wrapped key is **set aside** as `connections.key.unreadable-<stamp>` — the same
+idiom §68 gives a file that will not parse — rather than deleted or overwritten.
+That last move is the one departure from a literal reading of "the wrapped file
+is kept, never overwritten": it is kept, under another name, and only on an
+explicit act by the user, because the documented recovery ("the panel asks
+again") has to actually work or it is not a recovery.
+
+### What did not change
+
+The wire shape (`hasKey` + `keyTail`, never the key), `routeCredential` and its
+ladder, `connection.test`'s resolution order, the panel, and
+`HostConnection.apiKey` — the launch environment's key, which comes from an
+environment variable, is not stored by this store and is untouched. Everything
+downstream of the store reads the *in-memory* `apiKey` exactly as before; the
+encryption is entirely a property of the bytes on disk. Which is also why
+`toWire` needed no change: absent in memory already meant "no key", so an
+unreadable ciphertext shows up as a panel asking for a key rather than as a
+broken profile.
+
+One small thing did change outside this subject: `atomicWriteFile` grew a `mode`
+option, applied to the temporary so the bits are on the inode from its first
+byte. A `chmod` after the rename leaves a window in which the data key exists
+with the umask's bits, and closing that window is the whole reason for asking.
+
+### What this cost
+
+- **A profile folder is no longer portable on Windows.** Copy it to another
+  machine or another account and the keys do not come with it. This is the
+  protection working — someone who copies your `data/` cannot take your keys —
+  but it is also a person losing something that used to move, so it is said in
+  three places a user actually reads: README §3, the troubleshooting list, and
+  `apps/iris/.env.example`.
+- **One spawn on boot**, about 250 ms, on a Windows host that has a stored key.
+- **A second file to keep beside the profiles.** Back up `connections.key` with
+  `connections.json` or the backup restores endpoints without credentials.
+- **The `file` protector is a fallback, not a second design.** On Linux the keys
+  are as readable as before to anything running as the user; what it buys is the
+  casual read and the other accounts.
+
+### What would overturn this
+
+A DPAPI (or Keychain, or libsecret) **binding in Node** with no spawn: the
+protector interface is where it would land, one implementation, and the 250 ms
+would go. A portable-profile use case — a user who deliberately carries their
+`data/` on a stick between machines — would need a third protector (a passphrase
+the user types, which is exactly the prompt this design refused to add for
+everyone) chosen explicitly, not a downgrade of this one. And if upstream ever
+encrypts `secrets.json`, the shape it picks is worth reading before this one
+grows a second version.
+
+**Held by** `packages/iris-app-service/tests/key-at-rest.test.ts` (17: the round
+trip and the absent field name, a fresh nonce per write, the AAD binding both
+through the store and directly, a flipped `ct` byte and a flipped `tag`, the
+migration with its note and its second silent boot, both fields present, a
+plaintext beside an *unopenable* ciphertext, an unwrap failure with the key file
+and ciphertexts compared byte for byte after a later save, a missing key file
+beside sealed rows, re-entry after a failure with the old wrapped key kept
+aside, the `file` protector's warning and its `0o600`, the refusal to substitute
+a protector, and — gated on `IRIS_DPAPI=1` and `win32` — one live DPAPI round
+trip that also asserts no spawn argument contains the key),
+`packages/iris-app-service/tests/atomic.test.ts` (+1, the `mode` reaching the
+renamed file on POSIX) and `packages/iris-app-service/tests/connections.test.ts`
+(two assertions restated: the stored file has **no** plaintext key and the store
+answers with it anyway).
+
+## 76. The rename retry learns the code the two-host incident actually failed with, and the boot sweeps the temporaries a dead host left behind
+
+**Kind.** Completion of two mechanisms §68 and §71 built, measured against the
+failure log §71's incident produced. Dated 2026-09-11.
+
+**The incident this is measured against.** §71 records the two-host event as a
+diagnosis phantom; its storage half has a log line the lock alone does not
+answer. The 8790 host (pid 1664) lost `replaceWorldbook` three times in a row
+against the 8787 host's handles on the same `apps/iris/data`:
+
+1. `ENOENT: rename '…worlds\扣扣审判1.0.json.1664.tmp' -> '…worlds\扣扣审判1.0.json'`
+2. `EPERM` on the same rename
+3. and, as part of the card's `[MVU] Reinitialization failed`, the same `EPERM`
+   again — with the `ENOENT` of 1. being a temporary that existed when its write
+   finished and did not exist when the rename ran, because the competing host's
+   own failure path unlinked files while the directory entry was in flux.
+
+`atomicWriteFile` already retried the rename by then — but for `EPERM`,
+`EBUSY` and `EACCES` only. The code the first failure actually carried,
+`ENOENT`, was in the not-retried class, so the very failure shape the retry was
+built for went through it. And the `.1664.tmp` of failure 1 stayed in the real
+`worlds` directory: nothing reads a `.tmp`, so the debris of a killed or
+racing host sits in the data directory forever.
+
+### What Iris does now
+
+- **`ENOENT` joins the retryable rename codes** (`src/atomic.ts`,
+  `RETRYABLE_RENAME_CODES`). The reasoning is not "retry everything": a rename
+  refused with `ENOENT` naming the temporary is a directory entry in flux —
+  the one failure the two-host cleanup race produced — and it closes by
+  itself, which is all a bounded retry needs. The hopeless case is bounded
+  too: a temporary genuinely gone is gone for every attempt, the retry costs
+  its ~½ second of backoff, and the last error is thrown unchanged, still
+  naming both paths exactly as the platform spells them. `EISDIR` replaces
+  `ENOENT` as the not-retried example in the tests, because a directory is not
+  a race no matter how long one waits.
+- **The boot sweeps what the boot cannot prevent.** Holding the lock (§71)
+  makes one moment safe: right after `acquireHostLock` and before a store is
+  constructed, `apply` walks the data directory once
+  (`sweepStaleTemporaries`, `src/atomic.ts`) and unlinks every file matching
+  the shapes this package's temporaries have ever carried —
+  `<name>.<pid>.<16 hex>.tmp` today, `<name>.<pid>.tmp` before the random
+  suffix, which is the incident's spelling. The claim rule is §71's own
+  liveness probe pointed at a filename: a temporary is claimed when its
+  recorded pid is this process's own (ids are recycled; a leftover naming our
+  id would fail the dead check and sit forever) or when no process with that
+  id is running. A temporary of a pid that is alive and not ours is left
+  exactly where it is — the sweep stays correct on its own terms rather than
+  borrowing the lock's guarantee. A name that parses as nobody's temporary (no
+  pid segment, or hex letters where the pid would be) is never touched, and
+  the walk does not follow symlinks. One log line when something was removed,
+  silence when the directory was clean.
+
+### What would overturn this
+
+A rename failure carrying `ENOENT` for the *target* being genuinely absent
+(someone deleted the profile mid-write) now waits out its ~½ second before
+reporting; if that ever shows up as a real latency complaint, the retry can
+distinguish the two by probing the temporary's existence first, at the cost of
+a check that is wrong exactly as often as the window it looks for. The sweep's
+pattern is tied to this package's temporary spellings; if a third shape is
+ever introduced, `temporaryPid` is the one place that must learn it, and the
+`sweep claims the temporaries … in both shapes` test is where the omission
+turns red.
+
+**Held by** `packages/iris-app-service/tests/atomic.test.ts` (+5, 22 in the
+file: the flux case waited out in three attempts, the gone-for-good case
+exhausting the bound with both paths in the message and every attempt renaming
+the same temporary, the sweep claiming both shapes at depth while leaving the
+store's own file and nobody's-temporaries alone, the alive-foreign versus
+own-pid pair, the absent root) and
+`apps/iris/tests/host-lock.test.ts` (+1, 4 in the file: a booted host removes
+a stale temporary from its data directory while taking the lock, which is the
+composition-level pin that `apply` runs the sweep, not merely that the
+function exists).

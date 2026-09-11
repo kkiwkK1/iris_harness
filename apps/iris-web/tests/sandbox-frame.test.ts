@@ -1937,10 +1937,12 @@ test('a same-origin relative fetch rides the bridge and returns the content', as
 
 test('a fetch answer without status or type still reads as a plain 200', () => {
   // The remote-dependency path predates the two fields and sends neither.
+  // The path is an allow-listed one (`bridge-paths.ts`): this test is about the
+  // shape of the answer, and a refused path never reaches an answer at all.
   const scope = realm()
   let response: Response | undefined
   evaluate(scope, globals => {
-    void (globals['fetch'] as (input: string) => Promise<Response>)('/anything').then(
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/sandbox/manifest.json').then(
       answered => {
         response = answered
       },
@@ -2008,20 +2010,23 @@ test('an absolute URL on the shell origin rides the bridge too', () => {
   const scope = realm()
   evaluate(scope, globals => {
     void (globals['fetch'] as (input: string) => Promise<Response>)(
-      'http://127.0.0.1:8791/api/thing',
+      'http://127.0.0.1:8791/iris/script-bundle?url=https://cdn.jsdelivr.net/npm/vue',
     )
   })
 
   const sent = scope.posted.find(message => message.type === 'fetch')
   assert.ok(sent?.type === 'fetch')
-  assert.equal(sent.url, 'http://127.0.0.1:8791/api/thing')
+  assert.equal(
+    sent.url,
+    'http://127.0.0.1:8791/iris/script-bundle?url=https://cdn.jsdelivr.net/npm/vue',
+  )
 })
 
 test('a refused ride rejects the way a network failure would', async () => {
   const scope = realm()
   let failure: unknown
   evaluate(scope, globals => {
-    void (globals['fetch'] as (input: string) => Promise<Response>)('/gone').catch(
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/sandbox/gone.js').catch(
       error => {
         failure = error
       },
@@ -2043,7 +2048,7 @@ test('a bodyless empty-status answer is still a Response', async () => {
   const scope = realm()
   let response: Response | undefined
   evaluate(scope, globals => {
-    void (globals['fetch'] as (input: string) => Promise<Response>)('/done').then(
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/sandbox/done.js').then(
       answered => {
         response = answered
       },
@@ -2057,6 +2062,64 @@ test('a bodyless empty-status answer is still a Response', async () => {
 
   assert.equal(response?.status, 204)
   assert.equal(await response?.text(), '')
+})
+
+test('a same-origin path that is not on the bridge list is not carried', () => {
+  /*
+   * The network audit's F11, frame side. The bridge fetches with the *shell's*
+   * credentials, so before this check any path the host serves was a card's to
+   * read — `/iris/rpc` by GET included, which the endpoint's JSON-only gate
+   * stops for writes and not for reads.
+   *
+   * Refused means "left native", which is where the request went before the
+   * bridge existed: the frame's CSP refuses it and reports it. What is new is
+   * the note, which names the layer that declined to relay it — the CSP report
+   * names an origin, and every refused path in the product shares one.
+   */
+  const scope = realm()
+  evaluate(scope, globals => {
+    void (globals['fetch'] as (input: string) => Promise<Response>)('/iris/rpc')
+  })
+
+  assert.equal(scope.posted.some(message => message.type === 'fetch'), false)
+  assert.equal(scope.nativeFetches().length, 1, 'the old path is what it falls back to')
+  const note = scope.posted.find(message => message.type === 'note')
+  assert.ok(note?.type === 'note')
+  assert.match(note.message, /\/iris\/rpc/)
+  assert.match(note.message, /this frame did not carry it/)
+})
+
+test('a card may ride for its own avatar and not for another card’s', () => {
+  const scope = realm({ seeded: snapshot({ characterId: '络络.png' }) })
+  evaluate(scope, globals => {
+    const fetcher = globals['fetch'] as (input: string) => Promise<Response>
+    void fetcher(`/iris/avatar/${encodeURIComponent('络络.png')}`)
+    void fetcher(`/iris/avatar/${encodeURIComponent('爱衣.png')}`)
+  })
+
+  const rides = scope.posted.filter(message => message.type === 'fetch')
+  assert.equal(rides.length, 1, 'exactly one of the two was carried')
+  assert.equal(
+    rides[0]?.type === 'fetch' ? rides[0].url : undefined,
+    `http://127.0.0.1:8791/iris/avatar/${encodeURIComponent('络络.png')}`,
+  )
+  assert.equal(scope.nativeFetches().length, 1, 'the other one went native')
+})
+
+test('a refused shape is reported once, however many times it is asked for', () => {
+  // A card sweeping the library would otherwise leave one line per card in a
+  // list a reader has to read. The id is folded out of the shape for that.
+  const scope = realm({ seeded: snapshot({ characterId: '络络.png' }) })
+  evaluate(scope, globals => {
+    const fetcher = globals['fetch'] as (input: string) => Promise<Response>
+    void fetcher('/iris/avatar/a.png')
+    void fetcher('/iris/avatar/b.png')
+    void fetcher('/iris/avatar/c.png')
+  })
+
+  const notes = scope.posted.filter(message => message.type === 'note')
+  assert.equal(notes.length, 1, 'three refusals of one shape are one report')
+  assert.equal(scope.nativeFetches().length, 3, 'each request still went somewhere')
 })
 
 test('the fetch bridge is published for module code as well', () => {

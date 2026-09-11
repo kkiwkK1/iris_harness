@@ -9,8 +9,10 @@
  * @module @iris/app-service/settings
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+
+import { atomicWriteFile, quarantineUnparsable } from './atomic.ts'
 
 import type { ChatCompletionPreset } from '@iris/preset'
 import type { ContinuePostfix, GenerationSettings, ReasoningEffort } from '@iris/protocol'
@@ -177,15 +179,19 @@ export class SettingsStore {
    * rather than a seed written over settings that were already on disk.
    */
   #found: boolean | undefined
+  readonly #onProblem: ((message: string) => void) | undefined
 
   /**
    * @param path - the JSON file backing the store.
    * @param defaults - the route to use before anything has been configured.
+   * @param onProblem - told when the file was there and could not be parsed;
+   *   see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string, defaults: GenerationSettings) {
+  constructor(path: string, defaults: GenerationSettings, onProblem?: (message: string) => void) {
     this.#path = path
     this.#defaults = defaults
     this.#file = { global: defaults, chats: {} }
+    this.#onProblem = onProblem
   }
 
   /**
@@ -193,7 +199,17 @@ export class SettingsStore {
    *
    * A malformed file is ignored rather than fatal: a broken settings file must
    * not stop the host from starting, because then there is no way to fix it
-   * from the UI that the file broke.
+   * from the UI that the file broke. It is **not** ignored silently, and not
+   * left where the next `save` will land: ignoring it used to mean the first
+   * settings change after the incident wrote the defaults over the user's
+   * route, their sampling and their active preset. The bytes move aside, the
+   * problem is reported, and `#found` stays `true` — the profile is not brand
+   * new, so the one-time world-info seeding must not fire for it.
+   *
+   * This store reads in two steps of its own rather than through
+   * `readJsonStore`, because {@link seedWorldbookSettings} needs "there was no
+   * file" told apart from "the file did not parse", and a helper that answers
+   * `undefined` for both cannot say which. The sentence is still the shared one.
    */
   async load(): Promise<void> {
     let text: string
@@ -221,8 +237,11 @@ export class SettingsStore {
         // reset. Whatever the file holds is what the store holds.
         ...(parsed.worldbooks === undefined ? {} : { worldbooks: parsed.worldbooks }),
       }
-    } catch {
-      // Keep the defaults.
+    } catch (error: unknown) {
+      // Keep the defaults — but move the bytes out of the way first, so the
+      // next `save()` writes a new file instead of over them.
+      await quarantineUnparsable(
+        this.#path, error instanceof Error ? error.message : String(error), this.#onProblem)
     }
   }
 
@@ -620,7 +639,7 @@ export class SettingsStore {
   /** Write the file, creating its directory on a first run. */
   async save(): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#file, null, 2)}\n`, 'utf8')
+    await atomicWriteFile(this.#path, `${JSON.stringify(this.#file, null, 2)}\n`)
   }
 }
 

@@ -25,6 +25,63 @@
     <meta name="color-scheme" content="dark light" />
     <script>
       /*
+       * Framed: refuse to render. This runs before anything else in the page.
+       *
+       * Iris is an unauthenticated local interface. Every button on it acts
+       * with the user's whole authority — it spends their tokens, reads their
+       * conversations, edits their connection profiles — and it asks for no
+       * credential, because the thing that protects it is that only this
+       * machine can reach it. A hostile page cannot *read* this one (it is a
+       * different origin), but it can put it in an invisible frame under its
+       * own buttons and let the reader click Iris's while believing they are
+       * clicking something else. That is click-jacking, and the platform's
+       * answer to it is the `frame-ancestors` directive or the older
+       * `X-Frame-Options` header.
+       *
+       * **Neither is available here, and this is the substitute.**
+       * `frame-ancestors` is ignored in a `<meta>` by definition, and a header
+       * would have to be written by whoever answers for this document — which
+       * is `@deepseek-ai/dsh-host-frontend-static`, an external package holding
+       * the carrier's fallback seat with no hook for one. So the page checks
+       * for itself and refuses.
+       *
+       * This is honestly weaker than a header: a header stops the browser
+       * *before* the document exists, while this runs after it has been fetched
+       * and parsed this far, and it depends on the page's own script running at
+       * all. It is what can be done from inside the document.
+       * (`notes/apps/iris-web/DEVIATIONS.md` §93.)
+       */
+      ;(function refuseFraming() {
+        if (window.top === window.self) return
+        // Abort the parser first: everything below this script — the module
+        // entry, the stylesheet — must not load. Replacing the document is the
+        // visible half; not booting the app is the half that matters.
+        window.stop()
+        var root = document.documentElement
+        while (root.firstChild !== null) root.removeChild(root.firstChild)
+        var head = document.createElement('head')
+        var charset = document.createElement('meta')
+        charset.setAttribute('charset', 'utf-8')
+        head.appendChild(charset)
+        var title = document.createElement('title')
+        title.textContent = 'Iris'
+        head.appendChild(title)
+        root.appendChild(head)
+        var body = document.createElement('body')
+        body.setAttribute('data-iris-framed', 'refused')
+        body.setAttribute(
+          'style',
+          'margin:0;padding:2rem;font:16px/1.7 system-ui,-apple-system,"Segoe UI",sans-serif;' +
+            'background:#12171d;color:#e6e8ea'
+        )
+        body.textContent =
+          'Iris 不在框架里打开：这一页被别的页面嵌着，而它无法确认嵌它的是谁——请在自己的标签页里打开 Iris。' +
+          '(Iris refuses to render inside a frame.)'
+        root.appendChild(body)
+      })()
+    </script>
+    <script>
+      /*
        * Theme before first paint.
        *
        * The stored preference has to reach the root element before any stylesheet

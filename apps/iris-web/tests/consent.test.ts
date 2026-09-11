@@ -22,6 +22,7 @@ function required(sentence: string | undefined): string {
 import {
   consentFigures,
   describeConsentAsk,
+  describeMarkupScripts,
   consentState,
   mayRun,
   interfacesMayBuild,
@@ -249,4 +250,43 @@ test('a card that is never asked still renders its interfaces', () => {
   assert.equal(interfacesMayBuild('declined', 3), false)
   assert.equal(interfacesMayBuild('allowed', 0), true)
   assert.equal(interfacesMayBuild('allowed', 3), true)
+})
+
+test('the markup clause is appended only when there is markup to talk about', () => {
+  /*
+   * The system audit's F9, in the question. `interfacesMayBuild` above is
+   * deliberately unchanged — a card with no scripts is still never asked, and
+   * still builds its frames — so the only thing that can carry the fact to a
+   * reader is a sentence.
+   *
+   * Appended last and separately, because it counts a *different* population:
+   * scripts embedded in the card's interface markup, not units in its script
+   * list. A reader who could add the two numbers would be told something false.
+   */
+  const one = consentFigures([{ bytes: 94, enabled: true }])
+  assert.doesNotMatch(required(describeConsentAsk(one, bytes)), /interface markup/)
+  assert.doesNotMatch(required(describeConsentAsk(one, bytes, 'en', 0)), /interface markup/)
+
+  const withOne = required(describeConsentAsk(one, bytes, 'en', 1))
+  assert.match(withOne, /carries 1 embedded script\./)
+  assert.match(withOne, /the scripts question does not cover it/)
+
+  const withMany = required(describeConsentAsk(one, bytes, 'en', 4))
+  assert.match(withMany, /carries 4 embedded scripts\./)
+  assert.match(withMany, /does not cover them/)
+  // Still one sentence about the scripts themselves, unmoved.
+  assert.match(withMany, /This card runs 1 script \(94 B\)\./)
+})
+
+test('the markup sentence stands alone, because the card it was found on has no question', () => {
+  /*
+   * The finding's own card carries an empty `scripts` array, so
+   * `describeConsentAsk` returns undefined for it and there is nothing for a
+   * clause to be a clause of. The panel needs the sentence anyway.
+   */
+  assert.equal(describeMarkupScripts(0), undefined)
+  assert.equal(describeMarkupScripts(-1), undefined, 'a negative count is a caller bug, not copy')
+  assert.match(required(describeMarkupScripts(1)), /1 embedded script\./)
+  assert.match(required(describeMarkupScripts(2)), /2 embedded scripts\./)
+  assert.match(required(describeMarkupScripts(2, 'zh')), /内嵌着 2 段脚本/)
 })

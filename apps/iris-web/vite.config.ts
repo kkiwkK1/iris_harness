@@ -65,16 +65,23 @@ export default defineConfig({
       // without editing this file per branch. Default unchanged.
       '/iris/rpc': { target: `http://127.0.0.1:${String(process.env.IRIS_HOST_PORT ?? 8787)}`, changeOrigin: true },
       /*
-       * `rewriteWsOrigin` is the difference between this working and not.
+       * `changeOrigin` and `rewriteWsOrigin` are both load-bearing, and for two
+       * different guards.
        *
-       * The host admits a socket when the request's `Origin` host equals its
-       * `Host` header (`isOriginAllowed`), which is what makes the proxied
-       * arrangement same-origin as far as it can tell. `changeOrigin` rewrites
-       * `Host` but deliberately leaves `Origin` alone — so without this the
-       * handshake arrives claiming `localhost:5175` against a host of
-       * `127.0.0.1:8787` and is refused, while every plain HTTP call succeeds.
-       * That asymmetry is exactly what was observed: 21 POSTs at 200 and a dead
-       * event socket.
+       * `changeOrigin` rewrites `Host` to the target's authority, which is what
+       * gets the request past the host's `Host` allow-list at all — that list is
+       * `127.0.0.1:<bound port>`, `localhost:<bound port>` and `[::1]:<bound
+       * port>` plus whatever `IRIS_ALLOWED_HOSTS` adds, so a request arriving
+       * under `localhost:5175` would be refused with 403 before anything else
+       * was looked at (`@iris/rpc-host/host-guard`).
+       *
+       * `changeOrigin` deliberately leaves `Origin` alone, and the upgrade is
+       * checked against a literal origin allow-list — so without
+       * `rewriteWsOrigin` the handshake arrives claiming `http://localhost:5175`
+       * and is refused, while every plain HTTP call succeeds. That asymmetry is
+       * exactly what was observed: 21 POSTs at 200 and a dead event socket.
+       * (`IRIS_DEV_ORIGIN` is the other way out: it adds the dev server's origin
+       * to that list, and its host to the `Host` list with it.)
        */
       '/iris/events': {
         target: `ws://127.0.0.1:${String(process.env.IRIS_HOST_PORT ?? 8787)}`,

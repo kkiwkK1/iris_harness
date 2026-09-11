@@ -64,7 +64,7 @@ import {
   type FakeWorldbook,
 } from './worldbooks.ts'
 import {
-  selected, summariseFakeUsage, toChatSummary, toChatView,
+  generationTimingFor, selected, summariseFakeUsage, toChatSummary, toChatView,
   type FakeChat, type FakeMessage,
 } from './state.ts'
 
@@ -2225,6 +2225,15 @@ class InMemoryClient implements FakeClient {
     const reasoning = candidate.reasoning === undefined
       ? undefined
       : Math.max(1, Math.round(candidate.reasoning.length / 4))
+    // Invented before the cost, because the cost's `at` is the moment the
+    // request went out and this is what says when that was: the reply has just
+    // arrived, so the start is a whole generation ago. Two readings of one
+    // moment is exactly what the host does not have — it stamps `sentAt` once
+    // and hands the same number to both records — so the fake shares it too,
+    // rather than leaving `usage.at` and `generation.startedAt` a few seconds
+    // apart on the same generation.
+    const timing = generationTimingFor(output + (reasoning ?? 0), reasoning, Date.now())
+    candidate.generation = timing
     candidate.usage = {
       inputTokens: prompt - cacheRead,
       outputTokens: output + (reasoning ?? 0),
@@ -2240,7 +2249,7 @@ class InMemoryClient implements FakeClient {
       // unlabelled series is the unknown case in a known case's clothes.
       ...chat.settings.model === '' ? {} : { model: chat.settings.model },
       ...chat.settings.provider === '' ? {} : { provider: chat.settings.provider },
-      at: Date.now(),
+      at: timing.startedAt,
     }
   }
 

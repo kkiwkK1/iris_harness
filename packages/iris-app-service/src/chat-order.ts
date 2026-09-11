@@ -16,9 +16,10 @@
  * @module @iris/app-service/chat-order
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
+import { atomicWriteFile, readJsonStore } from './atomic.ts'
 import type { ChatSummary } from '@iris/protocol'
 
 /**
@@ -32,35 +33,37 @@ import type { ChatSummary } from '@iris/protocol'
  */
 export class ChatOrderStore {
   readonly #path: string
+  readonly #onProblem: ((message: string) => void) | undefined
   #order: string[] = []
   #loaded = false
 
   /**
    * @param path - the JSON file backing the store.
+   * @param onProblem - told when the file was there and could not be parsed;
+   *   see {@link readJsonStore}. Absent means silence.
    */
-  constructor(path: string) {
+  constructor(path: string, onProblem?: (message: string) => void) {
     this.#path = path
+    this.#onProblem = onProblem
   }
 
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        && Array.isArray((parsed as { order?: unknown }).order)) {
-        this.#order = dedupe(((parsed as { order: unknown }).order as unknown[])
-          .filter((id): id is string => typeof id === 'string'))
-      }
-    } catch {
-      // Absent or unreadable: nothing is arranged, which is the state every
-      // profile starts in and a valid state to stay in.
+    // Absent: nothing is arranged, which is the state every profile starts in
+    // and a valid state to stay in. Present and unparsable is set aside, so a
+    // single drag does not write an empty order over the reader's arrangement.
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      && Array.isArray((parsed as { order?: unknown }).order)) {
+      this.#order = dedupe(((parsed as { order: unknown }).order as unknown[])
+        .filter((id): id is string => typeof id === 'string'))
     }
   }
 
   async #save(): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify({ order: this.#order }, null, 2)}\n`, 'utf8')
+    await atomicWriteFile(this.#path, `${JSON.stringify({ order: this.#order }, null, 2)}\n`)
   }
 
   /**

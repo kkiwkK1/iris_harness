@@ -39,9 +39,10 @@
  * @module @iris/app-service/scripts
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 import type { RegexScriptView, ScopedRegexView, ScriptView } from '@iris/protocol'
 import { effectiveButtons, type ScriptButton } from './script-buttons.ts'
 import { extractScripts, type CardScript } from '@iris/script'
@@ -144,48 +145,65 @@ interface PolicyFile {
 /** Reads and persists the user's decisions about card scripts. */
 export class ScriptPolicyStore {
   readonly #path: string
-  #file: PolicyFile = { characters: {} }
+  readonly #onProblem: ((message: string) => void) | undefined
+  #file: PolicyFile = { characters: wireKeyedTable() }
   #loaded = false
 
   /**
    * @param path - the JSON file backing the store.
+   * @param onProblem - told when the file was there and could not be parsed;
+   *   see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string) {
+  constructor(path: string, onProblem?: (message: string) => void) {
     this.#path = path
+    this.#onProblem = onProblem
   }
 
-  /** Load on first use; a missing file is an empty policy, not an error. */
+  /**
+   * Load on first use; a missing file is an empty policy, not an error.
+   *
+   * An unreadable policy file must not stop the app from opening. The comment
+   * that used to stand here said the fallback direction was safe because "the
+   * default is deny" — **that is true of two of the three defaults and false of
+   * the third.** `scriptsAllowed` answers `undefined` (ask the user) and
+   * `presetRegex` answers `=== true` (deny), but {@link scopedRegex} answers
+   * `!== false`: a card's own regex tier is *allowed* when nothing is recorded,
+   * which is a deliberate ruling (commit a47b669 set the preset tier the other
+   * way on purpose) and is not being changed here. What changes is that the
+   * fallback is no longer invisible — the file is set aside under its own name
+   * and the problem is reported, so a reader can tell "the user allowed this"
+   * from "the file naming their refusals is gone".
+   */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null) {
-        const file = parsed as PolicyFile
-        const characters = 'characters' in parsed && typeof file.characters === 'object' && file.characters !== null
-          ? file.characters
-          : {}
-        // The preset record is read **beside** the character one rather than
-        // instead of it: a file written before this record existed carries
-        // `characters` alone, and a reader that required both would drop every
-        // decision the user had already made. Same shape as the guard above,
-        // and it has to stay separate for exactly that reason.
-        const presets = typeof file.presets === 'object' && file.presets !== null
-          ? file.presets
-          : undefined
-        this.#file = { characters, ...presets === undefined ? {} : { presets } }
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed === 'object' && parsed !== null) {
+      const file = parsed as PolicyFile
+      const characters = 'characters' in parsed && typeof file.characters === 'object' && file.characters !== null
+        ? file.characters
+        : {}
+      // The preset record is read **beside** the character one rather than
+      // instead of it: a file written before this record existed carries
+      // `characters` alone, and a reader that required both would drop every
+      // decision the user had already made. Same shape as the guard above,
+      // and it has to stay separate for exactly that reason.
+      const presets = typeof file.presets === 'object' && file.presets !== null
+        ? file.presets
+        : undefined
+      // Both partitions are keyed from outside this process — a character id is
+      // a filename, a preset name is what the user typed — so neither is
+      // adopted from `JSON.parse` as it stands. See `wireKeyedTable`.
+      this.#file = {
+        characters: wireKeyedTable(characters),
+        ...presets === undefined ? {} : { presets: wireKeyedTable(presets) },
       }
-    } catch {
-      // Unreadable or absent. An unreadable policy file must not stop the app
-      // from opening — but note that the safe direction here is the DEFAULT, and
-      // the default is deny, so a corrupt file loses grants rather than
-      // inventing them.
     }
   }
 
   async #save(): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true })
-    await writeFile(this.#path, `${JSON.stringify(this.#file, undefined, 2)}\n`, 'utf8')
+    await atomicWriteFile(this.#path, `${JSON.stringify(this.#file, undefined, 2)}\n`)
   }
 
   /**
@@ -340,7 +358,7 @@ export class ScriptPolicyStore {
    */
   async setPresetRegexAllowed(presetName: string, allowed: boolean): Promise<boolean> {
     await this.#load()
-    const presets = this.#file.presets ?? {}
+    const presets = this.#file.presets ?? wireKeyedTable()
     const record = presets[presetName] ?? {}
     // `true` is written and `false` deletes — the mirror image of
     // `setScopedRegexAllowed`, and for the same reason read the other way
@@ -362,7 +380,7 @@ export class ScriptPolicyStore {
    */
   async setPresetRegexEnabled(presetName: string, scriptId: string, enabled: boolean): Promise<void> {
     await this.#load()
-    const presets = this.#file.presets ?? {}
+    const presets = this.#file.presets ?? wireKeyedTable()
     const record = presets[presetName] ?? {}
     record.regexEnabled = { ...record.regexEnabled, [scriptId]: enabled }
     presets[presetName] = record

@@ -272,7 +272,12 @@ async function service(
   global: Partial<GenerationSettings>,
 ): Promise<Handlers> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-model-context-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
+  // the Windows window 2b43efc found: a write can land a moment after the
+  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
+  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
+  // which replaced one write syscall per save with a write and a rename.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
@@ -379,7 +384,12 @@ test('one ceiling bounds a typed window, a reported one, and the wire', async (t
    * refuses one past it, not how it spells the range.
    */
   const dir = await mkdtemp(join(tmpdir(), 'iris-ceiling-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
+  // the Windows window 2b43efc found: a write can land a moment after the
+  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
+  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
+  // which replaced one write syscall per save with a write and a rename.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   const store = new SettingsStore(join(dir, 'settings.json'), {
     provider: 'default',
     model: 'deepseek-v4-flash',

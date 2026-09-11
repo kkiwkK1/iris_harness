@@ -52,6 +52,81 @@ export interface MessageView {
    * it. Assistant messages only; user lines and imported history carry none.
    */
   usage?: TurnUsage
+  /**
+   * How long generating the **selected** candidate took.
+   *
+   * Beside {@link MessageView.usage} and deliberately **not inside** it: a
+   * `TurnUsage` is a bag of buckets that get *added up* — `sumUsage` folds a
+   * conversation's generations into one record — and none of these numbers may
+   * ever be summed. A total of two turns' `durationMs` is not "how long the
+   * conversation took" (the turns were minutes apart), and a sum of two
+   * `startedAt` moments is not a moment at all. Keeping them in a separate
+   * object is what makes that unsummable by construction rather than by a rule
+   * someone has to remember; `TurnUsage`'s own comment block about its
+   * non-bucket fields is the same argument one layer in.
+   */
+  generation?: TurnGeneration
+}
+
+/**
+ * How long one generation took, as the host measured it.
+ *
+ * All three durations are measured from the same origin — {@link startedAt},
+ * the moment the request went out — which is what SillyTavern's own message
+ * timer does (`public/script.js:2681` `formatGenerationTimer`, whose whole
+ * window is `gen_started` → `gen_finished` and whose "Time to think" starts at
+ * the generation's start, not at the first reasoning token: `ReasoningHandler`'s
+ * `startTime = this.initialTime`, `public/scripts/reasoning.js:445`). Sharing
+ * the origin is what lets a reader subtract them from one another and get a
+ * span; a mixture of origins would make `durationMs - firstTokenMs` mean
+ * nothing.
+ *
+ * **Wall clock, not billed time.** A queue at the provider, a slow first
+ * connection and a fast decode are all in here, because all three are what the
+ * person waited. That is also why a rate derived from these is comparable with
+ * SillyTavern's `Token rate` and not with a provider's own throughput claim.
+ *
+ * Absent fields are never zero-filled, the rule {@link TurnUsage} states for
+ * its buckets: a generation that produced no reasoning has **no**
+ * `reasoningMs`, because `0` would say the model thought instantaneously.
+ */
+export interface TurnGeneration {
+  /**
+   * When the request went out, Unix epoch milliseconds.
+   *
+   * The same moment `TurnUsage.at` records, and recorded twice on purpose: a
+   * turn can have a timing record and no usage record (most
+   * OpenAI-compatible endpoints report no usage at all), so neither object may
+   * depend on the other being there.
+   */
+  startedAt: number
+  /**
+   * From the request going out to the stream ending, milliseconds.
+   *
+   * The *whole* window, a provider's queue included — so `outputTokens /
+   * (durationMs / 1000)` is upstream's `Token rate` under upstream's own
+   * definition. Present whenever this object is: a generation that ended has a
+   * duration, even if it ended by failing.
+   */
+  durationMs: number
+  /**
+   * From the request going out to the first output the model produced —
+   * either a text delta or a reasoning delta, whichever arrived first.
+   *
+   * Absent when nothing ever arrived (a request that failed before its first
+   * token), which is not the same fact as `0`.
+   */
+  firstTokenMs?: number
+  /**
+   * From the request going out to the end of the reasoning block,
+   * milliseconds.
+   *
+   * Upstream's `reasoning_duration` measured upstream's way: the clock starts
+   * with the generation, not with the first reasoning token, so this figure
+   * *contains* {@link firstTokenMs} whenever the reasoning came first. Absent
+   * — never `0` — on a model that emitted no reasoning at all.
+   */
+  reasoningMs?: number
 }
 
 /**

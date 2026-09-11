@@ -26,8 +26,10 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 
 import type { CharacterCard } from '@iris/character'
 import { fromCharacterBook, parseLorebook } from '@iris/lorebook'
@@ -85,29 +87,42 @@ type Bindings = Record<string, MaterialisedBinding>
 export class WorldbookBindingStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
-  #bindings: Bindings = {}
+  readonly #onProblem: ((message: string) => void) | undefined
+  // Keyed by character id, which is a filename — see `wireKeyedTable`.
+  #bindings: Bindings = wireKeyedTable()
   #loaded = false
 
   /**
    * @param path - the JSON file backing the store.
    * @param onError - told when a write fails; absent means silence.
+   * @param onProblem - told when the file was there and could not be read or
+   *   parsed; see `atomic.ts`'s `readJsonStore`. Absent means silence.
    */
-  constructor(path: string, onError: (error: Error) => void = () => {}) {
+  constructor(
+    path: string,
+    onError: (error: Error) => void = () => {},
+    onProblem?: (message: string) => void,
+  ) {
     this.#path = path
     this.#onError = onError
+    this.#onProblem = onProblem
   }
 
+  /**
+   * Load on first use.
+   *
+   * Absent: no card has been materialised yet, which is the correct first-run
+   * state and the state every existing profile is in. Unparsable is a different
+   * matter and now says so — this table is the only record of which named book
+   * a card's embedded one became, and reading it as empty makes the next open
+   * materialise a second copy under a fresh name.
+   */
   async #load(): Promise<void> {
     if (this.#loaded) return
     this.#loaded = true
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.#path, 'utf8'))
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        this.#bindings = parsed as Bindings
-      }
-    } catch {
-      // Absent or unreadable: no card has been materialised yet, which is the
-      // correct first-run state and the state every existing profile is in.
+    const parsed = await readJsonStore(this.#path, this.#onProblem)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      this.#bindings = wireKeyedTable(parsed as Bindings)
     }
   }
 
@@ -159,7 +174,7 @@ export class WorldbookBindingStore {
   async #save(): Promise<void> {
     try {
       await mkdir(dirname(this.#path), { recursive: true })
-      await writeFile(this.#path, `${JSON.stringify(this.#bindings, null, 2)}\n`, 'utf8')
+      await atomicWriteFile(this.#path, `${JSON.stringify(this.#bindings, null, 2)}\n`)
     } catch (error: unknown) {
       this.#onError(error instanceof Error ? error : new Error(String(error)))
     }

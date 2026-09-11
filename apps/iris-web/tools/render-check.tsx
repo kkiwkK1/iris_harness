@@ -41,8 +41,8 @@ import { ringDash } from '../src/app/composer-bar.ts'
 import { ContextCard } from '../src/app/ContextMeter.tsx'
 import { cacheCeiling, providerExcuse, providerFellShort } from '../src/app/divergence.ts'
 import {
-  billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageDetailRows,
-  usageSideShareSentences, usageSummaryRows,
+  billedInputTokens, cacheHitPercent, formatExactTokens, formatTokens, totalTokens, usageChipText,
+  usageDetailRows, usageSideShareSentences, usageSummaryRows,
 } from '../src/app/token-format.ts'
 import { UsageDetailCard } from '../src/app/UsagePopover.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
@@ -844,6 +844,101 @@ async function main(): Promise<void> {
   assert.match(withScripts, /A card has no way to ask/, 'the panel does not say a card cannot request this')
   assert.doesNotMatch(withScripts, /document access/i, 'the grant is worded as an API, not a consequence')
 
+  /*
+   * What page access actually costs, named concretely — the network audit's
+   * M-3. The grant makes the card's frame same-origin with the shell, and the
+   * copy said only "your other conversations": the same-origin frame can also
+   * read this page's stored preferences, call every host action in the user's
+   * name, and read `input[type=password].value` in the connection panel while
+   * an API key is being typed or pasted. A dialog that named one of four is a
+   * dialog collecting consent under a description of its own choosing.
+   *
+   * Asserted here rather than only in the dictionary test because the dialog is
+   * a *component's* copy: `RiskConfirmation` takes four separate strings, and a
+   * key that stopped being passed would still be in the dictionary.
+   */
+  assert.match(withScripts, /API key/, 'the off copy does not name the key the grant would expose')
+  assert.match(withScripts, /connection panel/, 'the off copy does not say where the key is typed')
+  assert.match(withScripts, /stored preferences/, 'the off copy does not name the stored preferences')
+
+  /*
+   * And the granted state's own sentence, which is the one a reader checks
+   * *after* turning it on — reached by actually granting, because the dialog
+   * that says the same thing is a modal a server render cannot open. Revoked
+   * again below so every later render in this file sees the default state.
+   */
+  await wired.store.getState().setDocumentGrant(true)
+  const whenGranted = render(wired.store, slots.core)
+  assert.match(whenGranted, /part of this page/, 'the granted state does not say the sandbox is gone')
+  assert.match(
+    whenGranted,
+    /every conversation here/,
+    'the granted copy does not say it reads every conversation',
+  )
+  assert.match(whenGranted, /stored preferences/, 'the granted copy does not name the preferences')
+  assert.match(
+    whenGranted,
+    /any host action in your name/,
+    'the granted copy does not say the card acts as the user',
+  )
+  assert.match(whenGranted, /spends your tokens/, 'the granted copy does not say generation is billed')
+  assert.match(whenGranted, /API key while you type or paste it/, 'the granted copy does not name the key')
+  await wired.store.getState().setDocumentGrant(false)
+
+  /*
+   * And the scripts the script list does not know about — the system audit's
+   * F9. The seeded greeting carries a card interface with one inline
+   * `<script>`; `interfacesMayBuild` runs it whatever the consent answer is,
+   * and before this line nothing on screen said so.
+   *
+   * Checked against a count rather than a phrase alone: a sentence that said
+   * "embedded scripts" while counting zero would pass a phrase match and be
+   * exactly the reassuring lie this is here to stop.
+   */
+  assert.match(
+    withScripts,
+    /carries 1 embedded script/,
+    'the panel does not report the scripts embedded in the interface markup',
+  )
+  assert.match(
+    withScripts,
+    /the scripts question does not cover it/,
+    'the panel does not say the question leaves the markup scripts out',
+  )
+  /*
+   * Counted, not merely matched, and the count is two.
+   *
+   * The question is put in **two** places — `ConsentAsk` above the conversation
+   * and `ConsentGate` inside the settings panel — and a match against the page
+   * is satisfied by either. That is exactly the shape of check that passes
+   * while half the surface has gone quiet, so the number is asserted: a card's
+   * reader who never opens the drawer, and one who only opens the drawer, must
+   * both be told.
+   */
+  assert.equal(
+    withScripts.match(/carries 1 embedded script/g)?.length,
+    2,
+    'both the banner and the settings panel must state the embedded count',
+  )
+
+  /*
+   * And it has to survive the question being answered.
+   *
+   * The markup scripts run whatever the answer was — declining the card's
+   * script list does not stop them — so a panel that said this only while the
+   * question was on screen would fall silent at exactly the moment the reader
+   * believed they had switched something off. Driven through the real action,
+   * because the state the sentence has to survive is a state the host stores.
+   */
+  await wired.store.getState().answerScriptsAllowed(false)
+  const afterAnswer = render(wired.store, slots.core)
+  assert.doesNotMatch(afterAnswer, /Run them/, 'the question is answered and should be gone')
+  assert.match(
+    afterAnswer,
+    /carries 1 embedded script/,
+    'the count disappeared once the question was answered',
+  )
+
   // ------------------------------------------------- regex, both tiers
   /*
    * The two regex sections and the editor, rendered.
@@ -1519,7 +1614,7 @@ async function main(): Promise<void> {
 
   // Per-reply readings: exactly the replies whose generation reported a cost.
   const pricedFloors = costed.messages.flatMap(row =>
-    row.usage === undefined ? [] : [{ id: row.id, usage: row.usage }])
+    row.usage === undefined ? [] : [{ id: row.id, usage: row.usage, generation: row.generation }])
   assert.ok(pricedFloors.length >= 2, 'the seed should price more than one reply')
   assert.equal(
     priced.match(/iris-act--reading/g)?.length,
@@ -1535,10 +1630,28 @@ async function main(): Promise<void> {
   )
   for (const floor of pricedFloors) {
     assert.ok(
-      priced.includes(`>Usage ${formatTokens(totalTokens(floor.usage))}<`),
+      priced.includes(`>${usageChipText(floor.usage, floor.generation)}<`),
       `floor ${String(floor.id)} does not carry its own usage reading`,
     )
   }
+  /*
+   * The speed half of the same reading (`DEVIATIONS.md` §92).
+   *
+   * Both branches, from the seed rather than from a constructed row: the
+   * reading the seeded turn is showing was clocked and prints
+   * `· {rate} tok/s`, and a reading whose timer is not in the file prints the
+   * bare total. The second is not an edge case — the host stores the timer in
+   * SillyTavern's one-per-line `gen_started` pair, so every reloaded turn but
+   * one reading is in that state — and a chip that appended a separator with
+   * nothing after it would be visible here as a stray `·`.
+   */
+  const clocked = pricedFloors.find(floor => floor.generation !== undefined)
+  assert.ok(clocked !== undefined, 'the seed no longer clocks any reply, so the rate branch is not taken here')
+  assert.match(usageChipText(clocked.usage, clocked.generation), / · [\d.]+ tok\/s$/)
+  assert.ok(priced.includes(`>${usageChipText(clocked.usage, clocked.generation)}<`))
+  const unclocked = pricedFloors.find(floor => floor.generation === undefined)
+  assert.ok(unclocked !== undefined, 'the seed no longer carries a priced reply with no timer')
+  assert.doesNotMatch(usageChipText(unclocked.usage, undefined), /·|tok\/s/)
   // The breakdown is a hover card now (`UsagePopover`), and a server render
   // cannot hover: closed, so the rows appear in the page only through the
   // card, which is asserted by rendering the card itself — the same component

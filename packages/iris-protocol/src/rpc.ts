@@ -59,7 +59,20 @@ const worldbookEntriesPatch = z.array(z.object({
       /** Strings, like `keys` above — the same un-revival applies. */
       keys: z.array(z.string().max(1000)).max(200).optional(),
     }).optional(),
-    scan_depth: z.union([z.number().int(), z.literal('same_as_global')]).optional(),
+    /**
+     * Bounded at upstream's own limit, which is the one bound SillyTavern
+     * actually enforces: `MAX_SCAN_DEPTH = 1000`
+     * (`public/scripts/world-info.js:98`), a negative reset to `0` with a
+     * toast (`:3629-3633`) and anything past the limit reset to it
+     * (`:3635-3638`). Measured: 1..6 across 1,478 live disk entries and 1,378
+     * embedded card-book entries — 1,420 of the disk entries are `null`.
+     * `worldbook-settings.ts:117` already clamps the *global* setting to the
+     * same `[0, 1000]`.
+     */
+    scan_depth: z.union([
+      z.number().int().min(0).max(1000),
+      z.literal('same_as_global'),
+    ]).optional(),
   }).optional(),
   position: z.object({
     type: z.enum([
@@ -68,25 +81,82 @@ const worldbookEntriesPatch = z.array(z.object({
       'before_author_note', 'after_author_note', 'at_depth', 'outlet',
     ]).optional(),
     role: z.enum(['system', 'user', 'assistant']).optional(),
-    depth: z.number().int().optional(),
-    order: z.number().int().optional(),
+    /**
+     * Measured maximum 10,000 (`worlds/银麒赎世.json` entries 127 and 128,
+     * both `position: 4`), and no negative anywhere in 2,856 entries.
+     * Upstream declares `min="0" max="9999"` on the input
+     * (`public/index.html:7194`) and enforces neither — the generic binder
+     * `handleNumberInputHelper` ignores its own `min`/`max` unless
+     * `clamp: true` (`world-info.js:3180-3188`), and the depth binding passes
+     * `clamp: false` (`:3327-3330`). An order of magnitude of headroom over
+     * what a real book carries.
+     */
+    depth: z.number().int().min(0).max(100_000).optional(),
+    /**
+     * The one field where negatives are real: 16 of 1,478 live disk entries
+     * sit at **−999** (`worlds/OVERLORD不死者之王.json` entry 0,
+     * `创世回廊1.3.json` entry 19), matched by 14 in the `originalData`
+     * mirror and 18 in the embedded card books. The maximum measured is
+     * **100,000,000** (`[SG]可攻略女主拒绝被攻略.json` entry 35; the next two
+     * are 1,000,000 and 114,514). Upstream applies no bound at all — its
+     * handler is `Number(val)` with `NaN → 0` (`world-info.js:3310-3321`) and
+     * the HTML `min="0"` is advisory — and the character-book importer
+     * (`:5507-5545`) writes `insertion_order` straight through, which is how
+     * the eight-digit value got onto disk. Headroom of ten either way.
+     */
+    order: z.number().int().min(-1_000_000).max(1_000_000_000).optional(),
   }).optional(),
   content: z.string().max(200_000).optional(),
   probability: z.number().int().min(0).max(100).optional(),
   recursion: z.object({
     prevent_incoming: z.boolean().optional(),
     prevent_outgoing: z.boolean().optional(),
-    delay_until: z.number().int().nullable().optional(),
+    /**
+     * A recursion *level*. Only two entries in the whole corpus carry it as a
+     * number and both are `0`; the other 1,476 hold the boolean `false`.
+     * Upstream's level field is `type="text"` with no bound and writes
+     * `Number(content)` unfiltered (`world-info.js:3696-3721`), so it would
+     * accept a negative — **this schema does not**, which is the one place
+     * these bounds are narrower than upstream rather than merely finite. A
+     * negative recursion level names no pass, and nothing has ever written
+     * one. A real book carrying one would overturn it.
+     */
+    delay_until: z.number().int().min(0).max(100_000).nullable().optional(),
   }).optional(),
+  /**
+   * The three timed effects, all counted in messages and none of them
+   * meaningful below zero — upstream's own arithmetic is
+   * `end = chat.length + Number(entry[type])` (`world-info.js:604-611`), so a
+   * negative yields an effect that expired before it began rather than an
+   * error. Its editor declares `min="0" max="999999"`
+   * (`public/index.html:6992`, `:7005`, `:7018`) and enforces neither: the
+   * bindings at `world-info.js:3677-3690` pass `clamp: false`. The ceiling
+   * here is above upstream's *declared* one so that nothing typed into
+   * SillyTavern's editor can be refused by this host.
+   *
+   * Measured across 2,856 entries: `sticky` 0..10 (max in the embedded book of
+   * `终焉之刻NG.png`, entry 11), `cooldown` 0..9,999
+   * (`worlds/魔法禁书目录_v1.0.json` entry 6), `delay` only ever 0 or `null`.
+   * The 569 zeros beside 898 `null`s are upstream's own doing —
+   * `Number('') === 0`, so clearing the field stores a zero.
+   */
   effect: z.object({
-    sticky: z.number().int().nullable().optional(),
-    cooldown: z.number().int().nullable().optional(),
-    delay: z.number().int().nullable().optional(),
+    sticky: z.number().int().min(0).max(1_000_000).nullable().optional(),
+    cooldown: z.number().int().min(0).max(1_000_000).nullable().optional(),
+    delay: z.number().int().min(0).max(1_000_000).nullable().optional(),
   }).optional(),
   addMemo: z.boolean().optional(),
   group: z.string().max(200).optional(),
   groupOverride: z.boolean().optional(),
-  groupWeight: z.number().int().optional(),
+  /**
+   * Not on the audit's list, and bounded with the rest because it is the same
+   * unbounded integer in the same object. Upstream is stricter than this by a
+   * long way — it is one of only two fields whose binder passes `clamp: true`,
+   * to `[1, 10000]` (`world-info.js:3671-3675`) — and every one of the 2,856
+   * measured entries holds exactly `100`. Nothing SillyTavern can produce is
+   * refused here.
+   */
+  groupWeight: z.number().int().min(0).max(1_000_000).optional(),
   caseSensitive: z.boolean().nullable().optional(),
   matchWholeWords: z.boolean().nullable().optional(),
   /**

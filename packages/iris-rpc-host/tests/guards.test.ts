@@ -5,7 +5,7 @@ import { describeHubError } from '../src/errors.ts'
 
 import type { RpcError } from '@iris/protocol'
 
-import { isJsonContentType, isOriginAllowed, isRpcErrorCode, toRpcError } from '../src/index.ts'
+import { deriveAllowance, isJsonContentType, isOriginAllowed, isRpcErrorCode, toRpcError } from '../src/index.ts'
 
 /**
  * The two guards and the error projection, at the edges.
@@ -13,6 +13,10 @@ import { isJsonContentType, isOriginAllowed, isRpcErrorCode, toRpcError } from '
  * These are table-driven because each one is a boundary check whose failure
  * mode is silent: a content type that should not have been accepted, or an
  * origin that should not have been let in, looks exactly like a working system.
+ *
+ * The `Host` half of the origin story lives in `host-guard.test.ts`; this file
+ * keeps the origin table because it is the same kind of boundary as the content
+ * type, and because the table is the record of what changed on 2026-09-11.
  */
 
 test('a content type names JSON only when the media type matches exactly', () => {
@@ -32,23 +36,43 @@ test('a content type names JSON only when the media type matches exactly', () =>
   }
 })
 
-test('an origin is allowed when it matches the host, is opted into, or is absent', () => {
-  const allowed = ['http://localhost:5173']
-  const cases: [string | undefined, string | undefined, boolean][] = [
-    // No Origin at all: a browser always sends one, so this is a local tool.
-    [undefined, '127.0.0.1:8080', true],
-    ['http://127.0.0.1:8080', '127.0.0.1:8080', true],
+test('an origin is allowed when it is in the literal allow-list, or is absent', () => {
+  /*
+   * **This table used to compare the `Origin` against the `Host` header**, and
+   * that is the bug of 2026-09-11: a page at `http://127.0.0.1.nip.io:8080`
+   * sends exactly that agreeing pair, so the rule admitted the attacker's own
+   * origin. The set is now literal and derived from the bound port, and the
+   * `Host` is checked first and separately (`host-guard.test.ts`).
+   */
+  const { origins } = deriveAllowance({
+    port: 8080,
+    allowedHosts: [],
+    allowedOrigins: ['http://localhost:5173'],
+  })
+  const cases: [string | undefined, boolean][] = [
+    // No Origin at all: a browser always sends one on an upgrade, so this is a
+    // local tool — and it has already satisfied the Host guard to get here.
+    [undefined, true],
+    ['http://127.0.0.1:8080', true],
     // Same host, different scheme: still the same authority to the carrier,
     // which serves plain HTTP and has no way to distinguish them.
-    ['https://127.0.0.1:8080', '127.0.0.1:8080', true],
-    ['http://127.0.0.1:9999', '127.0.0.1:8080', false],
-    ['https://evil.example', '127.0.0.1:8080', false],
-    ['http://localhost:5173', '127.0.0.1:8080', true],
-    ['null', '127.0.0.1:8080', false],
-    ['http://127.0.0.1:8080', undefined, false],
+    ['https://127.0.0.1:8080', true],
+    ['http://localhost:8080', true],
+    ['http://[::1]:8080', true],
+    ['HTTP://127.0.0.1:8080', true],
+    ['  http://127.0.0.1:8080  ', true],
+    ['http://127.0.0.1:9999', false],
+    ['https://evil.example', false],
+    // The exploit's own origin. It is a *different* authority from the one this
+    // host bound, and no amount of agreeing with its own `Host` makes it ours.
+    ['http://127.0.0.1.nip.io:8080', false],
+    ['http://127.0.0.1.sslip.io:8080', false],
+    ['http://localhost:5173', true],
+    ['null', false],
+    ['not a url', false],
   ]
-  for (const [origin, host, expected] of cases) {
-    assert.equal(isOriginAllowed(origin, host, allowed), expected, `origin ${String(origin)} host ${String(host)}`)
+  for (const [origin, expected] of cases) {
+    assert.equal(isOriginAllowed(origin, origins), expected, `origin ${String(origin)}`)
   }
 })
 

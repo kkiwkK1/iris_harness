@@ -12,7 +12,7 @@
 
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 
@@ -22,6 +22,7 @@ import type { ChatCompletionPreset } from '@iris/preset'
 import { DEFAULT_TIMEOUTS, OpenAiCompatAdapter } from '@iris/llm-openai-compat'
 import { versionRoute } from './version.ts'
 
+import { sweepStaleTemporaries } from './atomic.ts'
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { CacheTraceStore, DEFAULT_CACHE_TRACE_KEEP } from './cache-trace.ts'
 import { ChatStore } from './chats.ts'
@@ -31,6 +32,7 @@ import type { CharacterCard } from '@iris/character'
 
 import { CardStorageStore } from './card-storage.ts'
 import { DiagnosticBuffer } from './diagnostics.ts'
+import { acquireHostLock } from './host-lock.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
@@ -46,6 +48,7 @@ import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
 import { DEFAULT_PRUNE } from './prune.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
+import { stampShellIndex } from './shell-csp.ts'
 import { ScriptCache } from './script-cache.ts'
 import { presetRegexSource } from './regex.ts'
 import { ScriptPolicyStore } from './scripts.ts'
@@ -58,13 +61,31 @@ export {
   DEFAULT_BACKUP_KEEP,
   NO_CHARACTER,
   backupStamp,
+  compareBackupNames,
   parseBackupStamp,
   rotateBackups,
   type BackupIntent,
   type BackupStoreOptions,
 } from './backups.ts'
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
-export { ConnectionStore, keyTailOf, summarize, routeOf, type ProfileInput } from './connections.ts'
+export {
+  ConnectionStore,
+  keyFilePathFor,
+  keyTailOf,
+  summarize,
+  routeOf,
+  type ConnectionStoreOptions,
+  type ProfileInput,
+} from './connections.ts'
+export {
+  KEY_FILE_WARNING,
+  dpapiProtector,
+  encryptValue,
+  decryptValue,
+  fileProtector,
+  type EncryptedValue,
+  type KeyProtector,
+} from './key-protection.ts'
 export type { ConnectionEndpoint } from './service.ts'
 export {
   assertStorable,
@@ -76,6 +97,16 @@ export {
 export { ChatEntry, lineTurns, metadataBackend, readMeta, type IrisChatMeta } from './entry.ts'
 export { AppError, busy, invalid, notFound } from './errors.ts'
 export { FavoriteStore } from './favorites.ts'
+export {
+  acquireHostLock,
+  describeHeldLock,
+  HOST_LOCK_FILE,
+  isPidAlive,
+  readLockRecord,
+  type HostLock,
+  type HostLockOptions,
+  type HostLockRecord,
+} from './host-lock.ts'
 export { applyChatOrder, ChatOrderStore } from './chat-order.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
 export {
@@ -157,11 +188,24 @@ export {
   type PersonaInput,
   type PersonaPosition,
 } from './persona.ts'
-export { ScriptCache, cacheKey, nodeFetch, type CacheFailure, type FetchLike, type ScriptCacheOptions } from './script-cache.ts'
+export { ScriptCache, cacheKey, type CacheFailure, type ScriptCacheOptions } from './script-cache.ts'
+export {
+  DEFAULT_MAX_BYTES,
+  MAX_HOPS,
+  fetchAllowedRemote,
+  nodeFetch,
+  type FetchLike,
+  type RemoteFetchFailure,
+  type RemoteFetchInit,
+  type RemoteFetchOptions,
+  type RemoteFetchOutcome,
+  type RemoteResponse,
+} from './remote-fetch.ts'
 export { ScriptPolicyStore, scopedRegexRows } from './scripts.ts'
 export { ScriptLibraryStore, viewOf as userScriptViewOf, scriptRowOf, type LibraryScope, type OwnedUserScript, type UserScriptInput } from './script-library.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
+export { SHELL_CSP_DIRECTIVES, shellPolicy, stampShellIndex, type IndexStamp } from './shell-csp.ts'
 export { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from './template.ts'
 export { charWorldbookNames, resolveCardWorldbook, toWorldbookEntry, WorldbookStore } from './worldbooks.ts'
 export type { CharWorldbookNames, ResolvedWorldbook } from './worldbooks.ts'
@@ -296,8 +340,12 @@ export interface Config {
    *
    * Off by default, and the default is the honest one: evaluating a template is
    * running the card author's JavaScript. It runs in a child process with no
-   * environment, no filesystem writes and no host objects in reach, but that is
-   * a containment argument, not a reason to opt a user in for them.
+   * environment, no filesystem writes, a heap ceiling, one child at a time, and
+   * a `vm` realm nothing of the child's own realm reaches into — the last of
+   * those true since 2026-09-11, when the three functions EJS names in every
+   * template's scope (`escapeFn`, `include`, `rethrow`) stopped crossing raw and
+   * `escapeFn.constructor("return process")` stopped working. Containment is
+   * still a containment argument, not a reason to opt a user in for them.
    * @default false
    */
   templates?: boolean
@@ -501,16 +549,117 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const dataDir = resolve(root, config.dataDir ?? './data')
   const avatarPath = config.avatarPath ?? '/iris/avatar'
 
+  /*
+   * **The data directory is taken before anything reads or writes in it.**
+   *
+   * Every store here is a whole-file rewrite from in-memory state, so two hosts
+   * on one directory are two copies of the same files and the second one's save
+   * overwrites the first one's newer file whole — silently, on both sides. This
+   * is the first statement in `apply` for the same reason
+   * `refuseOverlappingInstall` is early: by the time a store has read a file the
+   * damage is already possible, and the only honest place to refuse is before
+   * the first read.
+   *
+   * The port recorded is `ctx.webServer.port`, the **bound** one. This plugin
+   * injects `webServer`, so the carrier has finished listening by the time
+   * `apply` runs and the value is the port a person would actually open —
+   * which is what the refusal sentence has to name to be actionable.
+   *
+   * The release is a fiber effect rather than a `process.on('exit')` handler:
+   * `bin.ts`'s SIGINT/SIGTERM path disposes the fiber, the tests dispose it,
+   * and an effect is the one spelling that covers both. A crash releases
+   * nothing, deliberately — see `host-lock.ts`.
+   */
+  const lock = await acquireHostLock(dataDir, { port: ctx.webServer.port })
+  if (lock.takeover !== undefined) ctx.logger.warn(lock.takeover)
+  // The disposer is `async` and its promise is returned, the way the carrier's
+  // own listen effect is: a fire-and-forget release resolves `dispose()` before
+  // the file is gone, so a supervisor that restarts the host the instant the old
+  // one exits races its own lock — measured, as a failing assertion that the
+  // file was gone after `fiber.dispose()`.
+  ctx.effect(() => async () => {
+    await lock.release().catch((error: unknown) => {
+      ctx.logger.warn(error instanceof Error ? error.message : String(error))
+    })
+  }, 'irisApp.hostLock')
+
+  /*
+   * **The debris the lock cannot prevent is swept now, once, before a store
+   * exists.** A host killed between writing a temporary and renaming it leaves
+   * that file behind forever — nothing reads a `.tmp`, so the accumulation is
+   * invisible until a listing or a backup steps over it, and the 2026-09-11
+   * two-host incident left one in the real `worlds` directory
+   * (`扣扣审判1.0.json.1664.tmp`, named for a process that was already gone).
+   * Holding the lock is what makes this moment safe: no store of ours is
+   * constructed yet, so nothing in this process has a temporary in flight, and
+   * no other host can legitimately hold one here either. A temporary whose
+   * recorded pid is alive and not ours is left alone regardless — the sweep
+   * stays correct on its own terms rather than borrowing the lock's; see
+   * `atomic.ts`. One line when something was removed, silence when the
+   * directory was clean, the way the store-problem reports below behave.
+   */
+  const swept = await sweepStaleTemporaries(dataDir)
+  if (swept.length > 0) {
+    const listed = swept.length <= 5 ? swept : [...swept.slice(0, 5), `… and ${String(swept.length - 5)} more`]
+    ctx.logger.warn(`iris: removed ${String(swept.length)} stale temporary file(s) under ${dataDir}, `
+      + 'left behind by hosts that died between writing a temporary and renaming it: '
+      + listed.map(path => basename(path)).join(', '))
+  }
+
   // Every path comes from one derivation, so a profile is one segment rather
   // than a change in five places — and so a store added later cannot be the one
   // that forgot to be profile-scoped.
   const paths = profilePaths(dataDir, config.profile ?? DEFAULT_PROFILE)
   warnOnPreProfileLayout(ctx, dataDir, paths.root)
 
+  // Retention for the diagnostic bus. Reports already reached the logger and
+  // stopped there, so a debug page had nothing to ask for; this keeps a bounded
+  // window of them in memory. Not persisted deliberately — a restart empties it
+  // and says so through `oldest`.
+  //
+  // **Constructed first**, before any store, because the stores now report
+  // through it: a store's file is read on first use, which for most of them is
+  // after boot, and a report that arrives then has to land in the same buffer
+  // the service's own `#report` writes to or the debug page would be showing
+  // two different histories of one host.
+  const diagnostics = new DiagnosticBuffer()
+  /**
+   * What a store says when its file was there and could not be used.
+   *
+   * The service's `#report(message, { kind, grade })` in two lines, because
+   * this runs before the service exists and the stores it belongs to are
+   * constructed here. Same buffer, same logger, so the record reaches
+   * `debug.reports` exactly as a fault raised inside a generation does.
+   *
+   * `grade: 'fault'` — the call that triggered the load was served, with
+   * defaults, which is precisely the thing worth flagging. Not `irreversible`:
+   * the bytes were set aside rather than lost, and that is the whole point of
+   * quarantining them, so this waits to be asked for instead of interrupting
+   * every open page.
+   */
+  const reportStoreProblem = (message: string): void => {
+    diagnostics.record({ kind: 'host', grade: 'fault' }, message)
+    ctx.logger.warn(message)
+  }
+  /**
+   * What a store says when it **did** something on the user's behalf.
+   *
+   * `grade: 'note'` and `logger.info`, because the one caller today — the
+   * connection keys being encrypted at rest on the first boot after 2026-09-11
+   * (§75) — is a success. Filing it through `reportStoreProblem` would put a
+   * completed upgrade in the same list as an unreadable key file, and telling
+   * those two apart is the debug page's whole job.
+   */
+  const reportStoreNote = (message: string): void => {
+    diagnostics.record({ kind: 'host', grade: 'note' }, message)
+    ctx.logger.info(message)
+  }
+
   const library = new CharacterLibrary(paths.characters, avatarPath)
   const scriptVariables = new ScriptVariableStore(paths.scriptVariables,
-    error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) })
-  const extensionSettingsStore = new ExtensionSettingsStore(paths.extensionSettings)
+    error => { ctx.logger.warn(error instanceof Error ? error.message : String(error)) },
+    reportStoreProblem)
+  const extensionSettingsStore = new ExtensionSettingsStore(paths.extensionSettings, reportStoreProblem)
   // Loaded before the chats, because the `global` scope is read synchronously by
   // a card and a synchronous read cannot wait for a file.
   const globalScope = await openGlobalScope(extensionSettingsStore, error => { ctx.logger.warn(error.message) })
@@ -522,12 +671,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const settings = new SettingsStore(paths.settings, {
     provider: config.provider ?? 'default',
     model: config.model ?? 'local-model',
-  })
+  }, reportStoreProblem)
   // Which named book each card's embedded book became. Beside the installation
   // rather than in the card, so a card exported back to SillyTavern is
   // unchanged — the same decision as `script-variables.json`.
   const worldbookBindings = new WorldbookBindingStore(
-    paths.worldbookBindings, error => { ctx.logger.warn(error.message) })
+    paths.worldbookBindings, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
 
   /**
    * Materialise a card's embedded book, once, however the card first arrives.
@@ -580,10 +729,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Constructed **before** the chat store, because the chat store composes each
   // conversation's regex from it: the user's allow switch for a card's own tier
   // and their switches over its individual rules.
-  const scripts = new ScriptPolicyStore(paths.scriptPolicy)
+  const scripts = new ScriptPolicyStore(paths.scriptPolicy, reportStoreProblem)
   // The user's own scripts. Beside the policy file rather than inside it, and
   // beside the cards rather than inside them — see `paths.scriptLibrary`.
-  const scriptLibrary = new ScriptLibraryStore(paths.scriptLibrary)
+  const scriptLibrary = new ScriptLibraryStore(paths.scriptLibrary, reportStoreProblem)
 
   /**
    * The last malformed-row report, so one preset is said once rather than on
@@ -656,21 +805,25 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Runtime button tables, beside the installation rather than in the card —
   // the same decision as `script-variables.json`, and for the same reason.
   const scriptButtons = new ScriptButtonStore(
-    paths.scriptButtons, error => { ctx.logger.warn(error.message) })
-  const connections = new ConnectionStore(paths.connections)
+    paths.scriptButtons, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
+  // The keys in here are encrypted at rest (§75): the data key beside the file
+  // is wrapped by the OS where there is a keystore to wrap it with, and the
+  // first boot on an older profile migrates the plaintext away and says so
+  // through `reportStoreNote`.
+  const connections = new ConnectionStore(paths.connections, reportStoreProblem, { onNote: reportStoreNote })
   // The user's personas — who `{{user}}` is. Its own file, like the
   // connections beside it, for the same owner-separation reason.
-  const personas = new PersonaStore(paths.personas)
+  const personas = new PersonaStore(paths.personas, reportStoreProblem)
   // The characters this profile has starred. Profile-level rather than the
   // card's `fav`, on the standing rule that runtime state stays out of shared
   // card files — an exported card carries no trace of the stars it earned here.
-  const favorites = new FavoriteStore(paths.favorites)
+  const favorites = new FavoriteStore(paths.favorites, reportStoreProblem)
   // The order the reader put their conversations in — beside the stars, for the
   // same reason: both are decisions about this profile's own shelf rather than
   // settings a chat is using. Upstream keeps no manual chat order at all, so
   // both the file and its name are Iris's (`chat-order.ts`), and a profile that
   // has never dragged a row never gets the file.
-  const chatOrder = new ChatOrderStore(paths.chatOrder)
+  const chatOrder = new ChatOrderStore(paths.chatOrder, reportStoreProblem)
   // Runtime adapter installs, one per provider route this plugin has claimed.
   //
   // `connection.activate` and boot-time restoration both come through here: a
@@ -715,12 +868,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // origin. Not partitioned per card, and deliberately not forgotten when a
   // card is deleted — see `character.delete`.
   const cardStorage = new CardStorageStore(
-    paths.cardStorage, error => { ctx.logger.warn(error.message) })
-  // Retention for the diagnostic bus. Reports already reached the logger and
-  // stopped there, so a debug page had nothing to ask for; this keeps a bounded
-  // window of them in memory. Not persisted deliberately — a restart empties it
-  // and says so through `oldest`.
-  const diagnostics = new DiagnosticBuffer()
+    paths.cardStorage, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
 
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a
@@ -986,18 +1134,40 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
   }, 'irisApp.handlers')
 
+  /*
+   * **Every route below goes through `ctx.irisRpc.guard`.**
+   *
+   * The transport's `Host` allow-list is not about the RPC endpoint; it is
+   * about this process. A page at `http://127.0.0.1.nip.io:8787` — public
+   * wildcard DNS resolving to loopback — is a browser origin an attacker owns
+   * that becomes same-origin with this host, and these four routes are as
+   * readable to it as the RPC endpoint is: avatars are the user's character
+   * library, the script bundle is the card code running in their sandbox, and
+   * `/version` names the build. `guard` is the same predicate the RPC POST and
+   * the event upgrade use, so there is one rule in one place
+   * (`notes/packages/iris-rpc-host/DEVIATIONS.md` §1, and §70 below).
+   *
+   * Wrapped at the registration rather than inside each handler, so a handler
+   * cannot forget it — and so the sandbox route keeps its `Origin: null` CORS
+   * behaviour untouched, which the card frames depend on: `Origin` is not what
+   * is being checked here.
+   */
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'prefix',
       path: avatarPath,
-      handler: (req, res) => serveAvatar(library, avatarPath, req, res),
+      handler: ctx.irisRpc.guard((req, res) => serveAvatar(library, avatarPath, req, res)),
     }),
     `irisApp: GET ${avatarPath}`,
   )
 
   // The route object is built in `version.ts` so a test can hold the same one
   // the server gets; this line is the only part no test can reach.
-  ctx.effect(() => ctx.webServer.register(versionRoute()), 'irisApp: GET /version')
+  const version = versionRoute()
+  ctx.effect(
+    () => ctx.webServer.register({ ...version, handler: ctx.irisRpc.guard(version.handler) }),
+    'irisApp: GET /version',
+  )
 
   const bundlePath = config.scriptBundlePath ?? '/iris/script-bundle'
   const bundles = new ScriptCache({
@@ -1017,7 +1187,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: bundlePath,
-      handler: (req, res) => bundles.serve(req, res),
+      handler: ctx.irisRpc.guard((req, res) => bundles.serve(req, res)),
     }),
     `irisApp: GET ${bundlePath}`,
   )
@@ -1033,9 +1203,39 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       () => ctx.webServer.register({
         kind: 'prefix',
         path: sandboxPath,
-        handler: (req, res) => serveSandboxAsset(sandboxDir, sandboxPath, req, res),
+        handler: ctx.irisRpc.guard((req, res) => serveSandboxAsset(sandboxDir, sandboxPath, req, res)),
       }),
       `irisApp: GET ${sandboxPath}`,
+    )
+
+    /*
+     * The shell page's own Content-Security-Policy, written into the index the
+     * fallback seat serves.
+     *
+     * Registered here rather than in the front-end row because this plugin is
+     * the one that already holds `webDistIndex` — the same gate as the sandbox
+     * route above, and for the same reason: with no build there is no index to
+     * tap, and the carrier applies taps only through `renderIndex`, which only
+     * the static seat calls. What goes in and why each directive earned its
+     * place is `shell-csp.ts`; the short version is that a card interface is a
+     * `srcdoc` frame, a `srcdoc` document **inherits the embedder's policy**,
+     * and so every directive here is also a directive on every card.
+     *
+     * A refusal is warned once rather than per response: an index that already
+     * carries a policy would otherwise print a line per page load, and the fact
+     * does not change between two reads of the same file.
+     */
+    let policyRefusalSaid = false
+    ctx.effect(
+      () => ctx.webServer.tapIndex(html => {
+        const stamped = stampShellIndex(html)
+        if (stamped.refusal !== undefined && !policyRefusalSaid) {
+          policyRefusalSaid = true
+          ctx.logger.warn(`irisApp: ${stamped.refusal}`)
+        }
+        return stamped.html
+      }),
+      'irisApp: shell Content-Security-Policy',
     )
   }
 }

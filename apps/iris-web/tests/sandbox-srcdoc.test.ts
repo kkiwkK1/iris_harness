@@ -71,6 +71,18 @@ test('the frame cannot open a nested context or post a form', () => {
   assert.match(policy, /default-src 'none'/)
 })
 
+test('the frame cannot re-point its relative URLs with a <base>, granted or not', () => {
+  /*
+   * `base-uri` is one of the few directives with **no fallback to
+   * `default-src`**, so `default-src 'none'` above left it wide open and a card
+   * could write `<base href="https://…">`. Asserted on both branches because a
+   * network grant is about images, fetches and stylesheets, and nothing about a
+   * grant is a reason to let a card move where its own document resolves from.
+   */
+  assert.match(framePolicy(false, SELF), /base-uri 'none'/)
+  assert.match(framePolicy(true, SELF), /base-uri 'none'/)
+})
+
 test('the bootstrap is fetched by a blocking classic tag, not inlined', () => {
   /*
    * **The inversion of what this test used to assert, and the reason is the

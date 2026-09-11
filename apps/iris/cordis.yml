@@ -52,7 +52,10 @@
 
 # The browser carrier. `dsh-host-webserver` ships no TLS and no authentication —
 # its own README says so — so this binds to loopback and trusts the machine.
-# Serving Iris to a network needs a reverse proxy in front, not `0.0.0.0` here.
+# Serving Iris to a network needs a reverse proxy in front, not `0.0.0.0` here —
+# and `0.0.0.0` here now refuses to start until the rpc row below names the hosts
+# that proxy answers to, because a loopback bind is a bind and not an access
+# control (`notes/packages/iris-rpc-host/DEVIATIONS.md` §1).
 - id: webserver
   name: '@deepseek-ai/dsh-host-webserver'
   config:
@@ -68,11 +71,34 @@
     # /iris/rpc and /iris/events from that server instead, which keeps the page
     # same-origin and leaves this empty.
     allowedOrigins: !!js (process.env.IRIS_DEV_ORIGIN ?? '').split(',').filter(Boolean)
+    # Exact `host:port` values this host answers to, comma-separated, besides
+    # loopback on the port it actually bound — which is derived, so the ordinary
+    # loopback install needs nothing here. It is the reverse-proxy case that
+    # cannot be derived: the browser writes the proxy's **public** host into
+    # `Host`, this process never sees it, and everything not listed is refused
+    # with 403. Exact strings only, no wildcards: a suffix rule would admit
+    # `127.0.0.1.attacker.example.com`, which is the attack (a wildcard DNS name
+    # resolving to loopback) this list exists to refuse.
+    allowedHosts: !!js (process.env.IRIS_ALLOWED_HOSTS ?? '').split(',').filter(Boolean)
 
 # The application half: the protocol handlers over the domain packages.
 - id: app
   name: '@iris/app-service'
   config:
+    # **One host per data directory, enforced.** On startup the app service
+    # creates `<dataDir>/host.lock` with `open(path, 'wx')` and refuses to start
+    # when the pid it already names is running — every store here is a
+    # whole-file rewrite from memory, so a second host's save overwrites the
+    # first's newer file whole and silently (it has happened on this machine;
+    # `notes/packages/iris-app-service/DEVIATIONS.md` §71). A lock left by a
+    # process that is gone is stale: the next host takes it over and says so.
+    # Released on an orderly shutdown, never on a crash — that is what the
+    # liveness check is for.
+    #
+    # **There is no override flag, on purpose.** Running a second host is still
+    # supported and takes a second `IRIS_DATA_DIR`, which is a copy away. Note
+    # that this is about the *directory*, not the port: two hosts on 8787 and
+    # 8790 sharing one `./data` is exactly the case a port check cannot see.
     dataDir: !!js process.env.IRIS_DATA_DIR ?? './data'
     # Storage is profile-scoped. The default matches SillyTavern's own
     # `data/<user>/` layout, so pointing IRIS_DATA_DIR at an existing install

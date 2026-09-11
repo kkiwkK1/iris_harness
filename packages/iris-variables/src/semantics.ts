@@ -19,6 +19,7 @@ import has from 'lodash-es/has.js'
 import mergeWith from 'lodash-es/mergeWith.js'
 import unset from 'lodash-es/unset.js'
 
+import { assertNoForbiddenKeys, assertPathWritable } from './keys.ts'
 import type { Variables } from './scope.ts'
 
 /**
@@ -52,6 +53,11 @@ export function detach(variables: Variables): Variables {
  * @returns a new table with `incoming` merged over `current`.
  */
 export function insertOrAssign(current: Variables, incoming: Variables): Variables {
+  // The merge is the pollution site the audit named: `mergeWith` walks the
+  // incoming tree key by key, and a `__proto__` member survives `JSON.parse`
+  // as an ordinary own property. Lodash 4.18 refuses it in `safeGet`, but the
+  // refusal belongs to this code rather than to whatever the range resolved to.
+  assertNoForbiddenKeys(incoming, 'variables')
   return mergeWith(cloneDeep(current), incoming, arraysReplace) as Variables
 }
 
@@ -62,6 +68,7 @@ export function insertOrAssign(current: Variables, incoming: Variables): Variabl
  * @returns a new table with `current` layered back over `incoming`.
  */
 export function insertMissing(current: Variables, incoming: Variables): Variables {
+  assertNoForbiddenKeys(incoming, 'variables')
   return mergeWith({}, incoming, current, arraysReplace) as Variables
 }
 
@@ -78,6 +85,11 @@ export interface DeleteResult {
  * @returns the new table and whether anything was actually there.
  */
 export function deletePath(current: Variables, path: string): DeleteResult {
+  // A deletion cannot pollute, but `_.has('a.constructor.b')` walks the
+  // prototype chain and answers `true` for a path that is not in the table, so
+  // an unfiltered delete reports `delete_occurred` for something that was never
+  // stored. Refused for the same reason a write is, and by the same predicate.
+  assertPathWritable(path)
   const variables = cloneDeep(current)
   // `_.unset` reports whether the property is gone afterwards, which is `true`
   // for a path that never existed — so existence has to be checked first.

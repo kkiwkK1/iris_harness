@@ -5,6 +5,16 @@
  */
 
 export {
+  assertNoForbiddenKeys,
+  assertPathWritable,
+  findForbiddenKey,
+  forbiddenSegmentIn,
+  ForbiddenKeyError,
+  isForbiddenKey,
+  pathSegments,
+} from './keys.ts'
+
+export {
   deletePath,
   detach,
   insertMissing,

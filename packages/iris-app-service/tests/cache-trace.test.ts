@@ -566,8 +566,11 @@ test('an interrupted trace records no usage and no zeroes, and the comparison ca
     inputTokens: 120,
     cacheReadTokens: 60,
   }), seq: 2 }
-  assert.equal('error' in interrupted, true, 'the trace file carries the failure verbatim')
+  assert.equal('error' in interrupted, true, 'the trace file carries the failure')
   assert.match(interrupted.error as string, /closed by the peer|no usage was reported/iu)
+  // Verbatim, credentials excepted (see the scrub test below): this sentence
+  // holds none, so it is stored exactly as the report panel showed it.
+  assert.ok((interrupted.error as string).endsWith('no usage was reported for this turn'))
 
   // The comparison copies the newer request's error the same way it copies its
   // usage figures — a reader of this pair sees that the turn it is looking at
@@ -587,6 +590,31 @@ test('an interrupted trace records no usage and no zeroes, and the comparison ca
   assert.equal(after.error, undefined)
   assert.equal(after.inputTokens, 120)
   assert.equal(after.cacheReadTokens, 60)
+})
+
+test('a credential quoted into a failure does not reach the trace file', () => {
+  /*
+   * The trace is the copy that outlives the session: the `stream.error` frame
+   * is gone when the page closes, this is a file in the profile. The adapter
+   * already scrubs the body it echoes, so this is the second net — for a
+   * message that reached the host by another path — and it is why the patterns
+   * are imported from the adapter rather than restated here.
+   */
+  const options = request('系统段', 'x', 'y')
+  const echoed = traceOf(options, { chatId: 'c', kind: 'send', turn: 0 }, 1000, undefined,
+    'https://api.example/v1/chat/completions responded 401: '
+    + '{"error":"Authorization: Bearer sk-iris-test-not-a-real-key-000000000000"}')
+  const written = echoed.error ?? ''
+  assert.ok(!written.includes('sk-iris'), 'the key was written to the profile')
+  assert.ok(written.includes('<redacted>'))
+  // What a reader navigates by survives: which endpoint, which status.
+  assert.match(written, /https:\/\/api\.example\/v1\/chat\/completions responded 401: /u)
+
+  // And a failure with no credential in it is stored as it was reported —
+  // pinned here rather than inferred, because a scrub that ate ordinary text
+  // would fail this and pass every assertion above.
+  const plain = 'the provider closed the connection while the reply was streaming'
+  assert.equal(traceOf(options, { chatId: 'c', kind: 'send', turn: 0 }, 1000, undefined, plain).error, plain)
 })
 
 test('the store keeps the newest N and deletes only its own files', async (t) => {

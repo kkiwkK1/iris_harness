@@ -24,10 +24,13 @@ function harness(host?: Partial<RunnerHost>): {
   hostFetches: () => string[]
   /** Make the shell page's next same-origin fetch fail. */
   failNextRide: (why: Error) => void
+  /** What the shell reported on the note channel. */
+  notes: () => string[]
 } {
   const posted: Record<string, unknown>[] = []
   const sameOriginCalls: string[] = []
   const hostFetches: string[] = []
+  const notes: string[] = []
   let pendingFailure: Error | undefined
 
   const contentWindow = {
@@ -102,6 +105,9 @@ function harness(host?: Partial<RunnerHost>): {
       onCall: async () => undefined,
       onError: () => undefined,
       onBlocked: () => undefined,
+      onNote: message => {
+        notes.push(message)
+      },
       ...host,
     },
     document as unknown as Document,
@@ -120,6 +126,7 @@ function harness(host?: Partial<RunnerHost>): {
     failNextRide: why => {
       pendingFailure = why
     },
+    notes: () => notes,
   }
 }
 
@@ -196,6 +203,70 @@ test('a neighbouring port is not our origin', async () => {
 
   assert.deepEqual(scope.sameOriginCalls(), [])
   assert.deepEqual(scope.hostFetches(), ['http://127.0.0.1:8790/version'])
+})
+
+test('the shell refuses a same-origin path the bridge does not carry, on its own', async () => {
+  /*
+   * The network audit's F11, shell side — and this is the side that counts.
+   * The frame consults the same list in `rideFor`, but the frame is the
+   * untrusted half: a frame running an older build, or one whose check was
+   * evaded, sends the message anyway, and the credentials are held here. A
+   * message is delivered directly for exactly that reason, bypassing the frame.
+   */
+  const scope = harness()
+  const token = tokenOf(scope.card.element.srcdoc)
+
+  scope.fromFrame({ iris: token, type: 'fetch', id: 'f6', url: 'http://127.0.0.1:8791/iris/rpc' })
+  await settle()
+
+  assert.deepEqual(scope.sameOriginCalls(), [], 'the credentialed fetch never happened')
+  assert.deepEqual(scope.hostFetches(), [], 'and it was not smuggled onto the remote route either')
+
+  const answer = scope.posted().at(-1)
+  assert.ok(answer?.type === 'fetch:error', 'answered on the channel the frame already understands')
+  assert.equal(answer.id, 'f6')
+  assert.match(answer.message as string, /\/iris\/rpc/)
+  // The repo rule: a refusal names the layer that produced it.
+  assert.match(answer.message as string, /the page refused to fetch it/)
+  assert.deepEqual(scope.notes().length, 1, 'and it is on the durable report channel once')
+})
+
+test('the shell allows this card’s own avatar and refuses another card’s', async () => {
+  const scope = harness({ context: { characterId: '络络.png' } as never })
+  const token = tokenOf(scope.card.element.srcdoc)
+  const own = `http://127.0.0.1:8791/iris/avatar/${encodeURIComponent('络络.png')}`
+  const other = `http://127.0.0.1:8791/iris/avatar/${encodeURIComponent('爱衣.png')}`
+
+  scope.fromFrame({ iris: token, type: 'fetch', id: 'f7', url: own })
+  scope.fromFrame({ iris: token, type: 'fetch', id: 'f8', url: other })
+  await settle()
+
+  assert.deepEqual(scope.sameOriginCalls(), [own], 'the other card’s file was never read')
+  const refusal = scope.posted().find(
+    message => message.type === 'fetch:error' && message.id === 'f8',
+  )
+  assert.ok(refusal !== undefined, 'the refused one was answered')
+})
+
+test('the shell reports one refused shape once, however many cards are swept', async () => {
+  const scope = harness({ context: { characterId: '络络.png' } as never })
+  const token = tokenOf(scope.card.element.srcdoc)
+  for (const [at, name] of ['a.png', 'b.png', 'c.png'].entries()) {
+    scope.fromFrame({
+      iris: token,
+      type: 'fetch',
+      id: `s${String(at)}`,
+      url: `http://127.0.0.1:8791/iris/avatar/${encodeURIComponent(name)}`,
+    })
+  }
+  await settle()
+
+  assert.equal(scope.notes().length, 1, 'three refusals of one shape are one report')
+  assert.equal(
+    scope.posted().filter(message => message.type === 'fetch:error').length,
+    3,
+    'each card still got its own answer — the deduplication is the report, not the refusal',
+  )
 })
 
 test('a failed same-origin fetch is reported as an error, not a body', async () => {

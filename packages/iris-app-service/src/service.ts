@@ -36,7 +36,7 @@ import {
   type TavernHelperPreset,
 } from '@iris/compat-tavernhelper'
 // —— family③ end ——
-import { checkScriptFetch, extractScripts } from '@iris/script'
+import { extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, slotsOf, squashSystemRuns, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
@@ -82,6 +82,7 @@ import { cardWorldbookDigest, cardWorldbookView, charWorldbookNames, WorldbookSt
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
+import { forbiddenSegmentIn } from '@iris/variables'
 // —— family①: identity & messages ——
 import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
@@ -92,6 +93,7 @@ import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import { CacheTraceStore, traceOf } from './cache-trace.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
+import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
 import type { PruneOptions } from './prune.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
@@ -556,12 +558,21 @@ export interface AppServiceOptions {
    */
   probeTimeoutMs?: number
   /**
-   * Fetches a remote script dependency. Defaults to global `fetch`.
+   * The transport `script.fetch` reaches the network through. Defaults to
+   * {@link nodeFetch}.
    *
    * Injectable so the whitelist can be tested without a network, and so a
-   * deployment can route these through its own proxy.
+   * deployment can route these through its own proxy — but it is a *transport*
+   * and not a fetcher: one request, no redirect following, the body as a
+   * stream. The allowlist, the hop limit and the size cap live above it in
+   * `fetchAllowedRemote`, the same executor `ScriptCache` fetches through.
+   *
+   * This option used to be `(url) => Promise<{ ok, status, text, headers }>`
+   * defaulting to a bare `fetch(url)`, and that shape *was* the defect: a fetcher
+   * that follows redirects itself hands the host a body from wherever the far
+   * side pointed, and the handler above checked only the URL it started with.
    */
-  fetchRemote?: (url: string) => Promise<{ ok: boolean, status: number, text: () => Promise<string>, headers: { get: (name: string) => string | null } }>
+  fetchRemote?: FetchLike
   /** Pushes one frame to every attached page. */
   broadcast: (event: IrisEvent) => void
   /**
@@ -847,7 +858,7 @@ export class IrisAppService {
       templateOverhead: options.templateOverhead ?? 0,
       trimBlockFloors: options.trimBlockFloors ?? DEFAULT_TRIM_BLOCK_FLOORS,
       onError: options.onError ?? (() => {}),
-      fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
+      fetchRemote: options.fetchRemote ?? nodeFetch,
       probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       env: options.env ?? process.env,
       // Off unless a composition says otherwise: see the option's docblock for
@@ -2392,6 +2403,13 @@ export class IrisAppService {
 
         if (op === 'delete') {
           if (path === undefined) throw invalid('a delete needs the path to remove')
+          // `_.has('a.constructor.b')` walks the prototype chain, so an
+          // unfiltered delete answers `delete_occurred` for a path that was
+          // never in the table. Refused with this face's own vocabulary.
+          const blocked = forbiddenSegmentIn(path)
+          if (blocked !== undefined) {
+            throw invalid(`the path "${path}" walks through "${blocked}", which cannot be used as a variable key`)
+          }
           entry.variables.deleteVariable(path, option)
         } else {
           if (variables === undefined) throw invalid(`"${op}" needs a variables object`)
@@ -3790,27 +3808,43 @@ export class IrisAppService {
         return { text: await this.#generateRaw(entry, prompt, systemPrompt) }
       },
 
+      /**
+       * Fetch one allow-listed URL on a card's behalf.
+       *
+       * **The fetching is `fetchAllowedRemote`'s, not this handler's**, and that
+       * is the whole of the 2026-09-11 change (host §69). This handler used to
+       * run `checkScriptFetch` on the first hop and then call a fetcher that
+       * followed redirects itself, so an allow-listed host answering `302
+       * Location: https://evil.example/x.js` lent its allowance to
+       * `evil.example` and the foreign body came back as text a card turns into
+       * a `blob:` and runs. `ScriptCache` had the same rule written out properly
+       * a file away; two executions of an allowlist are worth the weaker one.
+       *
+       * Nothing here is cached. The disk cache belongs to the bundle route,
+       * which stores JavaScript under a seven-day TTL and rewrites it on the way
+       * out; this answers whatever a card asked for with the far side's own
+       * content type, and measured across both corpora no card fetches an
+       * allow-listed URL through this path at all — so there is not one repeat
+       * to share, and a shared store would mean a data fetch answered from a
+       * week-old copy.
+       *
+       * The two codes split on *whose* refusal it is: `unsupported` is this
+       * host declining — the source is not on the list, the redirect chain is
+       * longer than this host follows, the body is bigger than this host will
+       * hand a card — and `provider-error` is the far side failing. Neither
+       * carries any part of a refused body.
+       */
       'script.fetch': async ({ url }) => {
-        const verdict = checkScriptFetch(url)
-        // `unsupported` and not `invalid-request`: the URL is well-formed and
-        // the request is understood, it is the source that is not allowed, and
-        // the message names the host so the person holding the card can see why.
-        if (!verdict.allowed) throw new AppError('unsupported', verdict.reason)
-
-        const fetcher = this.#options.fetchRemote
-        let response: Awaited<ReturnType<NonNullable<AppServiceOptions['fetchRemote']>>>
-        try {
-          response = await fetcher(verdict.url)
-        } catch (cause: unknown) {
-          throw new AppError('provider-error', `could not reach ${new URL(verdict.url).hostname}: ${String(cause)}`)
+        const result = await fetchAllowedRemote(url, { fetch: this.#options.fetchRemote })
+        if (!result.ok) {
+          const code = result.kind === 'unreachable' || result.kind === 'bad-status'
+            ? 'provider-error'
+            : 'unsupported'
+          throw new AppError(code, result.reason)
         }
-        if (!response.ok) {
-          throw new AppError('provider-error', `${new URL(verdict.url).hostname} answered ${String(response.status)}`)
-        }
-        const contentType = response.headers.get('content-type')
         return {
-          content: await response.text(),
-          ...contentType === null ? {} : { contentType },
+          content: result.bytes.toString('utf8'),
+          ...result.contentType === null ? {} : { contentType: result.contentType },
         }
       },
 
@@ -4608,7 +4642,13 @@ export class IrisAppService {
    * @returns the summaries in display order.
    */
   async #chatList(): Promise<ChatSummary[]> {
-    const rows = await this.#options.chats.list()
+    // The listing's own report channel. A chat file that cannot be summarised
+    // is still left out of the answer — the shape of `chat.list` does not
+    // change — but it is no longer left out *silently*: a conversation damaged
+    // by a truncated save used to vanish from the sidebar with nothing said
+    // anywhere, which reads as a deletion nobody performed.
+    const rows = await this.#options.chats.list(
+      message => { this.#report(message, { kind: 'host', grade: 'fault' }) })
     const store = this.#options.chatOrder
     if (store === undefined) return rows
     return applyChatOrder(rows, await store.list())
@@ -4772,6 +4812,23 @@ export class IrisAppService {
 
   /**
    * Record a finished generation and tell every page.
+   *
+   * **A settle that cannot store its reply is a terminal event of its own.**
+   * Everything below the generation — the variable records, the rewrite, the
+   * save — runs inside one `try`, and its `catch` used to do nothing but
+   * release the chat and file a report: on a full disk or a permission error
+   * the reply existed in memory,
+   * the report panel knew, and the page stayed in the generating state until
+   * somebody reloaded it, while every other terminal path (`#fail`'s three)
+   * broadcasts. Upstream cannot reach this state — its save is a request the
+   * browser makes *after* the generation has ended, and `saveChat`'s own catch
+   * toasts `Chat could not be saved` / `Check the server connection and reload
+   * the page to prevent data loss.` (`public/script.js:7417-7423`) while
+   * `chat[]` keeps the reply and the next successful save writes it
+   * (`saveChatConditional`, `9352-9378`, logs the failure and swallows it). So
+   * the failure is told twice here, in upstream's order: `chat.updated` carries
+   * the view the reply is *in*, then `stream.error` with `storage-error` ends
+   * the turn and puts the sentence in front of the reader.
    * @param entry - the conversation.
    * @param turn - the turn that settled.
    * @param text - the generation's visible text.
@@ -4785,6 +4842,13 @@ export class IrisAppService {
     reason: 'completed' | 'aborted',
     options: { recordVariables?: boolean } = {},
   ): Promise<void> {
+    // Whether this turn has already had its terminal event. Set **before** the
+    // `stream.end` broadcast rather than after it: once the frame is handed to
+    // the carrier every subscriber may have seen it, and a failure in what
+    // follows — `#announceChats` is a directory read, and it is inside this
+    // `try` — must then be reported rather than answered with a second terminal
+    // frame contradicting the first.
+    let terminal = false
     try {
       // The reply-shaping settings run first, before variables and storage
       // read the text: upstream applies `cleanUpMessage` before the message is
@@ -4831,6 +4895,15 @@ export class IrisAppService {
       // (see `recordUsage`), so nothing is written — but the reason is the
       // shape of the log, not this switch.
       entry.recordUsage(turn)
+      // Beside the cost, under the same ordering rule (before
+      // `#storeRewritten`, which may rebuild the log), and a separate call for
+      // the reason `recordTiming` gives: the two records are independently
+      // absent, and an endpoint that reports no usage still took a measurable
+      // amount of time — which is most of them. An **aborted** turn reaches
+      // here through `#fail`'s partial path and records what it has: the wait
+      // up to the stop is what the person actually waited, and a partial reply
+      // the user chose to keep is a reply whose speed is a fact about it.
+      entry.recordTiming(turn)
       this.#storeRewritten(entry, entry.scripts, generated, settledText)
       entry.touch()
       entry.finish()
@@ -4863,6 +4936,7 @@ export class IrisAppService {
       await this.#options.chats.save(entry, message => {
         this.#report(message, { kind: 'variables', grade: 'fault', chatId: entry.chatId })
       })
+      terminal = true
       this.#options.broadcast({
         type: 'stream.end', chatId: entry.chatId, turn, view: this.#viewOf(entry), reason,
       })
@@ -4870,6 +4944,30 @@ export class IrisAppService {
     } catch (cause: unknown) {
       entry.finish()
       this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
+      if (terminal) return
+      // The reply itself is not lost: it is a candidate on `entry.session`, and
+      // the entry stays in `ChatStore`'s map for as long as this host runs, so
+      // the next save that succeeds — the next turn's — writes the whole log
+      // including this turn. That is the half of the truth a page cannot see,
+      // and from its side an unsaved reply and a lost one look identical, which
+      // is why the view goes out first and the sentence says so.
+      try {
+        this.#options.broadcast({
+          type: 'chat.updated', chatId: entry.chatId, view: this.#viewOf(entry),
+        })
+      } catch {
+        // A view this host cannot project is not a reason to withhold the
+        // failure itself. The frame below is the one that must go out.
+      }
+      this.#options.broadcast({
+        type: 'stream.error',
+        chatId: entry.chatId,
+        turn,
+        code: 'storage-error',
+        message: `the reply was generated but could not be saved: `
+          + `${cause instanceof Error ? cause.message : String(cause)}`
+          + `; it is held in this host's memory and the next save that succeeds writes it`,
+      })
     }
   }
 
@@ -6044,8 +6142,57 @@ export class IrisAppService {
     // reach disk, and `chats.save` is a file write that must not run inside
     // the loop yielding chunks to whoever is consuming this stream.
     let sideUsage: TurnUsage | undefined
+    /*
+     * **The stopwatch, in the one funnel every generation passes through.**
+     *
+     * Four moments, three of them read off the chunks themselves:
+     *
+     * - `sentAt` above is the start, and it is the same moment `noteRoute`
+     *   stamps — reused rather than taken again, so the cost's `at` and the
+     *   timer's `gen_started` cannot disagree by the width of the macro pass.
+     * - `firstTokenAt` is the first chunk carrying **any** output the model
+     *   produced, a reasoning delta counting exactly as much as a text one:
+     *   upstream's own time-to-first-token is set on the first chunk of its
+     *   generator whatever it holds (`public/script.js:3819`), and on a
+     *   reasoning model the first visible word can be a minute after the model
+     *   started answering.
+     * - `reasoningEndAt` is where the thinking stopped, which upstream reads as
+     *   "the first content delta after reasoning was under way" (its
+     *   `ReasoningHandler` sets `endTime` when the message text changes while
+     *   the state is still `Thinking`, `public/scripts/reasoning.js:448`) and
+     *   otherwise as the last reasoning it saw. Both are here, in that order.
+     * - `lastChunkAt` is the end. The `finally` below cannot take it itself:
+     *   that block runs after the consumer has finished with the final chunk,
+     *   so it would fold the shell's broadcast and the assembler's work into
+     *   the model's time. The last chunk's own arrival is the moment the
+     *   provider stopped speaking, which is what `gen_finished` means.
+     *
+     * Nothing here is per-turn state: a side generation runs through this same
+     * loop and is measured the same way. What it has no room for is the
+     * *record* — see the `finally`.
+     */
+    let firstTokenAt: number | undefined
+    let reasoningEndAt: number | undefined
+    let reasoningClosed = false
+    let lastChunkAt: number | undefined
     try {
       for await (const chunk of this.#options.stream(request)) {
+        lastChunkAt = Date.now()
+        if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+          firstTokenAt ??= lastChunkAt
+          if (chunk.type === 'reasoning-delta') {
+            // Every reasoning delta moves the end forward, so a stream that
+            // was still reasoning when it closed has an end anyway.
+            if (!reasoningClosed) reasoningEndAt = lastChunkAt
+          } else if (reasoningEndAt !== undefined && !reasoningClosed) {
+            // The first visible word after thinking — upstream's own boundary,
+            // and the last time this may move. It is *this* moment and not the
+            // previous reasoning delta's, because that is what upstream
+            // records and the two differ by the pause a reader sees.
+            reasoningEndAt = lastChunkAt
+            reasoningClosed = true
+          }
+        }
         if (chunk.type === 'usage') {
           this.#counter.observe(estimated, chunk.usage.inputTokens)
           // Recorded beside the estimate so a user can see whether to trust it.
@@ -6093,8 +6240,44 @@ export class IrisAppService {
       }
       throw error
     } finally {
-      // **A generation that is not a turn, billed to its conversation.** First
-      // in the `finally`, and in the `finally` rather than in the loop, because that
+      // **The stopwatch, filed on the turn.** First in the `finally` and in a
+      // `finally` at all for the reason the side bill below gives: an abort and
+      // a provider failure are exactly the generations whose duration is worth
+      // having, and a record written only on the happy path would be missing
+      // from every turn a reader is trying to explain. `#fail` settles a kept
+      // partial through `#settle`, which is where `recordTiming` picks this up.
+      //
+      // Read off `pendingTurn`, the turn this request was composed for, rather
+      // than `entry.pending?.turn` again: the second read can have moved (the
+      // turn settled and another began) and `noteTiming`'s own guard would then
+      // silently drop the record instead of refusing the wrong one.
+      //
+      // **Side generations are left out, and that is a decision.** A card's
+      // `TavernHelper.generate` and the host's compaction summary have no
+      // candidate and land on the chat header (`./side-usage.ts`), where
+      // upstream has no timer field and Iris has no surface — so a duration
+      // stored there would be a number nothing reads. §67 records it as the
+      // open follow-up.
+      if (entry !== undefined && pendingTurn !== undefined) {
+        const finishedAt = lastChunkAt ?? Date.now()
+        // Never negative, whatever the clock did between the two readings: a
+        // duration that ran backwards is what upstream's own timer refuses to
+        // render (`isNaN(seconds) || seconds < 0`, `public/script.js:2700`),
+        // and `./timing.ts` refuses to read one back.
+        const durationMs = Math.max(0, finishedAt - sentAt)
+        entry.noteTiming(pendingTurn, {
+          startedAt: sentAt,
+          durationMs,
+          // Clamped the same way and for the same reason. Absent — never
+          // zero — when nothing ever arrived, which is the shape of a request
+          // that failed before its first token: `0` there would read as
+          // "answered instantly".
+          ...firstTokenAt === undefined ? {} : { firstTokenMs: Math.max(0, firstTokenAt - sentAt) },
+          ...reasoningEndAt === undefined ? {} : { reasoningMs: Math.max(0, reasoningEndAt - sentAt) },
+        })
+      }
+      // **A generation that is not a turn, billed to its conversation.** In
+      // the `finally` rather than in the loop, because that
       // is what covers the abort and the provider error: a request that
       // reported its usage and then failed was still charged, and dropping it
       // would leave a gap exactly where a reader is comparing what they paid
