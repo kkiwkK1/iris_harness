@@ -16,8 +16,10 @@
  * (`src/endpoints/settings.js:209`), 61 call sites in all.
  *
  * Iris already had the pattern hand-rolled in two places — `worldbooks.ts` and
- * `cache-trace.ts`, the latter's comment naming the former as its home — so
- * there were three behaviours in one package. There is now one.
+ * `cache-trace.ts` (the latter's comment naming the former as its home; the
+ * module has since moved out of this package to `@iris/ext-cache-trace`, and
+ * now writes through the storage face, which calls *this* function) — so there
+ * were three behaviours in one process. There is now one.
  *
  * **What atomicity here does and does not buy.** `rename` over an existing path
  * is atomic on both filesystems this host runs on: POSIX `rename(2)` replaces,

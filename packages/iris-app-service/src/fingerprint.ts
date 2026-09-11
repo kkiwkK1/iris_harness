@@ -132,9 +132,10 @@ export interface CanonicalBody {
  * object, because the offsets have to be exact and a second pass that *searched*
  * the finished string for each text would be a different answer wearing this
  * one's clothes: two messages with identical text would both match the first
- * occurrence. The bytes are identical to the object form — `tests/cache-trace`
- * pins that against a literal `JSON.stringify`, which is the only reference
- * worth checking it against.
+ * occurrence. The bytes are identical to the object form —
+ * `packages/iris-ext-cache-trace/tests/cache-trace.test.ts` pins that against
+ * a literal `JSON.stringify`, which is the only reference worth checking it
+ * against.
  * @param options - the request as the adapter is about to receive it.
  * @returns the canonical body, its slots, and its byte length.
  */

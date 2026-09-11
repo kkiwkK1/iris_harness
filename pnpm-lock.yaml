@@ -68,6 +68,9 @@ importers:
       '@iris/compat-tavernhelper':
         specifier: workspace:*
         version: link:../../packages/iris-compat-tavernhelper
+      '@iris/ext-cache-trace':
+        specifier: workspace:*
+        version: link:../../packages/iris-ext-cache-trace
       '@iris/llm-openai-compat':
         specifier: workspace:*
         version: link:../../packages/iris-llm-openai-compat
@@ -241,6 +244,33 @@ importers:
         version: link:../iris-variables
 
   packages/iris-compat-tavernhelper-core: {}
+
+  packages/iris-ext-cache-trace:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.2
+        version: 4.0.2(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.3)
+      '@deepseek-ai/dsh-llm':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2))(@deepseek-ai/dsh-timeout@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.2)))
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.2
+        version: 3.18.2
+      '@iris/app-service':
+        specifier: workspace:*
+        version: link:../iris-app-service
+      '@iris/llm-openai-compat':
+        specifier: workspace:*
+        version: link:../iris-llm-openai-compat
+      '@iris/pipeline':
+        specifier: workspace:*
+        version: link:../iris-pipeline
+      '@iris/protocol':
+        specifier: workspace:*
+        version: link:../iris-protocol
+      '@iris/turn':
+        specifier: workspace:*
+        version: link:../iris-turn
 
   packages/iris-llm-openai-compat:
     dependencies:

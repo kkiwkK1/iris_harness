@@ -7145,3 +7145,98 @@ trip that also asserts no spawn argument contains the key),
 renamed file on POSIX) and `packages/iris-app-service/tests/connections.test.ts`
 (two assertions restated: the stored file has **no** plaintext key and the store
 answers with it anyway).
+
+## 76. The cache-trace record moved out of the host and became an extension, and the host grew the two provides that made that possible
+
+The extension system's constitution (`notes/EXTENSION-SYSTEM-RULING.md`) calls
+for one first-class extension to move an existing capability out of the host and
+prove the form: a Cordis plugin, one `cordis.yml` row, commenting the row out as
+the uninstall. The capability chosen is the cache-trace record — §36's store,
+whole — and it now lives in `packages/iris-ext-cache-trace`, consuming two
+host-provided services and nothing else. `@iris/app-service` no longer carries
+the record's code; what it carries is the contract the record rides on, in
+`src/extensions.ts`:
+
+- **`ctx.irisStorage`** — the storage namespace, the ruling's capability v1's
+  first item made concrete. `namespace(id)` hands back a face rooted at
+  `<profile>/extensions/<id>/` and nothing else: there is no path parameter
+  anywhere on it (the ruling's forbidden list names raw filesystem paths, and
+  the face closes that by construction), every name segment goes through the
+  same identifier guard a chat filename goes through plus the containment check
+  `fileFor` established, and every write goes through `atomicWriteFile` — the
+  ruling's "no second write path beside `host.lock`", stated the other way
+  round: there is exactly one writer, and extensions cannot opt out of it.
+- **`ctx.irisGeneration`** — the generation-pipeline hook, the ruling's
+  「生成管线钩子是第一公民」 made concrete. One hook in v1, the record: at the
+  end of every real generation, from the same `finally` §36 wrote the trace
+  from, the host hands each registered sink the request as it went out (layout
+  included), the provider's usage figures, and the failure, if the reply did
+  not complete. Signature versioned (`apiVersion: 1` on payload and sink), a
+  failure isolated per sink — a sink that throws is logged as
+  `extensions: <id> generation.record failed (generation carried on)` and the
+  generation carries on, which is §36's own rule promoted from one store's
+  discipline to the hook contract's.
+
+What the service keeps is a **port**, not a store: `AppServiceOptions
+.cacheTrace` changed from `CacheTraceStore` to a two-method sink (`record` +
+optional `divergence`), and the plugin wires it to the hook service. Absent
+sinks answer `prompt.divergence` with no comparison — the same answer a
+conversation with one turn gets, or the record switched off gets — so the row's
+absence is a quiet state, not a broken one. `cacheTraceKeep` is gone from the
+schema and the app row; the retention knob rides the extension row's own
+`config.keep`, spelled from the same environment chain (`IRIS_CACHE_TRACE=0`,
+`IRIS_CACHE_TRACE_KEEP=N`), so the switches keep their meaning and the schema's
+default (8) is the one decision. The recorded files moved house with the code:
+`<profile>/cache-trace/` becomes `<profile>/extensions/cache-trace/`, and
+`scripts/cache-divergence-report.mjs` reads the new root.
+
+**The direction of the read, and why.** The record's write side is
+host-pushes-to-extension (a hook, squarely in capability v1). Its read side is
+the reverse: the host's `prompt.divergence` RPC asks the registered sink for the
+comparison, because the reader of the record must be the writer of it — the
+comparison is over the sink's own stored bytes, and a host-side reader over the
+namespace would make the on-disk trace format a second, frozen contract nobody
+was asked to freeze. `divergenceOf` and the record's arithmetic therefore moved
+with the store. The sink registration is the shape `llm.registerAdapter` already
+established — an extension registers into a host-provided service, and the host
+calls back through the registered interface — not a new kind of edge.
+
+**Known gaps this PoC leaves open, deliberately**, each of them a decision for
+the contract's next pass (`docs/EXTENSIONS.md` §3 describes machinery this PoC
+does not build): there is no `claim`/manifest step, so the extension hard-states
+its id (`cache-trace`) rather than having it read from its `package.json` `iris:`
+node, and nothing de-duplicates ids across the composition; the face is
+`irisStorage.namespace(id)` rather than `claim(...).storage`, so the mapping
+between this PoC's two services and the draft contract's one `irisExtensions`
+face is a rename, not a redesign, but it has not been made; and the hook payload
+carries the assembly `layout`, which the draft contract's `generation
+.afterSerialize` deliberately left out — the PoC's answer to that open question
+is that the full-fidelity record cannot exist without it (the byte-to-part map
+is built from the driver's own record, not by searching the body), so either
+`afterSerialize` grows it or the record hook stays the richer one. The
+extension's imports of `canonicalBody`/`fingerprintBody` from
+`@iris/app-service/src/fingerprint.ts` are the one dependency edge the draft
+contract's L3 rule ("an extension must not depend on `@iris/app-service`")
+would want moved: there is exactly one serializer, the traces must describe the
+bytes it sends, and where the canonical-body pass should live so a third-party
+extension can reach it without depending on the host is E-2's question, not
+this PoC's.
+
+**Held by** `packages/iris-app-service/tests/extensions.test.ts` (5: write,
+read, list, remove and whole-document rewrite; traversal refused at every
+segment in every spelling, and the extensions root refusing a bad id; absent
+namespace listing empty and a malformed document reported rather than read as
+absent; the hook's per-sink isolation, version refusal at registration,
+re-registration replacing its owner's own sink, and the disposer removing
+exactly what it registered; the extensions root derived per profile, one
+directory per id), `packages/iris-ext-cache-trace/tests/plugin.test.ts` (3: the
+plugin's name, inject list and schema default; a record pushed through the hook
+landing as a trace file in the granted namespace with the comparison answering;
+a retention of zero writing nothing and no directory standing where nothing was
+recorded) and `apps/iris/tests/composition.test.ts` (+1: the app row carries no
+`cacheTraceKeep`, the `ext-cache-trace` row exists and composes the environment
+chain through the extension's own schema, `IRIS_CACHE_TRACE=0` still winning
+over any keep count). The moved `cache-trace.test.ts` (25) and the two
+integration fixtures that pass a trace sink into the service
+(`compaction-usage.test.ts`, `depth-bucket-entries.test.ts`) are unchanged in
+what they assert; only the store's constructor gained the namespace argument.

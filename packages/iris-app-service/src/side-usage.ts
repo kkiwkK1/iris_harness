@@ -67,8 +67,8 @@ import { conversationUsage, parseUsage } from './usage.ts'
  * **Append-only, and unbounded.** Nothing rewrites or prunes the array: a
  * total that drops its oldest entries understates a bill, which is the one
  * failure this whole feature exists to remove, so bounding it the way
- * `cache-trace.ts` bounds its eight traces is not available here — a trace is
- * evidence and this is a sum.
+ * the cache-trace record bounds its eight traces per conversation is not
+ * available here — a trace is evidence and this is a sum.
  *
  * The growth is real and small. Measured, 2026-09-09: one record serialises to
  * **151 bytes** at its smallest (two buckets, a route, a moment, a caller),

@@ -10,10 +10,10 @@
  *
  * So each real generation writes the canonical body it sent, plus a map from
  * byte offsets in that body back to the assembly parts that produced them, into
- * the profile's own `cache-trace/<chatId>/<seq>.json`. Two adjacent files then
- * answer the whole question arithmetically: the first differing byte, whose text
- * that byte belongs to, and how the unservable remainder splits between text
- * that is new and text that is merely in the wrong place.
+ * the profile's own `extensions/cache-trace/<chatId>/<seq>.json`. Two adjacent
+ * files then answer the whole question arithmetically: the first differing
+ * byte, whose text that byte belongs to, and how the unservable remainder
+ * splits between text that is new and text that is merely in the wrong place.
  *
  * **This writes the user's prompts to the user's own disk.** Three rules follow,
  * and each is load-bearing rather than decorative:
@@ -22,37 +22,44 @@
  *    conversation survive; the rest are deleted on every write. A prompt is tens
  *    of kilobytes and a long session is hundreds of turns, so an unbounded
  *    record would quietly become the largest thing in the profile.
- * 2. **Its own subtree, and nothing else's.** Every path is built from
- *    {@link fileFor}, so a chat id off the wire cannot name a file outside
- *    `cache-trace/`. The store never deletes anything it did not write: rotation
- *    only removes files whose names it can parse as its own.
- * 3. **Atomically, or not at all.** Written to a sibling temporary and renamed
- *    over the target, through `atomic.ts`'s `atomicWriteFile` — which is where
- *    this pattern lives now, and no longer in `worldbooks.ts`: the two
- *    hand-rolled copies (this one and that one) became one helper when every
- *    other write in the package was brought onto it. A half-written trace is
- *    worse than no trace: it reads as a request that diverged from itself.
+ * 2. **Its own subtree, and nothing else's.** Every path is a name inside the
+ *    host-provided storage namespace, whose guard checks each segment with the
+ *    same identifier whitelist a chat file's name goes through — so a chat id
+ *    off the wire cannot name a file outside this extension's directory. The
+ *    store never deletes anything it did not write: rotation only removes files
+ *    whose names it can parse as its own. The canonical body and its
+ *    fingerprint are imported from `@iris/app-service` rather than restated,
+ *    because there is exactly one serializer and the traces must describe the
+ *    bytes it sends.
+ * 3. **Atomically, or not at all.** Written through the host's storage face,
+ *    whose writer is `atomic.ts`'s `atomicWriteFile` — a sibling temporary and
+ *    a rename. A half-written trace is worse than no trace: it reads as a
+ *    request that diverged from itself.
  *
- * And one rule about failure: **a trace must never cost a generation.** Every
- * write is wrapped, and a failure is reported and dropped. The record exists to
- * explain a cost, and an instrument that can break the thing it measures is not
- * one.
+ * And one rule about failure: **a trace must never cost a generation.** The
+ * record arrives through the host's `generation.record` hook, whose dispatcher
+ * already isolates a sink's failure and lets the generation carry on; every
+ * write inside the store is wrapped besides, and a failure is reported and
+ * dropped. The record exists to explain a cost, and an instrument that can
+ * break the thing it measures is not one.
  *
- * @module @iris/app-service/cache-trace
+ * This module moved out of `@iris/app-service` (where it lived as
+ * `src/cache-trace.ts` until the extension system's first PoC) with its
+ * behaviour intact: the host now provides the storage namespace and the hook,
+ * this package consumes them, and commenting the `ext-cache-trace` row out of
+ * `cordis.yml` stops the record while the host answers `prompt.divergence`
+ * with no comparison — the same answer a conversation with one turn gets.
+ *
+ * @module @iris/ext-cache-trace/cache-trace
  */
 
-import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
-
-import { atomicWriteFile } from './atomic.ts'
-
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
+import type { ExtensionStorage, GenerationRecord } from '@iris/app-service/src/extensions.ts'
+import { canonicalBody, fingerprintBody, type BodySlot } from '@iris/app-service/src/fingerprint.ts'
+import { isSafeId } from '@iris/app-service/src/paths.ts'
 import { redactSecrets } from '@iris/llm-openai-compat'
 import { SYSTEM_JOIN, type Role } from '@iris/pipeline'
 import { HISTORY_ITEM_PREFIX, type PromptDivergence, type PromptDivergenceItem } from '@iris/protocol'
-
-import { canonicalBody, fingerprintBody, type BodySlot } from './fingerprint.ts'
-import { fileFor } from './paths.ts'
 
 /** How many traces one conversation keeps when nothing says otherwise. */
 export const DEFAULT_CACHE_TRACE_KEEP = 8
@@ -547,25 +554,29 @@ export interface CacheTraceOptions {
 const TRACE_FILE = /^(\d+)\.json$/
 
 /**
- * The profile's `cache-trace/` directory, one subdirectory per conversation.
+ * The record, kept and compared.
  *
- * Sequence numbers are assigned from an in-memory counter seeded by one
- * directory read, rather than by re-reading before every write: two generations
- * of one conversation cannot overlap (the host refuses a second while one is
- * pending), but a *card's* side generation can land beside a turn, and a counter
- * makes that a distinct file rather than a race for one name.
+ * Its directory is the host-provided storage namespace, not a path: the
+ * extension never learns where the profile sits, and the namespace's own guard
+ * is what confines every name below. Sequence numbers are assigned from an
+ * in-memory counter seeded by one directory read, rather than by re-reading
+ * before every write: two generations of one conversation cannot overlap (the
+ * host refuses a second while one is pending), but a *card's* side generation
+ * can land beside a turn, and a counter makes that a distinct file rather than
+ * a race for one name.
  */
 export class CacheTraceStore {
-  readonly #dir: string
+  readonly #namespace: ExtensionStorage
   readonly #options: CacheTraceOptions
   readonly #next = new Map<string, number>()
 
   /**
-   * @param dir - the profile's `cache-trace` directory. It need not exist.
+   * @param namespace - the storage namespace the host granted this extension.
+   *   It need not exist yet; writes create their directories.
    * @param options - how many to keep, and where failures go.
    */
-  constructor(dir: string, options: CacheTraceOptions) {
-    this.#dir = dir
+  constructor(namespace: ExtensionStorage, options: CacheTraceOptions) {
+    this.#namespace = namespace
     this.#options = options
   }
 
@@ -575,16 +586,18 @@ export class CacheTraceStore {
   }
 
   /**
-   * One conversation's directory, guarded.
+   * One conversation's directory name, guarded.
    *
-   * Through {@link fileFor} with an empty extension, so a chat id that reached
-   * this process from a browser is put through the same whitelist and the same
-   * containment check a chat file's name is.
+   * The namespace already refuses traversal in every segment, and this check
+   * beside it keeps the store's own contract stated where it is relied on: a
+   * chat id that would become nested directories (a `/` inside it) is refused
+   * here exactly as the file-path era's `fileFor` refused it.
    * @param chatId - the conversation.
-   * @returns the absolute directory path.
+   * @returns the chat-relative prefix its files sit under.
    */
-  #chatDir(chatId: string): string {
-    return fileFor(this.#dir, chatId, '')
+  #chatPrefix(chatId: string): string {
+    if (!isSafeId(chatId)) throw new Error(`"${chatId}" is not a valid conversation id`)
+    return `${chatId}/`
   }
 
   /** Every recorded sequence number for one conversation, ascending. */
@@ -592,14 +605,14 @@ export class CacheTraceStore {
     if (!this.enabled) return []
     let names: string[]
     try {
-      names = await readdir(this.#chatDir(chatId))
+      names = await this.#namespace.list(this.#chatPrefix(chatId))
     } catch {
       // No directory is the ordinary state of a conversation that has not
       // generated yet, not a failure worth reporting.
       return []
     }
     return names
-      .map(name => TRACE_FILE.exec(name)?.[1])
+      .map(name => TRACE_FILE.exec(name.slice(name.lastIndexOf('/') + 1))?.[1])
       .filter((digits): digits is string => digits !== undefined)
       .map(digits => Number(digits))
       .sort((left, right) => left - right)
@@ -614,14 +627,15 @@ export class CacheTraceStore {
   async read(chatId: string, seq: number): Promise<CacheTraceFile | undefined> {
     if (!this.enabled) return undefined
     try {
-      const text = await readFile(join(this.#chatDir(chatId), `${String(seq)}.json`), 'utf8')
-      const parsed = JSON.parse(text) as CacheTraceFile
+      const parsed = await this.#namespace.read(`${this.#chatPrefix(chatId)}${String(seq)}.json`)
+      if (typeof parsed !== 'object' || parsed === null) return undefined
+      const trace = parsed as CacheTraceFile
       // Refused by version rather than repaired: a file written by a future
       // shape would be read with today's field meanings, and a comparison built
       // on that is a wrong answer rather than a missing one.
-      if (parsed.version !== CACHE_TRACE_VERSION) return undefined
-      if (typeof parsed.body !== 'string' || !Array.isArray(parsed.spans)) return undefined
-      return parsed
+      if (trace.version !== CACHE_TRACE_VERSION) return undefined
+      if (typeof trace.body !== 'string' || !Array.isArray(trace.spans)) return undefined
+      return trace
     } catch {
       return undefined
     }
@@ -639,17 +653,36 @@ export class CacheTraceStore {
   async write(trace: Omit<CacheTraceFile, 'seq'>): Promise<number | undefined> {
     if (!this.enabled) return undefined
     try {
-      const dir = this.#chatDir(trace.chatId)
+      const prefix = this.#chatPrefix(trace.chatId)
       const seq = await this.#claim(trace.chatId)
-      await mkdir(dir, { recursive: true })
-      const path = join(dir, `${String(seq)}.json`)
-      await atomicWriteFile(path, JSON.stringify({ ...trace, seq }))
-      await this.#rotate(trace.chatId, dir)
+      await this.#namespace.write(`${prefix}${String(seq)}.json`, { ...trace, seq })
+      await this.#rotate(trace.chatId, prefix)
       return seq
     } catch (error: unknown) {
       this.#options.onError?.(error instanceof Error ? error : new Error(String(error)))
       return undefined
     }
+  }
+
+  /**
+   * Record one generation, as the host's `generation.record` hook delivers it.
+   *
+   * This is the store's face as a {@link GenerationSink}: the hook's payload is
+   * exactly the arguments `traceOf` builds a record from, so the sink is one
+   * call into the builder and one write. A retention of `0` returns before the
+   * canonical body is computed — off is free, not merely silent.
+   * @param payload - the generation's record, failures included.
+   * @returns nothing; a failure is reported through the store's `onError`.
+   */
+  async record(payload: GenerationRecord): Promise<void> {
+    if (!this.enabled) return
+    await this.write(traceOf(
+      payload.request,
+      payload.target,
+      payload.sentAt,
+      payload.usage,
+      payload.error,
+    ))
   }
 
   /** The next sequence number for one conversation, seeded from disk once. */
@@ -672,12 +705,12 @@ export class CacheTraceStore {
    * dropped into the directory is left alone rather than deleted by an
    * instrument they did not ask for.
    */
-  async #rotate(chatId: string, dir: string): Promise<void> {
+  async #rotate(chatId: string, prefix: string): Promise<void> {
     const existing = await this.list(chatId)
     const doomed = existing.slice(0, Math.max(0, existing.length - this.#options.keep))
     for (const seq of doomed) {
       try {
-        await unlink(join(dir, `${String(seq)}.json`))
+        await this.#namespace.remove(`${prefix}${String(seq)}.json`)
       } catch (error: unknown) {
         this.#options.onError?.(error instanceof Error ? error : new Error(String(error)))
       }

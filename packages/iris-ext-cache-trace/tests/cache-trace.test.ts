@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { LlmError, createAssistantMessage, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { localNamespace } from '@iris/app-service/src/extensions.ts'
+import { canonicalBody, fingerprintBody, serialiseRequest } from '@iris/app-service/src/fingerprint.ts'
 import { providerExcuse, type IrisEvent } from '@iris/protocol'
 import { slotsOf, squashSystemRuns, type AssembledSlot, type PromptLayout, type StreamFn } from '@iris/turn'
 
@@ -15,12 +17,11 @@ import {
   traceOf,
   type CacheTraceFile,
 } from '../src/cache-trace.ts'
-import { canonicalBody, fingerprintBody, serialiseRequest } from '../src/fingerprint.ts'
-import { ChatStore } from '../src/chats.ts'
-import { CharacterLibrary } from '../src/library.ts'
-import { IrisAppService, type Handlers } from '../src/service.ts'
-import { SettingsStore } from '../src/settings.ts'
-import { WorldbookStore } from '../src/worldbooks.ts'
+import { ChatStore } from '@iris/app-service/src/chats.ts'
+import { CharacterLibrary } from '@iris/app-service/src/library.ts'
+import { IrisAppService, type Handlers } from '@iris/app-service/src/service.ts'
+import { SettingsStore } from '@iris/app-service/src/settings.ts'
+import { WorldbookStore } from '@iris/app-service/src/worldbooks.ts'
 
 /**
  * The record that makes a cache miss answerable, and the arithmetic over it.
@@ -620,7 +621,7 @@ test('a credential quoted into a failure does not reach the trace file', () => {
 test('the store keeps the newest N and deletes only its own files', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-trace-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
-  const store = new CacheTraceStore(dir, { keep: 3 })
+  const store = new CacheTraceStore(localNamespace(dir), { keep: 3 })
 
   const options = request('系统', 'q', 'a')
   for (let index = 0; index < 6; index += 1) {
@@ -646,7 +647,7 @@ test('the store keeps the newest N and deletes only its own files', async (t) =>
 test('a retention of zero records nothing at all', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-trace-off-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
-  const store = new CacheTraceStore(dir, { keep: 0 })
+  const store = new CacheTraceStore(localNamespace(dir), { keep: 0 })
 
   assert.equal(store.enabled, false)
   assert.equal(await store.write(traceOf(request('系统', 'q', 'a'), { chatId: 'c', kind: 'send', turn: 0 }, 1)), undefined)
@@ -667,7 +668,7 @@ test('a chat id cannot name a file outside the trace directory', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'iris-trace-guard-'))
   t.after(async () => { await rm(root, { recursive: true, force: true }) })
   const dir = join(root, 'cache-trace')
-  const store = new CacheTraceStore(dir, { keep: 4 })
+  const store = new CacheTraceStore(localNamespace(dir), { keep: 4 })
 
   // The id reaches this process from a browser. `list` answers empty for a
   // refused id — a read of nowhere is nothing — and `write` swallows the
@@ -687,7 +688,7 @@ test('a chat id cannot name a file outside the trace directory', async (t) => {
 test('a file from another version is refused rather than read with today\'s meanings', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-trace-version-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
-  const store = new CacheTraceStore(dir, { keep: 4 })
+  const store = new CacheTraceStore(localNamespace(dir), { keep: 4 })
   await mkdir(join(dir, 'c'), { recursive: true })
   await writeFile(join(dir, 'c', '0.json'), JSON.stringify({ version: 99, body: '{}', spans: [] }), 'utf8')
 
@@ -730,7 +731,7 @@ async function fixture(t: TestContext, keep = 8): Promise<Fixture> {
   await settings.load()
   const chats = new ChatStore(
     join(dir, 'chats'), library, undefined, undefined, worldbooks, () => settings.globalSelect())
-  const traces = new CacheTraceStore(join(dir, 'cache-trace'), { keep })
+  const traces = new CacheTraceStore(localNamespace(join(dir, 'cache-trace')), { keep })
   let ends = 0
   let waited = 0
 
@@ -1054,7 +1055,7 @@ test('an interrupted turn records the failure on the trace, and never a zero for
   await settings.load()
   const chats = new ChatStore(
     join(dir, 'chats'), library, undefined, undefined, worldbooks, () => settings.globalSelect())
-  const traces = new CacheTraceStore(join(dir, 'cache-trace'), { keep: 8 })
+  const traces = new CacheTraceStore(localNamespace(join(dir, 'cache-trace')), { keep: 8 })
   const errors: IrisEvent[] = []
   const handlers = new IrisAppService({
     stream: interruptingStream(),

@@ -105,3 +105,49 @@ test('the app row composes pruneVariables to false, from the file the host boots
     + 'is an opt-out a user writes into cordis.yml — never a default, and never something an env var turns on quietly',
   )
 })
+
+test('the cache-trace capability rides as an extension row, not an app row', async () => {
+  const rows = await parseComposition()
+  const app = rows.find(row => row.name === '@iris/app-service')
+  assert.ok(app !== undefined && typeof app.config === 'object' && app.config !== null)
+  const appConfig = interpolate({}, app.config) as Record<string, unknown>
+  // The record moved out of the app service with the extension system's first
+  // PoC; a retention row here would be an option nobody reads — the schema no
+  // longer declares it, so a row could not even boot.
+  assert.equal(
+    'cacheTraceKeep' in appConfig,
+    false,
+    'the app row must not carry cacheTraceKeep: the record belongs to the ext-cache-trace row now',
+  )
+
+  const ext = rows.find(row => row.name === '@iris/ext-cache-trace')
+  assert.ok(ext !== undefined, 'the composition must carry the ext-cache-trace row: commenting it out is the uninstall')
+  assert.ok(ext.id === 'ext-cache-trace', 'the row is id-named so a reader can find what to comment out')
+  assert.ok(typeof ext.config === 'object' && ext.config !== null)
+
+  // The same environment chain the app row used to compose, evaluated the way
+  // the boot evaluates it, with the schema the extension row applies.
+  const previousTrace = process.env.IRIS_CACHE_TRACE
+  const previousKeep = process.env.IRIS_CACHE_TRACE_KEEP
+  try {
+    const { Config } = await import('@iris/ext-cache-trace')
+    delete process.env.IRIS_CACHE_TRACE
+    delete process.env.IRIS_CACHE_TRACE_KEEP
+    assert.equal(
+      (Config(interpolate({}, ext.config) as never) as { keep: number }).keep,
+      8,
+      'unset environment composes to the schema default of 8',
+    )
+    process.env.IRIS_CACHE_TRACE = '0'
+    assert.equal(
+      (Config(interpolate({}, ext.config) as never) as { keep: number }).keep,
+      0,
+      'IRIS_CACHE_TRACE=0 must still win over any keep count, as it did on the app row',
+    )
+  } finally {
+    if (previousTrace === undefined) delete process.env.IRIS_CACHE_TRACE
+    else process.env.IRIS_CACHE_TRACE = previousTrace
+    if (previousKeep === undefined) delete process.env.IRIS_CACHE_TRACE_KEEP
+    else process.env.IRIS_CACHE_TRACE_KEEP = previousKeep
+  }
+})

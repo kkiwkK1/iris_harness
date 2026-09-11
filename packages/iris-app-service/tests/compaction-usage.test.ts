@@ -27,7 +27,8 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
-import { CacheTraceStore } from '../src/cache-trace.ts'
+import { CacheTraceStore } from '../../iris-ext-cache-trace/src/cache-trace.ts'
+import { localNamespace } from '../src/extensions.ts'
 import type { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
@@ -85,7 +86,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const chats = materialisingChatStore(dir, library)
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
-  const traces = new CacheTraceStore(join(dir, 'cache-trace'), { keep: 8 })
+  const traces = new CacheTraceStore(localNamespace(join(dir, 'cache-trace')), { keep: 8 })
   const seen: GenerateOptions[] = []
   let ends = 0
   let waited = 0

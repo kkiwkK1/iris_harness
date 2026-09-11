@@ -10,7 +10,8 @@ import { MEMBER_JOIN } from '@iris/pipeline'
 import { serializeRequest } from '@iris/llm-openai-compat'
 import type { StreamFn } from '@iris/turn'
 
-import { CacheTraceStore } from '../src/cache-trace.ts'
+import { CacheTraceStore } from '../../iris-ext-cache-trace/src/cache-trace.ts'
+import { localNamespace } from '../src/extensions.ts'
 import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { classifyVolatility, emptyVolatility, markCachePhase } from '../src/cache-friendly.ts'
@@ -320,7 +321,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
   await settings.load()
   const chats = new ChatStore(
     join(dir, 'chats'), library, undefined, undefined, worldbooks, () => settings.globalSelect())
-  const traces = new CacheTraceStore(join(dir, 'cache-trace'), { keep: 8 })
+  const traces = new CacheTraceStore(localNamespace(join(dir, 'cache-trace')), { keep: 8 })
 
   const captured: GenerateOptions[] = []
   let replies = 0

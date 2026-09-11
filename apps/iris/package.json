@@ -26,6 +26,7 @@
     "@iris/character": "workspace:*",
     "@iris/chat": "workspace:*",
     "@iris/compat-tavernhelper": "workspace:*",
+    "@iris/ext-cache-trace": "workspace:*",
     "@iris/llm-openai-compat": "workspace:*",
     "@iris/lorebook": "workspace:*",
     "@iris/macro": "workspace:*",

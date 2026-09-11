@@ -1223,7 +1223,7 @@ export class ChatEntry {
    * For the same reason it takes **no turn**. A side generation is not a turn
    * and folding it onto whichever turn happened to be pending would file a
    * card's bill against a reply the user is looking at — the mistake
-   * `cache-trace.ts` avoids by writing `turn: -1`.
+   * the cache-trace record avoids by writing `turn: -1`.
    *
    * Does not stamp `updatedAt`: a card asking a question about the
    * conversation is not activity *in* it, and moving the chat to the top of the

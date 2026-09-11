@@ -234,17 +234,16 @@ export interface ProfilePaths {
    */
   chatOrder: string
   /**
-   * The bodies of the most recent requests, one subdirectory per conversation.
+   * The root every extension's storage namespace lives under, one directory
+   * per extension id beneath it (`extensions/<id>/`).
    *
-   * A diagnostic record, and the only store here that holds whole prompts
-   * rather than the pieces they are assembled from — which is the point: a
-   * provider's prefix cache is decided over the bytes that went out, and
-   * `cache-trace.ts` explains why those bytes cannot be reconstructed
-   * afterwards. Bounded per conversation and switchable off; inside the profile
-   * for the reason `scriptBundles` is, so deleting a profile takes its whole
-   * footprint with it and leaves nothing the user cannot find.
+   * Inside the profile for the reason `scriptBundles` is: deleting a profile
+   * takes the whole footprint with it and leaves nothing the user cannot find.
+   * The host hands an extension only its own namespace under this root — never
+   * the root itself and never a path parameter — so an extension's writes are
+   * confined to its own directory by construction (`./extensions.ts`).
    */
-  cacheTrace: string
+  extensions: string
 }
 
 /**
@@ -286,6 +285,6 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     personas: join(root, 'personas.json'),
     favorites: join(root, 'favorites.json'),
     chatOrder: join(root, 'chat-order.json'),
-    cacheTrace: join(root, 'cache-trace'),
+    extensions: join(root, 'extensions'),
   }
 }

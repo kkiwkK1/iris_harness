@@ -90,7 +90,7 @@ import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
-import { CacheTraceStore, traceOf } from './cache-trace.ts'
+import { type CacheTraceSink } from './extensions.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
@@ -709,8 +709,14 @@ export interface AppServiceOptions {
    * copies of its prompts is a normal host, not a broken one — and this is the
    * one store that holds whole prompts, so absence must be a first-class state
    * rather than an error to be worked around.
+   *
+   * A sink interface, not a store: the record moved out of this package with
+   * the extension system's first PoC (`@iris/ext-cache-trace`), and what
+   * remains here is the port the host pushes records through and asks
+   * comparisons of. Anything registered on the generation hook
+   * (`./extensions.ts`) can stand behind it.
    */
-  cacheTrace?: CacheTraceStore
+  cacheTrace?: CacheTraceSink
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -759,7 +765,7 @@ export class IrisAppService {
       chatOrder?: ChatOrderStore
       worldbookBindings?: WorldbookBindingStore
       backups?: BackupStore
-      cacheTrace?: CacheTraceStore
+      cacheTrace?: CacheTraceSink
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -2374,14 +2380,16 @@ export class IrisAppService {
 
       'prompt.divergence': async ({ chatId, seq }) => {
         // **The chat is not opened.** Unlike `prompt.itemize`, which assembles a
-        // preview and therefore needs the live entry, this reads two files the
-        // profile already holds — so it answers for a conversation nobody has
-        // opened, and it cannot be the call that loads a 244 KB chat into
-        // memory. The id is still checked, by the store, through the same
-        // `fileFor` guard a chat file's name goes through.
-        const store = this.#options.cacheTrace
-        if (store === undefined) return {}
-        const divergence = await store.divergence(chatId, seq)
+        // preview and therefore needs the live entry, this reads two stored
+        // records the profile already holds — so it answers for a conversation
+        // nobody has opened, and it cannot be the call that loads a 244 KB chat
+        // into memory. The id is still checked, by the sink's own store, through
+        // the same identifier guard a chat file's name goes through. Whoever
+        // holds the record answers: the stock composition's answerer is the
+        // `ext-cache-trace` extension, registered on the generation hook.
+        const sink = this.#options.cacheTrace
+        if (sink?.divergence === undefined) return {}
+        const divergence = await sink.divergence(chatId, seq)
         // Absent rather than refused: "this conversation has fewer than two
         // recorded requests" is the ordinary state of a chat that has just
         // started, and of every chat if the record is switched off. A refusal
@@ -6336,14 +6344,15 @@ export class IrisAppService {
       // reader is trying to place.
       //
       // Written last, so a store that is slow or full cannot delay the report.
-      // `write` never throws — the trace exists to explain a cost and must not
-      // be able to fail the generation that paid it — so there is no `catch`
-      // here to add.
-      const store = this.#options.cacheTrace
-      if (trace !== undefined && store !== undefined && store.enabled) {
-        await store.write(traceOf(
+      // `record` never throws — the hook's dispatcher isolates a sink's failure
+      // and the trace exists to explain a cost and must not be able to fail the
+      // generation that paid it — so there is no `catch` here to add.
+      const sink = this.#options.cacheTrace
+      if (trace !== undefined && sink !== undefined) {
+        await sink.record({
+          apiVersion: 1,
           request,
-          {
+          target: {
             chatId: trace.chatId,
             kind: trace.kind,
             ...trace.caller === undefined ? {} : { caller: trace.caller },
@@ -6354,10 +6363,16 @@ export class IrisAppService {
             turn: trace.turn ?? entry?.pending?.turn ?? -1,
           },
           sentAt,
-          { ...inputTokens === undefined ? {} : { inputTokens },
-            ...cacheReadTokens === undefined ? {} : { cacheReadTokens } },
-          streamFailure,
-        ))
+          ...inputTokens === undefined && cacheReadTokens === undefined
+            ? {}
+            : {
+                usage: {
+                  ...inputTokens === undefined ? {} : { inputTokens },
+                  ...cacheReadTokens === undefined ? {} : { cacheReadTokens },
+                },
+              },
+          ...streamFailure === undefined ? {} : { error: streamFailure },
+        })
       }
     }
   }

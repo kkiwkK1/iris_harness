@@ -1,5 +1,7 @@
 /**
- * Read a profile's `cache-trace/` and rank what is costing it cache hits.
+ * Read a profile's `extensions/cache-trace/` — the directory the
+ * `ext-cache-trace` extension records into — and rank what is costing it cache
+ * hits.
  *
  * This reads what really went out. `cache-prefix-probe.mjs` beside it *replays*
  * an assembly headlessly, which cannot see anything a card script injected at
@@ -47,7 +49,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { divergenceOf } from '../packages/iris-app-service/src/cache-trace.ts'
+import { divergenceOf } from '../packages/iris-ext-cache-trace/src/cache-trace.ts'
 import { HISTORY_ITEM_PREFIX, providerExcuse } from '../packages/iris-protocol/src/views.ts'
 
 const PROFILE = process.argv[2]
@@ -114,7 +116,7 @@ async function tracesOf(dir) {
   return traces
 }
 
-const traceRoot = join(PROFILE, 'cache-trace')
+const traceRoot = join(PROFILE, 'extensions', 'cache-trace')
 let chatDirs
 try {
   chatDirs = (await readdir(traceRoot, { withFileTypes: true }))

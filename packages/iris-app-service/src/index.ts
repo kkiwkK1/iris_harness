@@ -23,7 +23,6 @@ import { DEFAULT_TIMEOUTS, OpenAiCompatAdapter } from '@iris/llm-openai-compat'
 import { versionRoute } from './version.ts'
 
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
-import { CacheTraceStore, DEFAULT_CACHE_TRACE_KEEP } from './cache-trace.ts'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
@@ -35,6 +34,7 @@ import { acquireHostLock } from './host-lock.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import { IrisAppService } from './service.ts'
+import { IrisGenerationService, IrisStorageService, type GenerationRecord } from './extensions.ts'
 import { ConnectionStore } from './connections.ts'
 import { PersonaStore } from './persona.ts'
 import { FavoriteStore } from './favorites.ts'
@@ -164,21 +164,15 @@ export {
   type CanonicalBody,
   type PromptFingerprint,
 } from './fingerprint.ts'
-export {
-  CacheTraceStore,
-  divergenceOf,
-  spansOf,
-  traceOf,
-  CACHE_TRACE_VERSION,
-  DEFAULT_CACHE_TRACE_KEEP,
-  TAIL_SPAN_ID,
-  type CacheTraceFile,
-  type CacheTraceOptions,
-  type TraceSpan,
-  type TraceSpanKind,
-  type TraceTarget,
-} from './cache-trace.ts'
 export { IrisAppService, samplingOf, type AppServiceOptions, type Handlers } from './service.ts'
+export {
+  localNamespace,
+  IrisGenerationService,
+  IrisStorageService,
+  type ExtensionStorage,
+  type GenerationRecord,
+  type GenerationSink,
+} from './extensions.ts'
 export {
   DEFAULT_PERSONA_DEPTH,
   DEFAULT_PERSONA_ROLE,
@@ -367,20 +361,6 @@ export interface Config {
    * @default 50
    */
   backupKeep?: number
-  /**
-   * Request bodies kept per conversation for cache attribution, or `0` for none.
-   *
-   * The record is what makes a cache miss answerable after the fact:
-   * `cache-trace.ts` carries the argument and `CACHE-PREFIX.md` §5.3 the
-   * measurement that asked for it. Bounded because a prompt is tens of
-   * kilobytes — at this default, and measured against the user's own longest
-   * conversation, one chat holds roughly 700 KB.
-   *
-   * A count rather than a boolean beside a count, so one knob cannot disagree
-   * with itself about whether the record exists.
-   * @default 8
-   */
-  cacheTraceKeep?: number
 }
 
 /** Runtime schema for the application row. */
@@ -419,7 +399,6 @@ export const Config: z<Config> = z.object({
   pruneKeepRecent: z.natural().default(20),
   templateDeadlineMs: z.natural().default(2000),
   backupKeep: z.natural().default(DEFAULT_BACKUP_KEEP),
-  cacheTraceKeep: z.natural().default(DEFAULT_CACHE_TRACE_KEEP),
 })
 
 /**
@@ -688,15 +667,25 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     onError: error => { ctx.logger.warn(`backups: ${error.message}`) },
   })
 
-  // The bodies of the most recent requests, for cache attribution. Constructed
-  // unconditionally and switched off by a retention of `0` — the store answers
-  // `enabled: false` and every method becomes a no-op — so "off" is one
-  // reading of one number rather than an absent object some call sites check
-  // for and others do not.
-  const cacheTrace = new CacheTraceStore(paths.cacheTrace, {
-    keep: config.cacheTraceKeep ?? DEFAULT_CACHE_TRACE_KEEP,
-    onError: error => { ctx.logger.warn(`cache trace: ${error.message}`) },
-  })
+  // The capability face extensions reach the host through, published the
+  // moment the profile's paths exist and the host lock is held — before any
+  // store, so a composition row that injects one of these starts as early as
+  // the face can honestly answer (`./extensions.ts`). Unloading this plugin
+  // takes both services back with it, like every registration here.
+  const extensionStorage = new IrisStorageService(ctx, paths.root)
+  const generationHooks = new IrisGenerationService(ctx)
+
+  // The bodies of the most recent requests are kept by whoever provides a
+  // record sink on the generation hook (`./extensions.ts`) — the stock
+  // composition's provider is the `ext-cache-trace` row. With the row absent
+  // the sink list is empty: nothing is recorded and `prompt.divergence`
+  // answers with no comparison, which is the same answer a conversation with
+  // one turn gets, and a host that keeps no copies of its prompts is a normal
+  // host, not a broken one.
+  const cacheTrace = {
+    record: (payload: GenerationRecord) => generationHooks.record(payload),
+    divergence: (chatId: string, seq?: number) => generationHooks.divergence(chatId, seq),
+  }
 
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
