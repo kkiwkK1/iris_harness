@@ -117,13 +117,22 @@ import { spawn } from 'node:child_process'
  * on `IRIS_BROWSER=1` for the reason above, and failing rather than skipping when the flag is
  * set with no Chrome or no `apps/iris-web/dist`
  * (`notes/apps/iris-web/DEVIATIONS.md` §93).
+ *
+ * 39 → 40, 2026-09-11, and another **new gate category**:
+ * `packages/iris-app-service/tests/key-at-rest.test.ts` ×1 — "DPAPI protects and unprotects a key
+ * without putting it on a command line", the one test that really spawns a PowerShell and asks
+ * Windows to wrap a (made-up) key. Gated on `IRIS_DPAPI=1` **and** `process.platform === 'win32'`,
+ * so it skips in this rehearsal on every machine: on Linux for the platform, on Windows for the
+ * flag. That is deliberate and is what keeps this number a property of the tree rather than of the
+ * machine — the same reasoning `IRIS_BROWSER` above is gated by. The file's other 14 tests use an
+ * injected fake protector and run everywhere (`notes/packages/iris-app-service/DEVIATIONS.md` §75).
  */
-const EXPECTED_SKIPPED = 39
+const EXPECTED_SKIPPED = 40
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 
 /** The gate each skip reason names, in the order the report prints them. */
-const GATES = ['corpus', 'samples', 'IRIS_LIVE', 'IRIS_BROWSER', 'provider key', 'unlabelled', 'other']
+const GATES = ['corpus', 'samples', 'IRIS_LIVE', 'IRIS_BROWSER', 'IRIS_DPAPI', 'provider key', 'unlabelled', 'other']
 
 /**
  * Which gate a skip reason names.
@@ -143,6 +152,7 @@ function gateOf(reason) {
   if (reason === 'SKIP' || reason === '') return 'unlabelled'
   if (/IRIS_LIVE/.test(reason)) return 'IRIS_LIVE'
   if (/IRIS_BROWSER/.test(reason)) return 'IRIS_BROWSER'
+  if (/IRIS_DPAPI/.test(reason)) return 'IRIS_DPAPI'
   if (/test:live|provider key/.test(reason)) return 'provider key'
   if (/IRIS_SAMPLES/.test(reason)) return 'samples'
   if (/IRIS_CORPUS|corpus|Tavern Helper install|SillyTavern/i.test(reason)) return 'corpus'
