@@ -157,7 +157,19 @@ export {
   type PersonaInput,
   type PersonaPosition,
 } from './persona.ts'
-export { ScriptCache, cacheKey, nodeFetch, type CacheFailure, type FetchLike, type ScriptCacheOptions } from './script-cache.ts'
+export { ScriptCache, cacheKey, type CacheFailure, type ScriptCacheOptions } from './script-cache.ts'
+export {
+  DEFAULT_MAX_BYTES,
+  MAX_HOPS,
+  fetchAllowedRemote,
+  nodeFetch,
+  type FetchLike,
+  type RemoteFetchFailure,
+  type RemoteFetchInit,
+  type RemoteFetchOptions,
+  type RemoteFetchOutcome,
+  type RemoteResponse,
+} from './remote-fetch.ts'
 export { ScriptPolicyStore, scopedRegexRows } from './scripts.ts'
 export { ScriptLibraryStore, viewOf as userScriptViewOf, scriptRowOf, type LibraryScope, type OwnedUserScript, type UserScriptInput } from './script-library.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'

@@ -5831,3 +5831,194 @@ proxy — the decode rate beside it is already the answer to that, and it would
 then have to become the primary. Or a card that wants to read a turn's timing,
 which needs a Tavern Helper member and a decision about which of the two rates
 it answers with.
+
+## 69. One executor for every URL a card proposes: `script.fetch` stopped checking the first hop and calling `fetch`
+
+**Kind:** a security fix inside a deliberate departure. The allowlist itself is
+Iris's own — upstream has nothing like it — and this entry is about the host
+having written it out **twice**, once carefully and once not. Dated 2026-09-11.
+
+### What upstream does: nothing, because it does not have to
+
+SillyTavern runs a card's code **on its own page**, and so with the page's own
+network identity. The two installed mechanisms on this machine:
+
+- **ST-Prompt-Template's script sandbox** creates its frame with
+  `sandbox='allow-same-origin allow-scripts'`
+  (`public/scripts/extensions/third-party/ST-Prompt-Template/src/3rdparty/vm-browserify.ts:15-18`),
+  so the code runs same-origin with SillyTavern.
+- **Its interface frames** are created with no `sandbox` attribute at all —
+  `renderInFrame` sets width, height, border and scrolling and nothing else
+  (`.../src/utils/iframe.ts:9-15`) — so a rendered interface is an ordinary
+  same-origin document.
+
+A card's `fetch('https://…')` and `import('https://…')` are therefore ordinary
+browser requests made by the page: the *browser* decides, by CORS and by
+whatever CSP the page carries (SillyTavern carries none for this), and no host
+process ever sees the URL. There is no allowlist in ST core or in either
+extension — `jsdelivr`, `allowlist` and `allowedHosts` do not appear in
+`public/script.js` or `public/scripts/extensions.js`. Tavern Helper
+(JS-Slash-Runner) is not installed in this corpus and so is not cited.
+
+Iris cannot copy that. Its frames are **opaque-origin** (`docs/SANDBOX.md`), so
+a card's remote fetch has no page to borrow and the host has to make it — which
+is the moment an allowlist becomes both possible and necessary, and the moment
+the host becomes the thing that can be made to fetch a URL it was not shown.
+
+### The two executions that existed
+
+Both called `checkScriptFetch` (`packages/iris-script/src/remote.ts`: https
+only, `*.jsdelivr.net` by suffix, `raw.githubusercontent.com` exact). They are
+not the same rule:
+
+| | `ScriptCache` (`script-cache.ts`, the bundle route) | `script.fetch` (the RPC handler, `service.ts`) |
+| --- | --- | --- |
+| first hop | checked | checked |
+| **each redirect** | **checked**, `redirect: 'manual'`, followed by hand | **not checked** — `fetch(url)` follows them and `response.url` was never read |
+| hops | 5 | whatever the runtime does (20 in undici) |
+| **body size** | 8 MiB, compared after `arrayBuffer()` | **none at all** — `await response.text()` |
+| credentials | `omit`, inside the default adapter | whatever `fetch(url)` defaults to |
+
+So an allow-listed host answering `302 Location: https://evil.example/x.js` had
+its allowance transferred: the foreign body came back to the card as `content`,
+and a card turns text into a `blob:` URL and runs it — the frame's `script-src`
+already permits `blob:`. An allow-listed host serving a large file was a
+host-memory question with no limit in front of it.
+
+**The lesson is the count, not either implementation.** An allowlist is worth
+its weakest evaluator, and nothing made the weak one visible: both call sites
+read correctly on their own screen, both name the same function, and the
+difference is in what happens *after* the call. The fix is therefore not a
+better second copy.
+
+### The one that remains
+
+`packages/iris-app-service/src/remote-fetch.ts` — `fetchAllowedRemote(url,
+{fetch, maxBytes, maxHops, onError})`. Per-hop `checkScriptFetch`, redirects
+followed by this code under `redirect: 'manual'`, `MAX_HOPS` 5,
+`DEFAULT_MAX_BYTES` 8 MiB read **incrementally against a stream** — which is
+also a change for the cache, whose cap used to be checked after `arrayBuffer()`
+had already bought every byte it was meant to refuse — and `credentials: 'omit'`
+carried **in the init the transport receives** rather than set inside the
+default adapter, so it is visible at the injection point and a test can assert
+it. `ScriptCache` is one call over it plus the disk store; `script.fetch` is one
+call over it and nothing else. `AppServiceOptions.fetchRemote` changed from a
+fetcher (`(url) => {ok, status, text, headers}` defaulting to `fetch(url)`) to
+the same `FetchLike` transport the cache takes — one seam, and a transport that
+cannot follow a redirect on its own.
+
+**Refusals are named, and carry no body.** A redirect off the list answers
+`… redirected to a host that is not allowed: hop 1 would have gone to
+evil.example, and evil.example is not an allowed script source (allowed: …)`;
+the hop limit says how many and where it stopped; the cap says the limit and
+after how many bytes reading stopped. The codes split on **whose** refusal it
+is: `unsupported` is this host declining (off the list, too many hops, too big)
+and `provider-error` is the far side failing (unreachable, non-200) — the
+vocabulary this handler already used, with the two new limits landing on the
+side that was already "the host will not".
+
+### The measured basis
+
+Both corpora (`E:/sillyTavern/SillyTavern/data/default-user` plus Iris's own
+data directory, empty in a worktree), read through the product's own readers and
+the population `scripts/card-surface-census.mjs` walks — card script bodies, card
+regex source, interfaces a real chat rendered, preset regexes, world book
+entries — deduplicated by content hash: **1,694 sources** (39 script, 1,655
+interface), 169 duplicate bodies dropped.
+
+- **Remote `fetch()` call sites reaching an allow-listed host: 0.** There are 12
+  bare `fetch(` call sites in 5 sources. Three are same-origin paths
+  (`./testWorldBooks.json`), and the other nine are the two cards with a built-in
+  LLM client (银麒赎世 · 手机UI, 魔法少女的扣扣审判1.0 · 外置状态栏) fetching a
+  user-typed API base — `api.openai.com`, `https://你的API地址/v1/chat/completions`
+  — which the allowlist refuses before any request. **No corpus card fetches an
+  allow-listed URL through this handler at all.**
+- 28 distinct allow-listed URL literals appear across 14 sources (9 in scripts,
+  20 in interface text): 9 `.js`, 4 `.css`, 15 `.html`. The `.js` are
+  `import()`/`from` specifiers and the `.css` are `<link>`/`@font-face` — both go
+  to the **bundle route**, not here. The 15 `.html` are
+  `$('body').load('https://…/index.html')` in four cards' interface text, which
+  is jQuery's XHR and hits `connect-src 'none'` with no bridge at all (recorded
+  below, not changed).
+- Largest body on record through either path: MagVarUpdate's bundle, 307,765 B
+  (`script-cache.ts`'s own measurement). The cap stays **8 MiB** for both
+  callers: nothing measured argues for a smaller number on the handler's side,
+  and two limits would be the two executions again in a smaller form.
+
+**Caching: `script.fetch` stores nothing.** Ruling 4 asked how many of its
+targets repeat across cards; the honest answer is that it has no targets, so
+there is not one repeat to share. Beyond the count, the disk cache is the bundle
+route's: keyed by URL alone, a seven-day TTL, a thirty-second failure memory and
+a serve path that rewrites nested specifiers and answers
+`application/javascript`. A card fetching data through this handler would get a
+week-old copy of it, and a body typed by the other route's assumptions. Pinned —
+two calls, two requests.
+
+### The premise that was not true, and is recorded so the next reader does not re-derive it
+
+The finding described the card path as `runner.ts:494 → store.ts:2585 → this
+handler`, "how cards load dependencies". Measured on this tree: **cards load
+dependencies through the bundle route**, and the frame's `fetch` bridge posts a
+`fetch` message **only for same-origin targets** — `rideFor` returns `undefined`
+when `sameOriginTarget` does (`frame.ts:1826-1849`), so the remote branch of
+`runner.ts`'s `ride()` is unreachable from a card as the app is wired today.
+
+That does not make the defect theoretical and it does not change the fix. The
+handler is a registered RPC method (`index.ts:942`), reachable by anything that
+can reach the endpoint; `runner.ts:500-504` promises in writing that
+`host.fetch` "stays the enforcement for everything else, allowlisted remote
+dependencies included"; and the moment `networkGranted` becomes true for a
+frame — a ruled, pending piece of work (`MessageInterfaces.tsx:283`) — that
+promise starts being kept by whatever this handler does. An enforcement point
+that is currently unvisited is the cheapest possible time to fix it.
+
+### Found and deliberately not changed
+
+- **The bundle route decides "stylesheet" from the URL's `.css` suffix**
+  (`script-cache.ts`, `isStylesheetUrl`), so an allow-listed URL ending in
+  `.css` is served `text/css` whatever bytes came back, and a stylesheet served
+  from an extension-less URL is served as JavaScript and does not apply. It is
+  the route's own recorded trade (the far side's content-type is deliberately
+  not echoed, so that upstream cannot choose what the browser does with the
+  bytes) and widening it is not this change. Left as it stands.
+- **`$('body').load('https://…/index.html')`, 15 URLs in four cards**, is
+  jQuery's XHR. The frame shims `fetch` and not `XMLHttpRequest`, so these reach
+  `connect-src 'none'` and fail with no bridge and no allowlist involved. A
+  separate question, and one this change deliberately does not answer by
+  widening anything.
+- No host was added, `http:` is still refused rather than upgraded, and the
+  frame CSP is untouched.
+
+### Pinned
+
+`tests/script-fetch.test.ts` (13 tests) and the migrated `script-cache.test.ts`
+(now injecting the shared `support/fake-remote.ts`, which records what was
+asked, the init it was passed, and **how many bytes of each body were actually
+pulled**). The first test is the **control**: the pre-change handler written out
+as the four lines it was, over a redirect-following transport, asserted to hand
+back `evil.example`'s payload — without it, "the redirect is refused" would pass
+just as well on a host that could not follow a redirect at all.
+
+Every new assertion was shown red under a named mutation: follow every redirect
+without re-checking; drop the hop number from the refusal; drop the refused
+host; tell the transport `redirect: 'follow'`; tell it `credentials: 'include'`;
+remove the cap; enforce the cap *after* buying the whole body (this one leaves
+the refusal correct and reddens only the assertion that the read stopped);
+ignore the hop limit; report every refusal as `provider-error`; invent a
+content type; decode the body chunk by chunk (reddens the multi-byte
+round-trip); map the cache's allowlist refusal to 502; skip the first-hop check;
+memoise the handler's answers; return a refusal without reporting it; drop
+"where it stopped" from the hop-limit message; never follow a redirect; and read
+the redirect response's own body before judging the hop.
+
+### What would overturn it
+
+A card population that fetches allow-listed URLs through `script.fetch` — the
+`$('body').load` family becoming bridged would be exactly that — which would put
+real traffic behind the caching decision and could reverse it, and would give
+the 8 MiB cap a measured distribution instead of an inherited number. A decision
+to bridge `XMLHttpRequest` as well as `fetch`, which would route that family
+here and should route it through this same executor rather than a third. Or a
+transport requirement this shape cannot express — a POST, a request body,
+streaming a response to the card as it arrives — which would need the executor
+to grow a shape, and must not be met by letting a caller fetch around it.

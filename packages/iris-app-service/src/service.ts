@@ -36,7 +36,7 @@ import {
   type TavernHelperPreset,
 } from '@iris/compat-tavernhelper'
 // —— family③ end ——
-import { checkScriptFetch, extractScripts } from '@iris/script'
+import { extractScripts } from '@iris/script'
 import { defaultRegistry } from '@iris/macro'
 import { createCalibratingCounter, type CalibratingCounter } from '@iris/tokenizer'
 import { historyFromSession, slotsOf, squashSystemRuns, TurnDriver, type GenerateEvents, type HistoryProjection, type StreamFn } from '@iris/turn'
@@ -92,6 +92,7 @@ import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
 import { CacheTraceStore, traceOf } from './cache-trace.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
+import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
 import type { PruneOptions } from './prune.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
@@ -556,12 +557,21 @@ export interface AppServiceOptions {
    */
   probeTimeoutMs?: number
   /**
-   * Fetches a remote script dependency. Defaults to global `fetch`.
+   * The transport `script.fetch` reaches the network through. Defaults to
+   * {@link nodeFetch}.
    *
    * Injectable so the whitelist can be tested without a network, and so a
-   * deployment can route these through its own proxy.
+   * deployment can route these through its own proxy — but it is a *transport*
+   * and not a fetcher: one request, no redirect following, the body as a
+   * stream. The allowlist, the hop limit and the size cap live above it in
+   * `fetchAllowedRemote`, the same executor `ScriptCache` fetches through.
+   *
+   * This option used to be `(url) => Promise<{ ok, status, text, headers }>`
+   * defaulting to a bare `fetch(url)`, and that shape *was* the defect: a fetcher
+   * that follows redirects itself hands the host a body from wherever the far
+   * side pointed, and the handler above checked only the URL it started with.
    */
-  fetchRemote?: (url: string) => Promise<{ ok: boolean, status: number, text: () => Promise<string>, headers: { get: (name: string) => string | null } }>
+  fetchRemote?: FetchLike
   /** Pushes one frame to every attached page. */
   broadcast: (event: IrisEvent) => void
   /**
@@ -847,7 +857,7 @@ export class IrisAppService {
       templateOverhead: options.templateOverhead ?? 0,
       trimBlockFloors: options.trimBlockFloors ?? DEFAULT_TRIM_BLOCK_FLOORS,
       onError: options.onError ?? (() => {}),
-      fetchRemote: options.fetchRemote ?? ((url: string) => fetch(url)),
+      fetchRemote: options.fetchRemote ?? nodeFetch,
       probeTimeoutMs: options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       env: options.env ?? process.env,
       // Off unless a composition says otherwise: see the option's docblock for
@@ -3790,27 +3800,43 @@ export class IrisAppService {
         return { text: await this.#generateRaw(entry, prompt, systemPrompt) }
       },
 
+      /**
+       * Fetch one allow-listed URL on a card's behalf.
+       *
+       * **The fetching is `fetchAllowedRemote`'s, not this handler's**, and that
+       * is the whole of the 2026-09-11 change (host §69). This handler used to
+       * run `checkScriptFetch` on the first hop and then call a fetcher that
+       * followed redirects itself, so an allow-listed host answering `302
+       * Location: https://evil.example/x.js` lent its allowance to
+       * `evil.example` and the foreign body came back as text a card turns into
+       * a `blob:` and runs. `ScriptCache` had the same rule written out properly
+       * a file away; two executions of an allowlist are worth the weaker one.
+       *
+       * Nothing here is cached. The disk cache belongs to the bundle route,
+       * which stores JavaScript under a seven-day TTL and rewrites it on the way
+       * out; this answers whatever a card asked for with the far side's own
+       * content type, and measured across both corpora no card fetches an
+       * allow-listed URL through this path at all — so there is not one repeat
+       * to share, and a shared store would mean a data fetch answered from a
+       * week-old copy.
+       *
+       * The two codes split on *whose* refusal it is: `unsupported` is this
+       * host declining — the source is not on the list, the redirect chain is
+       * longer than this host follows, the body is bigger than this host will
+       * hand a card — and `provider-error` is the far side failing. Neither
+       * carries any part of a refused body.
+       */
       'script.fetch': async ({ url }) => {
-        const verdict = checkScriptFetch(url)
-        // `unsupported` and not `invalid-request`: the URL is well-formed and
-        // the request is understood, it is the source that is not allowed, and
-        // the message names the host so the person holding the card can see why.
-        if (!verdict.allowed) throw new AppError('unsupported', verdict.reason)
-
-        const fetcher = this.#options.fetchRemote
-        let response: Awaited<ReturnType<NonNullable<AppServiceOptions['fetchRemote']>>>
-        try {
-          response = await fetcher(verdict.url)
-        } catch (cause: unknown) {
-          throw new AppError('provider-error', `could not reach ${new URL(verdict.url).hostname}: ${String(cause)}`)
+        const result = await fetchAllowedRemote(url, { fetch: this.#options.fetchRemote })
+        if (!result.ok) {
+          const code = result.kind === 'unreachable' || result.kind === 'bad-status'
+            ? 'provider-error'
+            : 'unsupported'
+          throw new AppError(code, result.reason)
         }
-        if (!response.ok) {
-          throw new AppError('provider-error', `${new URL(verdict.url).hostname} answered ${String(response.status)}`)
-        }
-        const contentType = response.headers.get('content-type')
         return {
-          content: await response.text(),
-          ...contentType === null ? {} : { contentType },
+          content: result.bytes.toString('utf8'),
+          ...result.contentType === null ? {} : { contentType: result.contentType },
         }
       },
 

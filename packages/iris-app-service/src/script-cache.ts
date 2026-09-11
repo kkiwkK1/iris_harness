@@ -12,11 +12,14 @@
  * So the host fetches it once and serves it from disk afterwards. The route is
  * same-origin with the frame's existing `script-src`, so no CSP changes.
  *
- * **The URL arriving here is a proposal from the untrusted side.** It is checked
- * with `checkScriptFetch` — the same function `script.fetch` uses, not a second
- * copy of the rule — and so is every redirect target, because a whitelist that
- * stops at the first hop only checks where a request was aimed, not where it
- * lands.
+ * **The URL arriving here is a proposal from the untrusted side.** The fetching
+ * itself is not done here: it is `fetchAllowedRemote` in `remote-fetch.ts`, the
+ * one executor `script.fetch` also goes through, which checks every hop with
+ * `checkScriptFetch`, follows redirects itself and reads the body against a cap.
+ * This module decides what to do with the bytes — store them, rewrite them,
+ * serve them with the headers a module fetch needs — and nothing about which
+ * bytes may be had. Those were two implementations of one rule until
+ * 2026-09-11, and the weaker one is what an allowlist is worth.
  *
  * @module @iris/app-service/script-cache
  */
@@ -28,6 +31,13 @@ import { join } from 'node:path'
 
 import { rewriteNestedSpecifiers, rewriteStylesheetUrls } from './bundle-rewrite.ts'
 import { checkScriptFetch } from '@iris/script'
+import {
+  DEFAULT_MAX_BYTES,
+  fetchAllowedRemote,
+  nodeFetch,
+  type FetchLike,
+  type RemoteFetchFailure,
+} from './remote-fetch.ts'
 
 /** How a fetch through this route can fail, in the words the browser is given. */
 export type CacheFailure =
@@ -36,13 +46,20 @@ export type CacheFailure =
   | { status: 413, reason: string }
   | { status: 502, reason: string }
 
-/** The minimal fetch surface this needs, so tests can supply an upstream. */
-export interface FetchLike {
-  (url: string, init: { redirect: 'manual', headers: Record<string, string> }): Promise<{
-    status: number
-    headers: { get: (name: string) => string | null }
-    arrayBuffer: () => Promise<ArrayBuffer>
-  }>
+/**
+ * The HTTP status each refusal of the shared executor gets on this route.
+ *
+ * A table rather than a chain of `if`s so that adding a refusal kind to the
+ * executor does not compile until this route has decided what it means to a
+ * browser — the two vocabularies have to stay in step, and a `default:` branch
+ * is how they stop being.
+ */
+const STATUS_FOR: Record<RemoteFetchFailure['kind'], CacheFailure['status']> = {
+  'not-allowed': 403,
+  'too-large': 413,
+  'too-many-hops': 502,
+  unreachable: 502,
+  'bad-status': 502,
 }
 
 /** Host-side tuning. */
@@ -100,39 +117,6 @@ export interface ScriptCacheOptions {
    */
   onReport?: (message: string) => void
 }
-
-/**
- * The default upstream: Node's own `fetch`, narrowed to what this needs.
- *
- * Exported so it can be tested. It is the **only** part of this module that a
- * test with an injected upstream never exercises, and it is the part that runs
- * in production — a mismatch between what `FetchLike` promises and what undici
- * does would show up nowhere else. Two assumptions in particular are somebody
- * else's runtime rather than this code's: that `redirect: 'manual'` yields the
- * real 3xx with a readable `location` (a browser would hand back an opaque
- * response instead), and that `credentials: 'omit'` is accepted at all.
- * @param url - the URL to fetch.
- * @param init - redirect policy and headers.
- * @returns the response, narrowed to status, headers and bytes.
- */
-export const nodeFetch: FetchLike = async (url, init) => {
-  const response = await fetch(url, {
-    redirect: init.redirect,
-    headers: init.headers,
-    // Nothing of the user's identity crosses. A card's dependency is public code
-    // from a public CDN; sending credentials would make the host a confused
-    // deputy for whatever the URL points at.
-    credentials: 'omit',
-  })
-  return {
-    status: response.status,
-    headers: { get: (name: string) => response.headers.get(name) },
-    arrayBuffer: () => response.arrayBuffer(),
-  }
-}
-
-/** Redirect hops followed before giving up. jsDelivr uses one. */
-const MAX_HOPS = 5
 
 /**
  * How long a failure is remembered, in milliseconds.
@@ -215,9 +199,6 @@ const CORS_HEADER = {
 
 /** Seven days. See {@link ScriptCacheOptions.ttlSeconds}. */
 const DEFAULT_TTL_SECONDS = 604_800
-
-/** Eight mebibytes. See {@link ScriptCacheOptions.maxBytes}. */
-const DEFAULT_MAX_BYTES = 8_388_608
 
 /** 256 mebibytes. See {@link ScriptCacheOptions.maxCacheBytes}. */
 const DEFAULT_MAX_CACHE_BYTES = 268_435_456
@@ -473,68 +454,30 @@ export class ScriptCache {
     }
   }
 
-  /** Fetch, following only redirects the whitelist also allows, then store. */
+  /**
+   * Fetch through the shared executor, then store.
+   *
+   * Everything about *which* bytes may be had — the per-hop allowlist, the hop
+   * limit, the cap read against a stream, `credentials: 'omit'` — is
+   * `fetchAllowedRemote`'s, and deliberately not re-stated here: this module
+   * held the careful copy of that rule while `script.fetch` held a careless one,
+   * and the fix is one executor rather than a better second copy. What is left
+   * here is the translation into the statuses a browser gets.
+   * @param url - the allow-listed URL, already normalized.
+   * @returns the body, or why it could not be had.
+   */
   async #fetchAndStore(url: string): Promise<Buffer | CacheFailure> {
-    let target = url
-    for (let hop = 0; hop <= MAX_HOPS; hop += 1) {
-      let response: Awaited<ReturnType<FetchLike>>
-      try {
-        response = await this.#fetch(target, { redirect: 'manual', headers: { accept: '*/*' } })
-      } catch (error: unknown) {
-        // "could not reach" would assert a fact about the network, and this
-        // catch is not homogeneous: a `fetch` that throws is usually the far
-        // side being unreachable, but a fault in `nodeFetch` — the one part of
-        // this module a test with an injected upstream never runs — throws here
-        // too and would arrive wearing the network's clothes. Somebody chasing
-        // an upstream outage would never look at our adapter.
-        //
-        // So the message says what happened rather than why, and names both
-        // readings. Guessing between them from the error's shape would be a
-        // heuristic that is wrong silently, which is the thing being avoided.
-        const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-        const reason = `fetching ${target} threw (${detail}) — either the far side is unreachable`
-          + ' or the host’s own fetch adapter faulted; the adapter is nodeFetch in script-cache.ts'
-        this.#onError(new Error(reason))
-        return { status: 502, reason }
-      }
-
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location')
-        if (location === null) return { status: 502, reason: `${target} redirected without a location` }
-        const next = new URL(location, target).toString()
-        // The hop is checked like the first request was. A whitelist that only
-        // sees where a request was aimed does not know where it landed, and the
-        // far side chooses the landing.
-        const allowed = checkScriptFetch(next)
-        if (!allowed.allowed) {
-          const reason = `${target} redirected to a host that is not allowed: ${allowed.reason}`
-          this.#onError(new Error(reason))
-          return { status: 403, reason }
-        }
-        target = allowed.url
-        continue
-      }
-
-      if (response.status !== 200) {
-        const reason = `${target} answered ${String(response.status)}`
-        this.#onError(new Error(reason))
-        return { status: 502, reason }
-      }
-
-      const body = Buffer.from(await response.arrayBuffer())
-      if (body.byteLength > this.#maxBytes) {
-        const reason = `${target} is ${String(body.byteLength)} bytes, over the ${String(this.#maxBytes)} byte limit`
-        this.#onError(new Error(reason))
-        return { status: 413, reason }
-      }
-
-      await this.#store(url, body)
-      return body
-    }
-
-    const reason = `${url} redirected more than ${String(MAX_HOPS)} times`
-    this.#onError(new Error(reason))
-    return { status: 502, reason }
+    const result = await fetchAllowedRemote(url, {
+      fetch: this.#fetch,
+      maxBytes: this.#maxBytes,
+      onError: this.#onError,
+    })
+    if (!result.ok) return { status: STATUS_FOR[result.kind], reason: result.reason }
+    // Stored under the URL that was **asked for**, not under the one a redirect
+    // landed on: the next request will arrive as the same proposal, and an entry
+    // keyed by the destination would be a cache nothing ever reads.
+    await this.#store(url, result.bytes)
+    return result.bytes
   }
 
   /** Write the body and its sidecar. */
