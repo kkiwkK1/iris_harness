@@ -16,10 +16,14 @@
  *
  * The `Host` allow-list (`host-guard.ts`) is the service's, not the endpoint's:
  * `@iris/app-service` registers four more routes on the same carrier and wraps
- * each with {@link IrisRpcHost.guard}, so every byte Iris answers goes through
- * one predicate. The carrier's fallback seat — the static front-end bundle —
- * stays unguarded and is the known gap; see
- * `notes/packages/iris-rpc-host/DEVIATIONS.md` §1.
+ * each with {@link IrisRpcHost.guard}, and this endpoint's own POST is
+ * registered through the same wrapper, so every byte Iris answers goes through
+ * one function — which is also where `X-Content-Type-Options: nosniff` is set,
+ * for the same reason the allow-list is there rather than in five handlers. The
+ * carrier's fallback seat — the static front-end bundle — stays unguarded and
+ * unheadered, and is the known gap; see
+ * `notes/packages/iris-rpc-host/DEVIATIONS.md` §1 and
+ * `notes/packages/iris-app-service/DEVIATIONS.md` §74.
  *
  * @module @iris/rpc-host
  */
@@ -309,16 +313,41 @@ export class IrisRpcHost extends Service {
   }
 
   /**
-   * Wrap a route handler so it answers only requests this host is addressed by.
+   * Wrap a route handler so it answers only requests this host is addressed by,
+   * and so its answer is never re-typed by the browser.
    *
    * A wrapper rather than a line inside each handler: a handler that forgets
    * the line looks exactly like one that has it, and there is no test that can
-   * see the omission from inside the handler's own package.
+   * see the omission from inside the handler's own package. That argument was
+   * made for the `Host` check and it is the same argument for the header, which
+   * is why the two travel together rather than in two wrappers — **every route
+   * Iris owns goes through this one function**, the RPC POST included (it is
+   * registered through `guard` rather than checking the host inside itself).
+   *
+   * `X-Content-Type-Options: nosniff` is set before the handler runs, through
+   * `setHeader` rather than at each `writeHead`, because Node merges the two
+   * with `writeHead` winning — so a handler that writes its own headers keeps
+   * them and still gets this one. What it buys: every one of these routes
+   * answers bytes the user's own machine produced but did not necessarily
+   * author — an avatar is a file from a downloaded card, a script bundle is a
+   * card author's JavaScript, an RPC answer is JSON containing conversation
+   * text — and without the header a browser is free to decide a response is
+   * really HTML and run it as a document at Iris's own origin. Upstream sets it
+   * on every response too, by way of `helmet()`'s defaults
+   * (`src/server-main.js:104`); it is one of the few of those it keeps after
+   * turning `contentSecurityPolicy` off.
+   *
+   * The two responses this does **not** reach are recorded as gaps: the
+   * WebSocket upgrade (no body to sniff) and the carrier's fallback seat —
+   * `index.html` and the built assets, served by an external package with no
+   * header hook (`notes/packages/iris-rpc-host/DEVIATIONS.md` §1,
+   * `notes/packages/iris-app-service/DEVIATIONS.md` §74).
    * @param handler - the route handler to protect.
    * @returns a handler that refuses anything the allow-list does not admit.
    */
   guard(handler: WebRoute['handler']): WebRoute['handler'] {
     return (req, res) => {
+      res.setHeader('x-content-type-options', 'nosniff')
       if (!this.checkHost(req, res)) return undefined
       return handler(req, res)
     }
@@ -350,10 +379,17 @@ export class IrisRpcHost extends Service {
     const refusal = describeUnconfiguredBind(this.ctx.webServer.host, this.settings.allowedHosts)
     if (refusal !== undefined) throw new Error(refusal)
 
+    // Through `guard` like every other Iris-owned route, rather than checking
+    // the host inside `handleRequest` as this used to: one wrapper is the whole
+    // point of there being a wrapper, and it is what makes "every route answers
+    // nosniff" a property of one function instead of a habit five call sites
+    // have to keep. The ordering the old comment inside `handleRequest`
+    // insisted on is unchanged — the wrapper runs before the method, the
+    // content type, or anything else is looked at.
     const route: WebRoute = {
       kind: 'exact',
       path: this.settings.rpcPath,
-      handler: (req, res) => this.handleRequest(req, res),
+      handler: this.guard((req, res) => this.handleRequest(req, res)),
     }
     this.ctx.effect(
       () => this.ctx.webServer.register(route),
@@ -376,12 +412,16 @@ export class IrisRpcHost extends Service {
     )
   }
 
-  /** Answer one POST. Never rejects; the carrier's own guard is a last resort. */
+  /**
+   * Answer one POST. Never rejects; the carrier's own guard is a last resort.
+   *
+   * The `Host` allow-list ran before this was called — the route is registered
+   * through {@link IrisRpcHost.guard}, which refuses a rebound page before the
+   * method or the content type is looked at, since a rebound page is
+   * same-origin with this host and the content-type gate below is not in its
+   * path.
+   */
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // First, before the method is even looked at: a rebound page is same-origin
-    // with this host, so the content-type gate below is not in its path.
-    if (!this.checkHost(req, res)) return
-
     if (req.method !== 'POST') {
       res.writeHead(405, { allow: 'POST' })
       res.end()

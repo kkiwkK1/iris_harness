@@ -10,7 +10,14 @@
  * also come from `testingcf`. Allowing only the hostnames a person would think
  * of first would have failed 14 of 15 real imports.
  *
- * So the allowance is per-registrable-domain, not per-hostname.
+ * So the allowance is per-registrable-domain, not per-hostname — and, since
+ * 2026-09-11, per *subdomain* of it and not the apex, which is what the CSP
+ * grammar on the other half has always meant. A re-count on the same corpus the
+ * same day, through the census reader rather than by hand, found 43
+ * `testingcf.jsdelivr.net`, 13 `cdn.jsdelivr.net` and 0 apex; the wider
+ * plaintext sweep adds two mentions of `fastly.jsdelivr.net` in an extension's
+ * changelog, a fourth hostname the original "14 and 1" reading did not name and
+ * which this list already covers.
  *
  * @module @iris/script/remote
  */
@@ -18,7 +25,10 @@
 /**
  * Domains a script may import from.
  *
- * `jsdelivr.net` covers every hostname it serves under, which is the point.
+ * `jsdelivr.net` covers every hostname *under* it, which is the point — and,
+ * since 2026-09-11, not the apex itself, because that is what the CSP side's
+ * `https://*.jsdelivr.net` has always meant and no card in the corpus asks for
+ * it (see {@link checkScriptFetch}).
  * `raw.githubusercontent.com` is exact: `githubusercontent.com` as a suffix
  * would also cover user-content hosts that serve arbitrary uploads.
  *
@@ -64,9 +74,36 @@ export function checkScriptFetch(input: string): FetchVerdict {
 
   const host = url.hostname.toLowerCase()
   for (const entry of ALLOWED) {
+    /*
+     * A `subdomains` entry admits **only** subdomains, never the apex.
+     *
+     * Until 2026-09-11 this loop opened with `if (host === entry.suffix)` for
+     * *every* entry, so the bare `jsdelivr.net` passed here while the frame's
+     * `script-src https://*.jsdelivr.net` — which per the CSP grammar does not
+     * match the apex — refused it. One character of drift, in the direction
+     * that matters: the host would fetch and cache a bundle the frame could
+     * never load, and the card's failure would name neither side.
+     *
+     * Narrowed here rather than widened on the CSP side because the corpus
+     * asked for nothing. Measured 2026-09-11 over 1,888 card, interface, preset
+     * and world-book bodies (19 cards, 6 presets, 18 books, read through
+     * `scripts/card-surface-census.mjs`'s own reader — a raw grep over the PNGs
+     * answers zero for everything, because the card JSON is base64 in a `tEXt`
+     * chunk): the apex appears **0** times, against 43 uses of
+     * `testingcf.jsdelivr.net` and 13 of `cdn.jsdelivr.net`. `apps/iris-web`'s
+     * `isAllowedRemote` already read the list this way, with a comment saying
+     * so; this is the half that did not.
+     *
+     * The dot matters: a bare `endsWith` would also match `evil-jsdelivr.net`.
+     */
+    if (entry.subdomains) {
+      if (host.endsWith(`.${entry.suffix}`)) return { allowed: true, url: url.toString() }
+      continue
+    }
+    // An exact entry is exactly itself. `raw.githubusercontent.com` is served
+    // by this branch and by no other, which is why the apex comparison was
+    // gated rather than deleted.
     if (host === entry.suffix) return { allowed: true, url: url.toString() }
-    // The dot matters: a bare `endsWith` would also match `evil-jsdelivr.net`.
-    if (entry.subdomains && host.endsWith(`.${entry.suffix}`)) return { allowed: true, url: url.toString() }
   }
 
   return {

@@ -217,6 +217,39 @@ test('every route the application registers refuses a foreign Host and answers t
   assert.match(asset, /access-control-allow-origin/i, 'with the CORS header its opaque-origin frame needs')
 })
 
+test('every route Iris owns answers nosniff, refusals and misses included', async () => {
+  /*
+   * The second thing `IrisRpcHost.guard` does, and the reason the RPC POST was
+   * moved onto the same wrapper: `X-Content-Type-Options` is a property of
+   * *every* byte Iris answers, and a header written per handler is a header
+   * four handlers can forget. Each of these routes answers bytes this machine
+   * produced but did not author — an avatar is a file out of a downloaded card,
+   * a script bundle is a card author's JavaScript, an RPC frame is conversation
+   * text — and without the header a browser is free to decide a response is
+   * really HTML and run it as a document at Iris's own origin.
+   *
+   * The 404s and the 403 are in the list on purpose. A response whose body
+   * nothing would sniff is not a reason to skip the header; it is the reason
+   * the header has to come from the wrapper rather than from whichever branch
+   * happens to write the body.
+   */
+  const routes = ['/version', '/iris/avatar/aria.png', '/iris/script-bundle/nothing.js', '/sandbox/preset.js']
+
+  for (const path of routes) {
+    assert.match(await get(path, real()), /x-content-type-options: nosniff/i, `${path} answers unsniffable`)
+    assert.match(await get(path, rebinding), /x-content-type-options: nosniff/i, `${path} refuses unsniffable`)
+  }
+
+  const answered = await rpc({ id: 'sniff-1', method: 'chat.list', params: {} }, real())
+  assert.equal(status(answered), 200, 'the RPC answer this reads is a real one')
+  assert.match(answered, /x-content-type-options: nosniff/i, 'the RPC POST answers unsniffable')
+  assert.match(
+    await rpc({ id: 'sniff-2', method: 'chat.list', params: {} }, rebinding),
+    /x-content-type-options: nosniff/i,
+    'and so does its Host refusal, because the header is set before the check',
+  )
+})
+
 test('the allow-set is built from the port that was bound, not one next door', async () => {
   /*
    * This composition asks for `port: 0`, so the number below was chosen by the

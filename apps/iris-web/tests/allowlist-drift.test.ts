@@ -87,6 +87,31 @@ test('a host that merely ends with an allowed name is still refused', () => {
   assert.equal(isAllowedRemote('https://raw.githubusercontent.com.evil.example/x.js'), false)
 })
 
+test('a `*.` entry means subdomains, and the document says so in words as well', () => {
+  /*
+   * The third drift this file exists for, and the one it did not catch until
+   * 2026-09-11 (F10). The comparison above is by *set of origins*, so both
+   * halves could agree on the string `*.jsdelivr.net` while disagreeing about
+   * what it matches — and they did: this half refused the bare apex, the host's
+   * `checkScriptFetch` accepted it, and the documented line was a third opinion
+   * ("any hostname"). A set comparison cannot see a semantic disagreement, so
+   * the semantics get an assertion of their own, on the one case the two halves
+   * differed on.
+   *
+   * The document is checked for the *word* because that is where the host's
+   * test reads from too; the behaviour is checked on this side directly.
+   */
+  assert.equal(isAllowedRemote('https://jsdelivr.net/npm/lodash@4/lodash.min.js'), false)
+  assert.equal(isAllowedRemote('https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js'), true)
+
+  const doc = sandboxDoc()
+  assert.ok(
+    /not the bare apex/i.test(doc),
+    'SANDBOX.md no longer says a `*.` entry excludes the apex; it is the hub both halves read,'
+      + ' and it once said "any hostname" while neither half meant it',
+  )
+})
+
 test('the proxy route this half calls is the route the policy records', () => {
   /*
    * The route string existed in four places across two trust domains — one
