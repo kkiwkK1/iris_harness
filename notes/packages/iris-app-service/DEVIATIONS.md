@@ -6811,3 +6811,119 @@ walker, the property test), `packages/iris-app-service/tests/forbidden-keys.test
 `environment.ts` copy pinned against the exported list) and
 `packages/iris-protocol/tests/worldbook-bounds.test.ts` (each measured extreme
 accepted, one step past each bound refused).
+
+---
+
+## 74. The shell's policy is written into the index on the way out, and every route this host owns says `nosniff`
+
+**Kind:** a layer upstream has in a different place (a header, from `helmet`)
+and a layer upstream does not have at all (a CSP). Dated 2026-09-11. The
+browser half — what the policy says, the measurement that decided it, and the
+click-jacking guard — is `notes/apps/iris-web/DEVIATIONS.md` §93.
+
+**What upstream does.** `helmet()` at `src/server-main.js:104-106`, with
+`contentSecurityPolicy: false`. So SillyTavern ships **no CSP**, and the helmet
+defaults it keeps put `X-Content-Type-Options: nosniff` and `X-Frame-Options:
+SAMEORIGIN` on *every* response — index, assets, API — because the middleware
+sits in front of the whole express app
+(`node_modules/helmet/index.cjs:400-407` and `:445-459` install them when their
+options are absent). Iris has no middleware chain: the carrier
+(`@deepseek-ai/dsh-host-webserver`) routes to handlers, and the seat that
+answers for the index and the built assets belongs to a different package
+entirely. So the two protections are split, and the split is what this section
+records.
+
+### The policy: a `tapIndex` transform, owned by this plugin
+
+The carrier offers exactly one seam for markup no structured injection row
+expresses — `tapIndex(transform: (html: string) => string)`, applied by
+`renderIndex` after the injection rows. The static seat
+(`@deepseek-ai/dsh-host-frontend-static`) calls `renderIndex` on every index it
+renders. Measured in its `lib/index.js`: `renderIndex` is
+`async () => ctx.webServer.renderIndex(await readFile(distIndex, 'utf8'))`,
+passed into `serveStatic` and awaited per request — the file is re-read and the
+taps re-run **per response**, with nothing cached per process. That fact
+decides nonce-versus-hash, and the answer turned out not to matter: the shipped
+policy carries no `script-src`, so there is nothing for a nonce to authorise
+(§93 has the measurement that took `script-src` off the table). It is recorded
+because it is the fact a future strict policy would rest on.
+
+The tap is registered by **this** plugin, not by the front-end row, because this
+plugin already holds `webDistIndex` — the same value and the same gate as the
+sandbox-asset route beside it. `packages/iris-app-service/src/shell-csp.ts`
+holds the directive list and the transform; `index.ts` wires it in one
+`ctx.effect`.
+
+`stampShellIndex` **refuses rather than adds a second policy** when the body
+already declares one. Two CSP meta elements are not a stronger policy and not
+the later one either: the browser enforces both, so the page ends up under an
+intersection neither author wrote, and the symptom is a refusal citing a
+directive that appears in neither copy. Refusing also makes the transform
+idempotent for free, which matters because taps run in registration order and
+nothing stops a future row from rendering an index twice. The refusal is warned
+**once**, not per response: it is a property of a file, and a line per page load
+is a log nobody reads.
+
+**The dev server runs without this policy, deliberately.** `vite.config.ts`
+serves `index.html` itself, with no carrier and therefore no tap. Adding an
+equivalent meta to the source file would put a *different* policy in front of a
+different set of scripts (Vite's HMR client is injected inline and its socket is
+another origin), and a policy that only exists in the environment nobody ships
+is worse than none — it would either be loosened until it passed or silently
+diverge. `apps/iris/tests/shell-index.test.ts` pins that the file on disk
+carries no policy and the served bytes do, so that split stays a decision.
+
+### `nosniff`: one wrapper, not a line per route
+
+`IrisRpcHost.guard` — the wrapper §70 and rpc-host §1 added for the `Host`
+allow-list — now also sets `X-Content-Type-Options: nosniff` before the handler
+runs, and **the RPC POST is registered through it** instead of calling
+`checkHost` from inside `handleRequest`. That is the change that makes the
+sentence true: one function, six routes (the POST, avatar, `/version`, the
+script bundle, the sandbox assets), and a handler cannot forget what it never
+had to remember. The ordering the old comment insisted on is unchanged — the
+wrapper runs before the method, the content type, or anything else is looked at.
+
+`setHeader` rather than a header at each `writeHead`, because Node merges the
+two with `writeHead` winning: a handler that writes its own headers keeps them
+and still gets this one. It reaches the 404s and the 403 refusals too, which is
+deliberate — a response whose body nothing would sniff is not a reason to skip
+the header, it is the reason the header must come from the wrapper rather than
+from whichever branch happens to write the body.
+
+What it buys: every one of these routes answers bytes this machine produced but
+did not author — an avatar is a file out of a downloaded card, a script bundle
+is a card author's JavaScript, an RPC frame is conversation text — and without
+the header a browser is free to decide a response is really HTML and run it as a
+document at Iris's own origin.
+
+### The two gaps, recorded rather than papered over
+
+- **The index and the built assets carry no `nosniff`, no
+  `frame-ancestors`/`X-Frame-Options`, and no `Cache-Control: no-store`.** Those
+  are headers on a response written by `@deepseek-ai/dsh-host-frontend-static`,
+  which sets `content-type` and nothing else and exposes no hook. The same seat
+  is already the recorded gap in rpc-host §1 for the `Host` allow-list, for the
+  same reason. Upstream has all three, through helmet, on every response. What
+  would close it: a header hook on that package, or Iris taking the fallback
+  seat itself — which is a bigger decision than it looks, because that seat is
+  also what makes the dist swappable.
+- **`frame-ancestors` cannot be delivered in a `<meta>` at all**, so the
+  click-jacking answer is the page's own first script refusing to render framed
+  (§93). Weaker than a header, and said so there.
+
+### What would overturn this
+
+A header hook on the static package closes the first gap and makes the
+click-jacking guard redundant. A card frame that stops being `srcdoc` unlocks
+the strict policy §93 could not ship. Neither changes the shape here: the tap
+and the wrapper are the two places, and both would gain lines rather than move.
+
+**Held by** `packages/iris-app-service/tests/shell-csp.test.ts` (8),
+`apps/iris/tests/shell-index.test.ts` (4 — a booted composition with the static
+seat claimed, the served index carrying exactly one policy ahead of its first
+script, the source file untouched, every response tapped, and the index's
+missing `nosniff` asserted *as the gap* with `/version`'s present one on the
+same host for contrast) and `apps/iris/tests/host-allowlist.test.ts` (+1 — all
+four application routes plus the RPC POST answering `nosniff`, on the real host,
+the 404s and the 403 refusals included).

@@ -47,6 +47,7 @@ import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
 import { DEFAULT_PRUNE } from './prune.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
+import { stampShellIndex } from './shell-csp.ts'
 import { ScriptCache } from './script-cache.ts'
 import { presetRegexSource } from './regex.ts'
 import { ScriptPolicyStore } from './scripts.ts'
@@ -186,6 +187,7 @@ export { ScriptPolicyStore, scopedRegexRows } from './scripts.ts'
 export { ScriptLibraryStore, viewOf as userScriptViewOf, scriptRowOf, type LibraryScope, type OwnedUserScript, type UserScriptInput } from './script-library.ts'
 export { ScriptVariableStore, scriptIdOf } from './script-variables.ts'
 export { SettingsStore, sanitize, type SettingsPatch } from './settings.ts'
+export { SHELL_CSP_DIRECTIVES, shellPolicy, stampShellIndex, type IndexStamp } from './shell-csp.ts'
 export { applyOps, buildSnapshot, scalarsOf, worldInfoOf, writePath } from './template.ts'
 export { charWorldbookNames, resolveCardWorldbook, toWorldbookEntry, WorldbookStore } from './worldbooks.ts'
 export type { CharWorldbookNames, ResolvedWorldbook } from './worldbooks.ts'
@@ -1146,6 +1148,36 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         handler: ctx.irisRpc.guard((req, res) => serveSandboxAsset(sandboxDir, sandboxPath, req, res)),
       }),
       `irisApp: GET ${sandboxPath}`,
+    )
+
+    /*
+     * The shell page's own Content-Security-Policy, written into the index the
+     * fallback seat serves.
+     *
+     * Registered here rather than in the front-end row because this plugin is
+     * the one that already holds `webDistIndex` — the same gate as the sandbox
+     * route above, and for the same reason: with no build there is no index to
+     * tap, and the carrier applies taps only through `renderIndex`, which only
+     * the static seat calls. What goes in and why each directive earned its
+     * place is `shell-csp.ts`; the short version is that a card interface is a
+     * `srcdoc` frame, a `srcdoc` document **inherits the embedder's policy**,
+     * and so every directive here is also a directive on every card.
+     *
+     * A refusal is warned once rather than per response: an index that already
+     * carries a policy would otherwise print a line per page load, and the fact
+     * does not change between two reads of the same file.
+     */
+    let policyRefusalSaid = false
+    ctx.effect(
+      () => ctx.webServer.tapIndex(html => {
+        const stamped = stampShellIndex(html)
+        if (stamped.refusal !== undefined && !policyRefusalSaid) {
+          policyRefusalSaid = true
+          ctx.logger.warn(`irisApp: ${stamped.refusal}`)
+        }
+        return stamped.html
+      }),
+      'irisApp: shell Content-Security-Policy',
     )
   }
 }

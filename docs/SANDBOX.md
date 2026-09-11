@@ -85,6 +85,17 @@ exists, with symptoms that read as a broken card rather than a wrong policy. It 
 remains the one that counts**, because a page cannot be relied on to police its
 own fetches, and the two are not equivalent.
 
+> **Addition, 2026-09-11 (F10).** `framePolicy` now also emits `base-uri
+> 'none'`. `base-uri` is one of the handful of directives with **no fallback to
+> `default-src`**, so the frame's `default-src 'none'` left it open and a card
+> could write `<base href="https://…">` and re-point every relative URL in its
+> own document. Measured harmless as the corpus stands — the frame's own URLs
+> are absolute, and `script-src` would refuse code from a re-pointed origin
+> anyway — so this closes a door nothing currently walks through, which is the
+> cheapest kind of door to close. It costs the frames nothing: the same
+> directive arrives from the shell's policy as well, since a `srcdoc` document
+> inherits its embedder's (see `notes/apps/iris-web/DEVIATIONS.md` §93).
+
 ## `parent.*` — what cards actually reach for
 
 | Access | Sites | Disposition |
@@ -611,8 +622,9 @@ frames — reopens this decision before it reopens anything else.
 Card scripts import from CDNs. Whitelist, enforced host-side:
 
 ```
-*.jsdelivr.net        (any hostname — measured: 14 of 15 real imports use
-                       testingcf.jsdelivr.net, only 1 uses cdn.)
+*.jsdelivr.net        (any hostname *under* it — not the bare apex; measured
+                       2026-09-11: 43 testingcf.jsdelivr.net, 13
+                       cdn.jsdelivr.net, 0 jsdelivr.net)
 raw.githubusercontent.com
 ```
 
@@ -623,6 +635,24 @@ a message naming the host**, never silently allowed and never silently dropped.
 The frame's own `script-src` carries the same list. That is a second layer, not
 a second enforcement point — if the two ever disagree, the host's answer is the
 real one.
+
+> **Correction, 2026-09-11 (F10).** This block used to read "*.jsdelivr.net (any
+> hostname …)", and `checkScriptFetch` implemented exactly that: it accepted the
+> bare `jsdelivr.net` as well as every subdomain. The CSP side never did —
+> `https://*.jsdelivr.net` does not match the apex per the source-expression
+> grammar — so for as long as both have existed the host has been one character
+> wider than the frame, in the direction where the host fetches and caches a
+> bundle the browser can never load and the card's failure names neither side.
+> Narrowed on the host rather than widened on the CSP side, because the corpus
+> asks for nothing: the apex appears **0** times across 1,888 card, interface,
+> preset and world-book bodies (19 cards, 6 presets, 18 books, read through the
+> census reader — a raw grep over the card PNGs answers zero for *everything*,
+> since the card JSON is base64 inside a `tEXt` chunk). The wider plaintext
+> sweep of the same install also names a fourth hostname the original "14 and 1"
+> reading did not, `fastly.jsdelivr.net` (2 mentions, in an extension's
+> changelog); the list covers it and always did. `raw.githubusercontent.com` is
+> untouched — it is an *exact* entry, so the apex comparison is its only branch,
+> which is why the fix gates that branch on `subdomains` instead of deleting it.
 
 ### Anything the frame imports must send CORS headers
 

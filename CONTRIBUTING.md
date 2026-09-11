@@ -142,9 +142,11 @@ commit corrects an earlier decision, say which one and why it moved.
 These are decisions with tests behind them; a change to any of them is a PR
 that says so in its title.
 
-- **Remote script code loads from two places only**: any hostname under
-  `jsdelivr.net`, and exactly `raw.githubusercontent.com` (not the
-  `githubusercontent.com` suffix, which would also cover user-upload hosts).
+- **Remote script code loads from two places only**: any hostname *under*
+  `jsdelivr.net` — a subdomain, not the bare apex, which is what the frame's
+  `https://*.jsdelivr.net` has always meant and which no card in the corpus asks
+  for — and exactly `raw.githubusercontent.com` (not the `githubusercontent.com`
+  suffix, which would also cover user-upload hosts).
   The list is `ALLOWED` in `packages/iris-script/src/remote.ts`, and a drift
   test compares it against the sandbox's `script-src` line.
 - **The host binds loopback.** `apps/iris/cordis.yml` sets the webserver row to

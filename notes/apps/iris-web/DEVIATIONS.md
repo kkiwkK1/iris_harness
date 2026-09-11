@@ -6195,6 +6195,174 @@ the answer, and it would then have to be promoted. Or the follow-up above
 landing: a reading that shows a duration with no bill beside it, which needs the
 popover to stop being gated on `usage`.
 
+## 93. The shell page carries a policy of its own, refuses to be framed, and cannot carry the strict policy the audit asked for — because a `srcdoc` card frame inherits it
+
+**Kind:** a layer upstream does not have at all, built smaller than it was asked
+for by a browser measurement that overturned the ask. Dated 2026-09-11. The host
+half — the tap that injects it, and `nosniff` on every route Iris owns — is
+`notes/packages/iris-app-service/DEVIATIONS.md` §74.
+
+**The findings.** A network audit (M-1, L-1) and a system audit (F10), all three
+defence-in-depth:
+
+- **M-1.** `apps/iris-web/index.html` carried no `Content-Security-Policy` — 0
+  CSP meta elements, two inline `<script>` blocks and a module entry. The
+  shell's one HTML sink (`CardPopup.tsx:223`) is guarded by DOMPurify, an
+  independent audit pass and a fail-closed branch, but a DOMPurify bypass (mXSS)
+  would then own the whole page: every host RPC, the connection profiles,
+  `script.generate` spending the user's tokens. The card frames' own policy is
+  complete (`sandbox/srcdoc.ts`, `framePolicy`); the shell had no layer of its
+  own.
+- **L-1.** No `X-Content-Type-Options: nosniff`, no
+  `frame-ancestors`/`X-Frame-Options` — an unauthenticated local UI can be put
+  in a frame by a hostile page and clicked through — and no `no-store` on the
+  index.
+- **F10.** The frame policy had no `base-uri`, and the host's allow-list
+  accepted the bare `jsdelivr.net` where the CSP side spells
+  `https://*.jsdelivr.net`, which does not match an apex.
+
+**What upstream does.** SillyTavern mounts `helmet()` at
+`src/server-main.js:104-106` — with `contentSecurityPolicy: false`. So upstream
+has **no CSP at all**, on any page, by default; helmet 8's remaining defaults
+still put `X-Content-Type-Options: nosniff` and `X-Frame-Options: SAMEORIGIN` on
+every response, index and assets included (the two middlewares are pushed at
+`node_modules/helmet/index.cjs:400-407` and `:445-459` when their options are
+absent). That is the honest comparison and it cuts both ways: Iris gains a
+policy upstream does not have, and loses the two *header-level* protections
+upstream gets for free, because the response that carries this page is written
+by an external package (below).
+
+### The measurement that decided the policy, and what it overturns
+
+The ruling asked for the textbook shell policy: `default-src 'self'`,
+`script-src 'self' 'nonce-…'` with **no** `'unsafe-inline'` and no
+`'unsafe-eval'`, `connect-src 'self'`, `img-src 'self' data: blob:`, `style-src`
+measured, `frame-src` measured, `object-src 'none'`, `base-uri 'none'`,
+`form-action 'none'`.
+
+**It cannot ship, and the reason is structural.** A card interface is an
+`<iframe srcdoc>` (`src/sandbox/runner.ts:363`). `about:srcdoc` is a *local
+scheme*, and a document with a local-scheme URL **inherits the CSP of its
+embedder**, which the browser then enforces *alongside* the document's own
+`<meta>` policy. The frame's own policy is the permissive one card code needs —
+`'unsafe-inline' 'unsafe-eval' blob:` plus the CDN allow-list — and intersecting
+it with a strict shell policy leaves nothing that runs.
+
+Measured in headless Chrome, 2026-09-11, one card-shaped `srcdoc` frame
+carrying the real frame policy in its `<meta>` and
+`sandbox="allow-scripts"` (what `frameSandbox` writes for an ungranted card),
+mounted under four parent documents:
+
+| the shell's policy | the frame's parse-time inline script | `new Function` |
+| --- | --- | --- |
+| none (the shipping state before this change) | **runs** | `2` |
+| `default-src 'self'; script-src 'self' 'nonce-…'` | **never runs** | — |
+| the same plus `frame-src 'none'` | **never runs**; the frame is still created and its markup parses | — |
+| `default-src 'self'; script-src 'self' 'unsafe-inline'` | runs | **blocked**, and the refusal quotes the *shell's* directive |
+
+The first row is the control: the same frame document, byte for byte, runs when
+the parent carries no policy. The last row names the mechanism out loud — Chrome
+refused the frame's `new Function` citing `script-src 'self' 'unsafe-inline'`, a
+string that appears nowhere in the frame's own policy.
+
+Three consequences:
+
+1. **No fetch directives in the shell policy.** `default-src`, `script-src`,
+   `style-src`, `img-src`, `font-src` and `connect-src` each narrow every card
+   frame. The only `script-src` that would not is a union wide enough for the
+   frames — `'unsafe-inline' 'unsafe-eval' blob:` plus two CDNs — which is to say
+   no protection against the threat M-1 is about. A nonce cannot rescue it
+   either: a `script-src` carrying a nonce makes browsers *ignore*
+   `'unsafe-inline'`, so "nonce for the shell, unsafe-inline for the frames" is
+   not a policy that exists.
+2. **`frame-src` is omitted, not set.** The same measurement shows Chrome does
+   not apply `frame-src` to a `srcdoc` navigation — under `frame-src 'none'` the
+   frame was still created and parsed. Every value is therefore either a no-op
+   today or, if a browser started enforcing it, the one line that kills every
+   card interface at once, since no source expression matches `about:srcdoc`. An
+   omitted directive says that honestly; a written one would be a landmine with
+   a green test beside it.
+3. **Nonce versus hash is moot, and the caching fact is recorded anyway.**
+   `@deepseek-ai/dsh-host-frontend-static` re-reads `distIndex` and calls
+   `ctx.webServer.renderIndex` **per response** — nothing is cached per process —
+   so a per-response nonce would have been sound. With no `script-src` there is
+   nothing for a nonce to authorise, so none is generated and no `<script>` is
+   stamped.
+
+**The shipped set**, `SHELL_CSP_DIRECTIVES` in
+`packages/iris-app-service/src/shell-csp.ts`:
+
+```
+object-src 'none'; base-uri 'none'; form-action 'none'
+```
+
+Each one is free, and each one is real. The shell uses no `<form>`, `<object>`,
+`<embed>` or `<base>` anywhere in `apps/iris-web/src` (measured). A card frame
+already enforces `object-src` and `form-action` on itself by way of
+`default-src 'none'`. `base-uri` has **no fallback to `default-src`**, so the
+frame was unrestricted there — which is F10, closed on both sides at once. What
+they buy against an mXSS payload: `<object data>`/`<embed>` execute script in
+several engines, `<base href>` re-points every relative URL on the page (the
+shell's own module bundle is loaded as `./assets/…`), and a form posting
+somewhere else is how an injected credential prompt gets its answer out without
+needing `fetch`.
+
+### Click-jacking: the page refuses, and a header would be stronger
+
+`frame-ancestors` is ignored in a `<meta>` by definition, and no header on this
+response is Iris's to set. So `index.html`'s **first** script is now a guard: if
+`window.top !== window.self` it calls `window.stop()`, empties the document and
+writes one sentence into a fresh `<body data-iris-framed="refused">`.
+
+This is honestly weaker than a header and the ledger says so: a header stops the
+browser *before* the document exists, while this runs after the document has
+been fetched and parsed this far, and it depends on the page's own script
+running at all. It is what can be done from inside a document.
+
+### The recorded gaps
+
+- **Headers on the index and the built assets.** `nosniff`, `frame-ancestors` /
+  `X-Frame-Options` and `Cache-Control: no-store` are headers, and the fallback
+  seat that writes those responses belongs to
+  `@deepseek-ai/dsh-host-frontend-static`, which writes `content-type` and
+  nothing else and offers no hook. Routes Iris *does* own now answer `nosniff`
+  (§74). Upstream has these, through helmet, on every response.
+- **`script-src` itself**, for the reason above.
+
+### What would overturn this
+
+One thing, and it is nameable: **a card frame's document ceasing to be
+`srcdoc`** — served from a real same-origin URL, still sandboxed to an opaque
+origin, its policy in its own response's header. A non-local-scheme document
+does not inherit, and on that day the whole strict set becomes available in one
+edit to `SHELL_CSP_DIRECTIVES`. The cost is not small: §91's premise — a card's
+first parse-time script sees the bridge — is a property of the body arriving
+*as* the response, so that move needs the body to reach the frame without a
+post-load channel, and it needs its own measurement.
+
+Also overturning: any browser change to srcdoc CSP inheritance, which is exactly
+what the second live test would announce by going red.
+
+**Held by** `packages/iris-app-service/tests/shell-csp.test.ts` (8 — the tap's
+output, the single meta, the position ahead of the first script, the refusal on
+a page that already has a policy, idempotence, and a **forbidden-directive**
+assertion naming the six that would break the cards),
+`apps/iris/tests/shell-index.test.ts` (4 — the policy on a booted host's served
+index, the file on disk untouched, every response tapped, and the index's
+missing `nosniff` recorded as the gap with `/version`'s present one beside it),
+`apps/iris-web/tests/shell-page.test.ts` (+1 — the framing guard is the page's
+first script and stops the parser),
+`apps/iris-web/tests/sandbox-srcdoc.test.ts` (+1 — `base-uri 'none'` on both
+grant branches), `apps/iris-web/tests/allowlist-drift.test.ts` (+1 — a `*.`
+entry excludes the apex, on this half and in the document), and
+`apps/iris/tests/shell-csp-live.test.ts` (4, `IRIS_BROWSER=1`) — the real shell
+on a real host with zero `securitypolicyviolation` and a card frame still
+running inside it; the strict policy stopping that same frame, against a control
+page carrying none; the framed shell refusing; and `connect-src 'self'` admitting
+a same-origin WebSocket while refusing a cross-origin one.
+
+---
+
 ## 94. What page access actually hands over, said in the copy; the scripts a card's markup runs without being asked about, counted; and the one same-origin path list the bridge carries
 
 **Kind:** three answers to an audit, and all three are places where Iris has a

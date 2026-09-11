@@ -106,8 +106,19 @@ import { spawn } from 'node:child_process'
  * pinning it is that it is not. With the flag set and no Chrome, or no `public/sandbox` build,
  * the test **fails** and says which — asking for a check and silently not getting it is the
  * outcome that file exists to prevent (§91).
+ *
+ * 35 → 39, 2026-09-11, the same gate and four tests of it:
+ * `apps/iris/tests/shell-csp-live.test.ts` ×4 — the shell's Content-Security-Policy in a real
+ * browser against a booted host. Two of the four are the reading that decided the policy (a
+ * card frame still runs under the shipped one; it does **not** under the strict one the audit
+ * asked for, against a control page carrying none), one is the click-jacking refusal, one is
+ * the `connect-src 'self'` reading for a same-host WebSocket. Four rather than one because
+ * each carries its own control and a single test would have hidden which half failed. Gated
+ * on `IRIS_BROWSER=1` for the reason above, and failing rather than skipping when the flag is
+ * set with no Chrome or no `apps/iris-web/dist`
+ * (`notes/apps/iris-web/DEVIATIONS.md` §93).
  */
-const EXPECTED_SKIPPED = 35
+const EXPECTED_SKIPPED = 39
 
 const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
 

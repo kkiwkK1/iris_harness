@@ -166,10 +166,28 @@ test('a bare card object is accepted without rewrapping', () => {
 test('every jsdelivr hostname is allowed, not just the obvious one', () => {
   // Measured: 14 of 15 real imports use `testingcf`, one uses `cdn`. A
   // hostname-exact allowance for `cdn.` would fail 14 of 15 real cards.
-  for (const host of ['cdn.jsdelivr.net', 'testingcf.jsdelivr.net', 'gcore.jsdelivr.net', 'fastly.jsdelivr.net', 'jsdelivr.net']) {
+  for (const host of ['cdn.jsdelivr.net', 'testingcf.jsdelivr.net', 'gcore.jsdelivr.net', 'fastly.jsdelivr.net']) {
     const verdict = checkScriptFetch(`https://${host}/gh/MagicalAstrogy/MagVarUpdate@master/artifact/bundle.js`)
     assert.equal(verdict.allowed, true, host)
   }
+})
+
+test('the bare jsdelivr.net apex is refused, because the frame refuses it too', () => {
+  /*
+   * `https://*.jsdelivr.net` in the frame's `script-src` does not match the
+   * apex, and this list said it did until 2026-09-11 — drift in the widening
+   * direction, where the host fetches and caches a bundle the browser will
+   * never load and the card's failure names neither side. The corpus asks for
+   * nothing here: 0 apex references across 1,888 card, interface, preset and
+   * world-book bodies, against 43 `testingcf` and 13 `cdn`.
+   *
+   * `raw.githubusercontent.com` is the control on the next line. It is an
+   * *exact* entry, so its bare form is its only form: a fix that deleted the
+   * equality branch outright rather than gating it would have turned 27 real
+   * corpus references off, and this pair is what makes that go red.
+   */
+  assert.equal(checkScriptFetch('https://jsdelivr.net/npm/lodash@4/lodash.min.js').allowed, false)
+  assert.equal(checkScriptFetch('https://raw.githubusercontent.com/o/r/main/s.js').allowed, true)
 })
 
 test('GitHub raw is allowed exactly, without its siblings', () => {
