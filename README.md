@@ -336,7 +336,7 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `IRIS_CONTEXT_WINDOW` | `32768` | 预设没带上下文窗口时用这个 | `cordis.yml` app 行 |
 | `IRIS_PRESET` | 未设 | 要装配的 SillyTavern Chat Completion 预设文件路径。未设时用一个很薄的内置预设 | `cordis.yml` app 行 |
 | `IRIS_ST_DIR` | 未设 | 一个 SillyTavern **profile 目录**(`…/data/<user>`,**不是安装根目录**),只读地从中取世界书与预设。与 `IRIS_DATA_DIR` 重叠时启动即拒绝。从不猜 | `cordis.yml` app 行 |
-| `IRIS_TEMPLATES` | 关 | `1` 打开卡片的 EJS 提示词模板(ST-Prompt-Template)。默认关,因为求值一次就是在跑卡作者的 JavaScript | `cordis.yml` app 行 |
+| `IRIS_TEMPLATES` | 关 | `1` 打开卡片的 EJS 提示词模板。这只是**开机默认**——用户可以用 `template.setSettings` 线上开关覆盖并持久化(见 `notes/FEATURE-PROMPT-TEMPLATE.md`)。默认关,因为求值一次就是在跑卡作者的 JavaScript | `cordis.yml` app 行 |
 | `IRIS_BACKUP_KEEP` | `50` | 每个聊天保留多少份快照。与上游默认相同 | `cordis.yml` app 行 |
 | `IRIS_DEV_ORIGIN` | 未设 | 逗号分隔的来源白名单,给跑在另一个源上的前端开发服务器用。**更推荐**反代 `/iris/rpc` 与 `/iris/events`,那样页面仍是同源 | `cordis.yml` rpc 行 |
 | `IRIS_ALLOWED_HOSTS` | 未设 | 逗号分隔的 `host:port` 白名单,精确匹配、不支持通配。loopback + 实际端口是自动推出来的,所以本机用不着设;它是给**反向代理**用的——浏览器写进 `Host` 的是反代对外的那个名字。绑 `0.0.0.0` 而这里为空,宿主拒绝启动 | `cordis.yml` rpc 行 |
@@ -396,7 +396,7 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 
 **生成停在 `no first byte … after 120000 ms` 或 `no data … for 120000 ms`。** 端点收下了请求然后安静了。消息会点名是哪一段超时、等了多久。如果你的端点确实那么慢,去 `cordis.yml` 调大或关掉,不要干等;无论哪种情况聊天都会被释放。
 
-**卡的模板不起作用。** `IRIS_TEMPLATES` 是关的。打开它就是在一个子进程里跑卡作者的 JavaScript——没有环境变量、不能写文件系统、够不到宿主对象,是受限的,但仍然是他们的代码,所以默认要你自己开。
+**卡的模板不起作用。** 提示词模板功能是关着的。它有两个开关:组合行 `IRIS_TEMPLATES=1`(开机默认)和用户设置 `template.setSettings { enabled: true }`(持久化,赢过组合行);用 `template.settings` 看当前状态。打开它就是在一个子进程里跑卡作者的 JavaScript——没有环境变量、不能写文件系统、够不到宿主对象,是受限的,但仍然是他们的代码,所以默认要你自己开。
 
 **某条世界书条目不再触发。** SillyTavern 默认只扫最近两条消息(`scan_depth`),这个默认在这里被原样复现了。它是一个设置,不是 bug。
 

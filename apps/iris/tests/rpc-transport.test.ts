@@ -410,6 +410,11 @@ const PROBES: Record<string, unknown> = {
   'worldbook.setGlobalSelect': { names: [] },
   'worldbook.settings': {},
   'worldbook.setSettings': {},
+  // The read is a pure view. The write probe carries `null` — clear — which on
+  // a host that never decided is a handler-reached no-op, so reachability is
+  // proved without leaving a decision behind on the probe profile.
+  'template.settings': {},
+  'template.setSettings': { enabled: null },
   // Empty params: the cursor and the limit are both optional, and reading
   // from the oldest held record is the page's first call.
   'debug.reports': {},

@@ -119,6 +119,7 @@ export type {
   WorldbookPosition,
   WorldbookSettingsView,
   WorldbookSummary,
+  TemplateFeatureView,
   // —— family②: regex ——
   TavernRegexDestination,
   TavernRegexSource,

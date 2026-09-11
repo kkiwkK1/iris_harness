@@ -150,6 +150,20 @@ interface SettingsFile {
    * settings.json the same way.
    */
   preset?: { name?: string, body: ChatCompletionPreset }
+  /**
+   * The prompt-template feature's user decision, when the user has made one.
+   *
+   * `enabled` is a **tri-state by absence**: an unset field means the user has
+   * never decided and the composition's boot default stands. Upstream's nearest
+   * equivalent is the extension being installed and toggled in
+   * `extension_settings.EjsTemplate` — a user-facing decision persisted beside
+   * the other extension settings, which is the shape this section copies;
+   * `notes/FEATURE-PROMPT-TEMPLATE.md` §4.1 is the design it implements.
+   */
+  template?: {
+    /** The user's on/off decision, present only once made. */
+    enabled?: boolean
+  }
 }
 
 /** Fields of {@link GenerationSettings} that may simply be absent. */
@@ -236,6 +250,9 @@ export class SettingsStore {
         // until the next restart, and a user's global selection silently
         // reset. Whatever the file holds is what the store holds.
         ...(parsed.worldbooks === undefined ? {} : { worldbooks: parsed.worldbooks }),
+        // Same carry-through, same reason: a section this store writes that
+        // `load` drops is a setting with the lifetime of one boot.
+        ...(parsed.template === undefined ? {} : { template: parsed.template }),
       }
     } catch (error: unknown) {
       // Keep the defaults — but move the bytes out of the way first, so the
@@ -525,6 +542,45 @@ export class SettingsStore {
    */
   worldbookSettings(): WorldbookSettings {
     return resolveWorldbookSettings(this.#file.worldbooks?.settings)
+  }
+
+  /**
+   * The prompt-template feature's user decision, or `undefined` for never made.
+   *
+   * The tri-state is the whole point of answering `undefined` instead of a
+   * boolean: the *composition* owns the default, so this store answering one
+   * would silently outrank the row the deployment set. Which layer decided is
+   * a fact the caller can state (`persisted` in the wire view), not one this
+   * store should flatten away.
+   * @returns the persisted decision, or `undefined` when there is none.
+   */
+  templateEnabled(): boolean | undefined {
+    return this.#file.template?.enabled
+  }
+
+  /**
+   * Record — or clear — the prompt-template feature's user decision.
+   *
+   * `null` clears rather than writes `false`, because the two mean different
+   * things: `false` is a decision to keep the feature off across restarts and
+   * across a later change of the composition's default, `null` is stepping
+   * back to whatever the composition says. Writing the decision is what makes
+   * it survive both.
+   * @param enabled - the decision, or `null` to return it to the composition.
+   */
+  async setTemplateFeature(enabled: boolean | null): Promise<void> {
+    if (enabled === null) {
+      // An empty section is not a state worth a rewrite: dropping the key
+      // entirely keeps the file reading as "the user never decided", which is
+      // exactly what clearing means.
+      if (this.#file.template?.enabled === undefined) return
+      const { enabled: _dropped, ...rest } = this.#file.template
+      if (Object.keys(rest).length === 0) delete this.#file.template
+      else this.#file.template = rest
+    } else {
+      this.#file.template = { ...this.#file.template, enabled }
+    }
+    await this.save()
   }
 
   /**

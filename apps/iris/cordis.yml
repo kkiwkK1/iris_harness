@@ -143,11 +143,15 @@
     # card frame that loads them is an opaque origin, and the plugin serving the
     # rest of the dist has no way to set one.
     webDistIndex: !!js process.env.IRIS_WEB_DIST
-    # The cards' EJS prompt templates (the ST-Prompt-Template extension). Off
-    # unless asked for, because evaluating one is running the card author's
-    # JavaScript — it is contained in a child process with no environment, no
+    # The cards' EJS prompt templates — the ST-Prompt-Template capability as a
+    # first-party Iris feature (`notes/FEATURE-PROMPT-TEMPLATE.md`). This row is
+    # the **boot default**, not the switch: the user's own decision, persisted in
+    # the profile's settings.json and set over the wire with
+    # `template.setSettings`, wins once it exists. Until then the default holds,
+    # and it is off because evaluating a template is running the card author's
+    # JavaScript — contained in a child process with no environment, no
     # filesystem writes and no host objects in reach, but containment is not a
-    # reason to opt someone in. Set IRIS_TEMPLATES=1 to turn it on.
+    # reason to opt someone in.
     templates: !!js process.env.IRIS_TEMPLATES === '1'
     # Conversation snapshots kept per chat before the oldest is deleted. The
     # host snapshots a conversation before deleting a message from it, before a

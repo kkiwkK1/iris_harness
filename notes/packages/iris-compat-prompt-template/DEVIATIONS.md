@@ -257,7 +257,10 @@ referrer), but `fetch` needs no import. The `vm` context's refusal of dynamic
 import, which deviation 7 calls "the thing that closes that door", was irrelevant:
 the escape was not in the context.
 
-Reachable whenever `IRIS_TEMPLATES=1`, because `script.evalTemplate` is in
+Reachable whenever the prompt-template feature is on — originally spelled
+`IRIS_TEMPLATES=1`, which is now only the boot default: the user-facing switch
+(`template.setSettings`, persisted in the profile's `settings.json`) decides at
+call time, `notes/FEATURE-PROMPT-TEMPLATE.md` §4.1. `script.evalTemplate` is in
 `CARD_METHODS` — so any card with script consent, not only a card whose fields
 are evaluated during a generation.
 

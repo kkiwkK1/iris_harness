@@ -23,7 +23,7 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TemplateFeatureView, TurnUsage, ScriptContext } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -646,13 +646,15 @@ export interface AppServiceOptions {
    */
   pruneVariables?: PruneOptions
   /**
-   * EJS prompt templates, off unless this is present.
+   * EJS prompt templates — the feature's tuning and its boot default.
    *
-   * Presence is the switch rather than a boolean, because there is no useful
-   * "configured but disabled" state: evaluating a card author's JavaScript is a
-   * decision the deployment makes once. Absent means no child is ever forked and
-   * `<%` reaches the model as literal text, which is what SillyTavern without the
-   * extension installed does.
+   * Presence is the **default**, not the switch: the user's persisted decision
+   * (`settings.json`'s `template.enabled`, wired over the wire as
+   * `template.setSettings`) wins once it exists, and this option then only
+   * carries the deadline. Until decided, absence means no child is ever forked
+   * and `<%` reaches the model as literal text, which is what SillyTavern
+   * without the extension installed does. `notes/FEATURE-PROMPT-TEMPLATE.md`
+   * is the design.
    */
   templates?: TemplateOptions
   /**
@@ -2086,11 +2088,17 @@ export class IrisAppService {
         // string. A card asking for a render and receiving `''` cannot tell that
         // from a template that rendered to nothing, and would go on to inject
         // the emptiness.
-        const templates = this.#options.templates
-        if (templates === undefined) {
+        //
+        // The gate is the feature switch, read at call time — the same switch
+        // the generation path reads, so a card cannot render through this door
+        // what a generation would have left alone, or the reverse. The sentence
+        // names the setting, because the card author's next step is turning it
+        // on, and the composition row is only ever its default.
+        if (!await this.#templateEnabled()) {
           throw new AppError(
             'unsupported',
-            'script.evalTemplate needs the template feature, which this host is running without',
+            'script.evalTemplate needs the prompt-template feature, which is switched off '
+              + '(template.setSettings turns it on; IRIS_TEMPLATES=1 is only the boot default)',
           )
         }
 
@@ -2112,7 +2120,7 @@ export class IrisAppService {
         const outcome = await evaluateBatch({
           items: [{ id: 'eval', text: content, origin: `script.evalTemplate/${chatId}` }],
           snapshot: buildSnapshot(entry, turn, this.#traceId),
-          ...templates.deadlineMs === undefined ? {} : { deadlineMs: templates.deadlineMs },
+          ...this.#templateDeadline(),
         })
 
         const result = outcome.results[0]?.result
@@ -3202,6 +3210,21 @@ export class IrisAppService {
       'worldbook.setSettings': async patch => ({
         settings: await this.#options.settings.setWorldbookSettings(patch),
       }),
+
+      /*
+       * The prompt-template feature's switch.
+       *
+       * Reading and writing the same store the generation path and
+       * `script.evalTemplate` read, so the view is the decision rather than a
+       * copy of it: a `setSettings` here is visible to the next generation
+       * without a restart, which is the property that makes this a setting
+       * instead of a boot flag with a reader.
+       */
+      'template.settings': async () => ({ settings: await this.#templateFeatureView() }),
+      'template.setSettings': async ({ enabled }) => {
+        await this.#options.settings.setTemplateFeature(enabled)
+        return { settings: await this.#templateFeatureView() }
+      },
       'worldbook.charNames': async ({ characterId, withCard }) => {
         const card = await library.load(characterId)
         const names = charWorldbookNames(card, settings.charBooks(characterId))
@@ -6363,6 +6386,44 @@ export class IrisAppService {
   }
 
   /**
+   * Whether the prompt-template feature is on, decided at call time.
+   *
+   * The persisted user decision wins once it exists; the composition's boot
+   * default (`IRIS_TEMPLATES=1` → the `templates` option being present) rules
+   * until then. Reading the store rather than snapshotting the answer at boot
+   * is what makes `template.setSettings` take effect on the very next
+   * generation — a flag captured in the constructor would make the setting a
+   * lie that persists until restart.
+   * @returns whether templates will evaluate.
+   */
+  async #templateEnabled(): Promise<boolean> {
+    const decided = await this.#options.settings.templateEnabled()
+    return decided ?? this.#options.templates !== undefined
+  }
+
+  /**
+   * The evaluator's deadline option, from the composition when it tuned one.
+   * @returns the spread for `evaluateBatch`, empty when the default stands.
+   */
+  #templateDeadline(): { deadlineMs: number } | {} {
+    const deadlineMs = this.#options.templates?.deadlineMs
+    return deadlineMs === undefined ? {} : { deadlineMs }
+  }
+
+  /**
+   * The prompt-template feature's wire view.
+   * @returns all three facts the view promises, from one read each.
+   */
+  async #templateFeatureView(): Promise<TemplateFeatureView> {
+    const decided = await this.#options.settings.templateEnabled()
+    return {
+      enabled: decided ?? this.#options.templates !== undefined,
+      persisted: decided !== undefined,
+      defaultEnabled: this.#options.templates !== undefined,
+    }
+  }
+
+  /**
    * Run the chat's EJS templates over one assembled prompt.
    *
    * Nothing here is allowed to cost the caller a generation. A template that
@@ -6370,13 +6431,18 @@ export class IrisAppService {
    * write the host would refuse is reported rather than raised — upstream's own
    * behaviour, and the only one under which a card with one broken template is
    * still playable.
+   *
+   * The gate is the feature switch, read per generation (`#templateEnabled`):
+   * the composition row is only the boot default, and a user who switched the
+   * feature off is not overridden by the fact that the deployment once turned
+   * it on. `script.evalTemplate` reads the same switch, so the two doors the
+   * feature opens cannot disagree about whether it is open.
    * @param options - the assembled request.
    * @param entry - the conversation it was assembled for.
    * @returns the request to send, rewritten where a template succeeded.
    */
   async #applyTemplates(options: GenerateOptions, entry: ChatEntry): Promise<GenerateOptions> {
-    const templates = this.#options.templates
-    if (templates === undefined) return options
+    if (!await this.#templateEnabled()) return options
     // Before the fork, not after: a chat with no `<%` anywhere must not pay for
     // a child process and a 3 MiB snapshot to be told it had nothing to do.
     if (!promptHasTemplate(options)) return options
@@ -6392,7 +6458,7 @@ export class IrisAppService {
         options,
         buildSnapshot(entry, turn, this.#traceId),
         entry.chatId,
-        templates.deadlineMs,
+        this.#options.templates?.deadlineMs,
       )
       for (const failure of evaluated.failures) {
         this.#report(`${failure.origin} failed: ${failure.message}`, { kind: 'template', grade: 'fault', chatId: entry.chatId })

@@ -17,7 +17,7 @@ import { z } from 'zod'
 
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, TemplateFeatureView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
 // —— family①: identity & messages ——
 import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
 
@@ -1795,6 +1795,34 @@ export const requestSchemas = {
   }),
 
   /**
+   * Read the prompt-template feature's state.
+   *
+   * The native face of what ST ships as a third-party extension: whether the
+   * host evaluates the `<% %>` templates in card fields, world-book entries,
+   * preset prompts and chat messages when it assembles a prompt, and whether
+   * it answers a card's `evalTemplate` call
+   * (`notes/FEATURE-PROMPT-TEMPLATE.md`). Its own pair of methods rather than
+   * a field of `settings.set`, on the same grounds as `worldbook.settings`:
+   * installation-wide, not a sampler field, and carrying a decision the
+   * deployment's composition row only defaults.
+   */
+  'template.settings': z.object({}),
+  /**
+   * Record — or clear — the prompt-template feature's user decision.
+   *
+   * `null` is **clear**, not off: it removes the persisted decision so the
+   * composition's boot default rules again. `false` is a decision, kept
+   * across restarts and across a later change of that default — the difference
+   * matters once the deployment has opted in and the user wants it silent
+   * without editing the composition, and collapsing the two would make "back
+   * to how the host booted" inexpressible.
+   */
+  'template.setSettings': z.object({
+    /** The decision; `null` clears it back to the composition's default. */
+    enabled: z.boolean().nullable(),
+  }),
+
+  /**
    * The profile's conversation snapshots, newest first.
    *
    * Upstream's `GET /api/backups/chat/get` (`endpoints/backups.js`), narrowed
@@ -2446,6 +2474,8 @@ export interface RpcResponseMap {
   'worldbook.setCharBooks': { primary: string | null, additional: string[] }
   'worldbook.settings': { settings: WorldbookSettingsView }
   'worldbook.setSettings': { settings: WorldbookSettingsView }
+  'template.settings': { settings: TemplateFeatureView }
+  'template.setSettings': { settings: TemplateFeatureView }
 
   /** Newest first, so the snapshot a reader is looking for is the first one. */
   'backup.list': { backups: BackupSummary[] }

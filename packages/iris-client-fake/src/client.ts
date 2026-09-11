@@ -1493,6 +1493,30 @@ class InMemoryClient implements FakeClient {
         )
       }
 
+      case 'template.settings': {
+        /*
+         * Answered, not refused — the `worldbook.settings` reading. A host that
+         * has never decided is exactly this view: nothing persisted, and the
+         * composition row off, which is what a fresh install boots with
+         * (`notes/FEATURE-PROMPT-TEMPLATE.md` §4.1). Inventing nothing: the
+         * three fields say "the feature exists, nobody has touched it".
+         */
+        return { settings: { enabled: false, persisted: false, defaultEnabled: false } }
+      }
+
+      case 'template.setSettings': {
+        /*
+         * Refused like `worldbook.setSettings`: the decision is a write to the
+         * profile's settings file, which this client keeps none of — accepting
+         * it would answer with a view claiming a persistence that nothing
+         * holds, and the real host's next boot would disagree with it.
+         */
+        throw new FakeRpcError(
+          'unsupported',
+          'the fake client has no profile settings file, so a template-feature decision cannot land',
+        )
+      }
+
       case 'worldbook.create': {
         const { name } = params as RpcRequest<'worldbook.create'>
         /*

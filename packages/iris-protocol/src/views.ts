@@ -2310,6 +2310,28 @@ export interface WorldbookSettingsView {
 }
 
 /**
+ * The prompt-template feature's state, on the wire.
+ *
+ * Three fields, because one boolean cannot answer the question a reader
+ * actually has. `enabled` is what the host does next; `persisted` says whether
+ * the user has ever decided; `defaultEnabled` is what the composition booted
+ * with. The difference is load-bearing in both directions: a host with the
+ * feature off reads differently when it is off *because the deployment never
+ * opted in* (`persisted: false, defaultEnabled: false`) than when it is off
+ * *because the user turned a working feature off* (`persisted: true, enabled:
+ * false`) — and a panel that can offer "back to the default" needs to see the
+ * default to offer it.
+ */
+export interface TemplateFeatureView {
+  /** What the host does on the next generation: evaluate templates or not. */
+  enabled: boolean
+  /** Whether the user has recorded a decision (`template.setSettings`). */
+  persisted: boolean
+  /** The composition's boot default, which rules whenever nothing is persisted. */
+  defaultEnabled: boolean
+}
+
+/**
  * One named world book, with the two facts a chooser needs beside its name.
  *
  * **Deliberately not part of `worldbook.names`' default answer.** That method

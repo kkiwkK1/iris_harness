@@ -337,12 +337,17 @@ export interface Config {
   /**
    * Run the cards' EJS prompt templates (the ST-Prompt-Template extension).
    *
-   * Off by default, and the default is the honest one: evaluating a template is
-   * running the card author's JavaScript. It runs in a child process with no
-   * environment, no filesystem writes, a heap ceiling, one child at a time, and
-   * a `vm` realm nothing of the child's own realm reaches into — the last of
-   * those true since 2026-09-11, when the three functions EJS names in every
-   * template's scope (`escapeFn`, `include`, `rethrow`) stopped crossing raw and
+   * **This row is the boot default of a user-facing switch, not the switch
+   * itself.** The user's decision — `template.setSettings` on the wire,
+   * persisted in the profile's `settings.json` — wins once it exists, and the
+   * row then only carries the evaluator's deadline
+   * (`templateDeadlineMs`). Until the user has decided, the row rules, and the
+   * default stays the honest one: evaluating a template is running the card
+   * author's JavaScript. It runs in a child process with no environment, no
+   * filesystem writes, a heap ceiling, one child at a time, and a `vm` realm
+   * nothing of the child's own realm reaches into — the last of those true
+   * since 2026-09-11, when the three functions EJS names in every template's
+   * scope (`escapeFn`, `include`, `rethrow`) stopped crossing raw and
    * `escapeFn.constructor("return process")` stopped working. Containment is
    * still a containment argument, not a reason to opt a user in for them.
    * @default false
@@ -916,7 +921,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ...config.templateOverhead === undefined ? {} : { templateOverhead: config.templateOverhead },
     ...config.trimBlockFloors === undefined ? {} : { trimBlockFloors: config.trimBlockFloors },
     // `templates: false` must produce no key at all: in the service, presence is
-    // the switch, and a `{}` here would silently turn the feature on.
+    // the boot default, and a `{}` here would silently turn the feature on for
+    // every profile that has never decided.
     ...config.templates !== true
       ? {}
       : { templates: config.templateDeadlineMs === undefined ? {} : { deadlineMs: config.templateDeadlineMs } },
@@ -1079,6 +1085,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('worldbook.setCharBooks', handlers['worldbook.setCharBooks']),
       ctx.irisRpc.register('worldbook.settings', handlers['worldbook.settings']),
       ctx.irisRpc.register('worldbook.setSettings', handlers['worldbook.setSettings']),
+      // The prompt-template feature's switch — the native face of what ST ships
+      // as a third-party extension (`notes/FEATURE-PROMPT-TEMPLATE.md`).
+      ctx.irisRpc.register('template.settings', handlers['template.settings']),
+      ctx.irisRpc.register('template.setSettings', handlers['template.setSettings']),
       // —— family②: regex ——
       ctx.irisRpc.register('regex.tavernList', handlers['regex.tavernList']),
       ctx.irisRpc.register('regex.tavernReplace', handlers['regex.tavernReplace']),
