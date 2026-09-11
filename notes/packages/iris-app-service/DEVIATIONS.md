@@ -6022,3 +6022,48 @@ here and should route it through this same executor rather than a third. Or a
 transport requirement this shape cannot express — a POST, a request body,
 streaming a response to the card as it arrives — which would need the executor
 to grow a shape, and must not be met by letting a caller fetch around it.
+
+---
+
+---
+
+## 70. Every route this service registers answers only a `Host` this process is addressed by
+
+**Kind.** Deliberate improvement, route-side; the rule and its reasons are
+`notes/packages/iris-rpc-host/DEVIATIONS.md` §1, which is where an argument
+about it belongs.
+
+Dated 2026-09-11.
+
+**What changed.** The four routes this service puts on the carrier —
+`GET /iris/avatar/*`, `GET /version`, `GET /iris/script-bundle/*` and
+`GET /sandbox/*` — are each wrapped at their registration with
+`ctx.irisRpc.guard(...)`, the transport's `Host` allow-list. Nothing inside the
+handlers changed.
+
+**Why here and not only on the RPC endpoint.** A page served from
+`http://127.0.0.1.nip.io:8787` — public wildcard DNS resolving to loopback —
+becomes same-origin with this host, and these four routes are then as readable
+to it as `/iris/rpc` is: avatars are the user's character library, the bundle
+and the sandbox assets are the card code running in their sandbox, `/version`
+names the build. A guard that lived only in the transport would have left the
+library readable while the ledger said the host was defended.
+
+**Wrapped at the registration, not inside the handler.** A handler that forgot
+the line would look exactly like one that had it, and no test inside this
+package could see the omission — the same reason the sandbox CORS pair is
+asserted at the composition root. There are four registration sites and they
+are all in one screen of `src/index.ts`.
+
+**What it does not touch.** `Origin` is not what is being checked, so the
+sandbox route's `Access-Control-Allow-Origin: *` — which the card frames need,
+because an opaque origin is cross-origin to everything — is unchanged, and
+`apps/iris/tests/sandbox-cors.test.ts` invokes the handler directly and never
+sees the wrapper. A frame's request carries `Origin: null` and the *real*
+`Host`, which is the pair the guard admits.
+
+**Held by** `apps/iris/tests/host-allowlist.test.ts`: a booted composition on an
+ephemeral port asks all four routes for a refusal under
+`127.0.0.1.nip.io:<port>` and for an answer under `127.0.0.1:<port>`, and
+checks that `/sandbox/preset.js` really is served — 200 with its CORS header —
+so the accepting half is not four 404s agreeing with each other.

@@ -52,7 +52,10 @@
 
 # The browser carrier. `dsh-host-webserver` ships no TLS and no authentication —
 # its own README says so — so this binds to loopback and trusts the machine.
-# Serving Iris to a network needs a reverse proxy in front, not `0.0.0.0` here.
+# Serving Iris to a network needs a reverse proxy in front, not `0.0.0.0` here —
+# and `0.0.0.0` here now refuses to start until the rpc row below names the hosts
+# that proxy answers to, because a loopback bind is a bind and not an access
+# control (`notes/packages/iris-rpc-host/DEVIATIONS.md` §1).
 - id: webserver
   name: '@deepseek-ai/dsh-host-webserver'
   config:
@@ -68,6 +71,15 @@
     # /iris/rpc and /iris/events from that server instead, which keeps the page
     # same-origin and leaves this empty.
     allowedOrigins: !!js (process.env.IRIS_DEV_ORIGIN ?? '').split(',').filter(Boolean)
+    # Exact `host:port` values this host answers to, comma-separated, besides
+    # loopback on the port it actually bound — which is derived, so the ordinary
+    # loopback install needs nothing here. It is the reverse-proxy case that
+    # cannot be derived: the browser writes the proxy's **public** host into
+    # `Host`, this process never sees it, and everything not listed is refused
+    # with 403. Exact strings only, no wildcards: a suffix rule would admit
+    # `127.0.0.1.attacker.example.com`, which is the attack (a wildcard DNS name
+    # resolving to loopback) this list exists to refuse.
+    allowedHosts: !!js (process.env.IRIS_ALLOWED_HOSTS ?? '').split(',').filter(Boolean)
 
 # The application half: the protocol handlers over the domain packages.
 - id: app

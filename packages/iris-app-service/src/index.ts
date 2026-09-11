@@ -1002,18 +1002,40 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
   }, 'irisApp.handlers')
 
+  /*
+   * **Every route below goes through `ctx.irisRpc.guard`.**
+   *
+   * The transport's `Host` allow-list is not about the RPC endpoint; it is
+   * about this process. A page at `http://127.0.0.1.nip.io:8787` — public
+   * wildcard DNS resolving to loopback — is a browser origin an attacker owns
+   * that becomes same-origin with this host, and these four routes are as
+   * readable to it as the RPC endpoint is: avatars are the user's character
+   * library, the script bundle is the card code running in their sandbox, and
+   * `/version` names the build. `guard` is the same predicate the RPC POST and
+   * the event upgrade use, so there is one rule in one place
+   * (`notes/packages/iris-rpc-host/DEVIATIONS.md` §1, and §70 below).
+   *
+   * Wrapped at the registration rather than inside each handler, so a handler
+   * cannot forget it — and so the sandbox route keeps its `Origin: null` CORS
+   * behaviour untouched, which the card frames depend on: `Origin` is not what
+   * is being checked here.
+   */
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'prefix',
       path: avatarPath,
-      handler: (req, res) => serveAvatar(library, avatarPath, req, res),
+      handler: ctx.irisRpc.guard((req, res) => serveAvatar(library, avatarPath, req, res)),
     }),
     `irisApp: GET ${avatarPath}`,
   )
 
   // The route object is built in `version.ts` so a test can hold the same one
   // the server gets; this line is the only part no test can reach.
-  ctx.effect(() => ctx.webServer.register(versionRoute()), 'irisApp: GET /version')
+  const version = versionRoute()
+  ctx.effect(
+    () => ctx.webServer.register({ ...version, handler: ctx.irisRpc.guard(version.handler) }),
+    'irisApp: GET /version',
+  )
 
   const bundlePath = config.scriptBundlePath ?? '/iris/script-bundle'
   const bundles = new ScriptCache({
@@ -1033,7 +1055,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: bundlePath,
-      handler: (req, res) => bundles.serve(req, res),
+      handler: ctx.irisRpc.guard((req, res) => bundles.serve(req, res)),
     }),
     `irisApp: GET ${bundlePath}`,
   )
@@ -1049,7 +1071,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       () => ctx.webServer.register({
         kind: 'prefix',
         path: sandboxPath,
-        handler: (req, res) => serveSandboxAsset(sandboxDir, sandboxPath, req, res),
+        handler: ctx.irisRpc.guard((req, res) => serveSandboxAsset(sandboxDir, sandboxPath, req, res)),
       }),
       `irisApp: GET ${sandboxPath}`,
     )
