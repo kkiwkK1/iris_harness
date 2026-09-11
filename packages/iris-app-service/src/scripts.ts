@@ -42,7 +42,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { atomicWriteFile, readJsonStore } from './atomic.ts'
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 import type { RegexScriptView, ScopedRegexView, ScriptView } from '@iris/protocol'
 import { effectiveButtons, type ScriptButton } from './script-buttons.ts'
 import { extractScripts, type CardScript } from '@iris/script'
@@ -146,7 +146,7 @@ interface PolicyFile {
 export class ScriptPolicyStore {
   readonly #path: string
   readonly #onProblem: ((message: string) => void) | undefined
-  #file: PolicyFile = { characters: {} }
+  #file: PolicyFile = { characters: wireKeyedTable() }
   #loaded = false
 
   /**
@@ -191,7 +191,13 @@ export class ScriptPolicyStore {
       const presets = typeof file.presets === 'object' && file.presets !== null
         ? file.presets
         : undefined
-      this.#file = { characters, ...presets === undefined ? {} : { presets } }
+      // Both partitions are keyed from outside this process — a character id is
+      // a filename, a preset name is what the user typed — so neither is
+      // adopted from `JSON.parse` as it stands. See `wireKeyedTable`.
+      this.#file = {
+        characters: wireKeyedTable(characters),
+        ...presets === undefined ? {} : { presets: wireKeyedTable(presets) },
+      }
     }
   }
 
@@ -352,7 +358,7 @@ export class ScriptPolicyStore {
    */
   async setPresetRegexAllowed(presetName: string, allowed: boolean): Promise<boolean> {
     await this.#load()
-    const presets = this.#file.presets ?? {}
+    const presets = this.#file.presets ?? wireKeyedTable()
     const record = presets[presetName] ?? {}
     // `true` is written and `false` deletes — the mirror image of
     // `setScopedRegexAllowed`, and for the same reason read the other way
@@ -374,7 +380,7 @@ export class ScriptPolicyStore {
    */
   async setPresetRegexEnabled(presetName: string, scriptId: string, enabled: boolean): Promise<void> {
     await this.#load()
-    const presets = this.#file.presets ?? {}
+    const presets = this.#file.presets ?? wireKeyedTable()
     const record = presets[presetName] ?? {}
     record.regexEnabled = { ...record.regexEnabled, [scriptId]: enabled }
     presets[presetName] = record

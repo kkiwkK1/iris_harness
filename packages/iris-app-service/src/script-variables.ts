@@ -54,7 +54,7 @@ import type { CharacterCard } from '@iris/character'
 import { extractScripts } from '@iris/script'
 import type { ScopeBackend, VariableOption, Variables } from '@iris/variables'
 
-import { atomicWriteFile, readJsonStore } from './atomic.ts'
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 import { assertStorable } from './context.ts'
 import { invalid } from './errors.ts'
 
@@ -95,7 +95,8 @@ export class ScriptVariableStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
   readonly #onProblem: ((message: string) => void) | undefined
-  #partitions: Partitions = {}
+  // Keyed by character id, which is a filename — see `wireKeyedTable`.
+  #partitions: Partitions = wireKeyedTable()
   #loaded = false
   /** Writes are serialised through one chain so two flushes cannot interleave. */
   #queue: Promise<void> = Promise.resolve()
@@ -131,7 +132,7 @@ export class ScriptVariableStore {
     this.#loaded = true
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      this.#partitions = parsed as Partitions
+      this.#partitions = wireKeyedTable(parsed as Partitions)
     }
   }
 

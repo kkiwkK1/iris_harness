@@ -32,7 +32,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-import { atomicWriteFile, readJsonStore } from './atomic.ts'
+import { atomicWriteFile, readJsonStore, wireKeyedTable } from './atomic.ts'
 
 /** One button as both the card and the wire describe it. */
 export interface ScriptButton {
@@ -57,7 +57,8 @@ export class ScriptButtonStore {
   readonly #path: string
   readonly #onError: (error: Error) => void
   readonly #onProblem: ((message: string) => void) | undefined
-  #partitions: Partitions = {}
+  // Keyed by character id, which is a filename — see `wireKeyedTable`.
+  #partitions: Partitions = wireKeyedTable()
   #loaded = false
 
   /**
@@ -85,7 +86,7 @@ export class ScriptButtonStore {
     // a file that only failed to parse.
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      this.#partitions = parsed as Partitions
+      this.#partitions = wireKeyedTable(parsed as Partitions)
     }
   }
 

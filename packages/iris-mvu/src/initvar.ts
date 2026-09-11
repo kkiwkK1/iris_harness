@@ -21,6 +21,8 @@ import { load as parseYaml } from 'js-yaml'
 import cloneDeep from 'lodash-es/cloneDeep.js'
 import mergeWith from 'lodash-es/mergeWith.js'
 
+import { assertNoForbiddenKeys, isForbiddenKey } from '@iris/variables'
+
 import type { MvuData } from './apply.ts'
 
 /** One world book entry, reduced to the fields initialization cares about. */
@@ -81,6 +83,12 @@ export function parseInitVarBody(body: string): Record<string, unknown> | undefi
   if (typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('an [InitVar] body must be a mapping of variable names')
   }
+  // The declared tree is merged into the chat's state by `mergeWith`, the same
+  // pollution site the audit named in `@iris/variables/semantics`. A book is a
+  // file a user downloaded, so a forbidden key is refused where the other body
+  // problems are refused: the entry is reported as a failure and the rest of
+  // the book still loads.
+  assertNoForbiddenKeys(parsed, '[InitVar] body')
   return parsed as Record<string, unknown>
 }
 
@@ -117,7 +125,11 @@ export function loadInitVars(sources: readonly InitVarSource[], current: MvuData
     }
 
     if (touched) {
-      data.initialized_lorebooks[source.name] = []
+      // A book *name* is a wire string used as a plain object key. The
+      // bookkeeping is not worth a prototype write, so a book named one of the
+      // three is loaded and simply not recorded — it will re-run, which is the
+      // harmless direction of this failure.
+      if (!isForbiddenKey(source.name)) data.initialized_lorebooks[source.name] = []
       loaded.push(source.name)
     }
   }

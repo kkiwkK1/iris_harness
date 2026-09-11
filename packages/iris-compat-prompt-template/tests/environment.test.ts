@@ -407,3 +407,30 @@ test('reading the initial scope still works', () => {
   const getvar = locals['getvar'] as (key: string | null, options?: unknown) => unknown
   assert.equal(getvar('who', 'initial'), 'initial')
 })
+
+test('a setvar path walking through a reserved key is refused before it reaches the realm\'s _.set', () => {
+  // The lodash these closures call is the realm's, so `_.set('a.__proto__.b')`
+  // here writes the vm context's own `Object.prototype` — shared by every
+  // template in the batch, and a batch is a whole prompt. The names are a copy
+  // of `@iris/variables`'s predicate; the two lists are pinned against each
+  // other in `packages/iris-app-service/tests/forbidden-keys.test.ts`.
+  const { locals, ops, state } = environment()
+  const setvar = locals['setvar'] as (k: string, v: unknown, o?: unknown) => unknown
+
+  for (const key of ['__proto__', 'constructor', 'prototype']) {
+    assert.throws(() => setvar(`a.${key}.b`, 'polluted'), new RegExp(key), key)
+    assert.throws(() => setvar(key, 'polluted'), new RegExp(key), `bare ${key}`)
+    // Before `dryRun`, because the refusal is about the path and not about
+    // whether this particular call would have written anything.
+    assert.throws(() => setvar(`${key}.x`, 1, { dryRun: true }), new RegExp(key), `dryRun ${key}`)
+  }
+
+  assert.equal(ops.length, 0, 'a refused write must push no op for the host to replay')
+  assert.equal(plain(state.cache)['a'], undefined, 'and must leave the cache alone')
+  assert.equal(({} as Record<string, unknown>)['polluted'], undefined, 'this realm\'s Object.prototype')
+
+  // An ordinary write still lands, in the cache and as an op.
+  setvar('mood', 'calm')
+  assert.equal(plain(state.cache)['mood'], 'calm')
+  assert.equal(ops.length, 1)
+})

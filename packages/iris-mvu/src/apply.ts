@@ -29,6 +29,8 @@ import set from 'lodash-es/set.js'
 import toPath from 'lodash-es/toPath.js'
 import unset from 'lodash-es/unset.js'
 
+import { forbiddenSegmentIn, isForbiddenKey } from '@iris/variables'
+
 import { normalizeCommandPaths, type CommandInfo } from './commands.ts'
 import { applyTemplate, refuseInsert, schemaForPath } from './schema.ts'
 
@@ -179,6 +181,16 @@ export function applyCommands(
 
   for (const command of pending) {
     const path = command.args[0] as string
+    // A command's path is model output. `_.set` creates what is missing on the
+    // way down and `__proto__` is never missing, so `_.set('a.__proto__.b', 1)`
+    // writes into whatever `Object.prototype` the realm shares. Rejected like
+    // any other bad command — one refusal, the rest of the batch still applies,
+    // which is this function's rule for everything else.
+    const blockedSegment = forbiddenSegmentIn(path)
+    if (blockedSegment !== undefined) {
+      reject(command, `path "${path}" walks through "${blockedSegment}", which cannot be used as a variable key`)
+      continue
+    }
     const stored = path === '' ? data.stat_data : get(data.stat_data, path)
     const before = displayValue(stored)
 
@@ -260,6 +272,14 @@ export function applyCommands(
           }
         } else {
           const key = argValue(command, 1)
+          // The three-argument form names the member it creates, and the name
+          // is model output too. A computed key does not move a prototype, but
+          // it does put a member in the save that every later merge has to
+          // carry, so it is refused at the same door as the path.
+          if (isForbiddenKey(String(key))) {
+            reject(command, `"${String(key)}" cannot be used as a variable key`)
+            continue
+          }
           const value = applyTemplate(argValue(command, 2), node?.template)
           if (Array.isArray(stored) && typeof key === 'number') {
             const next = [...stored]

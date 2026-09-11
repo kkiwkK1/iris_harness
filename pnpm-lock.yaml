@@ -375,7 +375,7 @@ importers:
         specifier: workspace:*
         version: link:../iris-chat
       lodash-es:
-        specifier: ^4.17.21
+        specifier: ^4.18.1
         version: 4.18.1
     devDependencies:
       '@types/lodash-es':
