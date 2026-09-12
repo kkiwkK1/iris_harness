@@ -1,6 +1,13 @@
 # Iris 基础设施接口清单
 
-核对日期：2026-09-13（运行期 RPC 注册落地当日复核）。适用基线：`dev/system-plugins` 的 `ae55920` 加当前契约包迁移工作区；**不代表 main 已有这些插件接口，也不代表整体验收通过**。本清单只记录读取到的实现，设计草案不算可调用 API。
+> **文档身份与唯一所有者**
+>
+> - 文档编号：`DOC-INFRASTRUCTURE-INVENTORY`；它是合入后由集成人核对的接口快照，**不是补全所有“缺口”行的施工任务，也不授权并行修改所列代码**。
+> - 唯一维护者：集成人。各开发分支在交付报告中列出接口变化；集成人合入后统一更新本表，避免两个任务同时把“待实现”改成“已实现”。
+> - 需要补基础设施时，从 [ST 扩展兼容设计与施工手册](ST-EXTENSION-DESIGN-AND-RUNBOOK.md) §9 选择一个批次，再填写 §9.2 派工单。不得把本清单整份交给代理编码。
+> - 本表和 [插件制作与执行手册](PLUGIN-AUTHORING-RUNBOOK.md) 只能作为派工输入与验收证据，不能充当第二、第三条并行实施主线。
+
+核对日期：2026-09-13。适用基线：`dev/system-plugins @ 934ae1c`；**不代表 main 已有这些插件接口，也不代表整体验收通过**。本清单只记录读取到的实现，设计草案不算可调用 API。
 
 配套：[插件制作与执行手册](PLUGIN-AUTHORING-RUNBOOK.md)、[系统插件架构](SYSTEM-PLUGINS.md)。实施落点草案另见 [PLUGIN-CONTRACT-LANDING-SITES](../notes/PLUGIN-CONTRACT-LANDING-SITES.md)。
 
