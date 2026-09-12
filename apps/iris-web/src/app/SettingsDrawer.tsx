@@ -22,6 +22,7 @@ import { HostReports } from './HostReports.tsx'
 import { MemoryContextPanel } from './MemoryContextPanel.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
 import { PersonaPanel } from './PersonaPanel.tsx'
+import { PluginCenter } from './PluginCenter.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
 import { PresetRegexPanel } from './PresetRegexPanel.tsx'
 import { ReadingPanel } from './ReadingPanel.tsx'
@@ -64,6 +65,7 @@ export function SettingsDrawer({ open, onClose, control }: {
   const worldbooks = useIris(state => state.worldbooks)
   const library = useIris(state => state.library)
   const backups = useIris(state => state.backups)
+  const systemPlugins = useIris(state => state.systemPlugins)
 
   useEffect(() => { if (!open) setRoute('home') }, [open])
   useEffect(() => {
@@ -81,6 +83,11 @@ export function SettingsDrawer({ open, onClose, control }: {
     'memory/context': settings?.contextWindow === undefined ? undefined : `${settings.contextWindow.toLocaleString()} tokens`,
     generation: settings?.model,
     appearance: `${control.reading.size}px`,
+    plugins: systemPlugins === undefined
+      ? undefined
+      : lang === 'zh'
+        ? `${systemPlugins.plugins.filter(plugin => plugin.status === 'enabled').length} 个运行中`
+        : `${systemPlugins.plugins.filter(plugin => plugin.status === 'enabled').length} active`,
   }
   const counts: Partial<Record<Exclude<SettingsRoute, 'home'>, number | undefined>> = {
     connections: connections.length,
@@ -90,6 +97,7 @@ export function SettingsDrawer({ open, onClose, control }: {
     worldbooks: worldbooks?.books.length,
     scripts: library?.length,
     backups: backups?.length,
+    plugins: systemPlugins?.plugins.length,
   }
   const matches = useMemo(() => searchSettings(query), [query])
   const context = chatId === undefined
@@ -138,6 +146,7 @@ export function SettingsDrawer({ open, onClose, control }: {
         <SettingsPage route="appearance" active={route === 'appearance'}><AppearanceCard /><ReadingPanel control={control} /></SettingsPage>
         <SettingsPage route="backups" active={route === 'backups'}><BackupPanel /></SettingsPage>
         <SettingsPage route="usage" active={route === 'usage'}><UsagePanel embedded open={route === 'usage'} onClose={() => navigate('home')} onOpenChat={id => { close(); void actions.openChat(id) }} /></SettingsPage>
+        <SettingsPage route="plugins" active={route === 'plugins'}><PluginCenter /></SettingsPage>
         <SettingsPage route="diagnostics" active={route === 'diagnostics'}>
           <HostReports /><NoticeLog /><DemoActionsSection />
           {import.meta.env.DEV ? <SandboxProbe /> : null}{import.meta.env.DEV ? <RailPreview /> : null}

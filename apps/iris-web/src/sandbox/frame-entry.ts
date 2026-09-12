@@ -59,6 +59,10 @@ import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
 import { describeFailure, topFrame } from './failure-attribution.ts'
 import {
+  SYSTEM_PLUGIN_RUNTIME_META,
+  parseSandboxPluginRuntime,
+} from './system-plugin-runtime.ts'
+import {
   containDecision,
   contentExtent,
   describeHeightSources,
@@ -221,6 +225,12 @@ function token(): string {
     throw new Error('iris sandbox: the frame was built without a run token')
   }
   return value
+}
+
+/** The immutable system-plugin capabilities stamped into this frame. */
+function systemPluginRuntime() {
+  const element = document.querySelector(`meta[name="${SYSTEM_PLUGIN_RUNTIME_META}"]`)
+  return parseSandboxPluginRuntime(element?.getAttribute('content'))
 }
 
 /**
@@ -1807,6 +1817,7 @@ try {
 
   installSandbox({
     members,
+    systemPlugins: systemPluginRuntime(),
     /*
      * Read from the document here, because `frame.ts` is injected with
      * everything it needs and knows nothing about the document it lands in. The

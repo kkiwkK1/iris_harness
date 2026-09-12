@@ -25,6 +25,11 @@ import { bridgeVerdict, describeBridgeRefusal } from './bridge-paths.ts'
 import { buildSrcdoc } from './srcdoc.ts'
 import { rewriteViewportUnits } from './viewport-units.ts'
 import { rewriteBundleImports } from './bundle-proxy.ts'
+import {
+  DEFAULT_SANDBOX_PLUGIN_RUNTIME,
+  fenceFrameParams,
+  type SandboxPluginRuntime,
+} from './system-plugin-runtime.ts'
 
 /**
  * One popup a card raised, and the one way back to it.
@@ -46,6 +51,8 @@ export interface PopupRequest {
 
 /** What one running card needs from the shell. */
 export interface RunnerHost {
+  /** Plugin capabilities and revision captured when this frame incarnation starts. */
+  systemPlugins?: SandboxPluginRuntime
   /**
    * This build's bootstrap artifact, as a URL the frame will load.
    *
@@ -121,9 +128,9 @@ export interface RunnerHost {
   /** The host page's viewport, read on demand. */
   viewport: () => { width: number, height: number }
   /** Fetch a remote dependency through the host, which enforces the allowlist. */
-  fetch: (url: string) => Promise<string>
+  fetch: (url: string, pluginRevision: number) => Promise<string>
   /** A card wrote its extension settings; persist them. */
-  onSettings: (settings: Record<string, unknown>) => void
+  onSettings: (settings: Record<string, unknown>, pluginRevision: number) => void
   /**
    * The card invoked a slash command, raw and unparsed.
    *
@@ -131,7 +138,7 @@ export interface RunnerHost {
    * that asked the application to send a message and was silently ignored is
    * indistinguishable, from the reader's side, from a card that is broken.
    */
-  onSlash: (command: string) => Promise<string>
+  onSlash: (command: string, pluginRevision: number) => Promise<string>
   /**
    * The card showed one of the blocking dialogs (`alert`/`confirm`/`prompt`).
    *
@@ -348,6 +355,7 @@ export interface RunningCard {
  * @returns the frame and its disposer.
  */
 export function runCard(host: RunnerHost, document: Document): RunningCard {
+  const systemPlugins = host.systemPlugins ?? DEFAULT_SANDBOX_PLUGIN_RUNTIME
   const token = mintToken()
   /*
    * The window comes from the injected document, not from the global.
@@ -408,6 +416,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
      * library fetch's parse pause outlasting a message round trip.
      */
     ...(host.markup === undefined ? {} : { context: host.context }),
+    systemPlugins,
   })
 
   let disposed = false
@@ -431,6 +440,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   let reportedUnreadable = false
 
   const post = (message: ToFrame): void => {
+    if (disposed) return
     // `'*'` because the frame's origin is opaque and cannot be named. Safe in
     // this direction: everything sent is either the card's own or already the
     // card's to see, and the token is what stops a different frame from acting on
@@ -516,7 +526,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   ): Promise<{ content: string, status?: number, contentType?: string }> => {
     const target = sameOriginTarget(message.url, view.location.href, view.location.origin)
     if (target === undefined) {
-      return host.fetch(message.url).then(content => ({ content }))
+      return host.fetch(message.url, systemPlugins.revision).then(content => ({ content }))
     }
     const verdict = bridgeVerdict(target, host.context.characterId)
     if (!verdict.allowed) {
@@ -657,11 +667,11 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         }
         return
       case 'settings':
-        host.onSettings(message.settings)
+        host.onSettings(message.settings, systemPlugins.revision)
         return
       case 'call':
         void host
-          .onCall(message.method, message.params)
+          .onCall(message.method, fenceFrameParams(message.params, systemPlugins.revision))
           .then(result => {
             post({ iris: token, type: 'call:ok', id: message.id, result })
           })
@@ -676,7 +686,7 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'slash':
         void host
-          .onSlash(message.command)
+          .onSlash(message.command, systemPlugins.revision)
           .then(result => {
             post({ iris: token, type: 'slash:ok', id: message.id, result })
           })

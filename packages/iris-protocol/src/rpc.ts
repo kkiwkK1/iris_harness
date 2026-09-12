@@ -18,6 +18,7 @@ import { z } from 'zod'
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
 import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
+import type { SystemPluginSnapshot } from './system-plugins.ts'
 // —— family①: identity & messages ——
 import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
 
@@ -240,6 +241,12 @@ const userScriptRequest = z.looseObject({
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
+  'plugin.list': z.object({}),
+  'plugin.install': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.uninstall': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.enable': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.disable': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.reload': z.object({ id: z.string().min(1).max(200) }),
   'chat.list': z.object({}),
   'chat.create': z.object({ characterId: z.string().min(1) }),
   'chat.open': z.object({ chatId: z.string().min(1) }),
@@ -2220,8 +2227,13 @@ export const requestSchemas = {
 /** Every callable method. */
 export type RpcMethod = keyof typeof requestSchemas
 
+/** Incarnation fence attached by a controlled card frame. */
+export interface PluginRevisionRequest {
+  pluginRevision?: number
+}
+
 /** The validated request body of one method. */
-export type RpcRequest<M extends RpcMethod> = z.infer<(typeof requestSchemas)[M]>
+export type RpcRequest<M extends RpcMethod> = z.infer<(typeof requestSchemas)[M]> & PluginRevisionRequest
 
 /**
  * What the three `regex.*Preset*` methods answer with.
@@ -2262,6 +2274,12 @@ export interface PresetRegexAnswer {
 
 /** What each method resolves with. */
 export interface RpcResponseMap {
+  'plugin.list': SystemPluginSnapshot
+  'plugin.install': SystemPluginSnapshot
+  'plugin.uninstall': SystemPluginSnapshot
+  'plugin.enable': SystemPluginSnapshot
+  'plugin.disable': SystemPluginSnapshot
+  'plugin.reload': SystemPluginSnapshot
   /**
    * The sidebar list, and whether its order is one somebody arranged.
    *
@@ -2950,5 +2968,22 @@ export function parseRequest<M extends RpcMethod>(
   if (!result.success) {
     return { ok: false, error: { code: 'invalid-request', message: result.error.issues[0]?.message ?? 'invalid params' } }
   }
-  return { ok: true, params: result.data as RpcRequest<M> }
+  let pluginRevision: number | undefined
+  if (params !== null && typeof params === 'object' && Object.hasOwn(params, 'pluginRevision')) {
+    const value = (params as Record<string, unknown>)['pluginRevision']
+    if (!Number.isSafeInteger(value) || (value as number) < 0) {
+      return {
+        ok: false,
+        error: { code: 'invalid-request', message: 'pluginRevision must be a nonnegative safe integer' },
+      }
+    }
+    pluginRevision = value as number
+  }
+  return {
+    ok: true,
+    params: {
+      ...(result.data as object),
+      ...pluginRevision === undefined ? {} : { pluginRevision },
+    } as RpcRequest<M>,
+  }
 }

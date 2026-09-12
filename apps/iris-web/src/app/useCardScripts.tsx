@@ -42,6 +42,7 @@ import { STARTED_EVENTS, settledEvents } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun, isFailure } from '../sandbox/script-run-state.ts'
+import { sandboxPluginRuntime } from '../sandbox/system-plugin-runtime.ts'
 import { describeRefusal } from './blocked-line.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
@@ -75,6 +76,11 @@ export function CardScriptFrames(): ReactElement {
   const chatId = useIris(state => state.chatId)
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
+  const pluginSnapshot = useIris(state => state.systemPlugins)
+  const pluginRuntime = sandboxPluginRuntime(pluginSnapshot)
+  const pluginRevision = pluginRuntime?.revision
+  const tavernHelperEnabled = pluginRuntime?.tavernHelper === true
+  const mvuEnabled = pluginRuntime?.mvu === true
   const store = useIrisStore()
   const actions = useIrisActions()
   const mount = useRef<HTMLDivElement>(null)
@@ -122,6 +128,12 @@ export function CardScriptFrames(): ReactElement {
 
   useEffect(() => {
     if (chatId === undefined || characterId === undefined) return
+    if (pluginRuntime === undefined || !pluginRuntime.tavernHelper) return
+
+    // One immutable capability snapshot belongs to this whole run. The effect's
+    // revision dependency tears it down before a replacement can capture the
+    // next incarnation.
+    const frameRuntime = pluginRuntime
 
     /*
      * **Read the consent fresh, and check it belongs to this card.**
@@ -277,6 +289,7 @@ export function CardScriptFrames(): ReactElement {
           let frame: RunningCard | undefined
           frame = runCard(
             {
+              systemPlugins: frameRuntime,
               bootstrapUrl: input.bootstrapUrl,
               // One frame for the card's whole set. Each script still evaluates
               // as its own module, so their top-level bindings stay separate;
@@ -323,9 +336,9 @@ export function CardScriptFrames(): ReactElement {
                * off again.
                */
               sizedByHost: true,
-              fetch: async url => actionsOf(store).fetchScriptDependency(url),
+              fetch: async (url, revision) => actionsOf(store).fetchScriptDependency(url, revision),
               onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
-              onSlash: async command => actionsOf(store).runSlash(command),
+              onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision),
               /*
                * The dialog bridge. The sandbox never carries `allow-modals`, so
                * the browser's own answer to all three dialogs is silence —
@@ -775,7 +788,16 @@ export function CardScriptFrames(): ReactElement {
        */
       void actionsOf(store).endCardRun()
     }
-  }, [chatId, characterId, consent, store, actions])
+  }, [
+    chatId,
+    characterId,
+    consent,
+    store,
+    actions,
+    pluginRevision,
+    tavernHelperEnabled,
+    mvuEnabled,
+  ])
 
   /*
    * A best-effort `runEnded` when the page itself goes.

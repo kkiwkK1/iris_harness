@@ -34,6 +34,10 @@ import { POPUP_MEMBERS } from './popup.ts'
 import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
 import type { Listener } from '@iris/compat-tavernhelper-core'
 import type { ScriptContext } from '@iris/protocol'
+import {
+  DEFAULT_SANDBOX_PLUGIN_RUNTIME,
+  type SandboxPluginRuntime,
+} from './system-plugin-runtime.ts'
 
 /**
  * The standard scheduler set, as the virtual parent answers it.
@@ -102,6 +106,8 @@ export const VIRTUAL_PARENT_DIALOG_MEMBERS = ['alert', 'confirm', 'prompt'] as c
 export interface FrameEnv {
   /** The run token every message carries. */
   token: string
+  /** Capabilities fixed for this frame's complete lifetime. */
+  systemPlugins?: SandboxPluginRuntime
   /** The frame's own body — which is the card's container, and what `parent.document.body` yields. */
   container: ScopedRoot
   /**
@@ -381,6 +387,9 @@ function passthrough(realWindow: object, property: string): unknown {
  * @returns the handle, mostly for tests and diagnostics.
  */
 export function installSandbox(env: FrameEnv): FrameSandbox {
+  const systemPlugins = env.systemPlugins ?? DEFAULT_SANDBOX_PLUGIN_RUNTIME
+  const hasTavernHelper = systemPlugins.tavernHelper
+  const hasMvu = systemPlugins.mvu
   // Until the shell reports, fall back to the frame's own size. A card measuring
   // the viewport before the first message gets a real number rather than zero.
   let viewport = { width: 0, height: 0 }
@@ -1185,7 +1194,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    */
   const predefineShared = (): void => {
     const name = 'Mvu'
-    if (predefined.has(name) || !published.has(name)) return
+    if (!hasMvu || predefined.has(name) || !published.has(name)) return
     predefined.add(name)
     env.definePredefined?.(name, () => published.get(name))
   }
@@ -1247,8 +1256,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       // A window size is not a secret, and the frame can already read one off
       // its own `window.screen`; refusing it would break ten measured sites to
       // protect nothing.
-      if (property === 'SillyTavern') return context === undefined ? undefined : sillyTavern
-      if (property === 'extension_settings') return extensionSettings
+      if (property === 'SillyTavern') {
+        return !hasTavernHelper || context === undefined ? undefined : sillyTavern
+      }
+      if (property === 'extension_settings') return hasTavernHelper ? extensionSettings : undefined
       /*
        * The three that used to be `UNBRIDGED_GLOBALS`, measured at 15 sites
        * between them. All reach the same objects a card gets as bare globals:
@@ -1256,9 +1267,11 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * subscribes through one name and emits through the other must still be
        * talking to itself.
        */
-      if (property === 'TavernHelper') return tavernHelper['TavernHelper']
-      if (property === 'eventSource') return eventSource
-      if (property === 'event_types') return TAVERN_EVENTS
+      if (property === 'TavernHelper') {
+        return hasTavernHelper ? tavernHelper['TavernHelper'] : undefined
+      }
+      if (property === 'eventSource') return hasTavernHelper ? eventSource : undefined
+      if (property === 'event_types') return hasTavernHelper ? TAVERN_EVENTS : undefined
       /*
        * The window event-target surface, on the same bus as `eventSource`. A
        * `getTopWindow()` helper that returned the real top used to answer these
@@ -1310,7 +1323,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * answered `undefined` would fail that test — correctly, if we had nothing
        * to offer, and wrongly now that we do.
        */
-      if (property === 'EjsTemplate') return ejsTemplate
+      if (property === 'EjsTemplate') return hasTavernHelper ? ejsTemplate : undefined
 
       /*
        * `parent.$` and `parent.jQuery`, answered with **this frame's** jQuery.
@@ -1338,7 +1351,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * `parent.is_send_press`, upstream's own name for "a generation is
        * running". A card polls it to avoid re-entering while the model writes.
        */
-      if (property === 'is_send_press') return generating
+      if (property === 'is_send_press') return hasTavernHelper ? generating : undefined
 
       if (property === '$' || property === 'jQuery') {
         return (env.realWindow as unknown as Record<string, unknown>)[property]
@@ -1421,6 +1434,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (typeof property === 'symbol') {
         throw new UnsupportedApiError('parent[symbol]', 'The sandbox is not writable.')
       }
+      if (!hasMvu && property === 'Mvu') {
+        throw new UnsupportedApiError(
+          'parent.Mvu',
+          'The MVU system plugin is disabled for this frame lifetime.',
+        )
+      }
       // The bridged members stay read-only. A card overwriting `document` or
       // `SillyTavern` would be redefining the frame's own view of the host.
       if (isBridged(property)) {
@@ -1437,6 +1456,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * on something already gone.
      */
     deleteProperty(_target, property): boolean {
+      if (!hasMvu && property === 'Mvu') {
+        throw new UnsupportedApiError(
+          'parent.Mvu',
+          'The MVU system plugin is disabled for this frame lifetime.',
+        )
+      }
       if (typeof property === 'symbol' || isBridged(property)) {
         throw new UnsupportedApiError(`parent.${String(property)}`, 'The sandbox is not writable.')
       }
@@ -1460,9 +1485,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
           && (env.realWindow as unknown as Record<string, unknown>)[property] !== undefined) ||
         property === 'innerWidth' ||
         property === 'innerHeight' ||
-        property === 'TavernHelper' ||
-        property === 'eventSource' ||
-        property === 'event_types' ||
+        (hasTavernHelper && property === 'TavernHelper') ||
+        (hasTavernHelper && property === 'eventSource') ||
+        (hasTavernHelper && property === 'event_types') ||
         property === 'addEventListener' ||
         property === 'removeEventListener' ||
         property === 'dispatchEvent' ||
@@ -1518,10 +1543,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          *   quietly fixed here, because closing it means *building* a member and
          *   this trap's job is only to describe what the other one does.
          */
-        property === 'EjsTemplate' ||
-        property === 'is_send_press' ||
-        (property === 'extension_settings' && extensionSettings !== undefined) ||
-        (property === 'SillyTavern' && context !== undefined)
+        (hasTavernHelper && property === 'EjsTemplate') ||
+        (hasTavernHelper && property === 'is_send_press') ||
+        (hasTavernHelper && property === 'extension_settings' && extensionSettings !== undefined) ||
+        (hasTavernHelper && property === 'SillyTavern' && context !== undefined)
       )
     },
     /**
@@ -2183,19 +2208,35 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     },
   })
 
-  const tavernHelper = env.members.createFrameTavernHelper({
-    context: () => context,
-    scriptId: () => scriptId,
-    // The shared surface answers `getCurrentMessageId` too — a fact about the
-    // frame, not about which script asks — so the floor rides here as well.
-    currentMessageId: () => currentFloor,
-    reportGap,
-    reportFault,
-    call: callAction,
-    triggerSlash,
-    events,
-    adoptVariables,
-  })
+  const fullTavernHelper: Record<string, unknown> = hasTavernHelper
+    ? env.members.createFrameTavernHelper({
+        context: () => context,
+        scriptId: () => scriptId,
+        // The shared surface answers `getCurrentMessageId` too — a fact about the
+        // frame, not about which script asks — so the floor rides here as well.
+        currentMessageId: () => currentFloor,
+        reportGap,
+        reportFault,
+        call: callAction,
+        triggerSlash,
+        events,
+        adoptVariables,
+      })
+    : {}
+
+  /* MVU's event table is a plugin capability, including under the nested facade. */
+  const tavernHelper: Record<string, unknown> = (() => {
+    if (!hasTavernHelper || hasMvu) return fullTavernHelper
+    const reduced = { ...fullTavernHelper }
+    delete reduced['mvu_events']
+    const nested = reduced['TavernHelper']
+    if (typeof nested === 'object' && nested !== null && !Array.isArray(nested)) {
+      const nestedReduced = { ...(nested as Record<string, unknown>) }
+      delete nestedReduced['mvu_events']
+      reduced['TavernHelper'] = nestedReduced
+    }
+    return reduced
+  })()
 
   /**
    * One script's bound view of the identity-bearing members.
@@ -2232,11 +2273,23 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const coordination = (forScript: string | undefined): Record<string, unknown> => ({
     initializeGlobal: (name: unknown, value: unknown): void => {
       const global = requireGlobalName('initializeGlobal', name)
+      if (!hasMvu && global === 'Mvu') {
+        throw new UnsupportedApiError(
+          'initializeGlobal(Mvu)',
+          'The MVU system plugin is disabled for this frame lifetime.',
+        )
+      }
       publishName(global, value)
       void events.eventEmit(`global_${global}_initialized`)
     },
     waitGlobalInitialized: async (name: unknown): Promise<void> => {
       const global = requireGlobalName('waitGlobalInitialized', name)
+      if (!hasMvu && global === 'Mvu') {
+        throw new UnsupportedApiError(
+          'waitGlobalInitialized(Mvu)',
+          'The MVU system plugin is disabled for this frame lifetime.',
+        )
+      }
       /*
        * Waiting is only half of it. Upstream's own description is "等待其他
        * iframe 中共享出来的全局接口初始化完毕, **并使之在当前 iframe 中可用**" —
@@ -2313,6 +2366,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
 
   const viewFor = (forScript: string | undefined): Record<string, unknown> => {
     begun.add(forScript)
+    if (!hasTavernHelper) return {}
     const bound = env.members.createFrameTavernHelper({
       context: () => context,
       scriptId: () => forScript,
@@ -2356,10 +2410,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     'globalThis',
     'parent',
     'top',
-    'SillyTavern',
-    'extension_settings',
-    'triggerSlash',
-    'getScriptId',
+    ...(hasTavernHelper
+      ? ['SillyTavern', 'extension_settings', 'triggerSlash', 'getScriptId']
+      : []),
     /*
      * Bare as well as on `parent`, which is what upstream does with all seven of
      * its borrowed globals — its shim copies them onto the child window, so a
@@ -2374,7 +2427,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * upstream-faithful, so it is not a wider surface so much as the member
      * finished at both the names upstream offers it under.
      */
-    'EjsTemplate',
+    ...(hasTavernHelper ? ['EjsTemplate'] : []),
     /*
      * The same-origin fetch bridge, on the same two routes every bridged
      * global takes: a parameter in classic mode and a published property of
@@ -2384,7 +2437,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * refuse, so no card can observe the difference except by seeing a refused
      * request answer instead.
      */
-    'fetch',
+    ...(hasTavernHelper ? ['fetch'] : []),
     /*
      * The dialog trio, bridged for the same reason `fetch` is: the sandbox's
      * own answer is a silent no-op (`allow-modals` is never granted), which
@@ -2465,8 +2518,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     windowShadow,
     virtualParent,
     virtualParent,
-    context === undefined ? undefined : sillyTavern,
-    extensionSettings,
+    ...(hasTavernHelper
+      ? [
+          context === undefined ? undefined : sillyTavern,
+          extensionSettings,
     /*
      * Read out of `tavernHelper` rather than the two bridge functions above,
      * so a card reaching `triggerSlash` bare and one reaching
@@ -2476,8 +2531,8 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * host values where every sibling returned a clone. Upstream has one
      * function per name, and so should this.
      */
-    tavernHelper['triggerSlash'],
-    tavernHelper['getScriptId'],
+          tavernHelper['triggerSlash'],
+          tavernHelper['getScriptId'],
     /*
      * Positional, and that is a hazard worth naming: this array is index-matched
      * to `core`, so a name appended to one list and not the other does not fail
@@ -2485,12 +2540,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * cards a neighbour's function under the name they asked for. Adding
      * `EjsTemplate` above without this line did exactly that.
      */
-    ejsTemplate,
+          ejsTemplate,
     /*
      * The bridge goes last, appended together with its `core` entry, so no
      * index above had to move for it.
      */
-    fetchBridge,
+          fetchBridge,
+        ]
+      : []),
     /*
      * The dialog bridges sit at `core`'s tail — immediately after `fetch` — so
      * their values belong here, before the `helperNames` spread: the zip
@@ -2648,10 +2705,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * floor that cannot be parsed is a transport fault, and this is the only
        * place that would ever notice it.
        */
-      env.members.restoreFloorTables(context.chat, (text, failed) => {
-        if (failed) reportFault(text)
-        else reportGap(text)
-      })
+      if (hasMvu) {
+        env.members.restoreFloorTables(context.chat, (text, failed) => {
+          if (failed) reportFault(text)
+          else reportGap(text)
+        })
+      }
       /*
        * Immediately after, and on every snapshot for the same reason: MVU's
        * one-time variable cleanup is **ported natively** in Iris — the host
@@ -2661,8 +2720,10 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * argument, the three measurements behind it and why the mark is
        * non-enumerable are on `sealLegacyCleanup`.
        */
-      env.members.sealLegacyCleanup(context.chat)
-      extensionSettings = settingsProxy({ ...message.context.extensionSettings })
+      if (hasMvu) env.members.sealLegacyCleanup(context.chat)
+      extensionSettings = hasTavernHelper
+        ? settingsProxy({ ...message.context.extensionSettings })
+        : undefined
       /*
        * An interface frame published its surface at install, when neither of
        * these had an answer — the install-time `resolveValues()` handed
@@ -2678,7 +2739,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * evaluation. `parent.SillyTavern` answers live (line ~942); from this
        * moment the bare spelling and it agree.
        */
-      if (env.interfaceFrame === true) {
+      if (env.interfaceFrame === true && hasTavernHelper) {
         env.publishGlobals?.([
           ['SillyTavern', sillyTavern],
           ['extension_settings', extensionSettings],
@@ -2861,17 +2922,17 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
        * itself throws*. So the shadow has to be in place before the preset's
        * modules evaluate, not merely before the card's own code.
        */
-      env.provideStorage?.(cardStorage)
+      if (hasTavernHelper) env.provideStorage?.(cardStorage)
 
       // `say`, not `reportGap`: a card's own `toastr.error` is the card’s claim
       // that something failed, and its `toastr.success` is not.
-      env.provideToastr?.(say)
+      if (hasTavernHelper) env.provideToastr?.(say)
 
       // Which of upstream's seeded globals this frame does NOT have. Reported
       // rather than waited for: without it, each missing library costs a full
       // round trip to discover, one crash at a time, and the crash names the
       // symptom rather than the gap.
-      env.reportMissingGlobals?.(EXPECTED_GLOBALS)
+      if (hasTavernHelper) env.reportMissingGlobals?.(EXPECTED_GLOBALS)
 
       /*
        * Last, so the check sees everything every earlier script published, and
@@ -2932,18 +2993,20 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * for data this early gets a named gap instead of a `ReferenceError` about the
    * member.
    */
-  if (env.interfaceFrame === true) {
+  if (env.interfaceFrame === true && hasTavernHelper) {
     try {
       const values = resolveValues()
       /*
        * Built once and published twice — see the entry below for why it exists
        * and what it is.
        */
-      const mvu = {
-        events: MVU_EVENTS,
-        getMvuData: tavernHelper['getVariables'],
-        replaceMvuData: tavernHelper['replaceVariables'],
-      }
+      const mvu = hasMvu
+        ? {
+            events: MVU_EVENTS,
+            getMvuData: tavernHelper['getVariables'],
+            replaceMvuData: tavernHelper['replaceVariables'],
+          }
+        : undefined
       env.publishGlobals?.([
         ...shadowed
           .map((name, at) => [name, values[at]] as [string, unknown])
@@ -3014,15 +3077,12 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
          * A card (or a future Iris change) publishing a real `Mvu` over this
          * simply replaces the bag entry; nothing here is privileged.
          */
-        [
-          'Mvu',
-          mvu,
-        ],
+        ...(mvu === undefined ? [] : [['Mvu', mvu] as [string, unknown]]),
       ])
       // The virtual-parent half, so `waitGlobalInitialized('Mvu')` — which polls
       // that bag, not the window — resolves instead of waiting on a publication
       // that, in this frame, has no other route to happen.
-      publishName('Mvu', mvu)
+      if (mvu !== undefined) publishName('Mvu', mvu)
       env.provideStorage?.(cardStorage)
       env.provideToastr?.(say)
       env.reportMissingGlobals?.(EXPECTED_GLOBALS)

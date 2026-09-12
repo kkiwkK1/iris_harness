@@ -20,9 +20,7 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { CharacterCard } from '@iris/character'
 import { listCandidates, selectedCandidate } from '@iris/chat'
 import type { TimedEffect, TimedEffectState } from '@iris/lorebook'
-import { expandHelperMacros } from '@iris/compat-tavernhelper'
 import { createMacroContext, createMemoryVariableStore, expandMacros, type MacroMessage, type MemoryVariableStore, type TokenBudget } from '@iris/macro'
-import { applyCommands, loadInitVars, scanDialects, type MvuData } from '@iris/mvu'
 import { extractScripts } from '@iris/script'
 
 import type { ResolvedWorldbook } from './worldbooks.ts'
@@ -51,6 +49,19 @@ import {
 import { parseTiming, timingBySeq, writeTiming } from './timing.ts'
 import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn, type UsageRoute } from './views.ts'
+import {
+  mvuCapability,
+  tavernHelperCapability,
+  type SystemPluginCapabilities,
+} from './plugins/capabilities.ts'
+import {
+  COMPAT_MVU,
+  EMPTY_MVU,
+  type MvuCapability,
+  type MvuExecution,
+} from './plugins/mvu.ts'
+import { COMPAT_TAVERN_HELPER } from './plugins/tavern-helper.ts'
+import type { MvuData } from '@iris/mvu'
 
 /**
  * One generation's per-candidate record, as the log holds it and the file
@@ -106,9 +117,6 @@ export interface ScriptInjection {
    */
   scan?: boolean
 }
-
-/** An empty MVU tree, before any book has declared anything. */
-const EMPTY_MVU: MvuData = { initialized_lorebooks: {}, stat_data: {} }
 
 /**
  * Read Iris's block out of a chat header.
@@ -450,7 +458,7 @@ export class ChatEntry {
    */
   tokenBudget: TokenBudget | undefined
 
-  #initVars: MvuData | undefined
+  #initVars: { revision: number, data: MvuData } | undefined
   #initialVariables: Record<string, unknown> | undefined
   #scripts: RegexScript[] | undefined
   /** The global regex tier this chat opened with; replaced by `setRegex`. */
@@ -503,6 +511,8 @@ export class ChatEntry {
   /** Row identities, one per chat-file line, plus one spare for a streaming row. */
   #keys: string[] = []
   #nextKey = 0
+  /** Runtime-owned capability registry; absent preserves the legacy always-on composition. */
+  readonly #plugins: SystemPluginCapabilities | undefined
 
   /**
    * @param input - identity, the restored log, its header, and the character.
@@ -570,6 +580,8 @@ export class ChatEntry {
      * of them in. See `regex.ts`'s `scriptsOf` and §53.
      */
     presetRegex?: PresetRegexTier
+    /** Live system-plugin capabilities. Absent keeps pre-plugin behavior for legacy callers. */
+    plugins?: SystemPluginCapabilities
   }) {
     this.chatId = input.chatId
     this.header = input.header
@@ -580,6 +592,7 @@ export class ChatEntry {
     this.#globalScripts = input.globalScripts ?? []
     this.#scopedRegex = input.scopedRegex
     this.#presetRegex = input.presetRegex
+    this.#plugins = input.plugins
     // Sticky and cooldown windows outlive the process in upstream: they live in
     // `chat_metadata.timedWorldInfo`, which is saved with the chat file. Restored
     // here rather than by the caller because every construction path — open,
@@ -744,7 +757,9 @@ export class ChatEntry {
         // corpus writes these macros into prompts, never into `findRegex`, and
         // expanding one here would be a guess with no evidence behind it.
         if (options?.postProcess !== undefined) return expanded
-        return expandHelperMacros(expanded, {
+        const helper = tavernHelperCapability(this.#plugins, COMPAT_TAVERN_HELPER)
+        if (helper === undefined) return expanded
+        return helper.expandMacros(expanded, {
           variables: {
             // Upstream searches the chat for the last message whose selected
             // swipe carries variables — and during generation the pending reply
@@ -1017,72 +1032,19 @@ export class ChatEntry {
   /**
    * The variable tree the character's world book declares.
    *
-   * Computed once per chat: `loadInitVars` records which books it has folded
-   * in, and re-running it must not undo later edits.
+   * Computed once per capability activation in each chat: `loadInitVars`
+   * records which books it has folded in, and re-running it must not undo
+   * later edits.
    * @returns the declared tree, empty when the card ships no `[InitVar]` entry.
    */
   initVars(): MvuData {
-    if (this.#initVars !== undefined) return this.#initVars
-    // The chosen book, not the embedded one. A card that declares `[InitVar]`
-    // in its named book and ships no embedded copy would otherwise start with
-    // no declared tree at all, and MVU's `set` refuses a path that does not
-    // exist — so the symptom would be every variable update silently failing.
-    const chosen = this.worldbook
+    const engine = mvuCapability(this.#plugins, COMPAT_MVU)
+    if (engine === undefined) return EMPTY_MVU
+    if (this.#initVars?.revision === engine.revision) return this.#initVars.data
 
-    // Globally selected books seed variables too, and **before** the
-    // character's. That order is not a guess: MVU's `getEnabledLorebookList`
-    // builds `[...selected_global_lorebooks, primary, ...additional]`
-    // (`MagVarUpdate/src/function/initvar/variable_init.ts:230`), so a global
-    // book's `[InitVar]` is folded first and the character's declaration wins
-    // where they overlap.
-    //
-    // **This is the opposite of the order `scanEntriesOf` builds, and neither is
-    // a typo.** That one is character-first, by the installation's
-    // `world_info_character_strategy`; this one is global-first, by MVU's
-    // hardcoded list. The same note sits beside that construction, because a
-    // reader who finds only one of the two will reasonably conclude the other
-    // is a mistake. Matching them up would be plausible tidiness that changes
-    // behaviour.
-    const books: { name: string, entries: unknown[] }[] = []
-    const seen = new Set<string>()
-    for (const book of chosen?.global ?? []) {
-      if (seen.has(book.world)) continue
-      seen.add(book.world)
-      books.push({ name: book.world, entries: book.entries })
-    }
-
-    // The chosen book, not the embedded one. A card that declares `[InitVar]`
-    // in its named book and ships no embedded copy would otherwise start with
-    // no declared tree at all, and MVU's `set` refuses a path that does not
-    // exist — so the symptom would be every variable update silently failing.
-    const ownName = chosen?.world ?? this.card?.data.name ?? 'character book'
-    const own = chosen !== undefined
-      ? chosen.entries
-      : (() => {
-        const book = this.card?.data.character_book
-        return book !== undefined && Array.isArray(book.entries) ? book.entries : []
-      })()
-    if (own.length > 0 && !seen.has(ownName)) books.push({ name: ownName, entries: own })
-
-    // The host-stored extras, after the primary. MVU's own list reads
-    // `[...selected_global_lorebooks, primary, ...additional]`
-    // (`initvar/variable_init.ts:230`) — the additional bindings have a named
-    // position in it, so a book the user bound to this character through the
-    // host seeds variables exactly as it would upstream. Same skip rules as
-    // above: a name already folded (an extra that duplicates the primary or a
-    // global) contributes once, and an empty book leaves no row.
-    for (const book of chosen?.additional ?? []) {
-      if (seen.has(book.world) || book.entries.length === 0) continue
-      seen.add(book.world)
-      books.push({ name: book.world, entries: book.entries })
-    }
-
-    if (books.length === 0) {
-      this.#initVars = EMPTY_MVU
-      return this.#initVars
-    }
-    this.#initVars = loadInitVars(books as Parameters<typeof loadInitVars>[0], EMPTY_MVU).data
-    return this.#initVars
+    const data = engine.initialState({ card: this.card, worldbook: this.worldbook })
+    this.#initVars = { revision: engine.revision, data }
+    return data
   }
 
   /**
@@ -1096,32 +1058,28 @@ export class ChatEntry {
    * @param text - the candidate's visible text.
    * @returns the state now attached to the candidate.
    */
-  recordVariables(turn: number, text: string, onReport?: (message: string) => void): MvuData {
-    // Both dialects, because a card asks for one of them and nothing here knows
-    // which. Reading only the legacy one is exactly how the `<JSONPatch>` cards
-    // silently stopped folding.
-    const scan = scanDialects(text)
-    for (const rejection of scan.rejected) onReport?.(`MVU: ${rejection}`)
-    // A block the model wrote and nothing understood is the signal that was
-    // missing when this broke; it costs one line and it is the only thing that
-    // distinguishes "the model did not answer" from "we could not read it".
-    //
-    // Gated on the operation count, not on the block count. `<JSONPatch>[]` is a
-    // model saying "nothing changed this turn" — a correct answer, and the most
-    // ordinary one on a quiet turn. Reporting it would point whoever reads the
-    // log at a parser that is working perfectly.
-    if (scan.jsonPatchOperations > 0 && scan.commands.length === 0) {
-      onReport?.(`MVU: a reply carried ${String(scan.jsonPatchOperations)} <JSONPatch> operation(s) that produced no commands`)
-    }
-    // The same signal for the other dialect. Not gated on the command count
-    // being zero: a reply where four calls of five were understood has lost an
-    // update, and upstream loses it in silence. Every drop is worth a line.
-    if (scan.legacyAttempts > scan.legacyCommands) {
-      const dropped = scan.legacyAttempts - scan.legacyCommands
-      onReport?.(`MVU: a reply started ${String(scan.legacyAttempts)} _.verb() call(s) and ${String(dropped)} could not be read`)
-    }
-    const result = applyCommands(scan.commands, this.baselineFor(turn))
-    for (const failure of result.failures) onReport?.(`MVU: ${failure.reason}`)
+  recordVariables(
+    turn: number,
+    text: string,
+    onReport?: (message: string) => void,
+    execution?: MvuExecution | null,
+  ): MvuData {
+    const baseline = this.baselineFor(turn)
+    if (execution === null) return baseline
+    const engine = execution?.capability ?? mvuCapability(this.#plugins, COMPAT_MVU)
+    if (engine === undefined) return baseline
+
+    const result = engine.update(text, baseline)
+    for (const report of result.reports) onReport?.(report)
+
+    // The lookup is repeated at the commit edge. Runtime transitions are
+    // serialized outside this class, but a capability can be replaced between
+    // any future asynchronous compute and this write; object identity is the
+    // incarnation token, so a stale activation cannot append state.
+    const current = execution === undefined
+      ? mvuCapability(this.#plugins, COMPAT_MVU) === engine
+      : execution.isCurrent()
+    if (!current) return baseline
     this.variables.replaceVariables(
       result.data as unknown as Variables,
       { type: 'message', message_id: turn },
@@ -1919,7 +1877,16 @@ export class ChatEntry {
       }
     }
 
-    const replayed = this.#replayFrom(snapshot, turn)
+    const engine = mvuCapability(this.#plugins, COMPAT_MVU)
+    if (engine === undefined) {
+      return {
+        variables: survived,
+        origin: 'pruned',
+        note: `${prunedNote(turn, removed, snapshot)}; MVU replay is unavailable while the MVU system plugin is disabled`,
+      }
+    }
+
+    const replayed = this.#replayFrom(snapshot, turn, engine)
     return {
       variables: replayed as unknown as Record<string, unknown>,
       origin: 'replayed',
@@ -1969,14 +1936,14 @@ export class ChatEntry {
    * @param to - the turn wanted.
    * @returns the reconstructed table.
    */
-  #replayFrom(from: number, to: number): MvuData {
-    let state = this.baselineFor(from + 1)
+  #replayFrom(from: number, to: number, engine: MvuCapability): MvuData {
+    const texts: string[] = []
     for (let turn = from + 1; turn <= to; turn += 1) {
       const candidate = selectedCandidate(this.session, turn)
       if (candidate === undefined) continue
-      state = applyCommands(scanDialects(textOf(candidate.message)).commands, state).data
+      texts.push(textOf(candidate.message))
     }
-    return state
+    return engine.replay(texts, this.baselineFor(from + 1))
   }
 
   /**

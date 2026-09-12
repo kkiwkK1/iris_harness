@@ -33,6 +33,12 @@ export {
   type IrisEventType,
 } from './events.ts'
 
+export type {
+  SystemPluginId,
+  SystemPluginSnapshot,
+  SystemPluginView,
+} from './system-plugins.ts'
+
 /*
  * The entry-listing mapper, in the contract for the reason the specifier walker
  * above is: the host derives digests from real books and the fake client from
@@ -43,6 +49,7 @@ export { toEntryDigest } from './digests.ts'
 
 export {
   parseRequest,
+  type PluginRevisionRequest,
   type PresetRegexAnswer,
   requestSchemas,
   RpcCallError,

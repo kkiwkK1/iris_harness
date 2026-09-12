@@ -24,6 +24,12 @@
 import { BOOTSTRAP_TAG_MARK, bootstrapGuard } from './bootstrap-contract.ts'
 import { fromProxied, toProxied } from './bundle-proxy.ts'
 import { isAllowedRemote, REMOTE_ALLOWLIST } from './policy.ts'
+import {
+  DEFAULT_SANDBOX_PLUGIN_RUNTIME,
+  SYSTEM_PLUGIN_RUNTIME_META,
+  encodeSandboxPluginRuntime,
+  type SandboxPluginRuntime,
+} from './system-plugin-runtime.ts'
 
 /**
  * The frame's content security policy.
@@ -517,10 +523,13 @@ export function buildSrcdoc(
      * The pushed channel stays for **updates**; this is only the initial value.
      */
     context?: unknown
+    /** System-plugin capabilities fixed for this frame's whole lifetime. */
+    systemPlugins?: SandboxPluginRuntime
   },
 ): string {
   const { networkGranted, libraries, selfOrigin, members } = options
   const { body, context } = options
+  const systemPlugins = options.systemPlugins ?? DEFAULT_SANDBOX_PLUGIN_RUNTIME
   /*
    * The message's own sheet, taken off the body and held for the head. See
    * `MESSAGE_CSS_MARK` for why it arrives this way; `sheet` is empty for every
@@ -579,6 +588,7 @@ export function buildSrcdoc(
      * quietly flattening.
      */
     `<meta name="iris-origin" content="${attribute(selfOrigin)}">`,
+    `<meta name="${SYSTEM_PLUGIN_RUNTIME_META}" content="${attribute(encodeSandboxPluginRuntime(systemPlugins))}">`,
     /*
      * The FontAwesome sentinel, and **its filename participates in behaviour**.
      *

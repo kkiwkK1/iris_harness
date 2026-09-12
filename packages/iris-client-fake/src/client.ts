@@ -43,6 +43,7 @@ import {
   saveConnection,
 } from './connections.ts'
 import { mergeOverrides, mergeSettings } from './settings.ts'
+import { FakeSystemPlugins } from './plugins.ts'
 import {
   DEFAULT_SETTINGS,
   FAKE_GLOBAL_REGEX,
@@ -242,6 +243,8 @@ class InMemoryClient implements FakeClient {
   #chunkDelayMs: number
   #chunkCount: number
   #nextId = 1
+  /** The same bundled catalog and dependency rules the real control plane exposes. */
+  readonly #systemPlugins: FakeSystemPlugins
   /**
    * The books selected for every chat.
    *
@@ -285,6 +288,10 @@ class InMemoryClient implements FakeClient {
     this.#globalSettings = { ...DEFAULT_SETTINGS }
     this.#chunkDelayMs = options.chunkDelayMs ?? 24
     this.#chunkCount = options.chunkCount ?? 28
+    this.#systemPlugins = new FakeSystemPlugins(
+      snapshot => this.#emit({ type: 'plugins.changed', snapshot }),
+      (code, message) => { throw new FakeRpcError(code, message) },
+    )
   }
 
   get connected(): boolean {
@@ -339,6 +346,24 @@ class InMemoryClient implements FakeClient {
 
   async #dispatch(method: RpcMethod, params: unknown): Promise<unknown> {
     switch (method) {
+      case 'plugin.list':
+        return this.#systemPlugins.snapshot()
+
+      case 'plugin.install':
+        return this.#systemPlugins.install((params as RpcRequest<'plugin.install'>).id)
+
+      case 'plugin.uninstall':
+        return this.#systemPlugins.uninstall((params as RpcRequest<'plugin.uninstall'>).id)
+
+      case 'plugin.enable':
+        return this.#systemPlugins.enable((params as RpcRequest<'plugin.enable'>).id)
+
+      case 'plugin.disable':
+        return this.#systemPlugins.disable((params as RpcRequest<'plugin.disable'>).id)
+
+      case 'plugin.reload':
+        return this.#systemPlugins.reload((params as RpcRequest<'plugin.reload'>).id)
+
       case 'chat.list':
         return { chats: this.#summaries(), ordered: this.#chatOrder.length > 0 }
 

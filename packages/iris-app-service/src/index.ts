@@ -54,6 +54,8 @@ import { ScriptPolicyStore } from './scripts.ts'
 import { ScriptLibraryStore } from './script-library.ts'
 import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
+import { SystemPluginRuntime } from './system-plugins.ts'
+import { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
 
 export {
   BackupStore,
@@ -67,6 +69,17 @@ export {
   type BackupStoreOptions,
 } from './backups.ts'
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
+export {
+  SystemPluginRuntime,
+  type SystemPluginActivationScope,
+  type SystemPluginDefinition,
+  type SystemPluginLease,
+  type SystemPluginRuntimeOptions,
+} from './system-plugins.ts'
+export { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
+export type { SystemPluginCapabilities } from './plugins/capabilities.ts'
+export { createTavernHelperCapability, type TavernHelperCapability } from './plugins/tavern-helper.ts'
+export { createMvuCapability, type MvuCapability } from './plugins/mvu.ts'
 export {
   ConnectionStore,
   keyFilePathFor,
@@ -733,6 +746,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     )
   }
 
+  const systemPlugins = new SystemPluginRuntime({
+    context: ctx,
+    file: join(paths.root, 'system-plugins.json'),
+    definitions: BUILTIN_SYSTEM_PLUGIN_DEFINITIONS,
+    onError: error => { reportStoreProblem(error.message) },
+  })
+  await systemPlugins.initialize()
+  ctx.effect(
+    () => async () => { await systemPlugins.dispose() },
+    'irisApp.systemPlugins',
+  )
+  ctx.effect(
+    () => systemPlugins.onChange(snapshot => {
+      ctx.irisRpc.broadcast({ type: 'plugins.changed', snapshot })
+    }),
+    'irisApp.systemPlugins.changed',
+  )
+
   const chats = new ChatStore(
     paths.chats, library, scriptVariables, globalScope, worldbooks,
     // Read through a closure rather than captured: the selection is a setting
@@ -774,6 +805,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       presetName => scripts.presetRegex(presetName),
       reportMalformedPresetRegex,
     ),
+    systemPlugins,
   )
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
@@ -889,6 +921,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     library,
     chats,
     settings,
+    plugins: systemPlugins,
     scripts,
     scriptLibrary,
     extensionSettings,
@@ -966,6 +999,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // the check worth having here.
   ctx.effect(() => {
     const disposers = [
+      ctx.irisRpc.register('plugin.list', handlers['plugin.list']),
+      ctx.irisRpc.register('plugin.install', handlers['plugin.install']),
+      ctx.irisRpc.register('plugin.uninstall', handlers['plugin.uninstall']),
+      ctx.irisRpc.register('plugin.enable', handlers['plugin.enable']),
+      ctx.irisRpc.register('plugin.disable', handlers['plugin.disable']),
+      ctx.irisRpc.register('plugin.reload', handlers['plugin.reload']),
       ctx.irisRpc.register('debug.reports', handlers['debug.reports']),
       ctx.irisRpc.register('storage.set', handlers['storage.set']),
       ctx.irisRpc.register('storage.remove', handlers['storage.remove']),

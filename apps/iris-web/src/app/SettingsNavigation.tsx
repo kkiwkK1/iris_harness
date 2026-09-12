@@ -5,7 +5,7 @@ import type { Language } from './i18n/strings.ts'
 export type SettingsRoute =
   | 'home' | 'connections' | 'presets' | 'persona' | 'memory/context'
   | 'replies' | 'generation' | 'regex' | 'worldbooks' | 'scripts'
-  | 'appearance' | 'backups' | 'usage' | 'diagnostics' | 'about'
+  | 'appearance' | 'backups' | 'usage' | 'plugins' | 'diagnostics' | 'about'
 
 export interface SettingsDestination {
   route: Exclude<SettingsRoute, 'home'>
@@ -30,6 +30,7 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
   { route: 'appearance', group: 'appearance', en: 'Appearance & Reading', zh: '外观与阅读', summaryEn: 'Theme, typography, language and user CSS', summaryZh: '主题、字号、语言与用户 CSS', aliases: 'appearance reading theme css language 外观 阅读 主题 语言' },
   { route: 'backups', group: 'data', en: 'Backups', zh: '备份', summaryEn: 'Preview, restore and remove snapshots', summaryZh: '预览、恢复与删除快照', aliases: 'backup restore snapshot 备份 恢复 快照' },
   { route: 'usage', group: 'data', en: 'Usage', zh: '用量', summaryEn: 'Token use, cache hits and model totals', summaryZh: 'Token、缓存命中与模型统计', aliases: 'usage token cache cost 用量 缓存 消耗' },
+  { route: 'plugins', group: 'advanced', en: 'System Plugins', zh: '系统插件', summaryEn: 'Bundled runtime capabilities and their lifecycle', summaryZh: '内置运行能力及其生命周期', aliases: 'plugin extension tavernhelper mvu runtime 插件 扩展 酒馆助手 运行' },
   { route: 'diagnostics', group: 'advanced', en: 'Diagnostics', zh: '诊断', summaryEn: 'Host reports, notices and extension checks', summaryZh: '宿主报告、通知与扩展检查', aliases: 'diagnostics report notice debug 诊断 报告 调试' },
   { route: 'about', group: 'advanced', en: 'About', zh: '关于', summaryEn: 'Import, export and application details', summaryZh: '导入、导出与应用信息', aliases: 'about import export version 关于 导入 导出 版本' },
 ] as const

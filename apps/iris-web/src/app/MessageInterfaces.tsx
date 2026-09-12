@@ -41,6 +41,7 @@ import {
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
+import { sandboxPluginRuntime, type SandboxPluginRuntime } from '../sandbox/system-plugin-runtime.ts'
 import { broadcastWindowEvent } from './window-events.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
 import { repairStrayFences } from './stray-fences.ts'
@@ -116,6 +117,11 @@ export function MessageInterfaces({
   const chatId = useIris(state => state.chatId)
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
+  const pluginSnapshot = useIris(state => state.systemPlugins)
+  const pluginRuntime = sandboxPluginRuntime(pluginSnapshot)
+  const pluginRevision = pluginRuntime?.revision
+  const tavernHelperEnabled = pluginRuntime?.tavernHelper === true
+  const mvuEnabled = pluginRuntime?.mvu === true
   const store = useIrisStore()
 
   /*
@@ -132,6 +138,7 @@ export function MessageInterfaces({
         assets: SandboxAssets
         documentGranted: boolean
         context: ScriptContext
+        systemPlugins: SandboxPluginRuntime
       }
     | undefined
   >(undefined)
@@ -143,7 +150,12 @@ export function MessageInterfaces({
      * the answer it is waiting for. `unasked` goes on deliberately: the scripts
      * list decides whether it is final, and only the round trip knows that.
      */
-    if (characterId === undefined || consent === 'declined' || consent === 'unknown') {
+    if (
+      characterId === undefined
+      || pluginRuntime === undefined
+      || consent === 'declined'
+      || consent === 'unknown'
+    ) {
       setReady(undefined)
       return undefined
     }
@@ -179,7 +191,12 @@ export function MessageInterfaces({
          */
         if (snapshot === undefined) return
         if (live) {
-          setReady({ assets, documentGranted: grants.documentGranted, context: snapshot })
+          setReady({
+            assets,
+            documentGranted: grants.documentGranted,
+            context: snapshot,
+            systemPlugins: pluginRuntime,
+          })
         }
       } catch {
         /*
@@ -195,7 +212,15 @@ export function MessageInterfaces({
     return () => {
       live = false
     }
-  }, [characterId, consent, chatId, store])
+  }, [
+    characterId,
+    consent,
+    chatId,
+    store,
+    pluginRevision,
+    tavernHelperEnabled,
+    mvuEnabled,
+  ])
 
   /*
    * How much of the budget this floor got.
@@ -245,13 +270,20 @@ export function MessageInterfaces({
   const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag, getBodyTag)
   const leak = splitBodyTag(display, bodyTag)
   const bodyText = leak.body ?? display
+  const currentMvuEnabled =
+    ready !== undefined
+    && ready.systemPlugins.revision === pluginRevision
+    && ready.systemPlugins.mvu
 
   const { states, swapping } = useMessageInterfaces({
     floor,
     text: bodyText,
     refusedInstances,
     gate,
-    allowed: ready !== undefined && chatId !== undefined,
+    allowed:
+      ready !== undefined
+      && ready.systemPlugins.revision === pluginRevision
+      && chatId !== undefined,
     start: input => {
       const current = ready
       if (current === undefined || chatId === undefined) {
@@ -267,6 +299,7 @@ export function MessageInterfaces({
       const popups = cardPopupBridge('interface')
       const card = runCard(
         {
+          systemPlugins: current.systemPlugins,
           bootstrapUrl: `${window.location.origin}${current.assets.bootstrap}`,
           scripts: [],
           mode: 'module',
@@ -291,7 +324,7 @@ export function MessageInterfaces({
             throw new Error('a message frame fetches nothing on the shell’s behalf')
           },
           onSettings: () => undefined,
-          onSlash: async command => actionsOf(store).runSlash(command),
+          onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision),
           onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
           /*
            * The dialog bridge, with the same wording and split the script
@@ -456,7 +489,7 @@ export function MessageInterfaces({
          * spoken to: their bundle emits the event itself, and a shell copy
          * would deliver every update twice.
          */
-        emit(MVU_UPDATE_ENDED_EVENT, [])
+        if (currentMvuEnabled) emit(MVU_UPDATE_ENDED_EVENT, [])
       }),
 
     attach: frame => {

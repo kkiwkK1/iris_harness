@@ -10,6 +10,7 @@
  */
 
 import type { ChatSummary, ChatView, DebugReport } from './views.ts'
+import type { SystemPluginSnapshot } from './system-plugins.ts'
 
 /** One frame pushed to the browser. */
 export type IrisEvent =
@@ -137,6 +138,8 @@ export type IrisEvent =
   }
   /** The conversation list changed. */
   | { type: 'chats.updated', chats: ChatSummary[] }
+  /** The profile's system-plugin lifecycle changed. */
+  | { type: 'plugins.changed', snapshot: SystemPluginSnapshot }
 
 /** Discriminant of an event frame. */
 export type IrisEventType = IrisEvent['type']

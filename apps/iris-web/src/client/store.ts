@@ -40,6 +40,7 @@ import type {
   ScopedRegexView,
   ScriptContext,
   ScriptView,
+  SystemPluginSnapshot,
   UsageGranularity,
   UserScript,
   UserScriptView,
@@ -371,6 +372,8 @@ export interface CardReportOptions {
 
 export interface IrisState {
   connected: boolean
+  /** The host-authored system-plugin catalog and runtime state. */
+  systemPlugins: SystemPluginSnapshot | undefined
   chats: ChatSummary[]
   /**
    * Whether the list's order is one somebody arranged, as the host reported it.
@@ -802,6 +805,13 @@ export interface IrisState {
 /** What the interface calls. Every one of these is a host round trip. */
 export interface IrisActions {
   boot(): Promise<void>
+  /** Replace the plugin projection from an explicit host read. */
+  refreshSystemPlugins(): Promise<SystemPluginOperationResult>
+  installSystemPlugin(id: string): Promise<SystemPluginOperationResult>
+  uninstallSystemPlugin(id: string): Promise<SystemPluginOperationResult>
+  enableSystemPlugin(id: string): Promise<SystemPluginOperationResult>
+  disableSystemPlugin(id: string): Promise<SystemPluginOperationResult>
+  reloadSystemPlugin(id: string): Promise<SystemPluginOperationResult>
   openChat(chatId: string): Promise<void>
   closeChat(): void
   createChat(characterId: string): Promise<void>
@@ -1041,7 +1051,7 @@ export interface IrisActions {
   /** Remove a persona; the held answer reflects the cleared activation if it was active. */
   deletePersona(id: string): Promise<void>
   /** Fetch a card's remote dependency through the host, which owns the allowlist. */
-  fetchScriptDependency(url: string): Promise<string>
+  fetchScriptDependency(url: string, pluginRevision?: number): Promise<string>
   setDocumentGrant(granted: boolean): Promise<void>
   /**
    * The host's snapshot for one chat, or undefined when the host will not give
@@ -1125,7 +1135,7 @@ export interface IrisActions {
    * rule, which lives host-side; a second copy in the browser would agree in
    * every test and disagree the first time a user types a `|`.
    */
-  runSlash(command: string): Promise<string>
+  runSlash(command: string, pluginRevision?: number): Promise<string>
   /**
    * Perform one card action.
    *
@@ -1339,6 +1349,11 @@ export interface IrisActions {
   dismissNotice(): void
 }
 
+/** A plugin-center request, including the host's displayable refusal. */
+export type SystemPluginOperationResult =
+  | { ok: true }
+  | { ok: false, error: string }
+
 /** The store the whole interface reads. */
 export type IrisStore = StoreApi<IrisState & IrisActions>
 
@@ -1363,6 +1378,62 @@ function presetRegexState(answer: PresetRegexAnswer): Pick<
     presetRegexAllowed: answer.allowed,
     presetRegexMalformed: answer.malformed,
   }
+}
+
+/**
+ * Ordering for one browser connection to one host process.
+ *
+ * Host revisions are meaningful only inside that connection. A restarted host
+ * may begin again at revision one, while a late response from the old process
+ * may still resolve after the socket reconnects. Keeping the connection epoch
+ * beside the revision separates those two cases without putting a browser-only
+ * field on the wire snapshot.
+ */
+interface SystemPluginProjectionClock {
+  session: number
+  revision: number | undefined
+}
+
+const SYSTEM_PLUGIN_CLOCKS = new WeakMap<IrisStore, SystemPluginProjectionClock>()
+
+function systemPluginClock(store: IrisStore): SystemPluginProjectionClock {
+  const held = SYSTEM_PLUGIN_CLOCKS.get(store)
+  if (held !== undefined) return held
+  const created: SystemPluginProjectionClock = {
+    session: 0,
+    revision: store.getState().systemPlugins?.revision,
+  }
+  SYSTEM_PLUGIN_CLOCKS.set(store, created)
+  return created
+}
+
+/** Start a host session whose revision sequence may begin below the old one. */
+function beginSystemPluginSession(store: IrisStore): void {
+  const clock = systemPluginClock(store)
+  clock.session += 1
+  clock.revision = undefined
+  store.setState({ systemPlugins: undefined })
+}
+
+/**
+ * Adopt a host snapshot when it belongs to this connection and advances it.
+ *
+ * Lists, events and mutation responses all pass through this gate. A list is
+ * authoritative across a reconnect because that reconnect starts a new
+ * session; within one session it cannot erase an event that arrived while the
+ * list request was in flight.
+ */
+function adoptSystemPluginSnapshot(
+  store: IrisStore,
+  snapshot: SystemPluginSnapshot,
+  session: number,
+): boolean {
+  const clock = systemPluginClock(store)
+  if (session !== clock.session) return false
+  if (clock.revision !== undefined && snapshot.revision <= clock.revision) return false
+  clock.revision = snapshot.revision
+  store.setState({ systemPlugins: snapshot })
+  return true
 }
 
 /**
@@ -1512,8 +1583,27 @@ export function createIrisStore(
         async () => client.call('script.list', { characterId }),
       )
 
+    const pluginFailure = (error: unknown): string => isHostError(error)
+      ? describeError(error, getLanguage())
+      : translate(getLanguage(), 'irisOwnFault', { detail: describeError(error, getLanguage()) })
+
+    const requestSystemPluginSnapshot = async (
+      work: () => Promise<SystemPluginSnapshot>,
+    ): Promise<SystemPluginOperationResult> => {
+      const session = systemPluginClock(store).session
+      try {
+        adoptSystemPluginSnapshot(store, await work(), session)
+        return { ok: true }
+      } catch (error: unknown) {
+        const message = pluginFailure(error)
+        set(raise('error', message))
+        return { ok: false, error: message }
+      }
+    }
+
     return {
       connected: client.connected,
+      systemPlugins: undefined,
       chats: [],
       chatsOrdered: undefined,
       characters: [],
@@ -1579,7 +1669,8 @@ export function createIrisStore(
 
       async boot(): Promise<void> {
         await guard(async () => {
-          const [chats, characters, settings, connections] = await Promise.all([
+          const pluginSession = systemPluginClock(store).session
+          const [chats, characters, settings, connections, systemPlugins] = await Promise.all([
             client.call('chat.list', {}),
             client.call('character.list', {}),
             client.call('settings.get', {}),
@@ -1598,6 +1689,10 @@ export function createIrisStore(
              * failing to load with no word.
              */
             client.call('connection.list', {}).catch(() => undefined),
+            // Plugin state is runtime input for frames, so it loads even when
+            // the plugin center is never opened. Isolated so a control-plane
+            // failure cannot take plain chat down with it.
+            client.call('plugin.list', {}).catch(() => undefined),
           ])
           set({
             chats: chats.chats,
@@ -1611,6 +1706,9 @@ export function createIrisStore(
               hostConnection: connections.host,
             },
           })
+          if (systemPlugins !== undefined) {
+            adoptSystemPluginSnapshot(store, systemPlugins, pluginSession)
+          }
           // Open the most recent conversation rather than an empty surface. This
           // is a reading app: the reader almost always wants to continue. A
           // reader who said otherwise gets the empty surface they asked for —
@@ -1619,6 +1717,30 @@ export function createIrisStore(
           if (first !== undefined && loadAutoOpenChat()) await get().openChat(first.chatId)
         })
         set({ booting: false })
+      },
+
+      async refreshSystemPlugins(): Promise<SystemPluginOperationResult> {
+        return requestSystemPluginSnapshot(async () => client.call('plugin.list', {}))
+      },
+
+      async installSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
+        return requestSystemPluginSnapshot(async () => client.call('plugin.install', { id }))
+      },
+
+      async uninstallSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
+        return requestSystemPluginSnapshot(async () => client.call('plugin.uninstall', { id }))
+      },
+
+      async enableSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
+        return requestSystemPluginSnapshot(async () => client.call('plugin.enable', { id }))
+      },
+
+      async disableSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
+        return requestSystemPluginSnapshot(async () => client.call('plugin.disable', { id }))
+      },
+
+      async reloadSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
+        return requestSystemPluginSnapshot(async () => client.call('plugin.reload', { id }))
       },
 
       async openChat(chatId: string): Promise<void> {
@@ -2606,10 +2728,13 @@ export function createIrisStore(
         return { scripts: listed.scripts, documentGranted: listed.documentGranted }
       },
 
-      async fetchScriptDependency(url: string): Promise<string> {
+      async fetchScriptDependency(url: string, pluginRevision?: number): Promise<string> {
         // The allowlist is the host's; a page cannot police its own fetches. The
         // refusal names the host it declined rather than being softened here.
-        const { content } = await client.call('script.fetch', { url })
+        const { content } = await client.call('script.fetch', {
+          url,
+          ...pluginRevision === undefined ? {} : { pluginRevision },
+        })
         return content
       },
 
@@ -3130,7 +3255,7 @@ export function createIrisStore(
         })
       },
 
-      async runSlash(command: string): Promise<string> {
+      async runSlash(command: string, pluginRevision?: number): Promise<string> {
         const chatId = get().chatId
         if (chatId === undefined) throw new Error('no chat is open')
         // Deliberately not wrapped in `guard`: the caller is a card waiting on a
@@ -3139,7 +3264,11 @@ export function createIrisStore(
         // "handed back" are two channels carrying one outcome, not a choice
         // between them.
         try {
-          const { result } = await client.call('script.slash', { chatId, command })
+          const { result } = await client.call('script.slash', {
+            chatId,
+            command,
+            ...pluginRevision === undefined ? {} : { pluginRevision },
+          })
           return result
         } catch (error: unknown) {
           set(raise('error', translate(getLanguage(), 'cardCallFailed', {
@@ -3379,8 +3508,13 @@ export function createIrisStore(
   // page that connected once and stayed connected never announces anything.
   let wasConnected = client.connected
   const offConnection = client.onConnectionChange(connected => {
-    store.setState({ connected })
     if (connected && !wasConnected) {
+      beginSystemPluginSession(store)
+      store.setState({ connected })
+      // This read is authoritative for the newly connected host session. It
+      // runs even if the settings drawer is never opened because frame owners
+      // use the runtime revision as their lifetime fence.
+      void store.getState().refreshSystemPlugins()
       const log = store.getState().noticeLog
       const outage = log.some(notice => notice.source === 'transport' && !notice.resolved)
       if (outage) {
@@ -3390,6 +3524,8 @@ export function createIrisStore(
         })
         store.getState().notify('info', translate(getLanguage(), 'reconnected'))
       }
+    } else {
+      store.setState({ connected })
     }
     wasConnected = connected
   })
@@ -3483,6 +3619,11 @@ function forOpenChat<E extends { chatId: string }>(
  * one: leaving a decision unmade does not type-check.
  */
 const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore) => void } = {
+  'plugins.changed': (event, store) => {
+    const session = systemPluginClock(store).session
+    adoptSystemPluginSnapshot(store, event.snapshot, session)
+  },
+
   'chats.updated': (event, store) => {
     store.setState({ chats: event.chats })
   },

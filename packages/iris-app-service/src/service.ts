@@ -23,7 +23,7 @@ import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribu
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -95,6 +95,9 @@ import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
 import type { PruneOptions } from './prune.ts'
+import { MVU_CAPABILITY } from './plugins/capabilities.ts'
+import type { MvuExecution } from './plugins/mvu.ts'
+import type { SystemPluginLease, SystemPluginRuntime } from './system-plugins.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
 // —— family②: regex ——
@@ -443,6 +446,8 @@ export interface AppServiceOptions {
   library: CharacterLibrary
   chats: ChatStore
   settings: SettingsStore
+  /** The profile's live system-plugin owner. Absent preserves legacy library behavior. */
+  plugins?: SystemPluginRuntime
   /**
    * The user's decisions about card scripts.
    *
@@ -735,10 +740,11 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
+      plugins?: SystemPluginRuntime
       scripts?: ScriptPolicyStore
       scriptLibrary?: ScriptLibraryStore
       extensionSettings?: ExtensionSettingsStore
@@ -864,6 +870,7 @@ export class IrisAppService {
       // Off unless a composition says otherwise: see the option's docblock for
       // why the *product* says otherwise and a library caller does not.
       requireProvider: options.requireProvider ?? false,
+      ...options.plugins === undefined ? {} : { plugins: options.plugins },
       ...options.hostConnection === undefined ? {} : { hostConnection: options.hostConnection },
       ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
@@ -1691,6 +1698,14 @@ export class IrisAppService {
     const scripts = this.#options.scripts
     const scriptLibrary = this.#options.scriptLibrary
     const cardStorage = this.#options.cardStorage
+    const plugins = this.#options.plugins
+
+    const requirePlugins = (): SystemPluginRuntime => {
+      if (plugins === undefined) {
+        throw new AppError('unsupported', 'system plugins are not configured on this host')
+      }
+      return plugins
+    }
 
     /**
      * The library, or a refusal that names what is missing.
@@ -1858,6 +1873,13 @@ export class IrisAppService {
      * would be the one that forgets.
      */
     const handlers: Handlers = {
+      'plugin.list': async () => requirePlugins().snapshot(),
+      'plugin.install': async ({ id }) => await requirePlugins().install(id),
+      'plugin.uninstall': async ({ id }) => await requirePlugins().uninstall(id),
+      'plugin.enable': async ({ id }) => await requirePlugins().enable(id),
+      'plugin.disable': async ({ id }) => await requirePlugins().disable(id),
+      'plugin.reload': async ({ id }) => await requirePlugins().reload(id),
+
       'chat.list': async () => {
         const order = this.#options.chatOrder
         return {
@@ -3199,7 +3221,7 @@ export class IrisAppService {
         return { name: typeof bound === 'string' ? bound : null }
       },
       'worldbook.settings': async () => ({ settings: this.#options.settings.worldbookSettings() }),
-      'worldbook.setSettings': async patch => ({
+      'worldbook.setSettings': async ({ pluginRevision: _pluginRevision, ...patch }) => ({
         settings: await this.#options.settings.setWorldbookSettings(patch),
       }),
       'worldbook.charNames': async ({ characterId, withCard }) => {
@@ -4317,6 +4339,50 @@ export class IrisAppService {
 
       // —— family③ end ——
     }
+
+    type PluginOwnedHandler = (params: PluginRevisionRequest) => Promise<unknown>
+    const guardTavernHelper = (method: RpcMethod, onlyWhenFenced = false): void => {
+      const original = handlers[method] as PluginOwnedHandler
+      ;(handlers as unknown as Record<RpcMethod, PluginOwnedHandler>)[method] = async params => {
+        if (plugins === undefined || (onlyWhenFenced && params.pluginRevision === undefined)) {
+          return await original(params)
+        }
+        const lease = plugins.lease('tavern-helper', params.pluginRevision)
+        try {
+          return await original(params)
+        } finally {
+          lease.release()
+        }
+      }
+    }
+
+    // These arms exist only for a card-script runtime. The consent-management
+    // methods (script.list/setEnabled/setDocumentGrant/setScriptsAllowed) stay
+    // outside this list so the user can inspect and change policy while the
+    // runtime itself is disabled. runEnded is cleanup and must remain callable
+    // after invalidation.
+    for (const method of [
+      'storage.set', 'storage.remove', 'storage.clear',
+      'script.getVariables', 'script.setVariables', 'script.swipeTo', 'script.slash',
+      'script.fetch', 'script.context', 'script.saveMetadata', 'script.createChatMessages',
+      'script.deleteChatMessages', 'script.getPreset', 'script.evalTemplate',
+      'script.replaceScriptButtons', 'script.saveChat', 'script.setExtensionPrompt',
+      'script.body', 'script.setExtensionSettings', 'script.generateRaw',
+      'script.setChatMessages', 'script.generate', 'script.getCharacter',
+      'script.chatHistoryBrief', 'script.chatHistoryDetail', 'script.rotateChatMessages',
+      'script.createOrReplacePreset', 'script.deletePreset', 'script.renamePreset',
+      'script.loadPreset', 'regex.tavernList', 'regex.tavernReplace', 'regex.tavernFormat',
+    ] satisfies readonly RpcMethod[]) guardTavernHelper(method)
+
+    // These storage arms are shared with native panels. A frame carries the
+    // fence; a native caller does not, so disabling Tavern Helper removes its
+    // facade without disabling the settings and world-book editors.
+    for (const method of [
+      'worldbook.load', 'worldbook.get', 'worldbook.replace', 'worldbook.create',
+      'worldbook.bindChat', 'worldbook.setGlobalSelect', 'worldbook.delete',
+      'worldbook.setCharBooks', 'worldbook.setSettings',
+    ] satisfies readonly RpcMethod[]) guardTavernHelper(method, true)
+
     return handlers
   }
 
@@ -4765,26 +4831,60 @@ export class IrisAppService {
       : ''
     const instruction = instructionText === '' ? undefined : entry.substitute(instructionText)
 
-    const running: Promise<Candidate | string> = request.kind === 'send'
-      // The storage direction runs on what the user typed, before it enters the
-      // log — the one point where a message is written for the first time.
-      ? driver.send(
-        entry.session,
-        runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
-        events,
-      )
-      : request.kind === 'regenerate'
-        ? driver.regenerate(entry.session, events)
-        : request.kind === 'continue'
-          ? driver.continueTurn(entry.session, events, nudge, continuePostfix)
-          : driver.impersonate(entry.session, events, instruction)
+    const impersonating = request.kind === 'impersonate'
+    const pluginLeases: SystemPluginLease[] = []
+    const plugins = this.#options.plugins
+    if (plugins?.isEnabled('tavern-helper') === true) {
+      pluginLeases.push(plugins.lease('tavern-helper'))
+    }
+    // Three states are intentional: an app service composed without a plugin
+    // runtime keeps the legacy always-on MVU behavior (`undefined`); a runtime
+    // with MVU disabled pins this turn off (`null`); an enabled runtime captures
+    // the admitted incarnation through settlement.
+    let mvuExecution: MvuExecution | null | undefined = plugins === undefined ? undefined : null
+    if (!impersonating && plugins?.isEnabled('mvu') === true) {
+      const lease = plugins.lease('mvu')
+      const capability = plugins.capability<MvuExecution['capability']>('mvu', MVU_CAPABILITY)
+      if (capability === undefined) {
+        lease.release()
+        for (const held of pluginLeases) held.release()
+        throw new AppError('internal', 'MVU is enabled without its runtime capability')
+      }
+      pluginLeases.push(lease)
+      mvuExecution = { capability, isCurrent: lease.isCurrent }
+    }
+    let leasesReleased = false
+    const releasePluginLeases = (): void => {
+      if (leasesReleased) return
+      leasesReleased = true
+      for (const lease of pluginLeases.reverse()) lease.release()
+    }
+
+    let running: Promise<Candidate | string>
+    try {
+      running = request.kind === 'send'
+        // The storage direction runs on what the user typed, before it enters the
+        // log — the one point where a message is written for the first time.
+        ? driver.send(
+          entry.session,
+          runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
+          events,
+        )
+        : request.kind === 'regenerate'
+          ? driver.regenerate(entry.session, events)
+          : request.kind === 'continue'
+            ? driver.continueTurn(entry.session, events, nudge, continuePostfix)
+            : driver.impersonate(entry.session, events, instruction)
+    } catch (error: unknown) {
+      releasePluginLeases()
+      throw error
+    }
 
     // Announced after the call, not before: `send` appends the user's line
     // synchronously at the top of the driver, and until it has, the spare key
     // slot belongs to that line rather than to the reply. Nothing can have been
     // emitted yet — the first delta waits on the network — and the ordering is
     // pinned by test rather than argued.
-    const impersonating = request.kind === 'impersonate'
     this.#options.broadcast({
       type: 'stream.start',
       chatId,
@@ -4795,16 +4895,31 @@ export class IrisAppService {
     })
 
     void running.then(
-      result => this.#settle(
-        entry,
-        turn,
-        // An impersonation resolves with its text rather than a candidate: the
-        // driver has already landed that text as the turn's user line.
-        typeof result === 'string' ? result : textOf(result.message),
-        'completed',
-        { recordVariables: !impersonating },
-      ),
-      error => this.#fail(entry, turn, signal, error, request.kind),
+      async result => {
+        try {
+          await this.#settle(
+            entry,
+            turn,
+            // An impersonation resolves with its text rather than a candidate:
+            // the driver has already landed that text as the turn's user line.
+            typeof result === 'string' ? result : textOf(result.message),
+            'completed',
+            {
+              recordVariables: !impersonating,
+              ...mvuExecution === undefined ? {} : { mvu: mvuExecution },
+            },
+          )
+        } finally {
+          releasePluginLeases()
+        }
+      },
+      async error => {
+        try {
+          await this.#fail(entry, turn, signal, error, request.kind, mvuExecution)
+        } finally {
+          releasePluginLeases()
+        }
+      },
     )
 
     return turn
@@ -4840,7 +4955,7 @@ export class IrisAppService {
     turn: number,
     text: string,
     reason: 'completed' | 'aborted',
-    options: { recordVariables?: boolean } = {},
+    options: { recordVariables?: boolean, mvu?: MvuExecution | null } = {},
   ): Promise<void> {
     // Whether this turn has already had its terminal event. Set **before** the
     // `stream.end` broadcast rather than after it: once the frame is handed to
@@ -4874,14 +4989,19 @@ export class IrisAppService {
       // has no candidate for it, and the next real turn's baseline walk would
       // then stop one turn early.
       if (options.recordVariables !== false) {
-        entry.recordVariables(turn, settledText, message => {
-          this.#report(message, {
-            kind: 'mvu',
-            grade: 'fault',
-            chatId: entry.chatId,
-            ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
-          })
-        })
+        entry.recordVariables(
+          turn,
+          settledText,
+          message => {
+            this.#report(message, {
+              kind: 'mvu',
+              grade: 'fault',
+              chatId: entry.chatId,
+              ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+            })
+          },
+          options.mvu,
+        )
       }
       // Before `#storeRewritten`, which may rebuild the log: `rebuild` carries
       // per-candidate records across by position, so a record that exists
@@ -4995,6 +5115,7 @@ export class IrisAppService {
     signal: AbortSignal,
     error: unknown,
     kind: 'send' | 'regenerate' | 'continue' | 'impersonate',
+    mvu: MvuExecution | null | undefined,
   ): Promise<void> {
     const partial = entry.pending?.text ?? ''
     // Three outcomes, not two. A budget expiring in the adapter aborts a
@@ -5044,7 +5165,13 @@ export class IrisAppService {
         // The interrupted path. Both paths converge here, which is why the
         // reason has to travel with the call: by the time the event is built,
         // nothing in the entry says whether the text arrived or was cut off.
-        await this.#settle(entry, turn, partial, 'aborted')
+        await this.#settle(
+          entry,
+          turn,
+          partial,
+          'aborted',
+          mvu === undefined ? {} : { mvu },
+        )
         return
       } catch (cause: unknown) {
         this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })

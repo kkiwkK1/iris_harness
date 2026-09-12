@@ -254,6 +254,12 @@ test('the avatar route answers only for cards that have a picture', async () => 
  * not exist is not this test's business.
  */
 const PROBES: Record<string, unknown> = {
+  'plugin.list': {},
+  'plugin.install': { id: 'no-such-plugin' },
+  'plugin.uninstall': { id: 'no-such-plugin' },
+  'plugin.enable': { id: 'no-such-plugin' },
+  'plugin.disable': { id: 'no-such-plugin' },
+  'plugin.reload': { id: 'no-such-plugin' },
   'chat.list': {},
   'chat.create': { characterId: 'no-such-card' },
   'chat.open': { chatId: 'no-such-chat' },
