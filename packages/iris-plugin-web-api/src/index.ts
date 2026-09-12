@@ -34,11 +34,24 @@
  */
 import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
 
-/** Capabilities and revision fixed for one frame lifetime. */
+/**
+ * Capabilities and revision fixed for one frame lifetime.
+ *
+ * `plugins` is the third-party half of the snapshot: one row per plugin whose
+ * members this incarnation admits, carrying the same rev-keyed URL the
+ * aggregate manifest serves. The built-in booleans stay separate fields —
+ * they are the compatibility FACE ("is the Tavern Helper surface assembled"),
+ * where `plugins` is presence ("who else is in this frame"), and the two
+ * read differently (`notes/PLUGIN-CONTRACT-LANDING-SITES.md` §3: the boolean
+ * gates in the frame are not generalized away). An empty record is the
+ * normal state: every frame whose profile has no third-party plugins
+ * installed.
+ */
 export interface SandboxPluginRuntime {
   revision: number
   tavernHelper: boolean
   mvu: boolean
+  plugins: Record<string, PluginAssetEntry>
 }
 
 /** Metadata name shared by the srcdoc writer and bootstrap reader. */
@@ -49,6 +62,7 @@ export const DEFAULT_SANDBOX_PLUGIN_RUNTIME: SandboxPluginRuntime = Object.freez
   revision: 0,
   tavernHelper: true,
   mvu: true,
+  plugins: Object.freeze({}),
 })
 
 /** A plugin is usable only after its runtime transition has completed. */
@@ -56,14 +70,35 @@ function running(plugin: SystemPluginView | undefined): boolean {
   return plugin?.installed === true && plugin.enabled === true && plugin.status === 'enabled'
 }
 
-/** Reduce the authoritative catalog to the capabilities a sandbox understands. */
+/**
+ * Reduce the authoritative catalog to the capabilities a sandbox understands.
+ *
+ * @param snapshot - the host's authoritative catalog and revision.
+ * @param assets - the aggregate manifest as the shell fetched it, supplying
+ *   the rev-keyed URLs a wire snapshot does not carry. The snapshot stays the
+ *   authority on **whether** a plugin is in; the manifest is only consulted
+ *   **where** its bytes live — a row for a plugin the snapshot does not run
+ *   is dropped, and a running plugin without a row is admitted without one
+ *   (its members, if any ever arrive, would be the next revision's problem;
+ *   a frame must never learn a URL the host did not publish for it).
+ * @returns the snapshot for one frame, or `undefined` when there is no host.
+ */
 export function sandboxPluginRuntime(
   snapshot: SystemPluginSnapshot | undefined,
+  assets?: PluginAssetManifest,
 ): SandboxPluginRuntime | undefined {
   if (snapshot === undefined) return undefined
   const tavernHelper = running(snapshot.plugins.find(plugin => plugin.id === 'tavern-helper'))
   const mvu = tavernHelper && running(snapshot.plugins.find(plugin => plugin.id === 'mvu'))
-  return { revision: snapshot.revision, tavernHelper, mvu }
+  const plugins: Record<string, PluginAssetEntry> = {}
+  if (assets !== undefined) {
+    for (const plugin of snapshot.plugins) {
+      if (!running(plugin)) continue
+      const entry = assets.plugins[plugin.id]
+      if (entry !== undefined) plugins[plugin.id] = entry
+    }
+  }
+  return { revision: snapshot.revision, tavernHelper, mvu, plugins }
 }
 
 /** Encode the capability snapshot for a metadata attribute. */
@@ -99,7 +134,41 @@ export function parseSandboxPluginRuntime(value: string | null | undefined): San
     revision: bag['revision'],
     tavernHelper: bag['tavernHelper'],
     mvu: bag['mvu'],
+    plugins: parsePluginRows(bag['plugins']),
   }
+}
+
+/**
+ * The snapshot's plugin rows, absent tolerated.
+ *
+ * Absent parses as an empty record, not a refusal: a shell built before the
+ * third-party half existed writes metas without the field, and a frame must
+ * not refuse every card on the machine because its shell predates it — the
+ * reverse order (new shell, old bootstrap) is refused by the bootstrap
+ * needing the markers it was built to read. A **present** field is held to
+ * the full contract, because a half-valid row would name a plugin whose
+ * members the frame then trusts without knowing where its bytes came from.
+ */
+function parsePluginRows(value: unknown): Record<string, PluginAssetEntry> {
+  if (value === undefined) return {}
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('iris sandbox: the system-plugin snapshot has an invalid plugins record')
+  }
+  const rows: Record<string, PluginAssetEntry> = {}
+  for (const [id, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new Error(`iris sandbox: the snapshot row for plugin "${id}" has an invalid shape`)
+    }
+    const { rev, client } = entry as Record<string, unknown>
+    if (typeof rev !== 'string' || !/^[0-9a-f]{12}$/.test(rev)) {
+      throw new Error(`iris sandbox: the snapshot row for plugin "${id}" has an invalid rev`)
+    }
+    if (typeof client !== 'string' || !client.startsWith(`${PLUGIN_ASSET_PREFIX}/`)) {
+      throw new Error(`iris sandbox: the snapshot row for plugin "${id}" has a client URL outside ${PLUGIN_ASSET_PREFIX}`)
+    }
+    rows[id] = { rev, client }
+  }
+  return rows
 }
 
 /** Attach the frame's immutable revision to a host-bound action payload. */
@@ -158,4 +227,49 @@ export interface PluginAssetManifest {
   revision: number
   /** Enabled plugins that have a client bundle, keyed by plugin id. */
   plugins: Record<string, PluginAssetEntry>
+}
+
+/**
+ * Parse one {@link PLUGIN_ASSET_MANIFEST_PATH} response body.
+ *
+ * Held to the same reading the snapshot's row parser applies — a rev is twelve
+ * hex characters and a client URL lives under the prefix — because the shell
+ * copies manifest rows into frame metas verbatim, and a row that would be
+ * refused in a meta must be refused before it gets there. Returns the reason
+ * as a string rather than throwing, so a caller formatting a fetch error can
+ * name both the URL and the cause in one sentence.
+ */
+export function parsePluginAssetManifest(text: string): PluginAssetManifest | string {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return 'the body is not valid JSON'
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return 'the body is not an object'
+  }
+  const bag = parsed as Record<string, unknown>
+  if (typeof bag['revision'] !== 'number' || !Number.isSafeInteger(bag['revision']) || bag['revision'] < 0) {
+    return 'the revision is not a nonnegative safe integer'
+  }
+  const rows = bag['plugins']
+  if (typeof rows !== 'object' || rows === null || Array.isArray(rows)) {
+    return 'the plugins record is not an object'
+  }
+  const plugins: Record<string, PluginAssetEntry> = {}
+  for (const [id, entry] of Object.entries(rows as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return `the row for plugin "${id}" is not an object`
+    }
+    const { rev, client } = entry as Record<string, unknown>
+    if (typeof rev !== 'string' || !/^[0-9a-f]{12}$/.test(rev)) {
+      return `the row for plugin "${id}" has an invalid rev`
+    }
+    if (typeof client !== 'string' || !client.startsWith(`${PLUGIN_ASSET_PREFIX}/`)) {
+      return `the row for plugin "${id}" has a client URL outside ${PLUGIN_ASSET_PREFIX}`
+    }
+    plugins[id] = { rev, client }
+  }
+  return { revision: bag['revision'], plugins }
 }

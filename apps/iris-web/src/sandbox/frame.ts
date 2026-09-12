@@ -259,6 +259,21 @@ export interface FrameEnv {
    */
   members: MemberTable
   /**
+   * The third-party member merge, collected lazily.
+   *
+   * A **thunk, not a value**, because the plugin tags execute after this
+   * bootstrap (the tag order is members → bootstrap → plugins → cards), so no
+   * eager read could see a registration; the run path calls it once, after
+   * every tag has run or definitively not run. Each admitted plugin id maps to
+   * its registered members, or — in `reports` — to the named reason they are
+   * absent, which the run path surfaces through the same gap channel as every
+   * other missing member.
+   */
+  pluginMembers?: () => {
+    members: Record<string, Record<string, unknown>>
+    reports: Record<string, string>
+  }
+  /**
    * Put a node the sandbox built into the card's container.
    *
    * Exists for exactly one node: the element that stands for **this frame** in

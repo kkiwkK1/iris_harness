@@ -53,7 +53,8 @@ import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { blockedMessageFor } from './blocked-report.ts'
 import type { Measured, Visibility } from './overlay-regions.ts'
-import { MEMBERS_GLOBAL, MEMBERS_MARKER, type MemberTable } from './members-contract.ts'
+import { MEMBERS_GLOBAL, MEMBERS_MARKER, PLUGIN_ADMITTED_GLOBAL, type MemberTable } from './members-contract.ts'
+import { collectPluginMembers } from './plugin-members.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { describeLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
@@ -232,6 +233,16 @@ function systemPluginRuntime() {
   const element = document.querySelector(`meta[name="${SYSTEM_PLUGIN_RUNTIME_META}"]`)
   return parseSandboxPluginRuntime(element?.getAttribute('content'))
 }
+
+/**
+ * Read once, at module scope — the meta cannot change within a frame's
+ * lifetime, and two readers need it: the sandbox install below and the
+ * admitted-plugin record published right after the member table is read, so
+ * it is in place **before the first plugin tag executes** (the tags follow
+ * this script by `srcdoc.ts`'s ordering, which is what lets a plugin's
+ * registration call check the snapshot that admitted it).
+ */
+const sandboxPluginSnapshot = systemPluginRuntime()
 
 /**
  * Report the content height to the shell, so it can size the frame.
@@ -1451,6 +1462,17 @@ const membersReady =
   (globalThis as unknown as Record<string, unknown>)[MEMBERS_MARKER] === true
   && memberTable !== undefined
 
+/*
+ * The third-party admission record, published **here** — after the core table
+ * is read, before any plugin tag runs. `registerPluginMembers` (a core-table
+ * member) refuses any id this record does not carry, so a plugin script a
+ * stale cache served for a plugin this snapshot disabled registers nothing,
+ * and a missing record means nothing is admitted — the same failure direction
+ * the asset cache headers took.
+ */
+;(globalThis as unknown as Record<string, unknown>)[PLUGIN_ADMITTED_GLOBAL]
+  = sandboxPluginSnapshot.plugins
+
 try {
   requestAnimationFrame(() => {
     firstFrameAt = performance.now()
@@ -1817,7 +1839,13 @@ try {
 
   installSandbox({
     members,
-    systemPlugins: systemPluginRuntime(),
+    systemPlugins: sandboxPluginSnapshot,
+    /*
+     * A thunk, not the collected value: the plugin tags run after this
+     * bootstrap, so the merge can only be read once they have. Memoizes
+     * internally — collection is a verdict, not a poll.
+     */
+    pluginMembers: () => collectPluginMembers(sandboxPluginSnapshot.plugins, globalThis as Record<string, unknown>),
     /*
      * Read from the document here, because `frame.ts` is injected with
      * everything it needs and knows nothing about the document it lands in. The

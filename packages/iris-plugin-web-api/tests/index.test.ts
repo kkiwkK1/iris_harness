@@ -9,6 +9,7 @@ import {
   PLUGIN_ASSET_PREFIX,
   SYSTEM_PLUGIN_RUNTIME_META,
   encodeSandboxPluginRuntime,
+  parsePluginAssetManifest,
   fenceFrameParams,
   parseSandboxPluginRuntime,
   sandboxPluginRuntime,
@@ -38,8 +39,9 @@ test('the meta name is the literal both bundles read and write', () => {
 })
 
 test('the legacy default behaves like an existing profile with both built-ins enabled', () => {
-  assert.deepEqual(DEFAULT_SANDBOX_PLUGIN_RUNTIME, { revision: 0, tavernHelper: true, mvu: true })
+  assert.deepEqual(DEFAULT_SANDBOX_PLUGIN_RUNTIME, { revision: 0, tavernHelper: true, mvu: true, plugins: {} })
   assert.equal(Object.isFrozen(DEFAULT_SANDBOX_PLUGIN_RUNTIME), true)
+  assert.equal(Object.isFrozen(DEFAULT_SANDBOX_PLUGIN_RUNTIME.plugins), true)
 })
 
 test('an absent snapshot reduces to absent capabilities', () => {
@@ -51,7 +53,7 @@ test('running built-ins reduce to their capability flags at the snapshot revisio
     view({ id: 'tavern-helper' }),
     view({ id: 'mvu', dependencies: ['tavern-helper'] }),
   ]))
-  assert.deepEqual(runtime, { revision: 7, tavernHelper: true, mvu: true })
+  assert.deepEqual(runtime, { revision: 7, tavernHelper: true, mvu: true, plugins: {} })
 })
 
 test('a plugin counts as usable only when installed, enabled and enabled in status', () => {
@@ -63,7 +65,7 @@ test('a plugin counts as usable only when installed, enabled and enabled in stat
     { installed: true, enabled: true, status: 'error' as const },
   ]) {
     const runtime = sandboxPluginRuntime(snapshot([view({ ...overrides, id: 'tavern-helper' })]))
-    assert.deepEqual(runtime, { revision: 7, tavernHelper: false, mvu: false }, JSON.stringify(overrides))
+    assert.deepEqual(runtime, { revision: 7, tavernHelper: false, mvu: false, plugins: {} }, JSON.stringify(overrides))
   }
 })
 
@@ -72,7 +74,43 @@ test('MVU is usable only through Tavern Helper, never alone', () => {
     view({ id: 'tavern-helper', installed: false, enabled: false, status: 'not-installed' }),
     view({ id: 'mvu' }),
   ]))
-  assert.deepEqual(runtime, { revision: 7, tavernHelper: false, mvu: false })
+  assert.deepEqual(runtime, { revision: 7, tavernHelper: false, mvu: false, plugins: {} })
+})
+
+test('a running plugin with a manifest row enters the snapshot with its rev-keyed URL', () => {
+  const assets: Parameters<typeof sandboxPluginRuntime>[1] = {
+    revision: 7,
+    plugins: {
+      'demo-panel': { rev: '0d3a91c47ba2', client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2' },
+    },
+  }
+  const runtime = sandboxPluginRuntime(snapshot([
+    view({ id: 'tavern-helper' }),
+    view({ id: 'mvu', dependencies: ['tavern-helper'] }),
+    view({ id: 'demo-panel', dependencies: ['tavern-helper'] }),
+  ]), assets)
+  assert.deepEqual(runtime?.plugins, {
+    'demo-panel': { rev: '0d3a91c47ba2', client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2' },
+  })
+})
+
+test('the snapshot is the authority on whether; the manifest only says where', () => {
+  const assets: Parameters<typeof sandboxPluginRuntime>[1] = {
+    revision: 6,
+    plugins: {
+      // a row for a plugin the snapshot does not run: dropped, whatever the
+      // manifest once served — a frame is never told about a plugin the
+      // current snapshot has disabled
+      'ghost-panel': { rev: '111111111111', client: '/plugins/ghost-panel/client.js?rev=111111111111' },
+    },
+  }
+  const runtime = sandboxPluginRuntime(snapshot([view({ id: 'tavern-helper' })]), assets)
+  assert.deepEqual(runtime?.plugins, {})
+})
+
+test('a running plugin without a manifest row is admitted without one', () => {
+  const runtime = sandboxPluginRuntime(snapshot([view({ id: 'demo-panel' })]), { revision: 7, plugins: {} })
+  assert.deepEqual(runtime?.plugins, {})
 })
 
 test('encode and parse round-trip through a metadata attribute', () => {
@@ -80,8 +118,34 @@ test('encode and parse round-trip through a metadata attribute', () => {
     revision: 12,
     tavernHelper: true,
     mvu: false,
+    plugins: { 'demo-panel': { rev: '0d3a91c47ba2', client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2' } },
   }
   assert.deepEqual(parseSandboxPluginRuntime(encodeSandboxPluginRuntime(runtime)), runtime)
+})
+
+test('parse tolerates a legacy meta without the plugins field', () => {
+  assert.deepEqual(
+    parseSandboxPluginRuntime('{"revision":12,"tavernHelper":true,"mvu":false}'),
+    { revision: 12, tavernHelper: true, mvu: false, plugins: {} },
+  )
+})
+
+test('parse holds a present plugins record to the full contract', () => {
+  const bad = [
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":[]}',
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":"demo"}',
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":{"demo":null}}',
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":{"demo":{}}}',
+    // rev: wrong length, wrong alphabet
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":{"demo":{"rev":"abc","client":"/plugins/demo/client.js"}}}',
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":{"demo":{"rev":"0D3A91C47BA2","client":"/plugins/demo/client.js"}}}',
+    // client: outside the plugin prefix — a frame never learns another URL from a snapshot
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":{"demo":{"rev":"0d3a91c47ba2","client":"https://cdn.example/x.js"}}}',
+    '{"revision":7,"tavernHelper":true,"mvu":false,"plugins":{"demo":{"rev":"0d3a91c47ba2","client":"/card-assets/demo/client.js"}}}',
+  ]
+  for (const value of bad) {
+    assert.throws(() => parseSandboxPluginRuntime(value), /invalid|outside/, value)
+  }
 })
 
 test('parse refuses a frame built without a snapshot', () => {
@@ -136,4 +200,37 @@ test('the plugin-asset paths are the literals both sides build URLs from', () =>
   // rather than one it follows quietly.
   assert.equal(PLUGIN_ASSET_PREFIX, '/plugins')
   assert.equal(PLUGIN_ASSET_MANIFEST_PATH, '/plugins/manifest.json')
+})
+
+test('the aggregate manifest parses when every row is in contract', () => {
+  const parsed = parsePluginAssetManifest(JSON.stringify({
+    revision: 9,
+    plugins: { 'demo-panel': { rev: '0d3a91c47ba2', client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2' } },
+  }))
+  assert.notEqual(typeof parsed, 'string')
+  if (typeof parsed !== 'string') {
+    assert.deepEqual(parsed, {
+      revision: 9,
+      plugins: { 'demo-panel': { rev: '0d3a91c47ba2', client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2' } },
+    })
+  }
+})
+
+test('the aggregate manifest parser refuses what the snapshot row parser would', () => {
+  const bad: [string, RegExp][] = [
+    ['nonsense{', /not valid JSON/],
+    ['[]', /not an object/],
+    ['"text"', /not an object/],
+    ['{"plugins":{}}', /revision/],
+    ['{"revision":1.5,"plugins":{}}', /revision/],
+    ['{"revision":9}', /plugins record/],
+    ['{"revision":9,"plugins":[]}', /plugins record/],
+    ['{"revision":9,"plugins":{"demo":1}}', /row for plugin "demo"/],
+    ['{"revision":9,"plugins":{"demo":{"rev":"zz","client":"/plugins/demo/client.js"}}}', /invalid rev/],
+    ['{"revision":9,"plugins":{"demo":{"rev":"0d3a91c47ba2","client":"https://cdn.example/x.js"}}}', /outside/],
+  ]
+  for (const [text, pattern] of bad) {
+    const parsed = parsePluginAssetManifest(text)
+    assert.ok(typeof parsed === 'string' && pattern.test(parsed), text)
+  }
 })

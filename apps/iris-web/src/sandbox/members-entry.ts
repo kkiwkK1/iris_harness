@@ -29,7 +29,7 @@
  * @module iris-web/sandbox/members-entry
  */
 
-import { MEMBERS_GLOBAL, MEMBERS_MARKER } from './members-contract.ts'
+import { MEMBERS_GLOBAL, MEMBERS_MARKER, PLUGIN_ADMITTED_GLOBAL, pluginMembersGlobal } from './members-contract.ts'
 import { createCardStorage } from './card-storage.ts'
 import { KNOWN_ST_IDS, createStAnchors } from './st-anchors.ts'
 import {
@@ -58,6 +58,70 @@ import {
 
 const host = globalThis as unknown as Record<string, unknown>
 
+/** Every member name any plugin has registered, to the plugin that registered it. */
+const pluginMemberNames = new Map<string, string>()
+
+/**
+ * The merge gate: one plugin's members, admitted under its own namespace.
+ *
+ * The rules, in the order a registration meets them:
+ *
+ * - **Admission**: the id must be a row in the record the bootstrap published
+ *   (`PLUGIN_ADMITTED_GLOBAL`). A plugin the snapshot disabled has no row, so
+ *   its script — even one a stale cache still served — registers nothing.
+ *   No published record (bootstrap absent or older than this protocol) reads
+ *   as *nothing admitted*, the same failure direction the cache headers took.
+ * - **Shape**: the members must be a plain object of name → value.
+ * - **Collision**: a name the core table already carries, or one another
+ *   plugin registered first, is refused **by throw, naming the plugin and
+ *   the member** — the core names can never be shadowed by a plugin, and one
+ *   name answering to two plugins is a composition fact, not a load-order
+ *   artifact (`IrisRpcHost.register`'s rule, transplanted). Storage is
+ *   namespaced per plugin, so the refusal is stricter than storage alone
+ *   demands; it keeps a future flat card-facing exposure from having to
+ *   invent a disambiguation rule after two plugins already shipped the same
+ *   name.
+ *
+ * Stored **frozen**, so a plugin cannot mutate its registration after the
+ * frame has begun trusting it, and recorded under the plugin's own global so
+ * the bootstrap's collector — which runs after every plugin tag — reads one
+ * well-known place per plugin.
+ */
+export function registerPluginMembers(pluginId: unknown, members: unknown): void {
+  if (typeof pluginId !== 'string' || pluginId === '') {
+    throw new Error('registerPluginMembers: the plugin id must be a non-empty string')
+  }
+  const admitted = host[PLUGIN_ADMITTED_GLOBAL] as Record<string, unknown> | undefined
+  if (admitted === undefined || typeof admitted !== 'object' || !(pluginId in admitted)) {
+    throw new Error(
+      `registerPluginMembers: plugin "${pluginId}" is not admitted by this frame's snapshot`
+      + ' — its script tag outlived the snapshot that admitted it',
+    )
+  }
+  if (typeof members !== 'object' || members === null || Array.isArray(members)) {
+    throw new Error(`registerPluginMembers: plugin "${pluginId}" must register a members object`)
+  }
+  const core = host[MEMBERS_GLOBAL] as Record<string, unknown> | undefined
+  for (const name of Object.keys(members as Record<string, unknown>)) {
+    if (core !== undefined && name in core) {
+      throw new Error(
+        `registerPluginMembers: plugin "${pluginId}" member "${name}" collides with the core member table`,
+      )
+    }
+    const owner = pluginMemberNames.get(name)
+    if (owner !== undefined && owner !== pluginId) {
+      throw new Error(
+        `registerPluginMembers: plugin "${pluginId}" member "${name}" is already registered by plugin "${owner}"`,
+      )
+    }
+  }
+  if (host[pluginMembersGlobal(pluginId)] !== undefined) {
+    throw new Error(`registerPluginMembers: plugin "${pluginId}" has already registered its members`)
+  }
+  host[pluginMembersGlobal(pluginId)] = Object.freeze({ ...(members as Record<string, unknown>) })
+  for (const name of Object.keys(members as Record<string, unknown>)) pluginMemberNames.set(name, pluginId)
+}
+
 host[MEMBERS_GLOBAL] = {
   createFrameTavernHelper,
   createEventSource,
@@ -83,6 +147,7 @@ host[MEMBERS_GLOBAL] = {
   UPSTREAM_CONTEXT_MEMBERS,
   recordChatEdits,
   replayChatEdits,
+  registerPluginMembers,
 }
 
 /*

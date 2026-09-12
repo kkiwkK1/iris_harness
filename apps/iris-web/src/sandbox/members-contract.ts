@@ -32,6 +32,39 @@ export const MEMBERS_GLOBAL = '__iris_members__'
  * missing names when the truth was one blocked script.
  */
 export const MEMBERS_MARKER = '__iris_members_ready__'
+
+/**
+ * The three names the third-party member merge agrees on
+ * (`notes/PLUGIN-CONTRACT-LANDING-SITES.md` §3, 落点 3).
+ *
+ * A plugin's browser script registers its members through the core table's
+ * `registerPluginMembers`, then proves it ran to completion the same way the
+ * core table does — a marker as its **last** statement. The bootstrap publishes
+ * which plugins this frame admits, so a script whose tag outlived its
+ * snapshot (stale shell cache, a disabled plugin's cached bundle) is refused
+ * at registration instead of being admitted because it executed.
+ */
+
+/** The global under which one plugin's registered members are stored. */
+export function pluginMembersGlobal(pluginId: string): string {
+  return `__iris_plugin_members__${pluginId}`
+}
+
+/** The marker a plugin's script sets as its last statement. */
+export function pluginReadyMarker(pluginId: string): string {
+  return `__iris_plugin_ready__${pluginId}`
+}
+
+/**
+ * Where the bootstrap publishes the frame's admitted plugin rows
+ * (`SandboxPluginRuntime.plugins`), keyed by plugin id.
+ *
+ * Registration reads this as its admission gate. It is a **record, not a
+ * set**, on purpose: the values are the rows the snapshot carries, and a
+ * future check that needs the rev (a report naming which version's members
+ * ran) reads it here rather than from a second channel.
+ */
+export const PLUGIN_ADMITTED_GLOBAL = '__iris_plugins_admitted__'
 /**
  * What the table carries, as the core sees it.
  *
@@ -76,4 +109,17 @@ export interface MemberTable {
   UPSTREAM_CONTEXT_MEMBERS: readonly string[]
   recordChatEdits: typeof import('./chat-journal.ts').recordChatEdits
   replayChatEdits: typeof import('./chat-journal.ts').replayChatEdits
+  /**
+   * Register one plugin's card-facing members.
+   *
+   * The merge gate lives here rather than in the plugin: a name that would
+   * collide with the core table or with another plugin's member is refused
+   * **at registration, by throw** — the same rule `IrisRpcHost.register`
+   * holds, because which member a name resolves to is a composition-level
+   * fact, and letting load order decide it would make script order a
+   * contract. The throw fails the plugin's own script, so its ready marker
+   * never arrives and the frame reports that plugin's members as absent —
+   * named, while every other plugin's members still flow.
+   */
+  registerPluginMembers: (pluginId: string, members: Record<string, unknown>) => void
 }
