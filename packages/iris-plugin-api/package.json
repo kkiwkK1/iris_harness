@@ -1,0 +1,15 @@
+{
+  "name": "@iris/plugin-api",
+  "license": "AGPL-3.0-only",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The system-plugin contract: what a plugin is, how the host activates it, and the lease a unit of its work holds. No @iris dependencies; Cordis types only, by contract.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.2"
+  }
+}

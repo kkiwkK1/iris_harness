@@ -24,6 +24,7 @@
     "@iris/mvu": "workspace:*",
     "@iris/persistence": "workspace:*",
     "@iris/pipeline": "workspace:*",
+    "@iris/plugin-api": "workspace:*",
     "@iris/preset": "workspace:*",
     "@iris/protocol": "workspace:*",
     "@iris/regex": "workspace:*",

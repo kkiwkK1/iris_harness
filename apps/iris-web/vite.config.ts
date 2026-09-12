@@ -37,6 +37,7 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
     alias: [
       { find: '@iris/protocol', replacement: workspace('iris-protocol') },
+      { find: '@iris/plugin-web-api', replacement: workspace('iris-plugin-web-api') },
       { find: '@iris/rpc-client', replacement: workspace('iris-rpc-client') },
       { find: '@iris/client-fake', replacement: workspace('iris-client-fake') },
       { find: '@iris/text', replacement: workspace('iris-text') },

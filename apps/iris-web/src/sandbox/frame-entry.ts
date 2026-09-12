@@ -61,7 +61,7 @@ import { describeFailure, topFrame } from './failure-attribution.ts'
 import {
   SYSTEM_PLUGIN_RUNTIME_META,
   parseSandboxPluginRuntime,
-} from './system-plugin-runtime.ts'
+} from '@iris/plugin-web-api'
 import {
   containDecision,
   contentExtent,

@@ -7,7 +7,7 @@ import { installSandbox, type FrameEnv } from '../src/sandbox/frame.ts'
 import type { FromFrame, ToFrame } from '../src/sandbox/protocol.ts'
 import { runCard, type RunnerHost } from '../src/sandbox/runner.ts'
 import { buildSrcdoc } from '../src/sandbox/srcdoc.ts'
-import type { SandboxPluginRuntime } from '../src/sandbox/system-plugin-runtime.ts'
+import type { SandboxPluginRuntime } from '@iris/plugin-web-api'
 import { MEMBERS } from './members-table.ts'
 
 const disabled: SandboxPluginRuntime = { revision: 4, tavernHelper: false, mvu: false }

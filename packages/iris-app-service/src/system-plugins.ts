@@ -1,10 +1,34 @@
 import { readFile } from 'node:fs/promises'
 
-import { Context, type Disposable, type Fiber } from '@deepseek-ai/cordis'
-import type { SystemPluginId, SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
+import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { registerRequestSchema, type SystemPluginId, type SystemPluginSnapshot, type SystemPluginView } from '@iris/protocol'
+import type {
+  ScopedPluginRevision,
+  ScopedRequestSchema,
+  SystemPluginActivationScope,
+  SystemPluginDefinition,
+  SystemPluginLease,
+  SystemPluginRuntimeOptions,
+} from '@iris/plugin-api'
 
 import { atomicWriteFile } from './atomic.ts'
 import { AppError } from './errors.ts'
+
+/*
+ * The plugin contract lives in `@iris/plugin-api` — definition, activation
+ * scope, lease and runtime options. It moved there from this file, which was
+ * the transition site named in `notes/SYSTEM-PLUGINS-HANDOFF.md`; the
+ * re-export below keeps this module's own surface (and the tests that import
+ * through it) on the one definition instead of growing a second one.
+ */
+export type {
+  ScopedPluginRevision,
+  ScopedRequestSchema,
+  SystemPluginActivationScope,
+  SystemPluginDefinition,
+  SystemPluginLease,
+  SystemPluginRuntimeOptions,
+}
 
 const SERVICE_PREFIX = 'iris.system-plugin'
 
@@ -40,51 +64,6 @@ interface NormalizedDefinition extends Omit<SystemPluginDefinition, 'dependencie
   dependencies: readonly string[]
 }
 
-/** One implementation available in the host's local system-plugin catalog. */
-export interface SystemPluginDefinition {
-  id: string
-  name: string
-  description: string
-  version: string
-  apiVersion: 1
-  dependencies?: readonly string[]
-  activate(scope: SystemPluginActivationScope): void | Disposable | Promise<void | Disposable>
-}
-
-/** The lifetime passed to a registered implementation during activation. */
-export interface SystemPluginActivationScope {
-  readonly context: Context
-  readonly pluginId: string
-  /** The snapshot revision that will identify this activation once it commits. */
-  readonly revision: number
-  /** Publish a capability owned by this activation's Cordis child fiber. */
-  provide<T>(name: string, value: T): () => void
-  /** Read a capability from one of this definition's declared dependencies. */
-  getDependency<T>(pluginId: string, name: string): T | undefined
-}
-
-/** A lease held by work that started in one enabled plugin incarnation. */
-export interface SystemPluginLease {
-  readonly pluginId: string
-  readonly revision: number
-  readonly incarnation: number
-  isCurrent(): boolean
-  assertCurrent(): void
-  release(): void
-}
-
-/** Runtime construction options. */
-export interface SystemPluginRuntimeOptions {
-  context: Context
-  file: string
-  definitions: readonly SystemPluginDefinition[]
-  /** Defaults used only when the preference file does not exist. */
-  defaultEnabled?: readonly string[]
-  onError?: (error: Error) => void
-  /** Persistence seam used by lifecycle tests; production uses atomic replacement. */
-  writePreferences?: (file: string, contents: string) => Promise<void>
-}
-
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -95,6 +74,18 @@ function errorOf(error: unknown): Error {
 
 function serviceName(pluginId: string, capability: string): string {
   return `${SERVICE_PREFIX}:${pluginId}:${capability}`
+}
+
+/**
+ * What `registerRpc` needs of the transport: `IrisRpcHost.register`'s shape.
+ *
+ * Structural on purpose — this module names what it calls, not which package
+ * provides it, the same way the capability face reads values back with
+ * `context.get`. Production resolves the real service under `'irisRpc'`; a
+ * test provides a stub the same way plugin capabilities are provided.
+ */
+interface RpcRegistrar {
+  register(method: string, handler: (params: unknown) => unknown | Promise<unknown>): () => void
 }
 
 function validPreference(value: unknown): value is StoredPluginPreference {
@@ -576,6 +567,59 @@ export class SystemPluginRuntime {
               )
             }
             return this.capability<T>(pluginId, name)
+          },
+          registerRpc: <T>(
+            method: string,
+            schema: ScopedRequestSchema<T>,
+            handler: (params: T & ScopedPluginRevision) => unknown,
+          ) => {
+            const registrar = this.#context.get('irisRpc') as RpcRegistrar | undefined
+            if (registrar === undefined) {
+              throw new AppError(
+                'internal',
+                `system plugin "${definition.id}" cannot register RPC methods: the RPC host is not available`,
+              )
+            }
+            // Registered as an effect of this activation's own fiber, so its
+            // disposal — the plugin's own teardown, a disable, a reload — takes
+            // the registration with it. `context.effect` runs the effect now,
+            // so a refused name (a builtin, another plugin's method) throws
+            // here, inside `activate`, failing this plugin and nothing else.
+            let teardown: () => void = () => {}
+            context.effect(() => {
+              const disposeSchema = registerRequestSchema(method, schema)
+              let disposeHandler: () => void
+              try {
+                disposeHandler = registrar.register(method, params => {
+                  // Admission per call, not only at registration: the lease
+                  // refuses when this plugin has stopped accepting work and —
+                  // when the request carries a fence — when it names a runtime
+                  // revision this activation already replaced. Released when
+                  // the handler settles, so a disable drains in-flight calls
+                  // before disposing the fiber that owns them.
+                  const lease = this.lease(
+                    definition.id,
+                    (params as ScopedPluginRevision).pluginRevision,
+                  )
+                  return Promise.resolve(handler(params as T & ScopedPluginRevision))
+                    .finally(() => { lease.release() })
+                })
+              } catch (error: unknown) {
+                // Never half-registered: a handler that could not sit down
+                // takes its schema with it.
+                disposeSchema()
+                throw error
+              }
+              let disposed = false
+              teardown = () => {
+                if (disposed) return
+                disposed = true
+                disposeHandler()
+                disposeSchema()
+              }
+              return teardown
+            }, `iris-system-plugin:${definition.id}: rpc ${method}`)
+            return () => { teardown() }
           },
         }
         const dispose = await definition.activate(scope)

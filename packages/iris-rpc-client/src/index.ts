@@ -14,7 +14,7 @@
  * @module @iris/rpc-client
  */
 
-import { RpcCallError, type IrisClient, type IrisEvent, type RpcMethod, type RpcRequest, type RpcResponse, type RpcResponseFrame } from '@iris/protocol'
+import { RpcCallError, type AnyRpcMethod, type IrisClient, type IrisEvent, type RpcRequest, type RpcResponse, type RpcResponseFrame } from '@iris/protocol'
 
 import { DEFAULT_BACKOFF, backoffDelay, type BackoffOptions } from './backoff.ts'
 
@@ -157,12 +157,16 @@ export class IrisHttpClient implements IrisClient {
 
   /**
    * Call one method.
+   *
+   * `AnyRpcMethod`: a name a system plugin registered at runtime is callable
+   * here exactly as a built-in is — the host validates it against the
+   * registered schema on arrival.
    * @param method - the method name.
    * @param params - its params; the host validates them again on arrival.
    * @returns the method's response.
    * @throws {RpcCallError} when the host refuses, or when it cannot be reached.
    */
-  async call<M extends RpcMethod>(method: M, params: RpcRequest<M>): Promise<RpcResponse<M>> {
+  async call<M extends AnyRpcMethod>(method: M, params: RpcRequest<M>): Promise<RpcResponse<M>> {
     const id = nextId()
 
     let response: FetchResponseLike

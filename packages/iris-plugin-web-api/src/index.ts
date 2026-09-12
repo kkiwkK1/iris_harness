@@ -1,5 +1,7 @@
 /**
- * The system-plugin state captured by one sandbox incarnation.
+ * The system-plugin state captured by one sandbox incarnation — the browser
+ * half of the plugin contract, the counterpart of `@iris/plugin-api` on the
+ * host side.
  *
  * Frames never read the live store. A run is born against one host revision
  * and keeps that revision for every request it can schedule later; changing
@@ -7,7 +9,28 @@
  * is also written into the srcdoc so parse-time interface code and the shell
  * agree about which optional facades exist.
  *
- * @module iris-web/sandbox/system-plugin-runtime
+ * The module moved here from `apps/iris-web/src/sandbox/system-plugin-runtime.ts`
+ * because its two readers live in different bundles: the shell writes the
+ * snapshot into the srcdoc (`encodeSandboxPluginRuntime`), and the frame's
+ * bootstrap parses it back out of the meta element
+ * (`parseSandboxPluginRuntime`) — different bundles, both built from source,
+ * with nothing but the string in a `name="…"` attribute between them. The
+ * type, the meta name and the codec therefore live together, so they cannot
+ * drift into a snapshot one side writes and the other refuses: the same ground
+ * `@iris/compat-tavernhelper-core` holds the verbatim event tables on. The
+ * reduction from the host's authoritative catalog is here too
+ * (`sandboxPluginRuntime`), because the rule it encodes — MVU is only usable
+ * when Tavern Helper is, since the MVU integration rides on the helper's
+ * card-facing API — is contract, not a shell detail.
+ *
+ * Dependencies, by contract: the Iris contract, as types only. `import type`
+ * is erased before the browser sees this module, so importing it drags
+ * nothing in behind it — the ground `@iris/text` and
+ * `@iris/compat-tavernhelper-core` hold their places on the browser's import
+ * allowlist on (`apps/iris/tests/architecture.test.ts`), and a source scan
+ * pins the rule (`tests/purity.test.ts`).
+ *
+ * @module @iris/plugin-web-api
  */
 import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
 

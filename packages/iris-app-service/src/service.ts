@@ -246,7 +246,18 @@ function continuedSeedText(seedText: string, postfix: string): string {
  */
 const WORLD_INFO_BUDGET_SHARE = 0.25
 
-/** Every method, keyed by name. */
+/**
+ * Every method this build implements, keyed by name — and total on purpose.
+ *
+ * The wire can lack a method since runtime RPC registration landed
+ * (`docs/SYSTEM-PLUGINS.md`): a plugin's method arrives through the registry,
+ * and the transport answers anything unregistered `unsupported`. What stays
+ * total is this build's own claim — a method in the static vocabulary that
+ * the literal does not implement is a compile error, not a silent refusal.
+ * When a capability moves out to a system plugin, its methods leave the
+ * static vocabulary for the runtime registry, `RpcMethod` shrinks with it,
+ * and this table shrinks by the same keys — one tripwire, no holes.
+ */
 export type Handlers = {
   [M in RpcMethod]: (params: RpcRequest<M>) => Promise<RpcResponse<M>>
 }

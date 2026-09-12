@@ -141,7 +141,16 @@ test('the browser sees the contract and nothing else', async () => {
   // `compat-tavernhelper-core` until 2026-09-12 and are on this list for the
   // same reason they were then — what changed is which package they live in, not
   // what the browser can reach (root `notes/DEVIATIONS.md`, stage 0).
-  const allowed = new Set(['@iris/protocol', '@iris/client-fake', '@iris/rpc-client', '@iris/compat-tavernhelper-core', '@iris/text'])
+  // `plugin-web-api` is allowlisted on the same ground a third time, for the
+  // system-plugin capability snapshot the shell writes into a frame's srcdoc
+  // and the frame's bootstrap parses back out: different bundles, one contract,
+  // so the type, the meta name and the codec live in one package instead of
+  // drifting into a snapshot one side writes and the other refuses. It
+  // qualifies because its only Iris import is `@iris/protocol`, which the
+  // browser already carries, and it is type-only — erased before any bundler
+  // sees it — with its own purity test pinning that
+  // (`packages/iris-plugin-web-api/tests/purity.test.ts`).
+  const allowed = new Set(['@iris/protocol', '@iris/plugin-web-api', '@iris/client-fake', '@iris/rpc-client', '@iris/compat-tavernhelper-core', '@iris/text'])
   const imported = await sourceImports(join(ROOT, 'apps', 'iris-web'))
   const forbidden = [...imported].filter(name => !allowed.has(name)).sort()
 
@@ -216,6 +225,42 @@ test('the shared text package depends on nothing of ours', async () => {
 
   assert.ok(graph.has('@iris/text'), 'the package must exist for this to be a check')
   assert.deepEqual(graph.get('@iris/text'), [])
+})
+
+test('the system-plugin contract packages hold the layer their names claim', async () => {
+  /*
+   * The two packages `notes/SYSTEM-PLUGINS-HANDOFF.md` assigns to the contract
+   * side, pinned at the level the manifest can see.
+   *
+   * `@iris/plugin-api` says what a system plugin is and how it activates; it
+   * is typed against the framework (Cordis, the same dependency set the
+   * extension design's §2.1 grants an extension package) and against
+   * nothing of Iris's — the contract must not learn what a store is in order
+   * to say what a plugin is. Its own source scan additionally forbids runtime
+   * imports, which a manifest cannot see.
+   *
+   * `@iris/plugin-web-api` is the browser half: the capability snapshot a
+   * frame is born with and the codec both bundles read. Its only Iris
+   * dependency is the wire contract, because the snapshot type names the shape
+   * both sides speak — and only as types, per its purity test, so the browser
+   * gains its bytes and nothing behind them.
+   *
+   * There is exactly one `SystemPluginDefinition`, in `@iris/plugin-api`;
+   * `@iris/app-service` reaches it through the dependency below rather than a
+   * copy, and a second definition would be the second registry
+   * `docs/SYSTEM-PLUGINS.md` (Authority and scope) forbids.
+   */
+  const graph = await manifestGraph()
+
+  for (const name of ['@iris/plugin-api', '@iris/plugin-web-api']) {
+    assert.ok(graph.has(name), `${name} is missing from the workspace graph`)
+  }
+  assert.deepEqual(graph.get('@iris/plugin-api'), [])
+  assert.deepEqual(graph.get('@iris/plugin-web-api'), ['@iris/protocol'])
+  assert.ok(
+    (graph.get('@iris/app-service') ?? []).includes('@iris/plugin-api'),
+    'the host runtime must consume the contract package, not a transition-site copy',
+  )
 })
 
 test('the generic engines do not depend on the Tavern Helper compat layer', async () => {

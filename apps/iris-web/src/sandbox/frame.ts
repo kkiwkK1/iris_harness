@@ -37,7 +37,7 @@ import type { ScriptContext } from '@iris/protocol'
 import {
   DEFAULT_SANDBOX_PLUGIN_RUNTIME,
   type SandboxPluginRuntime,
-} from './system-plugin-runtime.ts'
+} from '@iris/plugin-web-api'
 
 /**
  * The standard scheduler set, as the virtual parent answers it.

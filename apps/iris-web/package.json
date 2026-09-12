@@ -25,6 +25,7 @@
     "@fortawesome/fontawesome-free": "6.5.2",
     "@iris/client-fake": "file:../../packages/iris-client-fake",
     "@iris/compat-tavernhelper-core": "file:../../packages/iris-compat-tavernhelper-core",
+    "@iris/plugin-web-api": "file:../../packages/iris-plugin-web-api",
     "@iris/protocol": "file:../../packages/iris-protocol",
     "@iris/text": "file:../../packages/iris-text",
     "@tailwindcss/browser": "4.1.12",

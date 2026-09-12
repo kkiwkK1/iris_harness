@@ -37,9 +37,9 @@ import type { WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import {
   parseRequest,
+  type AnyRpcMethod,
   type IrisEvent,
   type RpcError,
-  type RpcMethod,
   type RpcRequest,
   type RpcResponse,
   type RpcResponseFrame,
@@ -87,8 +87,18 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** What one method's handler does. */
-export type RpcHandler<M extends RpcMethod> = (params: RpcRequest<M>) => RpcResponse<M> | Promise<RpcResponse<M>>
+/**
+ * What one method's handler does.
+ *
+ * `AnyRpcMethod` rather than `RpcMethod`: a system plugin registers methods
+ * the static vocabulary never knew, and the transport is where their schemas
+ * (registered alongside, in the protocol's runtime registry) are enforced —
+ * `register` checks only the name is free, exactly as it does for built-ins.
+ * Built-in callers keep the full per-method checking; a dynamic caller's
+ * params and response are `unknown` by design, because the schema it handed
+ * over is the type it gets back.
+ */
+export type RpcHandler<M extends AnyRpcMethod> = (params: RpcRequest<M>) => RpcResponse<M> | Promise<RpcResponse<M>>
 
 /** Transport config. Every field has a default, so an empty row is valid. */
 export interface Config {
@@ -249,11 +259,18 @@ export class IrisRpcHost extends Service {
    * A duplicate registration throws rather than shadowing: which plugin answers
    * a method is a composition-level fact, so a collision is a misconfiguration
    * and not something to resolve by ordering.
+   *
+   * A runtime method arrives with its own bookkeeping: the caller registers
+   * the request schema in the protocol's registry (`registerRequestSchema`)
+   * alongside this, and is answerable for disposing both. The transport does
+   * not do that here only because half of it is the protocol's table, not the
+   * transport's — the composition convenience lives where both halves are
+   * owned (`@iris/app-service`'s activation scope).
    * @param method - the protocol method to answer.
    * @param handler - receives params already validated against the method's schema.
    * @returns the disposer removing the handler.
    */
-  register<M extends RpcMethod>(method: M, handler: RpcHandler<M>): () => void {
+  register<M extends AnyRpcMethod>(method: M, handler: RpcHandler<M>): () => void {
     if (this.handlers.has(method)) {
       throw new Error(`iris-rpc-host: a handler for "${method}" is already registered`)
     }
@@ -478,8 +495,11 @@ export class IrisRpcHost extends Service {
     }
 
     // The single place a browser payload is trusted. A refusal answers with a
-    // frame and leaves every other page's stream alone.
-    const parsed = parseRequest(frame.method as RpcMethod, frame.params)
+    // frame and leaves every other page's stream alone. `frame.method` is an
+    // arbitrary string: a built-in resolves against the static schemas, a
+    // plugin method against the runtime registry, and everything else is
+    // `unsupported` — the cast this used to need is gone with the widening.
+    const parsed = parseRequest(frame.method, frame.params)
     if (!parsed.ok) {
       respondJson(res, 200, refuse(id, parsed.error))
       return
@@ -497,9 +517,11 @@ export class IrisRpcHost extends Service {
     try {
       // The handler was registered for this method, so its result is that
       // method's response; the registry stores handlers erased to `unknown`
-      // because one map cannot hold fifteen different signatures.
-      const result = await handler(parsed.params) as RpcResponse<RpcMethod>
-      respondJson(res, 200, { id, ok: true, result } satisfies RpcResponseFrame)
+      // because one map cannot hold fifteen different signatures. A runtime
+      // method's response is `unknown` all the way to the frame — the caller
+      // that registered it owns what the bytes mean.
+      const result = await handler(parsed.params)
+      respondJson(res, 200, { id, ok: true, result } satisfies RpcResponseFrame<AnyRpcMethod>)
     } catch (error: unknown) {
       const wire = toRpcError(error)
       // Deliberate refusals are the application talking; only an unclassified

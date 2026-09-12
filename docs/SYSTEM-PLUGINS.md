@@ -14,6 +14,47 @@ A card script is content executed within the existing sandbox. A system plugin
 owns a capability that such content may need. Installing or enabling a system
 plugin does not grant a card permission to execute scripts or access the network.
 
+## The contract packages
+
+What a plugin is, and what a frame is born with, are published contracts, not
+host internals. They moved out of the transition sites named in
+`notes/SYSTEM-PLUGINS-HANDOFF.md` — the move is a move, so there is exactly one
+`SystemPluginDefinition` in the repository.
+
+- **`@iris/plugin-api`** — the host-side contract: `SystemPluginDefinition`
+  (`apiVersion`-gated, dependency-declaring), the `SystemPluginActivationScope`
+  a definition's `activate` receives (provide and getDependency over namespaced
+  capabilities on a Cordis child fiber), the `SystemPluginLease` a unit of
+  admitted work holds across drain, and the runtime construction options. It
+  has no `@iris` dependencies — a plugin package can be typed against the
+  contract and the framework alone — and its sources may import nothing at
+  runtime.
+- **`@iris/plugin-web-api`** — the browser-side face: the
+  `SandboxPluginRuntime` capability snapshot a sandbox frame is born with, the
+  meta name it travels under, and the codec the shell (srcdoc writer) and the
+  frame bootstrap (reader) must use identically. Its only Iris dependency is
+  `@iris/protocol`, as types only, so importing it drags nothing into the
+  browser.
+
+Dependency direction: `app-service → plugin-api`, `iris-web → plugin-web-api`.
+The wire projection (`SystemPluginSnapshot`, `SystemPluginView`) stays in
+`@iris/protocol`; the runtime implementation — catalog, dependency ordering,
+serialized transitions, persistence, Cordis fibers, drain — stays in
+`@iris/app-service`.
+
+The vocabulary is shared with `docs/EXTENSIONS.md`, the third-party extension
+design, not duplicated by it. That document describes the *runtime services* a
+plugin may reach once it is active — a storage namespace under the profile, an
+event tap, the generation-pipeline hooks, a contributed settings face. This
+document and `@iris/plugin-api` describe *what a plugin is and how it
+activates*, one layer earlier in the paper stack, for the same control plane
+whether the implementation shipped with Iris or arrived from outside. The two
+meet in the contract's `apiVersion`: it is the same versioning device
+EXTENSIONS.md gives an extension manifest, and a breaking change to either is
+a new version, never an in-place edit. There is one registry; a future dynamic
+extension contributes through this contract's install/activate paths, not
+beside them.
+
 ## Authority and scope
 
 The user requested runtime management and extraction of Tavern Helper and MVU.

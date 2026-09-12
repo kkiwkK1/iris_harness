@@ -65,6 +65,16 @@ export class FakeSystemPlugins {
     }
   }
 
+  /**
+   * Whether one catalog row accepts work — the fake of the runtime's
+   * `isEnabled`, so a registered plugin method can be gated the same way the
+   * host gates its own.
+   */
+  isEnabled(id: string): boolean {
+    const plugin = this.#plugins.get(id)
+    return plugin?.enabled === true && plugin.status === 'enabled'
+  }
+
   install(id: string): SystemPluginSnapshot {
     const plugin = this.#require(id)
     if (plugin.installed) return this.snapshot()

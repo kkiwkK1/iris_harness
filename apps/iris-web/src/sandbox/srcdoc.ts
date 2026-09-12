@@ -29,7 +29,7 @@ import {
   SYSTEM_PLUGIN_RUNTIME_META,
   encodeSandboxPluginRuntime,
   type SandboxPluginRuntime,
-} from './system-plugin-runtime.ts'
+} from '@iris/plugin-web-api'
 
 /**
  * The frame's content security policy.

@@ -29,7 +29,7 @@ import {
   DEFAULT_SANDBOX_PLUGIN_RUNTIME,
   fenceFrameParams,
   type SandboxPluginRuntime,
-} from './system-plugin-runtime.ts'
+} from '@iris/plugin-web-api'
 
 /**
  * One popup a card raised, and the one way back to it.

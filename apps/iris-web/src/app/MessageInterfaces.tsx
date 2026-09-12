@@ -41,7 +41,7 @@ import {
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
-import { sandboxPluginRuntime, type SandboxPluginRuntime } from '../sandbox/system-plugin-runtime.ts'
+import { sandboxPluginRuntime, type SandboxPluginRuntime } from '@iris/plugin-web-api'
 import { broadcastWindowEvent } from './window-events.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
 import { repairStrayFences } from './stray-fences.ts'
