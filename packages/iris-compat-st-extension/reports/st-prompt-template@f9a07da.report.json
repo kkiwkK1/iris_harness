@@ -1,0 +1,183 @@
+{
+  "purpose": "Integration check of the analyzer against the real locked pilot (read-only run; the local ST tree is the fact source, never modified). This file is evidence, not a claim: verdict stays unverified; it records what one analyzer version measured on one artifact.",
+  "artifact": "zonde306/ST-Prompt-Template @ f9a07da0fbe25cd310eee746c2f5af24ed61f62b (manifest 1.17.4.1; see notes/st-compat/pilot-lock.md)",
+  "ranAt": "2026-09-12T17:20:32.702Z",
+  "analyzerVersion": 1,
+  "result": {
+    "ok": true,
+    "report": {
+      "analyzerVersion": 1,
+      "contentDigest": "decb699165e345d40fa04aa53f94711fd7920f8ccfebe0d0a01fc2fab5d77fa7",
+      "verdict": "unverified",
+      "findings": [
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../../script.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module script.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../slash-commands.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/slash-commands.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../world-info.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/world-info.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../power-user.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/power-user.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../utils.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/utils.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../group-chats.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/group-chats.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../extensions.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/extensions.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../regex/engine.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/extensions/regex/engine.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../../lib.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module lib.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../openai.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/openai.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../tokenizers.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/tokenizers.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../reasoning.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/reasoning.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../slash-commands/SlashCommand.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/slash-commands/SlashCommand.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../slash-commands/SlashCommandArgument.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/slash-commands/SlashCommandArgument.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../slash-commands/SlashCommandParser.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/slash-commands/SlashCommandParser.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../events.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/events.js"
+        },
+        {
+          "category": "module",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "../../../../popup.js",
+          "result": "mapped",
+          "reason": "resolves to registered host module scripts/popup.js"
+        },
+        {
+          "category": "dom",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "import.meta",
+          "result": "unknown",
+          "reason": "import.meta semantics in the compat environment are a facade decision, not a given"
+        },
+        {
+          "category": "dom",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "import.meta",
+          "result": "unknown",
+          "reason": "import.meta semantics in the compat environment are a facade decision, not a given"
+        },
+        {
+          "category": "dom",
+          "file": "dist/index.js",
+          "line": 1,
+          "name": "/scripts/extensions/third-party/ST-Prompt-Template/dist/ejs.workers.js",
+          "result": "unknown",
+          "reason": "Worker URL baked against a URL layout; mapping and origin policy are verified separately (§6)"
+        }
+      ],
+      "manifestUnknownFields": [],
+      "files": [
+        "dist/index.js",
+        "libs/buffer.mjs",
+        "libs/faker.mjs",
+        "manifest.json"
+      ]
+    }
+  }
+}
