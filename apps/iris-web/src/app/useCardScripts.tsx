@@ -43,6 +43,7 @@ import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun, isFailure } from '../sandbox/script-run-state.ts'
 import { sandboxPluginRuntime } from '@iris/plugin-web-api'
+import { usePluginAssetManifest } from './use-plugin-manifest.ts'
 import { describeRefusal } from './blocked-line.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
@@ -77,8 +78,18 @@ export function CardScriptFrames(): ReactElement {
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
   const pluginSnapshot = useIris(state => state.systemPlugins)
-  const pluginRuntime = sandboxPluginRuntime(pluginSnapshot)
-  const pluginRevision = pluginRuntime?.revision
+  const pluginRevision = pluginSnapshot?.revision
+  /*
+   * The manifest for exactly this revision: rows feed the snapshot reduction
+   * (the manifest says where a plugin's bytes live; the snapshot above says
+   * whether it runs at all), and its arrival in state is a rebuild dependency
+   * below — frames mounted before it landed were built without tags.
+   */
+  const pluginManifest = usePluginAssetManifest(pluginRevision)
+  const pluginRuntime = sandboxPluginRuntime(
+    pluginSnapshot,
+    pluginManifest?.revision === pluginSnapshot?.revision ? pluginManifest : undefined,
+  )
   const tavernHelperEnabled = pluginRuntime?.tavernHelper === true
   const mvuEnabled = pluginRuntime?.mvu === true
   const store = useIrisStore()
@@ -797,6 +808,7 @@ export function CardScriptFrames(): ReactElement {
     pluginRevision,
     tavernHelperEnabled,
     mvuEnabled,
+    pluginManifest,
   ])
 
   /*

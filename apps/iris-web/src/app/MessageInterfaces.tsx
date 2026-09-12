@@ -42,6 +42,7 @@ import { describeInterface, type InterfaceState } from '../sandbox/message-frame
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { sandboxPluginRuntime, type SandboxPluginRuntime } from '@iris/plugin-web-api'
+import { usePluginAssetManifest } from './use-plugin-manifest.ts'
 import { broadcastWindowEvent } from './window-events.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
 import { repairStrayFences } from './stray-fences.ts'
@@ -118,7 +119,11 @@ export function MessageInterfaces({
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
   const pluginSnapshot = useIris(state => state.systemPlugins)
-  const pluginRuntime = sandboxPluginRuntime(pluginSnapshot)
+  const pluginManifest = usePluginAssetManifest(pluginSnapshot?.revision)
+  const pluginRuntime = sandboxPluginRuntime(
+    pluginSnapshot,
+    pluginManifest?.revision === pluginSnapshot?.revision ? pluginManifest : undefined,
+  )
   const pluginRevision = pluginRuntime?.revision
   const tavernHelperEnabled = pluginRuntime?.tavernHelper === true
   const mvuEnabled = pluginRuntime?.mvu === true

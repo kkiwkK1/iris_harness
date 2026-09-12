@@ -766,6 +766,31 @@ export function buildSrcdoc(
      */
     `<script>${bootstrapGuard()}</script>`,
     /*
+     * The admitted plugins' own scripts, **after** the bootstrap and blocking —
+     * one tag per row of the snapshot's `plugins` record, in the merge's tag
+     * order (members → bootstrap → plugins → cards,
+     * `notes/PLUGIN-CONTRACT-LANDING-SITES.md` §3).
+     *
+     * After the bootstrap because a plugin registers its members through the
+     * core table's `registerPluginMembers`, which must already be published,
+     * and the bootstrap has already published which plugins this frame admits —
+     * so a tag the snapshot no longer carries (a stale cached srcdoc is not
+     * possible, but a stale cached *bundle* under a live tag is) registers
+     * nothing and is refused at the gate. Before the card's libraries for the
+     * same reason the bootstrap is: by the time card code runs, every
+     * registration has happened or definitively not happened, which is what
+     * lets the merge's collector be a verdict rather than a poll.
+     *
+     * `crossorigin="anonymous"` pairs with the host route's CORS headers the
+     * same way it does for the member table and the preset above; the URL is
+     * the row's own rev-keyed client URL, immutable per content, so a frame's
+     * tags and its snapshot can never disagree about which bytes a plugin's
+     * name answers for.
+     */
+    ...Object.entries(systemPlugins.plugins ?? {}).map(([pluginId, entry]) =>
+      `<script src="${attribute(entry.client)}" crossorigin="anonymous" data-iris-plugin="${attribute(pluginId)}"></script>`,
+    ),
+    /*
      * `crossorigin="anonymous"`, and it only works as **one half of a pair**.
      *
      * The attribute makes the browser report a cross-origin script's exceptions

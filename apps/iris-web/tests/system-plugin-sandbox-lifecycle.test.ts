@@ -10,9 +10,9 @@ import { buildSrcdoc } from '../src/sandbox/srcdoc.ts'
 import type { SandboxPluginRuntime } from '@iris/plugin-web-api'
 import { MEMBERS } from './members-table.ts'
 
-const disabled: SandboxPluginRuntime = { revision: 4, tavernHelper: false, mvu: false }
-const helperOnly: SandboxPluginRuntime = { revision: 5, tavernHelper: true, mvu: false }
-const enabled: SandboxPluginRuntime = { revision: 6, tavernHelper: true, mvu: true }
+const disabled: SandboxPluginRuntime = { revision: 4, tavernHelper: false, mvu: false, plugins: {} }
+const helperOnly: SandboxPluginRuntime = { revision: 5, tavernHelper: true, mvu: false, plugins: {} }
+const enabled: SandboxPluginRuntime = { revision: 6, tavernHelper: true, mvu: true, plugins: {} }
 
 test('a capability-free interface srcdoc keeps the card HTML', () => {
   const doc = buildSrcdoc('tok', 'http://iris.test/sandbox/bootstrap.js', {
@@ -196,8 +196,8 @@ function runnerHarness() {
 
 test('remounts keep old requests fenced and old ready messages inert after disposal', async () => {
   const harness = runnerHarness()
-  const old = harness.makeCard({ revision: 10, tavernHelper: true, mvu: true })
-  const next = harness.makeCard({ revision: 12, tavernHelper: true, mvu: false })
+  const old = harness.makeCard({ revision: 10, tavernHelper: true, mvu: true, plugins: {} })
+  const next = harness.makeCard({ revision: 12, tavernHelper: true, mvu: false, plugins: {} })
 
   old.send({ type: 'call', id: 'old-call', method: 'setVariables', params: { value: 1 } })
   next.send({ type: 'call', id: 'new-call', method: 'setVariables', params: { value: 2 } })
