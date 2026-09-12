@@ -1,0 +1,15 @@
+{
+  "name": "@iris/compat-st-extension",
+  "license": "AGPL-3.0-only",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The analysis half of ST-extension compatibility: manifest normalization, the registered host-module table, and the TypeScript-API module-graph analyzer behind CompatibilityReport. Analysis only — no install, no execution, no network.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}
