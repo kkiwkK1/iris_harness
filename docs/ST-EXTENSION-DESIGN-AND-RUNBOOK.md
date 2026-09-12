@@ -2,9 +2,32 @@
 
 日期：2026-09-13。性质：新增基础设施主线的设计和施工合同，**不是已实现 API 文档**。
 
-适用现场：main `2079dbe`；集成 worktree `dev/system-plugins` 保存点 `ae55920` 加未提交的契约与动态 RPC 工作。现场正在变化，施工前重新核对提交和文件所有者。不要从旧 `dev/feat-extension-system` 开工。
+> **文档身份与唯一所有者**
+>
+> - 文档编号：`DOC-ST-COMPAT-PROGRAM`；它是整个 ST 兼容主线的调度合同，**不是一个可以交给开发者直接“实现本文”或与另一份手册并行施工的编码任务**。
+> - 唯一维护者：集成人。正文变更使用从当前 `dev/system-plugins` HEAD 创建的短期 `dev/plugin-doc-*` 分支和独立 worktree，审阅后合回 `dev/system-plugins`。
+> - 编码任务只来自 §9 的一个具体批次及 §9.2 的完整派工单。一个批次一个分支；没有基线 SHA、分支、worktree、文件所有权和合并顺序时不得开工。
+> - 与本计划并列的另两项任务是 [系统插件实施交接](../notes/SYSTEM-PLUGINS-HANDOFF.md) 和 [基础设施接口清单](INFRASTRUCTURE-INTERFACES.md) 的核验；插件作者手册不在这组三任务中。
+
+适用现场：main `2079dbe`；插件内核基线 `2ac0f06`；当前集成基线 `dev/system-plugins @ 934ae1c`。现场继续变化，派工时必须用实际 HEAD 替换本文示例基线。不要从旧 `dev/feat-extension-system` 开工。
 
 配套：[基础设施接口清单](INFRASTRUCTURE-INTERFACES.md)、[插件制作与执行手册](PLUGIN-AUTHORING-RUNBOOK.md)、[系统插件架构](SYSTEM-PLUGINS.md)、[契约施工落点](../notes/PLUGIN-CONTRACT-LANDING-SITES.md)。本文件覆盖此前口头建议中“立即停止 TH/MVU 实现、直接换成上游”的部分：先做可行性试点，通过后才替换。
+
+### 2026-09-13 并行施工收口记录
+
+最初派发时没有先给三份文档分配唯一身份和分支，且任务二的链接误写成本文件，导致 ST 兼容方案、系统插件实施交接、接口盘点和产品施工在同一个集成 worktree 并行。这是调度错误；从本段起按上面的文档身份和 §9.2 派工单执行。
+
+已产生的提交不重写历史：动态 RPC 与契约基线是 `2ac0f06`；P0 是 `30b522c`；P2 分析器是 `a3d1d9c`，并在 `5aedccc` 合入；落点 2 资产面已经直接以 `ab3da4d`、`e2b8230` 合入集成分支，lockfile 收口是 `934ae1c`。本轮将这些视为既成集成历史，不再把同一改动复制到新分支。
+
+本地 `dev/plugin-assets-plane` 仍停在 `5aedccc`，早于真正的资产面提交，属于过期占位分支，**不得继续开发或作为落点 2 已完成的证据**。`dev/st-compat-baseline` 和 `dev/st-compat-installer` 是已完成批次的历史分支，后续只读。下一个产品编码任务是落点 3，必须从验收后的当前 `dev/system-plugins` HEAD 新建 `dev/plugin-client-runtime` 及独立 worktree。
+
+三项上层任务从现在起按下面的所有权收口：
+
+| 任务 | 权威文档 | 分支与 worktree | 允许范围 | 交界规则 |
+| --- | --- | --- | --- | --- |
+| 一：ST 扩展兼容 | 本文件 | 每个 §9 批次使用自己的 `dev/st-compat-*` 或指定分支与独立 worktree；本文件本身由 `dev/plugin-doc-*` 维护 | 安装分析、ST 兼容环境、试点与适配器 | 不能直接修改系统插件中央文件；通过明确接线任务合入 |
+| 二：系统插件控制面 | [SYSTEM-PLUGINS-HANDOFF](../notes/SYSTEM-PLUGINS-HANDOFF.md) | `dev/system-plugins`，`D:/workspace/小项目/iris-system-plugins` | 控制面、生命周期、中央接线和集成验收 | 它是集成目标；不再同时承接独立批次的工作区修改 |
+| 三：基础设施接口核验 | [INFRASTRUCTURE-INTERFACES](INFRASTRUCTURE-INTERFACES.md) | `dev/plugin-infrastructure-audit`，`D:/workspace/小项目/iris-plugin-infrastructure-audit`，从待核验的 `dev/system-plugins` SHA 创建 | 只读盘点、接口清单、核验测试与缺口报告 | 发现产品缺口时另开带所有权的实现分支，不能在核验分支顺手补代码 |
 
 ## 1. 产品目标与第一版边界
 
