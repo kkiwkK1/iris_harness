@@ -13,7 +13,7 @@
  *
  * `verdict` is always `unverified` when the analyzer writes it: static
  * analysis can enumerate certain dependencies and unknown points, never
- * compatibility (`docs/…RUNBOOK.md` §2). A `verified` verdict is set only by
+ * compatibility (`docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md` §2). A `verified` verdict is set only by
  * the evidence pipeline, on a locked artifact, with named test suites.
  */
 
