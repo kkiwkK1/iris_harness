@@ -130,6 +130,7 @@
 | 阶段 | 内容 | 量级 |
 |---|---|---|
 | 0 顺手活(无论做不做插件都该做) | `stringHash` / `parseRegexFromString` 迁中性包,解掉 `iris-lorebook`、`iris-macro` 两个反向依赖;`expandHelperMacros` 走 `MacroRegistry.registerMacroLike` 而不是第二遍扫描;删 `entry.ts:25` 的死导入。目标:包图无环 | 1–2 支 PR |
+| 0 **状态(2026-09-12)** | **大部分已落地**,分支 `dev/plugin-graph-hygiene`,账本见根 `notes/DEVIATIONS.md`「阶段 0:包图去环」。已做:两个工具迁入新包 `@iris/text`(零依赖,上浏览器白名单),th-core **不再 re-export**;§3 表里另一条反向边 `compat-tavernhelper` → `mvu` 也一并解掉——`formatYamlBlock` 迁入 `@iris/compat-tavernhelper`(它唯一的调用方),`js-yaml` 随之;`entry.ts:25` 的死导入已删。三条边由 `architecture.test.ts` 的新图断言钉住,不能无声回来。**未做**:`expandHelperMacros` 走 `registerMacroLike`——`dev/system-plugins` 正在重写 `entry.ts`,为两行去抢一个冲突不划算,留给那条分支或其后续 | 已合 1 支 |
 | 1 宿主插件契约 | 协议表运行期合并;`Handlers` Partial;fake 开放分发表;`AppServiceOptions` 四个钩子;设置与存储命名空间。**以 MVU 为第一个插件**验证:`prune.ts`、`entry.ts` 四函数、`#settle` 20 行、`chat.answerCleanup` / `cleanup.offer` 随 MVU 搬走 | 约一周 |
 | 2 前端宿主平面 | `/plugins` 下发 + `dsh.client` 清单扫描(`PLAN.md` 原始设计);成员表合并协议(含「表缺席即拒跑」的重新定义);资产清单可变长;硬编码面板迁到 slot;MVU 的帧侧垫片与 `CleanupOffer` 迁入 | 一到两周 |
 | 3 酒馆助手按域拆 | 照 `notes/AUDIT-CORDIS.md` §4「按域拆子插件」:worldbook / preset / script-compat 成 `@iris/app-service` 的兄弟插件,各自 `inject: ['irisRpc', …]` 自带 handler;先拆宿主 handler,再拆沙盒文件;协议形状暂留中央 | 数周;四个普查脚本要同步改口径 |

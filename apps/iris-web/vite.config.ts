@@ -39,6 +39,7 @@ export default defineConfig({
       { find: '@iris/protocol', replacement: workspace('iris-protocol') },
       { find: '@iris/rpc-client', replacement: workspace('iris-rpc-client') },
       { find: '@iris/client-fake', replacement: workspace('iris-client-fake') },
+      { find: '@iris/text', replacement: workspace('iris-text') },
       {
         find: '@iris/compat-tavernhelper-core',
         replacement: workspace('iris-compat-tavernhelper-core'),

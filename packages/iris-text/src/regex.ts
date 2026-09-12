@@ -15,11 +15,15 @@
  * literally. Both halves are internally consistent, the pair is wrong, and
  * nothing raises anything. Sharing the function is what makes that impossible.
  *
- * It is in the *core* package because that is the only one the browser may
- * import, and the allowlist admits it on the strength of having no dependencies
- * at all — so this file imports nothing, and must keep importing nothing.
+ * It is in `@iris/text` because that package is on the browser's import
+ * allowlist and is admitted on the strength of having no dependencies at all —
+ * so this file imports nothing, and must keep importing nothing. It lived in
+ * `@iris/compat-tavernhelper-core` until 2026-09-12 for the same reason (root
+ * `notes/DEVIATIONS.md`, stage 0); what moved it is that `@iris/lorebook`, a generic
+ * engine, had to declare a dependency on the Tavern Helper compat package to
+ * read one pattern.
  *
- * @module @iris/compat-tavernhelper-core/regex
+ * @module @iris/text/regex
  */
 
 /**

@@ -132,7 +132,16 @@ test('the browser sees the contract and nothing else', async () => {
   // a listener that never fires, with no error. It qualifies only because it is
   // dependency-free, and its own purity test pins that; the slash grammar was
   // deliberately left out of it so the browser cannot grow a second parser.
-  const allowed = new Set(['@iris/protocol', '@iris/client-fake', '@iris/rpc-client', '@iris/compat-tavernhelper-core'])
+  // `text` is allowlisted on exactly the same ground, for two functions the
+  // frame must compute the same way the host does: `stringHash`, which names a
+  // button's event (`${scriptId}_${hash(name)}`, and a hash differing by one bit
+  // is a listener that never fires), and `parseRegexFromString`, which decides
+  // key-as-pattern on both sides of the boundary. It too qualifies only because
+  // it is dependency-free, with its own purity test. Both functions were inside
+  // `compat-tavernhelper-core` until 2026-09-12 and are on this list for the
+  // same reason they were then — what changed is which package they live in, not
+  // what the browser can reach (root `notes/DEVIATIONS.md`, stage 0).
+  const allowed = new Set(['@iris/protocol', '@iris/client-fake', '@iris/rpc-client', '@iris/compat-tavernhelper-core', '@iris/text'])
   const imported = await sourceImports(join(ROOT, 'apps', 'iris-web'))
   const forbidden = [...imported].filter(name => !allowed.has(name)).sort()
 
@@ -190,6 +199,58 @@ test('nothing depends upward on the host or the composition root', async () => {
     for (const dep of deps) {
       if (upward.has(dep)) violations.push(`${name} → ${dep}`)
     }
+  }
+
+  assert.deepEqual(violations, [])
+})
+
+test('the shared text package depends on nothing of ours', async () => {
+  // Same rule the contract package holds, for the same reason turned around:
+  // `@iris/text` is on the browser's allowlist *because* it can drag nothing in
+  // behind it, so an `@iris/*` dependency here would widen what the frame can
+  // reach without anything in `apps/iris-web` changing. Its own purity test
+  // reads the sources and refuses npm dependencies too; this one is the
+  // manifest-side half, and it is here rather than there because a package that
+  // may import nothing cannot hold a test that walks the workspace.
+  const graph = await manifestGraph()
+
+  assert.ok(graph.has('@iris/text'), 'the package must exist for this to be a check')
+  assert.deepEqual(graph.get('@iris/text'), [])
+})
+
+test('the generic engines do not depend on the Tavern Helper compat layer', async () => {
+  /*
+   * The two inverted edges stage 0 of `notes/PLUGIN-FEASIBILITY.md` §3 removed,
+   * pinned so they cannot come back quietly — and they would come back quietly,
+   * because each was cheap and locally sensible when it was written. Until
+   * 2026-09-12 `@iris/lorebook` and `@iris/macro` — engines that know nothing
+   * about Tavern Helper — declared a dependency on `@iris/compat-tavernhelper-core`
+   * to reach `stringHash` and `parseRegexFromString`, and `@iris/compat-tavernhelper`
+   * declared one on `@iris/mvu` to reach `formatYamlBlock`. Neither is a cycle,
+   * so the cycle test above never saw them; both make a plugin boundary
+   * inexpressible, which is a fact about direction rather than about shape.
+   *
+   * Stated as named pairs rather than as a general rule. A general rule ("no
+   * engine may depend on a compat package") would need a list of which packages
+   * are engines, and that list is the thing that goes stale; these three names
+   * are the decision this change made, and a fourth edge wanting the same
+   * treatment is a new decision that belongs in the ledger before it belongs
+   * here. Root `notes/DEVIATIONS.md`, stage 0.
+   */
+  const forbidden: ReadonlyArray<readonly [string, string]> = [
+    ['@iris/lorebook', '@iris/compat-tavernhelper-core'],
+    ['@iris/macro', '@iris/compat-tavernhelper-core'],
+    ['@iris/compat-tavernhelper', '@iris/mvu'],
+  ]
+  const graph = await manifestGraph()
+  const violations: string[] = []
+
+  for (const [from, to] of forbidden) {
+    // A package that has vanished cannot violate the rule, and cannot enforce it
+    // either: without this the test passes loudest exactly when it is blind.
+    assert.ok(graph.has(from), `${from} is missing from the workspace graph`)
+    assert.ok(graph.has(to), `${to} is missing from the workspace graph`)
+    if ((graph.get(from) ?? []).includes(to)) violations.push(`${from} → ${to}`)
   }
 
   assert.deepEqual(violations, [])

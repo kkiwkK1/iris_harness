@@ -23,9 +23,15 @@ import {
   IFRAME_EVENTS,
   MVU_EVENTS,
   TAVERN_EVENTS,
-  parseRegexFromString,
   type Listener,
 } from '@iris/compat-tavernhelper-core'
+// `parseRegexFromString` is the *same* function the host's activation engine
+// matches with; it moved to `@iris/text` on 2026-09-12 so two generic engines
+// would stop depending on the Tavern Helper compat layer to reach it (root
+// `notes/DEVIATIONS.md`, stage 0). Both packages are dependency-free and both are on
+// the browser's import allowlist, so nothing about what this frame can reach
+// changed.
+import { parseRegexFromString } from '@iris/text'
 // —— family③: preset —— the same module the host writes presets back through,
 // so the three prompt-class guards cannot disagree across the two sides.
 import {
@@ -2271,7 +2277,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * `eventOn(getButtonEvent('名前'), handler)`, the bar emits what it computed,
      * and if the two hashes differ by a bit the handler is simply never called.
      * No error, no warning, nothing to see. So the hash is imported from
-     * `@iris/compat-tavernhelper-core` rather than written here — it was already
+     * `@iris/text` rather than written here — it was already
      * present twice in this repo before this member needed it, and a third copy
      * is how two implementations start disagreeing.
      *

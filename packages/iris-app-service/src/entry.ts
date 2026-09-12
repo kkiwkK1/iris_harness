@@ -22,7 +22,7 @@ import { listCandidates, selectedCandidate } from '@iris/chat'
 import type { TimedEffect, TimedEffectState } from '@iris/lorebook'
 import { expandHelperMacros } from '@iris/compat-tavernhelper'
 import { createMacroContext, createMemoryVariableStore, expandMacros, type MacroMessage, type MemoryVariableStore, type TokenBudget } from '@iris/macro'
-import { applyCommands, formatYamlBlock, loadInitVars, scanDialects, type MvuData } from '@iris/mvu'
+import { applyCommands, loadInitVars, scanDialects, type MvuData } from '@iris/mvu'
 import { extractScripts } from '@iris/script'
 
 import type { ResolvedWorldbook } from './worldbooks.ts'

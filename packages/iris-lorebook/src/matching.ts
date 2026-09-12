@@ -21,14 +21,17 @@
  * @module @iris/lorebook/matching
  */
 
-import { parseRegexFromString } from '@iris/compat-tavernhelper-core'
+import { parseRegexFromString } from '@iris/text'
 
 /**
  * Re-exported so this package's public surface is unchanged by the move.
  *
- * The function now lives in `@iris/compat-tavernhelper-core` because the frame
- * needs the same answer this engine uses — see that module for why a second
- * copy is the failure worth designing against.
+ * The function lives in `@iris/text` because the frame needs the same answer
+ * this engine uses — see that module for why a second copy is the failure worth
+ * designing against. It was in `@iris/compat-tavernhelper-core` until
+ * 2026-09-12, on the same reasoning plus the accident that the compat core was
+ * then the only dependency-free package the browser could import (root
+ * `notes/DEVIATIONS.md`, stage 0).
  */
 export { parseRegexFromString }
 

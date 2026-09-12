@@ -324,13 +324,15 @@ export function mulberry32(seed: number): () => number {
 }
 
 /**
- * Re-exported; the implementation moved to `@iris/compat-tavernhelper-core`.
+ * Re-exported; the implementation lives in `@iris/text`.
  *
  * An entry's identity for timed effects comes from this, and so do the macro
  * tier's `{{pick}}` seeds and the script-button event names. One number, one
- * implementation.
+ * implementation. It sat in `@iris/compat-tavernhelper-core` until 2026-09-12,
+ * which made this engine — which knows nothing about Tavern Helper — depend on
+ * the compat layer for a hash (root `notes/DEVIATIONS.md`, stage 0).
  */
-import { stringHash } from '@iris/compat-tavernhelper-core'
+import { stringHash } from '@iris/text'
 
 export { stringHash }
 

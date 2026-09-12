@@ -1215,3 +1215,133 @@ OOPIF 子会话读帧内 scrollHeight/clientHeight/滚动可达、elementFromPoi
 - 围栏基线无回归：Lights ON 问候帧 888x654、哈人冰恋问候帧 888x482 正常渲染。
 - `pnpm test` 2,400 例全绿；根 `pnpm typecheck` 与 iris-web typecheck 全绿；
   `npm --prefix apps/iris-web run build` 成功。
+
+---
+
+# DEVIATIONS — 阶段 0：包图去环（插件化前置，stage 0）
+
+分支 `dev/plugin-graph-hygiene`,基线 `main` b1bb139,日期 2026-09-12。
+理由见 `notes/PLUGIN-FEASIBILITY.md` §3 的两行「**反向**」与 §7 的阶段 0。
+**本次不改任何行为**:三个函数体逐字节搬家,没有一个被重写、被"顺手改进"
+或被重新格式化;判据是现有测试套件,一条断言都没有放宽。
+
+## 搬走的三个函数与删掉的三条边
+
+1. **`stringHash` / `parseRegexFromString`:`@iris/compat-tavernhelper-core`
+   → 新包 `@iris/text`。** 删掉的边是
+   `@iris/lorebook` → `@iris/compat-tavernhelper-core`(`activate.ts:333`、
+   `matching.ts:24`)与 `@iris/macro` → 同(`registry.ts:172`)。两个**通用引擎**
+   为了一个哈希和一个 `/pattern/flags` 解析器,在清单里声明了对酒馆助手兼容层
+   的依赖。不是环(`architecture.test.ts` 的无环检查从来看不见它),但方向是错的:
+   「酒馆助手是插件」这句话一旦成立,关掉它就会把 `{{pick}}` 的种子和世界书的
+   正则键一起带走。旧位置的理由(两个信任域必须算出**同一个数**;另有一份手抄
+   实现就是要设计规避的失败)一字不改地跟着搬了过去,变的只是哪个包。
+
+2. **th-core 不再 re-export 这两个函数**(`index.ts:29-30` 变成一段说明)。
+   re-export 会让边在清单里消失而在源码里留着,等于把这次改动做成一句谎话;
+   所有消费者直接写 `@iris/text`。th-core 的 `package.json` 描述里
+   "Zero dependencies, by contract" 不变,它的 `purity.test.ts` 不变。
+
+3. **`formatYamlBlock`:`@iris/mvu` → `@iris/compat-tavernhelper`**
+   (`src/yaml.ts`,`macros.ts:33` 改为 `./yaml.ts`)。删掉的边是
+   `@iris/compat-tavernhelper` → `@iris/mvu`,今天这条边让「MVU 作为酒馆助手
+   底下的一个插件」表达不出来:关掉 MVU 必须连一个**酒馆助手的宏**
+   (`{{format_*_variable::…}}`)一起关掉。它当初落在 MVU 里是个历史巧合——
+   那是当时工作区里唯一已经声明了 YAML 库的包,原文档注释自己写着"它是通用的,
+   不是 MVU 专属"。`js-yaml` + `@types/js-yaml` 随函数移入
+   `@iris/compat-tavernhelper`;`@iris/mvu` **保留** `js-yaml`,因为
+   `initvar.ts:20` 还在用它的 `load`。
+
+## `@iris/text` 的归属规则(写在 `src/index.ts` 的模块注释里)
+
+**进**:宿主与卡片帧必须算出**完全相同**答案、且只靠语言本身就能算出来的纯函数。
+**不进**:任何 import 别的包的东西(`@iris/*` 或 npm)。`formatYamlBlock` 就是那个
+反例——它同样纯、同样是文本,但它要 `js-yaml`,所以它去了唯一的调用方那里。
+同样不进:只有一个域会算的东西,以及斜杠命令文法(它纯,但按既有裁定不上浏览器,
+免得长出第二个解析点)。
+
+这条规则是这个包能上浏览器 import 白名单的**唯一**理由,所以它由
+`packages/iris-text/tests/purity.test.ts` 读源码来钉(照抄 th-core 同名测试的形状,
+两份而不是抽公共 helper——helper 就是一个 import,而这两个包唯一不能有的就是 import)。
+
+## 测试
+
+- `packages/iris-text/tests/index.test.ts`(**新**,4 例):`stringHash` 的
+  期望值是**在动任何一个文件之前**,拿 `main` 上的 th-core 跑出来的字面量
+  (`''`→3338908027751811、`'tower'`→6129580172663358、`'iris'`→3208409214457311、
+  `'龙'`→6283590729210438、`'🙂'`→5813621503378343、
+  `'The quick brown fox'`→3334773827374378,各带 seed=7 的第二列)。写成字面量而不是
+  跟旧模块比对:旧模块已经不存在,而一个 import 新模块两次的测试什么也证明不了。
+  星体面字符那一例是唯一能区分 `charCodeAt` 与 `for…of` 的样本——实测 ASCII、
+  BMP 中文在两种写法下**同值**,只有 `🙂` 不同,所以没有 emoji 的样本量再大也看不见
+  那次"改进"。另加一条比较计数的下限,防止循环一个样本都没比。
+- `packages/iris-text/tests/regex.test.ts`:从
+  `packages/iris-compat-tavernhelper-core/tests/regex.test.ts` 整文件搬来(`cp`,不是重打:
+  该文件的注释自己记着上一次搬家时反斜杠被 shell 吃掉的事故)。
+- `packages/iris-text/tests/purity.test.ts`(**新**,2 例)。
+- `packages/iris-compat-tavernhelper/tests/yaml.test.ts`(**新**,5 例):
+  `formatYamlBlock` 搬过来时**一条自己的测试都没有**,只被 app-service 的
+  `helper-macros.test.ts` 端到端覆盖——而那条断言"有一个块进了提示词",
+  下面每一种改写都还会产出"一个块"。这里钉的是它文档注释自称承重的三件事:
+  `lineWidth: -1`(默认会在 80 列折行,状态块里折一行在模型眼里就是两个值)、
+  `noCompatMode: true`(否则 `yes`/`on`/`off` 会被加引号,与上游 `yaml` 包 1.2 的
+  渲染不一致)、字符串原样返回(上游是原样代入,过一遍 `dump` 会把引号写进正文)。
+- `apps/iris/tests/architecture.test.ts`:白名单加 `@iris/text`(理由与 th-core 同款——
+  帧必须算出同一个答案,且它零依赖);新增两条图断言——
+  `@iris/text` 的 `@iris` 依赖为空(和 `@iris/protocol` 同规矩),
+  以及上面三条边不得回来。三条边按**具名成对**写,不写成通则:
+  「引擎不得依赖兼容包」需要一份"谁算引擎"的名单,而那份名单才是会过期的东西;
+  第四条边想要同样待遇,那是一个新决定,先进账本再进代码。两条断言都先断言
+  包**存在**——一个已经消失的包既违反不了规则,也守不住规则,而没有这一行时
+  它恰好在自己失明的时候叫得最响。
+- `packages/iris-lorebook`、`packages/iris-macro` 的 `hash-identity.test.ts` 与
+  `matching.test.ts` 的身份断言照旧,只是对照对象从 th-core 换成 `@iris/text`。
+
+**牙齿**:18 个具名变异,每个都让一条具名断言变红——
+`Math.imul`→`*`;`charCodeAt`→`codePointAt`(只红在 `🙂` 那一行);`^ seed` 删除;
+正则的未转义分隔符拒绝删除;`new RegExp(pattern, flags)` 丢掉 flags;
+`@iris/text` 里加一句 `import`;purity 扫描改成 `.tsx`(扫不到文件);
+`@iris/text` 的清单加一个 npm 依赖;加一个 `@iris` 依赖;包改名;
+三条边各自回插清单;白名单删掉 `@iris/text`;
+`{ lineWidth: -1 }` 去掉;`noCompatMode` 去掉;字符串直返去掉;`.trimEnd()` 去掉。
+最后一条第一次没红——变异脚本的字符串替换打在了**文档注释里**那句
+"`YAML.stringify(...).trimEnd()`"上(它在文件里先出现),改打代码行后一次红 4 条。
+同一轮里变异脚本本身先骗过我一次:它按 TAP 的 `# fail N` 解析,而 `node --test`
+默认输出的是 `ℹ fail N`,于是 14 个变异一致报 `fail=0`——一次"检查跳过了自己的样本"。
+
+## 顺带改了什么、没改什么
+
+- `docs/ARCHITECTURE.md`:包数 22→23,L0 加 `text`;规则 2 那段原本只写了
+  protocol / rpc-client / client-fake 三个,而测试里的白名单早已有
+  `compat-tavernhelper-core`——这次把"两个零依赖包"一并写进去,文档与测试重新对齐。
+- `packages/iris-app-service/src/entry.ts:25`:按协调者的例外条款,只从那一行 import
+  里删掉 `formatYamlBlock` 这个名字(它在该文件里零使用,是死导入;
+  `PLUGIN-FEASIBILITY.md` §3.2 已记载)。**该文件的另一项阶段 0 工作
+  ——`expandHelperMacros`(`entry.ts:747-767`)改走
+  `MacroRegistry.registerMacroLike`——本次不做**,因为
+  `dev/system-plugins` 正在重写同一个文件;这一项留在 §7 的阶段 0 行里。
+- `apps/iris-web/src/sandbox/tavern-helper.ts:2280` 的一句注释原本写着哈希来自
+  th-core,已改。同文件 `:4921` 说预设三个类别守卫来自 th-core——**那句仍然成立**,
+  没动。`notes/apps/iris-web/DEVIATIONS.md:5505` 提到
+  `@iris/compat-tavernhelper-core/src/regex.ts`,是带日期的历史账,按惯例不改写。
+
+## 装不上(实测,与本次改动无关)
+
+`pnpm install --offline` 在本机**跑不完**,失败点不是本次新增的依赖:
+```
+Lockfile is up to date, resolution step is skipped
+Already up to date
+✗ Lockfile failed supply-chain policy check (55 entries in 138ms)
+[ERR_PNPM_NO_OFFLINE_META] Failed to resolve zod in package mirror
+  C:\Users\kkiw\AppData\Local\pnpm-cache\v11\metadata-full\registry.npmjs.org\zod.jsonl
+```
+pnpm 11.24 的 supply-chain 校验要读**整份锁文件 55 条**的 registry 元数据,
+离线镜像里没有 `zod` 的那份;`--config.minimumReleaseAge=0` 不绕过。
+锁文件本身是对的——同一次运行里 pnpm 自己说 "Lockfile is up to date, resolution
+step is skipped"。校验失败发生在链接完成之前,于是三处 `node_modules` 链接没落地,
+改用 `mklink /J` 按 pnpm 自己的形状补上:
+`iris-lorebook`、`iris-macro` 各一条 `@iris/text` → `packages/iris-text`,
+`iris-compat-tavernhelper` 两条指向 `.pnpm` 里既有的 `js-yaml@4.3.2` 与
+`@types/js-yaml@4.0.9`(store 里本来就有,因为 `@iris/mvu` 声明着同样的版本)。
+`apps/iris-web` 是 npm 管的,协调者已经跑过 `npm install --offline`,`@iris/text`
+的 symlink 在位,本轮未再跑。锁文件的三处 importer 条目按手工改动同步更新。

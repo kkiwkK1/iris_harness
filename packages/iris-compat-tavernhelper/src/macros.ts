@@ -30,7 +30,7 @@
  * @module @iris/compat-tavernhelper/macros
  */
 
-import { formatYamlBlock } from '@iris/mvu'
+import { formatYamlBlock } from './yaml.ts'
 
 /**
  * The five scopes upstream's variable macros name.

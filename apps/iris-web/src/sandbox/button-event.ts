@@ -19,7 +19,7 @@
  *
  * @module iris-web/sandbox/button-event
  */
-import { stringHash } from '@iris/compat-tavernhelper-core'
+import { stringHash } from '@iris/text'
 
 /**
  * Build the event name for one button.
