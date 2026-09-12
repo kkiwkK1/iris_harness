@@ -1,0 +1,310 @@
+{
+  "surveyVersion": 1,
+  "generatedAt": "2026-09-12T17:00:36.804Z",
+  "extensionDir": "E:\\sillyTavern\\SillyTavern\\public\\scripts\\extensions\\third-party\\ST-Prompt-Template",
+  "stRoot": "E:\\sillyTavern\\SillyTavern\\public",
+  "manifest": {
+    "path": "manifest.json",
+    "sha256": "1169b3545c2ef5c2717c1e9611fbac4474d94dc411214e5854330bc58b49cd7d",
+    "fields": {
+      "display_name": "Prompt Template/提示词模板",
+      "loading_order": 1,
+      "requires": [],
+      "optional": [],
+      "js": "dist/index.js",
+      "css": "",
+      "author": "zonde306",
+      "version": "1.17.4.1",
+      "homePage": "https://github.com/zonde306/ST-Prompt-Template",
+      "auto_update": true,
+      "i18n": {
+        "zh-cn": "locales/zh-cn.json",
+        "zh-tw": "locales/zh-tw.json"
+      }
+    },
+    "unknownFields": [],
+    "knownFields": [
+      "js",
+      "css",
+      "loading_order",
+      "display_name",
+      "requires",
+      "optional",
+      "i18n",
+      "author",
+      "version",
+      "homePage",
+      "auto_update"
+    ]
+  },
+  "tree": {
+    "totalFiles": 415,
+    "totalBytes": 102374704,
+    "topLevel": [
+      {
+        "name": "dist",
+        "files": 190,
+        "bytes": 57388324
+      },
+      {
+        "name": ".git",
+        "files": 174,
+        "bytes": 40119076
+      },
+      {
+        "name": "libs",
+        "files": 2,
+        "bytes": 3889584
+      },
+      {
+        "name": "(root)",
+        "files": 11,
+        "bytes": 374798
+      },
+      {
+        "name": "src",
+        "files": 28,
+        "bytes": 365184
+      },
+      {
+        "name": "docs",
+        "files": 4,
+        "bytes": 161362
+      },
+      {
+        "name": "include",
+        "files": 2,
+        "bytes": 53638
+      },
+      {
+        "name": "tests",
+        "files": 1,
+        "bytes": 11417
+      },
+      {
+        "name": "locales",
+        "files": 2,
+        "bytes": 10230
+      },
+      {
+        "name": ".github",
+        "files": 1,
+        "bytes": 1091
+      }
+    ]
+  },
+  "entry": {
+    "path": "dist/index.js",
+    "sha256": "61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd",
+    "bytes": 5083741
+  },
+  "imports": {
+    "method": "regex first pass; P2 must re-derive with a parser (runbook §6)",
+    "static": [
+      {
+        "raw": "../libs/faker.mjs",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/extensions/third-party/ST-Prompt-Template/libs/faker.mjs",
+          "own:libs/faker.mjs"
+        ],
+        "ambiguous": true,
+        "tail": "libs/faker.mjs"
+      },
+      {
+        "raw": "../../../../../script.js",
+        "kind": "relative",
+        "matches": [
+          "st:script.js"
+        ],
+        "ambiguous": false,
+        "tail": "script.js"
+      },
+      {
+        "raw": "../../../../slash-commands.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/slash-commands.js"
+        ],
+        "ambiguous": false,
+        "tail": "slash-commands.js"
+      },
+      {
+        "raw": "../../../../world-info.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/world-info.js"
+        ],
+        "ambiguous": false,
+        "tail": "world-info.js"
+      },
+      {
+        "raw": "../../../../power-user.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/power-user.js"
+        ],
+        "ambiguous": false,
+        "tail": "power-user.js"
+      },
+      {
+        "raw": "../../../../utils.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/utils.js"
+        ],
+        "ambiguous": false,
+        "tail": "utils.js"
+      },
+      {
+        "raw": "../../../../group-chats.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/group-chats.js"
+        ],
+        "ambiguous": false,
+        "tail": "group-chats.js"
+      },
+      {
+        "raw": "../../../../extensions.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/extensions.js"
+        ],
+        "ambiguous": false,
+        "tail": "extensions.js"
+      },
+      {
+        "raw": "../../../regex/engine.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/extensions/regex/engine.js"
+        ],
+        "ambiguous": false,
+        "tail": "regex/engine.js"
+      },
+      {
+        "raw": "../../../../../lib.js",
+        "kind": "relative",
+        "matches": [
+          "st:lib.js"
+        ],
+        "ambiguous": false,
+        "tail": "lib.js"
+      },
+      {
+        "raw": "../../../../openai.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/extensions/tts/openai.js",
+          "st:scripts/openai.js"
+        ],
+        "ambiguous": true,
+        "tail": "openai.js"
+      },
+      {
+        "raw": "../../../../tokenizers.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/tokenizers.js"
+        ],
+        "ambiguous": false,
+        "tail": "tokenizers.js"
+      },
+      {
+        "raw": "../../../../reasoning.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/reasoning.js"
+        ],
+        "ambiguous": false,
+        "tail": "reasoning.js"
+      },
+      {
+        "raw": "../../../../slash-commands/SlashCommand.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/slash-commands/SlashCommand.js"
+        ],
+        "ambiguous": false,
+        "tail": "slash-commands/SlashCommand.js"
+      },
+      {
+        "raw": "../../../../slash-commands/SlashCommandArgument.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/slash-commands/SlashCommandArgument.js"
+        ],
+        "ambiguous": false,
+        "tail": "slash-commands/SlashCommandArgument.js"
+      },
+      {
+        "raw": "../../../../slash-commands/SlashCommandParser.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/slash-commands/SlashCommandParser.js"
+        ],
+        "ambiguous": false,
+        "tail": "slash-commands/SlashCommandParser.js"
+      },
+      {
+        "raw": "../../../../events.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/events.js"
+        ],
+        "ambiguous": false,
+        "tail": "events.js"
+      },
+      {
+        "raw": "../../../../popup.js",
+        "kind": "relative",
+        "matches": [
+          "st:scripts/popup.js"
+        ],
+        "ambiguous": false,
+        "tail": "popup.js"
+      }
+    ],
+    "dynamicLiteral": [],
+    "unresolved": []
+  },
+  "notes": [
+    "Worker scripts present (dist/editor.worker.js, dist/ejs.workers.js): Worker/fetch relative paths need their own verification (runbook §6)",
+    "resolved host-module candidates: 19; ambiguous tails are listed per-import, not resolved"
+  ],
+  "workers": [
+    {
+      "path": "dist/editor.worker.js",
+      "bytes": 282983
+    },
+    {
+      "path": "dist/ejs.workers.js",
+      "bytes": 891
+    }
+  ],
+  "workerLiteralSites": [
+    "/scripts/extensions/third-party/ST-Prompt-Template/dist/ejs.workers.js"
+  ],
+  "hostModules": [
+    "lib.js",
+    "script.js",
+    "scripts/events.js",
+    "scripts/extensions.js",
+    "scripts/extensions/regex/engine.js",
+    "scripts/extensions/third-party/ST-Prompt-Template/libs/faker.mjs",
+    "scripts/extensions/tts/openai.js",
+    "scripts/group-chats.js",
+    "scripts/openai.js",
+    "scripts/popup.js",
+    "scripts/power-user.js",
+    "scripts/reasoning.js",
+    "scripts/slash-commands.js",
+    "scripts/slash-commands/SlashCommand.js",
+    "scripts/slash-commands/SlashCommandArgument.js",
+    "scripts/slash-commands/SlashCommandParser.js",
+    "scripts/tokenizers.js",
+    "scripts/utils.js",
+    "scripts/world-info.js"
+  ]
+}
