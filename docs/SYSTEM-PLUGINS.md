@@ -117,6 +117,21 @@ unavailable does not apply to this dependency. Capability registrations are
 owned by the providing incarnation, so a delayed old disposer cannot withdraw
 its replacement.
 
+The activation scope also carries `registerRpc` (landed 2026-09-13): a plugin
+contributes a wire method without touching the static protocol. The request
+schema goes into `@iris/protocol`'s runtime registry and the handler onto the
+transport — paired, so a method is never half-registered — and both halves are
+effects of the activation's own fiber, so disposal takes them whether or not
+the plugin kept the returned handle. Every call is admitted through the
+plugin's lease: a disabled plugin's method answers `unsupported`, a stale
+`pluginRevision` is refused, and a disable drains in-flight calls before the
+registration goes. A method name is a composition-level fact: colliding with a
+built-in or another registration throws inside the arriving plugin's
+`activate`, failing that plugin and nothing else. The static vocabulary stays
+the host's own claim — `Handlers` remains total — and a capability moving out
+to a plugin takes its schemas to the registry, shrinking `RpcMethod` by the
+same keys.
+
 ## Compatibility boundaries
 
 Disabling Tavern Helper removes its optional API and stops its owned scripts.

@@ -107,3 +107,55 @@ export function fenceFrameParams(params: unknown, revision: number): unknown {
   if (typeof params !== 'object' || params === null || Array.isArray(params)) return params
   return { ...(params as Record<string, unknown>), pluginRevision: revision }
 }
+
+/**
+ * The pathname prefix every plugin-asset URL lives under.
+ *
+ * The same literal the host route is mounted at and the frame's plugin tags
+ * are built from, stated once here so the two cannot spell it differently —
+ * the same ground `SYSTEM_PLUGIN_RUNTIME_META` holds the meta name on. Fixed,
+ * not configurable, for that reason: a prefix both sides must agree on is a
+ * contract, and a contract with a per-deployment override is two contracts.
+ */
+export const PLUGIN_ASSET_PREFIX = '/plugins'
+
+/** Where the aggregate plugin-asset manifest is served. */
+export const PLUGIN_ASSET_MANIFEST_PATH = `${PLUGIN_ASSET_PREFIX}/manifest.json`
+
+/** One enabled plugin's browser face, as the aggregate manifest states it. */
+export interface PluginAssetEntry {
+  /**
+   * Content rev of the client bundle: sha1 of its bytes, first 12 hex
+   * characters — the shape dsh's own client-module routes use, so bundles
+   * and manifests composed by either half interoperate.
+   */
+  rev: string
+  /** The bundle's URL, rev included as its cache-busting query. */
+  client: string
+}
+
+/**
+ * What {@link PLUGIN_ASSET_MANIFEST_PATH} answers: the host composing its
+ * plugin install directory with the control plane's current snapshot.
+ *
+ * Keyed by plugin id and holding only plugins that are enabled **and** have a
+ * client bundle on disk, so the manifest is the enable state made fetchable —
+ * a plugin that is disabled, or whose bundle is absent, has no row, and a
+ * frame holding an older manifest ages out with the `revision` the runtime
+ * already broadcasts through `plugins.changed`.
+ *
+ * Deliberately **not** a fifth key in the build's own `manifest.json`
+ * (`apps/iris-web/src/sandbox/asset-manifest.ts`): that manifest is a
+ * build-time artifact whose fixed keys three build tools consume by name
+ * (`apps/iris-web/tools/hash-sandbox-assets.mjs`, `prune-sandbox-assets.mjs`,
+ * `check-bootstrap.mjs`), and letting runtime state into it would make
+ * those tools consumers of plugin installs. Two manifests, two gates, no
+ * shared prefix — the pruning tool's `<key>-<hash>` name rule must never meet
+ * a runtime-composed row.
+ */
+export interface PluginAssetManifest {
+  /** The system-plugin runtime revision this enabled set was read at. */
+  revision: number
+  /** Enabled plugins that have a client bundle, keyed by plugin id. */
+  plugins: Record<string, PluginAssetEntry>
+}

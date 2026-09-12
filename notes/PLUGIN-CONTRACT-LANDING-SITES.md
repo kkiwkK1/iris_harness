@@ -134,7 +134,7 @@ Iris 侧路由 + manifest 聚合 + CORS 头 2–3 天;dsh 注入行接线 + main
 
 **能力快照(Codex 已建,必须沿用)**
 
-- 帧内不可变快照:`SandboxPluginRuntime = { revision, tavernHelper, mvu }`(`apps/iris-web/src/sandbox/system-plugin-runtime.ts:20`),缺省值 `:25-30`,归约函数 `sandboxPluginRuntime()`(`system-plugin-runtime.ts:37-54`,只认 `installed && enabled && status === 'enabled'` 的行,MVU 隐含依赖 TH),meta 写入 srcdoc(`srcdoc.ts:591`,`SYSTEM_PLUGIN_RUNTIME_META` 在 `system-plugin-runtime.ts:22`),帧内读取(`frame-entry.ts:232-233`)。
+- 帧内不可变快照:`SandboxPluginRuntime = { revision, tavernHelper, mvu }`(契约包迁移后现居 `packages/iris-plugin-web-api/src/index.ts:38`;本稿勘察时在 `apps/iris-web/src/sandbox/system-plugin-runtime.ts`,该文件已随迁移删除,下列裸文件名行号仍以 ae55920 勘察稿为准),缺省值 `:25-30`,归约函数 `sandboxPluginRuntime()`(`system-plugin-runtime.ts:37-54`,只认 `installed && enabled && status === 'enabled'` 的行,MVU 隐含依赖 TH),meta 写入 srcdoc(`srcdoc.ts:591`,`SYSTEM_PLUGIN_RUNTIME_META` 在 `system-plugin-runtime.ts:22`),帧内读取(`frame-entry.ts:232-233`)。
 - revision 栅栏:帧发出的每个请求由 `fenceFrameParams` 附加 `pluginRevision`(`system-plugin-runtime.ts:83-90`;使用点 `runner.ts:670-690` 的 settings/call/slash 三臂)。
 - 变更→销毁重建:`plugins.changed` 事件 → `adoptSystemPluginSnapshot`(`store.ts:3622-3625`;时钟/会话排除旧响应 `store.ts:1399-1435`)→ `useCardScripts.tsx:79-83` 派生 `pluginRevision/tavernHelperEnabled/mvuEnabled`,作为**重建 effect 的依赖**(`useCardScripts.tsx:792-800`)——任何一项变化,整个 run 拆掉重建;接口帧同样校验 ready 的 revision(`MessageInterfaces.tsx:120-122,275,285`)。
 - 帧内按布尔装配 TH/MVU 面:`frame.ts:391-392` 的 `hasTavernHelper/hasMvu`,TH 表 `frame.ts:2228`起,`publishName`(`frame.ts:2129`),Mvu 垫片 `frame.ts:3003-3085`。

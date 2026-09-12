@@ -46,6 +46,7 @@ import { ScriptButtonStore } from './script-buttons.ts'
 import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
 import { DEFAULT_PRUNE } from './prune.ts'
+import { PluginAssetStore, type PluginAssetState } from './plugin-assets.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
 import { stampShellIndex } from './shell-csp.ts'
 import { ScriptCache } from './script-cache.ts'
@@ -56,6 +57,7 @@ import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 import { SystemPluginRuntime } from './system-plugins.ts'
 import { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
+import { PLUGIN_ASSET_PREFIX } from '@iris/plugin-web-api'
 
 export {
   BackupStore,
@@ -130,6 +132,11 @@ export {
   uniqueId,
   type ProfilePaths,
 } from './paths.ts'
+export {
+  PluginAssetStore,
+  type PluginAssetState,
+  type PluginAssetStateView,
+} from './plugin-assets.ts'
 export {
   applyCardOverrides,
   buildPrompt,
@@ -1253,4 +1260,54 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       'irisApp: shell Content-Security-Policy',
     )
   }
+
+  /*
+   * The browser face of installed system plugins: the aggregate manifest at
+   * `/plugins/manifest.json` and each enabled plugin's client bundle at
+   * `/plugins/<id>/client.js` (`plugin-assets.ts`, which is where the URL
+   * contract, the install-directory layout and their reasons live).
+   *
+   * Registered unconditionally, unlike the sandbox route above, for two
+   * reasons: it serves profile data rather than a build — the plugin install
+   * directory exists whenever the host does — and `/plugins/manifest.json` is
+   * a real answer in every state (the current enabled set, possibly empty),
+   * where a sandbox route without a dist would have nothing but 404s to say.
+   * Nothing in the built dist lives under `/plugins`, so the fallback seat
+   * loses nothing it could ever have served.
+   *
+   * The prefix is fixed by the contract package rather than configured, the
+   * same way the meta name is: the frame's plugin tags and this route must
+   * spell one URL, and a contract with a per-deployment override is two
+   * contracts.
+   *
+   * Guarded like every route above, and for the same reason: these bytes are
+   * plugin code this process did not author, and the `/plugins` prefix is as
+   * readable to a hostile same-origin page as the RPC endpoint is.
+   */
+  const pluginAssets = new PluginAssetStore(join(dataDir, 'system-plugins'))
+  // Read per request, never captured: the manifest and the bundle gate must
+  // answer the enable state as it is *now*, and a disable that committed
+  // after this plugin started is a fact the next request already carries. The
+  // triple is the same one the browser's `sandboxPluginRuntime` reduces on —
+  // installed, enabled, and the transition complete — restated per row rather
+  // than reduced to booleans, because the asset plane is per-plugin flat:
+  // MVU's implicit dependency on Tavern Helper is a capability-plane rule and
+  // has no business hiding one plugin's bundle behind another's state.
+  const pluginAssetState = (): PluginAssetState => {
+    const snapshot = systemPlugins.snapshot()
+    return {
+      revision: snapshot.revision,
+      enabled: new Set(snapshot.plugins
+        .filter(plugin => plugin.installed && plugin.enabled && plugin.status === 'enabled')
+        .map(plugin => plugin.id)),
+    }
+  }
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'prefix',
+      path: PLUGIN_ASSET_PREFIX,
+      handler: ctx.irisRpc.guard((req, res) => pluginAssets.serve(req, res, pluginAssetState)),
+    }),
+    `irisApp: GET ${PLUGIN_ASSET_PREFIX}`,
+  )
 }

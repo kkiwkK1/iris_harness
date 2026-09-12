@@ -106,9 +106,38 @@ renderSnapshot/showError 是使用者的 UI 回调。不要将该示例直接放
 
 ### 新增业务 RPC
 
-目前必须在中央 requestSchemas、响应类型和宿主 handler/注册处一起添加，并更新 fake/transport 测试。Claude 的动态注册机制完成后才能把 schema 放进插件包。不要通过 `as any`、全局 string 索引签名或绕过 parseRequest 把“能发送”当作完成接口支持。
+宿主自有方法仍走中央路径：requestSchemas、响应类型、handler/注册处一起添加，并更新 fake/transport 测试。**插件自有方法自 2026-09-13 起可走运行期登记**，不再需要改协议核心：
 
-未来动态注册要求：schema 与 handler 成对登记；同名拒绝；失败撤销；处理函数在入口取 lease；dispose 撤销两者；fake 有相同启停语义。单靠 fiber 最终撤销不能阻止 draining 期间的新请求。
+```ts
+import { z } from 'zod' // 或任何 safeParse 形状兼容的 schema 库
+import type { SystemPluginDefinition } from '@iris/plugin-api'
+
+const askSchema = z.object({ floor: z.number().int().min(0) })
+
+activate(scope) {
+  // 两半（协议注册表的 schema、运输层的 handler）成对登记；
+  // 撤销随 activation 的 fiber dispose 自动执行，返回的句柄只是提前撤。
+  scope.registerRpc('myplugin.ask', askSchema, async params => {
+    if (params.floor > 100) {
+      // 主动拒绝：抛带协议错误码的 Error，不要返回错误形状的结果。
+      const refusal = new Error('floor beyond this profile\'s reach')
+      ;(refusal as { code?: string }).code = 'invalid-request'
+      throw refusal
+    }
+    return { echo: params.floor }
+  })
+}
+```
+
+语义（全部有行为测试钉住，见接口清单 §7 毕业记录）：
+
+- **方法名是组合层事实**：撞内置名或撞已占用名在 activate 内抛错，只失败当事插件，先到者继续服务；不按加载顺序遮蔽。
+- **每次调用经当事插件的 lease**：停用后新调用立即答 `unsupported`；请求携带的 `pluginRevision` 过期即拒；停用会排空在途调用后再释放注册。
+- **两半同生同灭**：撤销/dispose 同时移除 schema 与 handler——方法要么完整存在，要么完整消失，调用侧读到的是同一状态的 `unsupported`。
+- **类型层**：动态方法的 params/响应在客户端类型里是 `unknown`，注册处的 schema 就是它的类型；不要用 `as any` 或全局索引签名换取假的类型化。
+- **fake 对应面**：测试/演示夹具用 `fakeClient.registerPluginMethod(method, schema, handler, { pluginId })`；命名 `pluginId` 的方法随该目录行启停失效，与宿主行为合同一致。
+
+静态表仍是宿主方法的正确归属：能为所有构建实现的方法不要塞进插件；插件方法的判定标准是"它随插件启停而存在"。不要通过 `as any`、全局 string 索引签名或绕过 parseRequest 把"能发送"当作完成接口支持。
 
 ### UI 和帧侧贡献
 
@@ -177,7 +206,8 @@ node apps/iris/bin.ts
 | 安装/启用 | 目录状态与真实 capability 对齐，失败有原因 |
 | 依赖阻塞 | MVU 启用时拒绝停用/重载/卸载 TH，并说明先停 MVU |
 | 异步停用 | 新请求立即拒绝；已接纳任务按合同结束；停用成功后无迟到提交 |
-| 重载循环 | 至少连续三轮，一个 capability/一组监听器；旧回调不能操作新实例 |
+| 重载循环 | 至少连续三轮，一个 capability/一组监听器/一组 RPC 注册；旧回调不能操作新实例 |
+| 运行期 RPC 方法 | 启用后可调用且 schema 生效；停用/过期 revision 答 unsupported 且 schema 同撤；reload 不累积注册；重名只失败当事插件 |
 | 激活失败 | 已注册的部分资源回收；其他插件可继续工作 |
 | 存储失败 | 不伪报成功，不覆盖损坏偏好；错误可见 |
 | MVU 停用期聊天 | 不初始化/更新/补放命令；重新启用不重放停用期文本 |
@@ -190,7 +220,7 @@ node apps/iris/bin.ts
 现成测试起点：
 
 ```powershell
-node --test packages/iris-plugin-api/tests/*.test.ts packages/iris-plugin-web-api/tests/*.test.ts packages/iris-app-service/tests/system-plugins.test.ts packages/iris-app-service/tests/system-plugin-extraction.test.ts packages/iris-client-fake/tests/system-plugins.test.ts apps/iris-web/tests/system-plugins-store.test.ts apps/iris-web/tests/plugin-center.test.ts apps/iris-web/tests/system-plugin-sandbox-lifecycle.test.ts
+node --test packages/iris-plugin-api/tests/*.test.ts packages/iris-plugin-web-api/tests/*.test.ts packages/iris-app-service/tests/system-plugins.test.ts packages/iris-app-service/tests/system-plugin-extraction.test.ts packages/iris-app-service/tests/system-plugin-rpc.test.ts packages/iris-protocol/tests/rpc.test.ts packages/iris-protocol/tests/rpc-registry.test.ts packages/iris-client-fake/tests/system-plugins.test.ts packages/iris-client-fake/tests/plugin-methods.test.ts apps/iris-web/tests/system-plugins-store.test.ts apps/iris-web/tests/plugin-center.test.ts apps/iris-web/tests/system-plugin-sandbox-lifecycle.test.ts
 ```
 
 先完成 web build 再读取 no-corpus 结果，避免因缺 dist 多跳过测试。记录实际 fail/skip 和原因，不把“测试文件未能启动”算成测试通过。

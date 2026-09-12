@@ -5,6 +5,8 @@ import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
 
 import {
   DEFAULT_SANDBOX_PLUGIN_RUNTIME,
+  PLUGIN_ASSET_MANIFEST_PATH,
+  PLUGIN_ASSET_PREFIX,
   SYSTEM_PLUGIN_RUNTIME_META,
   encodeSandboxPluginRuntime,
   fenceFrameParams,
@@ -124,4 +126,14 @@ test('fenceFrameParams attaches the revision to object payloads only', () => {
   for (const value of [null, 5, 'text', true, undefined, [1, 2]]) {
     assert.equal(fenceFrameParams(value, 9), value)
   }
+})
+
+test('the plugin-asset paths are the literals both sides build URLs from', () => {
+  // The host route is mounted at the prefix and answers the manifest path; the
+  // frame's plugin tags and the shell's manifest fetch are built from the same
+  // two strings. Stated as full literals, not derived from one another in the
+  // test, so a change to either contract value is a change this test reports
+  // rather than one it follows quietly.
+  assert.equal(PLUGIN_ASSET_PREFIX, '/plugins')
+  assert.equal(PLUGIN_ASSET_MANIFEST_PATH, '/plugins/manifest.json')
 })

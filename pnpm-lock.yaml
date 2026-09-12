@@ -158,6 +158,9 @@ importers:
       '@iris/plugin-api':
         specifier: workspace:*
         version: link:../iris-plugin-api
+      '@iris/plugin-web-api':
+        specifier: workspace:*
+        version: link:../iris-plugin-web-api
       '@iris/preset':
         specifier: workspace:*
         version: link:../iris-preset
