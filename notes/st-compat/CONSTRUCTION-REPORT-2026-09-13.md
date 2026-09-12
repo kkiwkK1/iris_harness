@@ -29,3 +29,15 @@
 
 - 下一产品编码任务：**落点 3**，从本轮修复后的 HEAD 新建 `dev/plugin-client-runtime` + 独立 worktree，按 §9.2 派工单开工（快照泛化 / 成员表合并 / 拒跑语义重定 / 宿主扫描接线）。
 - 基础设施核验（任务三）与控制面（任务二）归各自所有者；本会话不再在 `dev/system-plugins` 承接独立批次工作区修改，仅保留集成人接线与验收动作。
+
+## 追记二：落点 3 落地（dev/plugin-client-runtime @ 4fab477，已合入）
+
+按修订版任务书 §9.2 派工单（`notes/DISPATCH-plugin-client-runtime.md`，基线 `1e63711`）施工，三个切片一次交付：
+
+- **切片 A（契约）**：`SandboxPluginRuntime` 增 `plugins` 记录（复用落点 2 的 `PluginAssetEntry`）；内建布尔保留为兼容面字段，`plugins` 表达存在性——两者不互相泛化。权威划分：快照决定**是否**收录，清单只回答**字节在哪**；`parsePluginAssetManifest` 对 fetch 响应施加与快照行相同的行规则。
+- **切片 B（合并协议）**：核心表 `registerPluginMembers`——准入（bootstrap 在任一插件标签前发布的 `__iris_plugins_admitted__` 记录）、形状、同名冲突（核心名不可遮蔽；跨插件同名点名拒绝，镜像 `IrisRpcHost.register`）；存储按插件命名空间且冻结。收集器为纯模块 `plugin-members.ts`（标签顺序迫使惰性收集）；拒跑语义重定为**每插件**而非整帧：核心表缺席仍全拒，单插件 ready 标记缺席只拒该插件成员并点名原因。
+- **切片 C（接线）**：`buildSrcdoc` 按准入行发阻塞标签（bootstrap guard 之后、卡库之前，位置断言进测试）；shell 按快照 revision 取 `/plugins/manifest.json`（`usePluginAssetManifest`，失败为空+具名 console 警告，非致命），清单到达即作为重建依赖拆帧重建；`system-plugins.ts` **零触碰**（清单由落点 2 路由供数，无内核碰撞面）。
+
+集成树全量门（`4fab477`）：web build ✓、check:render ✓、根 tsc ✓、web tsc ✓、packages 半边 2122/2120 pass/0 fail/2 skip、iris-web 半边 1745/1744/0/1、apps/iris 半边 77/69/0/8、no-corpus 40 skip/0 failed、`git diff --check` 净。
+
+剩余事项（更新）：①插件成员的卡面暴露（frame.ts 消费通道）与首个真实插件浏览器面随 P3 试点落地；②插件清单 fetch 失败的用户可见状态归插件中心 UI；③TH/MVU 共享依赖组环境按 RUNBOOK §7 待实测需求裁决；④`dev/plugins-member-merge`（@934ae1c，树净）已被本派工单取代，可由其所有者清理。
