@@ -82,6 +82,8 @@ registerRequestSchema(method: string, schema: ZodType<unknown>): () => void
 
 ## 2. 落点二:`/plugins/<id>/client.js` 资产面
 
+**状态:已落地(2026-09-13,提交 `ab3da4d`)。** 服务面为 `packages/iris-app-service/src/plugin-assets.ts`(`PluginAssetStore`:聚合清单 + rev 键控 bundle,`?rev=` 命中当前内容才 immutable、否则一律 no-cache),组合接线在 `src/index.ts` 的 guarded 前缀路由;URL 字面量(`PLUGIN_ASSET_PREFIX`/`PLUGIN_ASSET_MANIFEST_PATH`)与清单形状在 `@iris/plugin-web-api`。行为测试:`packages/iris-app-service/tests/plugin-assets.test.ts`(8)与 `apps/iris/tests/plugin-assets-plane.test.ts`(4,guard 全覆盖/CSP 快照/契约前缀)。**与草案的两处偏离**:①未挂 dsh `client-modules` 组合行,插件 bundle 直接从安装目录伺服(该目录由安装路径负责,本落点不实现分发);②`dsh.client` 清单扫描未在本落点实现——第三方插件分发信任模型未裁决,扫描对象与伺服对象分开演进。壳侧消费(取清单、帧内加载标签)归落点三。以下为勘察原稿,供设计回溯。
+
 ### 2.1 现状
 
 **dsh 侧的内核已经存在**(`node_modules/.pnpm/@deepseek-ai+dsh-host-front_*/…/dsh-host-frontend-static` 之外的 `@deepseek-ai/dsh-client-modules`,0.1.1-rc.2,node 半边 `lib/index.js`):
