@@ -10,7 +10,7 @@
  * @module @iris/app-service
  */
 
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -607,6 +607,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // that forgot to be profile-scoped.
   const paths = profilePaths(dataDir, config.profile ?? DEFAULT_PROFILE)
   warnOnPreProfileLayout(ctx, dataDir, paths.root)
+  // The profile root is created here, once, because boot itself writes into
+  // it before any store's first save does: the system-plugin runtime's
+  // `initialize` persists its boot-revision increment immediately, and every
+  // store's mkdir is lazy (on first write), so on a fresh profile the write
+  // raced nothing — the directory simply did not exist yet, and the host
+  // died in `atomicWriteFile` before serving a single request.
+  await mkdir(paths.root, { recursive: true })
 
   // Retention for the diagnostic bus. Reports already reached the logger and
   // stopped there, so a debug page had nothing to ask for; this keeps a bounded

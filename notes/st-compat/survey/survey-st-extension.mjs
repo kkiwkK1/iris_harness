@@ -19,7 +19,7 @@
  *   node survey-st-extension.mjs <extension-dir> [--st-root <st-public-dir>] [--out report.json]
  *
  * `<st-public-dir>` defaults to the local fact source
- * `E:/sillyTavern/SillyTavern/public` (read-only; `docs/…RUNBOOK.md` §2).
+ * `E:/sillyTavern/SillyTavern/public` (read-only; `docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md` §2).
  */
 
 import { createHash } from 'node:crypto'
