@@ -2,12 +2,20 @@
 
 2026-09-12。用户接手编码，Codex 后续负责审查、测试和验收。本文件优先于旧任务表中的实施人员分工。
 
+> **任务二的身份、分支与所有权（2026-09-13 收口）**
+>
+> - 任务编号：`TASK-SYSTEM-PLUGIN-CONTROL-PLANE`。本文件才是三项上层任务中的任务二；此前把任务二链接到 ST 扩展手册是调度错误。
+> - 集成分支：`dev/system-plugins`；worktree：`D:/workspace/小项目/iris-system-plugins`。它拥有系统插件控制面、生命周期、中央接线和最终验收。
+> - 独立落点不得直接在该 worktree 并行施工。每项工作从明确的 `dev/system-plugins` SHA 创建独立分支/worktree，声明允许修改和禁止并行文件，验收后由集成人顺序合入。
+> - 任务一是 [ST 扩展兼容计划](../docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md)，任务三是 [基础设施接口核验](../docs/INFRASTRUCTURE-INTERFACES.md)。任务三只盘点和报告；发现缺口后另开实现任务。
+> - 当前收口点：插件内核 `2ac0f06`，P0/P2 合并 `5aedccc`，资产面 `ab3da4d`/`e2b8230`，lockfile 集成 `934ae1c`。已有历史不重写，不把相同改动复制到占位分支。
+
 ## 现场与保存
 
 - 工作目录：`D:/workspace/小项目/iris-system-plugins`
-- 分支：`dev/system-plugins`；基线 `2079dbe`，已包含 #84 包图去环。
-- 代码已经大面积实现，**尚未提交、尚未整体验收**。接着当前工作区改，不要从远程空分支重新开始。
-- `git status` 同时存在 staged、unstaged、untracked，三部分都是交付现场；不要 reset/checkout 丢弃。
+- 分支：`dev/system-plugins`；最初基线 `2079dbe`，当前收口提交 `934ae1c`。
+- 最初未提交现场已保存并逐批提交；截至本次收口，集成 worktree 为干净状态。每次接手仍先读取 `git status`，不得把后来出现的修改假定为自己的。
+- 不从远程旧提交或占位分支重新施工；新落点按上面的独立分支规则创建。
 - `stash@{0}` 的说明为 `system-plugins-integration-before-pr84`，是 rebase 前的备份，已经 pop 应用过并保留；不要再次 apply。安全提交并核对后再处理。
 - 不操作主工作区的实时数据、key.txt、ST secrets 或其他人的分支。测试使用临时 profile 与 mock provider。
 
