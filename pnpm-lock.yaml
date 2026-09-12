@@ -233,12 +233,16 @@ importers:
       '@iris/compat-tavernhelper-core':
         specifier: workspace:*
         version: link:../iris-compat-tavernhelper-core
-      '@iris/mvu':
-        specifier: workspace:*
-        version: link:../iris-mvu
       '@iris/variables':
         specifier: workspace:*
         version: link:../iris-variables
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.3.2
+    devDependencies:
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
 
   packages/iris-compat-tavernhelper-core: {}
 
@@ -259,15 +263,15 @@ importers:
 
   packages/iris-lorebook:
     dependencies:
-      '@iris/compat-tavernhelper-core':
+      '@iris/text':
         specifier: workspace:*
-        version: link:../iris-compat-tavernhelper-core
+        version: link:../iris-text
 
   packages/iris-macro:
     dependencies:
-      '@iris/compat-tavernhelper-core':
+      '@iris/text':
         specifier: workspace:*
-        version: link:../iris-compat-tavernhelper-core
+        version: link:../iris-text
 
   packages/iris-mvu:
     dependencies:
@@ -345,6 +349,8 @@ importers:
         version: 8.18.1
 
   packages/iris-script: {}
+
+  packages/iris-text: {}
 
   packages/iris-tokenizer: {}
 

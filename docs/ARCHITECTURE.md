@@ -6,12 +6,12 @@ enforces every invariant stated here, and a change to one belongs in both places
 
 ## The shape
 
-22 packages in five layers, no cycles. Layer numbers are the longest path to a
+23 packages in five layers, no cycles. Layer numbers are the longest path to a
 leaf, computed rather than declared:
 
 ```
 L0  character  chat  llm-openai-compat  lorebook  macro  pipeline
-    protocol  regex  script  tokenizer                        ← no @iris deps
+    protocol  regex  script  text  tokenizer                  ← no @iris deps
 L1  client-fake  persistence  preset  rpc-client  rpc-host  turn  variables
 L2  compat-tavernhelper  mvu
 L3  app-service
@@ -33,8 +33,14 @@ and neither drags the other.
 ### 2. The browser may only see the contract
 
 `apps/iris-web` imports `@iris/protocol`, `@iris/rpc-client` (the real
-transport, which itself depends only on the contract) and `@iris/client-fake`.
-Nothing else.
+transport, which itself depends only on the contract) and `@iris/client-fake`,
+plus two packages admitted on the strength of being **dependency-free**:
+`@iris/compat-tavernhelper-core`, for the event-name tables a card subscribes to
+by literal string, and `@iris/text`, for `stringHash` and `parseRegexFromString`
+— two answers the frame and the host must compute identically, where a second
+copy drifts into a listener that never fires or a key one side matches as a
+pattern and the other as text. Each has a purity test of its own, because the
+ground they are admitted on is a claim about every future edit. Nothing else.
 
 This is the rule most worth enforcing and the one least visible: the browser app
 reaches workspace code through **Vite aliases, not package.json**, so it appears

@@ -18,7 +18,7 @@
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
 
-import { stringHash } from '@iris/compat-tavernhelper-core'
+import { stringHash } from '@iris/text'
 
 import { buttonEventName } from '../src/sandbox/button-event.ts'
 

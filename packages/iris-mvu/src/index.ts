@@ -14,7 +14,14 @@ export {
   type CommandType,
 } from './commands.ts'
 
-export { formatYamlBlock } from './yaml.ts'
+/*
+ * `formatYamlBlock` used to be exported here. It moved to
+ * `@iris/compat-tavernhelper` on 2026-09-12 — `{{format_*_variable::…}}` is a
+ * Tavern Helper macro and that package was its only caller, while the export
+ * bought a hard `compat-tavernhelper → mvu` edge for one formatter (root
+ * `notes/DEVIATIONS.md`, stage 0). `js-yaml` stays a dependency here for
+ * `initvar.ts`'s parser.
+ */
 
 export {
   extractUpdateCommands,

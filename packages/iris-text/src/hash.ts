@@ -26,7 +26,13 @@
  * would register under a name nothing listens to. Both rewrites produce working
  * code that returns wrong numbers.
  *
- * @module @iris/compat-tavernhelper-core/hash
+ * Moved out of `@iris/compat-tavernhelper-core` on 2026-09-12 (root
+ * `notes/DEVIATIONS.md`, stage 0): two of the three callers above are generic
+ * engines, and a generic engine that must depend on the Tavern Helper compat
+ * package to hash a string is an edge that makes "Tavern Helper is a plugin"
+ * inexpressible. Nothing about the number changed.
+ *
+ * @module @iris/text/hash
  */
 
 export function stringHash(value: string, seed = 0): number {

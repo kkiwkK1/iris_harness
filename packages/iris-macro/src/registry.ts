@@ -164,12 +164,14 @@ export interface MacroRandom {
 /**
  * Re-exported so this package's public surface is unchanged by the move.
  *
- * The function lives in `@iris/compat-tavernhelper-core` because the lorebook
- * engine, the macro tier and the script-button event names must all produce the
- * **same number** — see that module for why two copies is the failure worth
- * designing against.
+ * The function lives in `@iris/text` because the lorebook engine, the macro
+ * tier and the script-button event names must all produce the **same number** —
+ * see that module for why two copies is the failure worth designing against. It
+ * was in `@iris/compat-tavernhelper-core` until 2026-09-12, which made this
+ * engine depend on the Tavern Helper compat layer to seed `{{pick}}` (root
+ * `notes/DEVIATIONS.md`, stage 0).
  */
-import { stringHash } from '@iris/compat-tavernhelper-core'
+import { stringHash } from '@iris/text'
 
 export { stringHash }
 

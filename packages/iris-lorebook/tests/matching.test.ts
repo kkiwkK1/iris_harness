@@ -97,17 +97,18 @@ test('an unknown selectiveLogic value activates nothing', () => {
 })
 
 test('the regex decision has exactly one implementation', async () => {
-  // `parseRegexFromString` moved to `@iris/compat-tavernhelper-core` so the
-  // frame can revive `strategy.keys` using the same judgement this engine
-  // matches with. Asserted by **identity**, not behaviour: two functions that
-  // agree today are two functions that can stop agreeing, and the whole point
-  // of the move was to remove that possibility. If this package ever grows its
-  // own copy again, the copy will pass every behavioural test in this file on
-  // the day it is written.
+  // `parseRegexFromString` lives in `@iris/text` so the frame can revive
+  // `strategy.keys` using the same judgement this engine matches with — it was
+  // in `@iris/compat-tavernhelper-core` until 2026-09-12, which made this engine
+  // depend on the Tavern Helper compat layer (root `notes/DEVIATIONS.md`, stage 0).
+  // Asserted by **identity**, not behaviour: two functions that agree today are
+  // two functions that can stop agreeing, and the whole point of the move was to
+  // remove that possibility. If this package ever grows its own copy again, the
+  // copy will pass every behavioural test in this file on the day it is written.
   //
-  // The check lives here rather than beside the function because core is
+  // The check lives here rather than beside the function because `@iris/text` is
   // dependency-free by contract — a test there importing `@iris/lorebook` would
   // be the reverse edge that contract forbids.
-  const core = await import('@iris/compat-tavernhelper-core') as { parseRegexFromString: unknown }
-  assert.equal(parseRegexFromString, core.parseRegexFromString)
+  const shared = await import('@iris/text') as { parseRegexFromString: unknown }
+  assert.equal(parseRegexFromString, shared.parseRegexFromString)
 })

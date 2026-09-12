@@ -26,8 +26,14 @@ export {
   type Listener,
   type Subscription,
 } from './events.ts'
-export { parseRegexFromString } from './regex.ts'
-export { stringHash } from './hash.ts'
+/*
+ * `parseRegexFromString` and `stringHash` used to be re-exported here. They
+ * moved to `@iris/text` on 2026-09-12 and are deliberately **not** re-exported
+ * from this package: a re-export would leave `@iris/lorebook` and `@iris/macro`
+ * importing the Tavern Helper compat layer to reach a generic utility, which is
+ * the edge the move exists to delete (root `notes/DEVIATIONS.md`, stage 0). Every
+ * consumer names `@iris/text`.
+ */
 // —— family③: preset ——
 export {
   TH_DEFAULT_PRESET,

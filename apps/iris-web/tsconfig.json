@@ -29,6 +29,7 @@
       "@iris/protocol": ["../../packages/iris-protocol/src/index.ts"],
       "@iris/client-fake": ["../../packages/iris-client-fake/src/index.ts"],
       "@iris/rpc-client": ["../../packages/iris-rpc-client/src/index.ts"],
+      "@iris/text": ["../../packages/iris-text/src/index.ts"],
       "@iris/compat-tavernhelper-core": ["../../packages/iris-compat-tavernhelper-core/src/index.ts"]
     }
   },

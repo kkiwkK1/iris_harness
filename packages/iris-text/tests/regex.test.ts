@@ -6,8 +6,12 @@ import { parseRegexFromString } from '../src/regex.ts'
 /**
  * Which world book keys are regexes.
  *
- * This function moved here from `@iris/lorebook` so that the host's activation
- * engine and the frame's `strategy.keys` revival share one answer. A second
+ * This function moved out of `@iris/lorebook` so that the host's activation
+ * engine and the frame's `strategy.keys` revival share one answer, and moved a
+ * second time on 2026-09-12, from `@iris/compat-tavernhelper-core` to
+ * `@iris/text`, because the first home made the lorebook engine depend on the
+ * Tavern Helper compat layer to read one pattern (root `notes/DEVIATIONS.md`
+ * §1). The file was copied both times, for the reason below. A second
  * hand-copied implementation drifts, and the drift is silent: a card holds a
  * `RegExp` for a key the engine matches literally, both halves are internally
  * consistent, the pair is wrong, and nothing raises anything.

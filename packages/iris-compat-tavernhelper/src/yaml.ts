@@ -1,12 +1,19 @@
 /**
  * The YAML block form a variable tree is shown in.
  *
- * Lives here because this is the only package in the workspace that already
- * declares a YAML library, and adding one elsewhere would mean an install this
- * session may not run. It is generic, not MVU-specific — see the note on
- * {@link formatYamlBlock}.
+ * Lives here because `{{format_*_variable::…}}` is a Tavern Helper macro and
+ * this package is its only caller (`macros.ts`). It sat in `@iris/mvu` until
+ * 2026-09-12 for an accident of history — that was the only package in the
+ * workspace already declaring a YAML library, and adding one elsewhere meant an
+ * install — and the note there said in as many words that the function is
+ * generic rather than MVU-specific. The price of that convenience was a hard
+ * `@iris/compat-tavernhelper` → `@iris/mvu` edge for one formatter, which made
+ * "MVU is a plugin underneath Tavern Helper" inexpressible: turning MVU off had
+ * to take a Tavern Helper macro with it. `js-yaml` is now declared here instead
+ * (root `notes/DEVIATIONS.md`, stage 0; `notes/PLUGIN-FEASIBILITY.md` §3). The
+ * function is byte-identical to the one that moved.
  *
- * @module @iris/mvu/yaml
+ * @module @iris/compat-tavernhelper/yaml
  */
 
 import { dump } from 'js-yaml'
