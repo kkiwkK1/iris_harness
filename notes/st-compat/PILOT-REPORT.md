@@ -135,4 +135,5 @@
 | 上游扩展锁定提交 | `f9a07da0fbe25cd310eee746c2f5af24ed61f62b` |
 | 上游 dist/index.js（sha256） | `61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd` |
 | 本报告所在提交（验收分支最终提交） | 见 `git rev-parse HEAD`（dev/st-compat-pilot-acceptance） |
-| PLUGIN_PLATFORM_BASE（dev/system-plugins 合入提交） | `39f1b2d0e37d60213b2131fd952d63c2cf4113e9` |
+| dev/system-plugins 合入提交（首轮，携带试点内容） | `39f1b2d0e37d60213b2131fd952d63c2cf4113e9` |
+| **PLUGIN_PLATFORM_BASE（dev/system-plugins 最终 HEAD）** | `a16cbd363b33f242f4593ac00c64f5c7a18465f4` |
