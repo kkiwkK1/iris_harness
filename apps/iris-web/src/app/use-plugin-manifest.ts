@@ -281,6 +281,15 @@ export function scanPluginMemberNames(source: string | undefined): string[] {
             i = colon + 1
             continue
           }
+          if (source[colon] === '(') {
+            // Method shorthand — `run() { … }` is as much a member as a colon
+            // key; its parameter parens and body braces are consumed by the
+            // depth counters below.
+            keys.push(key.value)
+            expectKey = false
+            i = key.end
+            continue
+          }
         }
       }
       i += 1

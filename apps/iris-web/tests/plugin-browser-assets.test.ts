@@ -85,6 +85,21 @@ test('nested values, comments and strings cannot invent top-level member names',
   assert.deepEqual(conflicts, {}, 'a nested property is not a registered member and cannot create a conflict')
 })
 
+test('method and function bodies contribute no member names, at any brace depth', () => {
+  const source = `registerPluginMembers('demo', {
+    run(input) { const step = { inner: 1 }; return step.inner },
+    build: function () { return { made: 2 } },
+    go: () => ({ arrowMade: 3 }),
+    plain: 4,
+  })`
+  assert.deepEqual(scanPluginMemberNames(source), ['run', 'build', 'go', 'plain'])
+  const conflicts = findMemberConflicts({
+    'plugin-a': { phase: 'loaded', rev: 'a', loadedAt: 1, error: undefined, source },
+    'plugin-b': { phase: 'loaded', rev: 'b', loadedAt: 1, error: undefined, source: `registerPluginMembers('plugin-b', { inner: 1, made: 2, arrowMade: 3 })` },
+  })
+  assert.deepEqual(conflicts, {}, 'names used inside method bodies are not members and cannot conflict')
+})
+
 test('two bundles claiming one member name are named as the conflict sources', () => {
   const probes = {
     'plugin-a': { phase: 'loaded' as const, rev: 'a', loadedAt: 1, error: undefined, source: `registerPluginMembers('plugin-a', { shared: 1, onlyA: 1 })` },
