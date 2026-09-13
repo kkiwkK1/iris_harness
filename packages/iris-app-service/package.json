@@ -33,6 +33,8 @@
     "@iris/script": "workspace:*",
     "@iris/tokenizer": "workspace:*",
     "@iris/turn": "workspace:*",
-    "@iris/variables": "workspace:*"
+    "@iris/variables": "workspace:*",
+    "@iris/compat-st-extension": "workspace:*",
+    "@iris/extension-installer": "workspace:*"
   }
 }

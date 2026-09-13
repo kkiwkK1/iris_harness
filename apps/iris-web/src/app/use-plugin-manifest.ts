@@ -424,7 +424,7 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
   const [retryRequest, setRetryRequest] = useState<{ generation: number; pluginId?: string }>({ generation: 0 })
   const [manifestGeneration, setManifestGeneration] = useState(0)
   const consumedRetries = useRef(new Map<string, number>())
-  const [, setEvidence] = useState(0)
+  const [, setEvidenceTick] = useState(0)
   const [poll, setPoll] = useState(0)
 
   const retry = useCallback((pluginId?: string) => {
@@ -453,7 +453,7 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
           const held = seenRows.get(id)
           if (held?.rev === entry.rev && held.revision === read.revision) continue
           seenRows.set(id, { rev: entry.rev, revision: read.revision })
-          setEvidence(current => current + 1)
+          setEvidenceTick(current => current + 1)
         }
       },
       error => {

@@ -810,6 +810,11 @@ export interface IrisActions {
   installSystemPlugin(id: string): Promise<SystemPluginOperationResult>
   uninstallSystemPlugin(id: string): Promise<SystemPluginOperationResult>
   enableSystemPlugin(id: string): Promise<SystemPluginOperationResult>
+  /** The ST-compat plane's arm/detach/submit/settings face (pilot). */
+  stCompatAttach(extensionId: string, pluginRevision: number, chatId?: string): Promise<void>
+  stCompatDetach(extensionId: string): Promise<void>
+  stCompatSubmit(input: { token: string, kind: 'generate' | 'reply', pluginRevision: number, result: unknown }): Promise<void>
+  stCompatSettings(extensionId: string, pluginRevision: number, settings: unknown): Promise<void>
   disableSystemPlugin(id: string): Promise<SystemPluginOperationResult>
   reloadSystemPlugin(id: string): Promise<SystemPluginOperationResult>
   openChat(chatId: string): Promise<void>
@@ -1741,6 +1746,22 @@ export function createIrisStore(
 
       async reloadSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
         return requestSystemPluginSnapshot(async () => client.call('plugin.reload', { id }))
+      },
+
+      // The pilot plane's face. Attach carries the open chat id so a freshly
+      // built frame starts hydrated; every call is best-effort at the store
+      // level (a refusal resolves false and the caller decides).
+      async stCompatAttach(extensionId, pluginRevision, chatId): Promise<void> {
+        await client.call('stCompat.plane.attach', { extensionId, pluginRevision, ...(chatId === undefined ? {} : { chatId }) })
+      },
+      async stCompatDetach(extensionId): Promise<void> {
+        await client.call('stCompat.plane.detach', { extensionId })
+      },
+      async stCompatSubmit(input): Promise<void> {
+        await client.call('stCompat.submit', input)
+      },
+      async stCompatSettings(extensionId, pluginRevision, settings): Promise<void> {
+        await client.call('stCompat.settings', { extensionId, pluginRevision, settings })
       },
 
       async openChat(chatId: string): Promise<void> {
@@ -3618,10 +3639,16 @@ function forOpenChat<E extends { chatId: string }>(
  * does not have. An accident caught it. A map keyed on the union does not need
  * one: leaving a decision unmade does not type-check.
  */
+import { dispatchStCompatRequest } from '../st-extensions/plane-bus.ts'
+
 const HANDLERS: { [T in IrisEvent['type']]: (event: EventOf<T>, store: IrisStore) => void } = {
   'plugins.changed': (event, store) => {
     const session = systemPluginClock(store).session
     adoptSystemPluginSnapshot(store, event.snapshot, session)
+  },
+
+  'st-compat.request': (event) => {
+    dispatchStCompatRequest(event as never)
   },
 
   'chats.updated': (event, store) => {

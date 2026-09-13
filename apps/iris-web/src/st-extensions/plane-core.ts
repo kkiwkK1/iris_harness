@@ -43,7 +43,7 @@ export interface StExtPlaneHost {
   /** The extension id this plane serves (the member proxy routes by it). */
   extensionId(): string
   /** Forward a validated submit to the host (`stCompat.submit`). */
-  submit(input: { token: string, kind: StBridgePayload['kind'], revision: number, result: StBridgeResult }): void
+  submit(input: { token: string, kind: StBridgePayload['kind'], pluginRevision: number, result: StBridgeResult }): void
   /** Forward the facade's settings blob (`stCompat.settings`). */
   persistSettings(extensionSettings: Record<string, unknown>): void
   /** Forward an error/toast line to the app's report surface. */
@@ -179,7 +179,7 @@ export class StExtPlane {
           this.#host.report('error', { where: 'extension bridge round', message: message.error.message })
           return // No submit: the host's deadline falls back to the raw text.
         }
-        this.#host.submit({ token: message.token, kind: message.result.kind, revision, result: message.result })
+        this.#host.submit({ token: message.token, kind: message.result.kind, pluginRevision: revision, result: message.result })
         return
       }
       case 'settings-persist':

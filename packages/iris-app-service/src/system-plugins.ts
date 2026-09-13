@@ -165,6 +165,38 @@ export class SystemPluginRuntime {
     }
   }
 
+  /**
+   * Adopt a definition after construction — the installed-ST-extension
+   * handshake. The constructor's validation, re-run: an adopted definition is
+   * indistinguishable from a builtin one, and the runtime's own invariants
+   * (unique ids, apiVersion 1, no self-dependency) are not relaxed for it.
+   * Idempotent: re-adopting a known id is a no-op, so a boot scan and a
+   * runtime install can race safely.
+   * @returns true when the definition was adopted, false when it already existed.
+   */
+  adoptDefinition(raw: SystemPluginDefinition, options: { installed: boolean }): boolean {
+    if (this.#plugins.has(raw.id)) return false
+    if (raw.id.length === 0 || raw.id.length > 200) {
+      throw new TypeError('system plugin ids must contain 1 to 200 characters')
+    }
+    if (raw.apiVersion !== 1) throw new TypeError(`system plugin "${String(raw.id)}" uses unsupported API version`)
+    const dependencies = [...new Set(raw.dependencies ?? [])]
+    if (dependencies.includes(raw.id)) throw new TypeError(`system plugin "${String(raw.id)}" depends on itself`)
+    this.#plugins.set(raw.id, {
+      definition: { ...raw, dependencies },
+      installed: options.installed,
+      enabled: false,
+      status: options.installed ? 'disabled' : 'not-installed',
+      error: undefined,
+      activation: undefined,
+      incarnation: 0,
+    })
+    if (!this.#persisted.has(raw.id)) {
+      this.#persisted.set(raw.id, { installed: options.installed, enabled: false })
+    }
+    return true
+  }
+
   /** Load profile preferences and activate the persisted enabled set. */
   async initialize(): Promise<SystemPluginSnapshot> {
     return await this.#serialize(async () => {

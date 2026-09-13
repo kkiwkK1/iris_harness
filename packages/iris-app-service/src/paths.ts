@@ -186,6 +186,8 @@ export interface ProfilePaths {
   worldbookBindings: string
   /** Key–value storage cards share across this profile. */
   cardStorage: string
+  /** Third-party ST extensions, in the installer's own layout. */
+  extensions: string
   /**
    * Remote script bundles the host has fetched on a card's behalf.
    *
@@ -287,5 +289,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     favorites: join(root, 'favorites.json'),
     chatOrder: join(root, 'chat-order.json'),
     cacheTrace: join(root, 'cache-trace'),
+    /** Third-party ST extensions, laid out by the installer (staging/ claims/ installed/). */
+    extensions: join(root, 'st-extensions'),
   }
 }

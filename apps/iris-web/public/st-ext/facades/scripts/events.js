@@ -369,11 +369,7 @@ async function handleShellMessage(data) {
         element.setAttribute("data-iris-proj-path", `p${seq}`);
         seq += 1;
       }
-      const html = root.innerHTML;
-      for (const element of root.querySelectorAll("[data-iris-proj-path]")) {
-        element.removeAttribute("data-iris-proj-path");
-      }
-      post({ irisStExt: token, type: "settings-html", html, language: state.language });
+      post({ irisStExt: token, type: "settings-html", html: root.innerHTML, language: state.language });
       return;
     }
     case "replay-event": {

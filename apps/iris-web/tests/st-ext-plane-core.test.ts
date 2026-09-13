@@ -19,7 +19,7 @@ interface Harness {
   plane: StExtPlane
   frame: Window & { sent: Array<{ message: unknown }> }
   card: Window
-  submitted: Array<{ token: string, revision: number, result: unknown }>
+  submitted: Array<{ token: string, pluginRevision: number, result: unknown }>
   reports: Array<Record<string, unknown>>
   persisted: Array<unknown>
 }
@@ -27,7 +27,7 @@ interface Harness {
 function harness(framePresent = true): Harness {
   const frame = fakeWindow() as Window & { sent: Array<{ message: unknown }> }
   const card = fakeWindow()
-  const submitted: Array<{ token: string, revision: number, result: unknown }> = []
+  const submitted: Array<{ token: string, pluginRevision: number, result: unknown }> = []
   const reports: Array<Record<string, unknown>> = []
   const persisted: Array<unknown> = []
   const host: StExtPlaneHost = {
@@ -77,7 +77,7 @@ test('a bridge result submits with the revision recorded at request time', () =>
   }
   h.plane.onWindowMessage(resultEvent as unknown as MessageEvent)
   assert.equal(h.submitted.length, 1)
-  assert.equal(h.submitted[0]!.revision, 12)
+  assert.equal(h.submitted[0]!.pluginRevision, 12)
   assert.equal(h.submitted[0]!.token, 'round-1')
 })
 

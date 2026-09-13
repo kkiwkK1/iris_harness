@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { StCompatBridge } from '../src/host/bridge.ts'
+import type { StBridgeResult } from '../src/runtime/protocol.ts'
 
 const REV = 7
 
-function generateResult(): unknown {
+function generateResult(): StBridgeResult {
   return { kind: 'generate', messages: [], chatVariables: {}, globalVariables: {} }
 }
 

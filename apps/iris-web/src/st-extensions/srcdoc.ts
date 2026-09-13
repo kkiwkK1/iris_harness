@@ -53,8 +53,8 @@ export function buildExtensionSrcdoc(options: ExtensionSrcdocOptions): string {
   // Vendor globals: the upstream bundle self-starts through jQuery's ready
   // queue and reads lodash and toastr as globals. Loaded as blocking classic
   // scripts so they exist before the module graph evaluates.
-  parts.push(`<script src="${origin}/st-ext/vendor/jquery.min.js" crossorigin="anonymous"></script>`)
-  parts.push(`<script src="${origin}/st-ext/vendor/lodash.min.js" crossorigin="anonymous"></script>`)
+  parts.push(`<script src="${origin}${artifactBase}/vendor/jquery.min.js" crossorigin="anonymous"></script>`)
+  parts.push(`<script src="${origin}${artifactBase}/vendor/lodash.min.js" crossorigin="anonymous"></script>`)
   parts.push('</head>')
   parts.push('<body></body>')
   // The upstream bundle, one byte changed by no one. Its relative imports

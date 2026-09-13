@@ -43,6 +43,7 @@ export {
   contributionsHaveTemplates,
 } from './host/expansion.ts'
 export { buildMemberBundle, ST_COMPAT_MEMBER_METHODS } from './host/member-bundle.ts'
+export { StExtensionSettingsStore } from './host/settings-store.ts'
 export {
   defaultSettingsBlob,
   EJS_TEMPLATE_DEFAULTS,
@@ -51,6 +52,7 @@ export {
   ST_COMPAT_SETTINGS_KEY_PREFIX,
   type StCompatSettingsBlob,
 } from './host/settings.ts'
+export type { StBridgeContext, StBridgeResult, StBridgePayload } from './runtime/protocol.ts'
 export {
   isStFrameToShell,
   validateGenerateResult,

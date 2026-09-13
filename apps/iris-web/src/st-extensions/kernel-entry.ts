@@ -318,11 +318,9 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
         element.setAttribute('data-iris-proj-path', `p${seq}`)
         seq += 1
       }
-      const html = root.innerHTML
-      for (const element of root.querySelectorAll('[data-iris-proj-path]')) {
-        element.removeAttribute('data-iris-proj-path')
-      }
-      post({ irisStExt: token, type: 'settings-html', html, language: state.language })
+      // The path attributes stay on: the replay looks the real element up by
+      // them, so stripping after serialize would break the projection round trip.
+      post({ irisStExt: token, type: 'settings-html', html: root.innerHTML, language: state.language })
       return
     }
     case 'replay-event': {

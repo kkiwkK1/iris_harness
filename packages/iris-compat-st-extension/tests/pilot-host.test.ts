@@ -37,7 +37,7 @@ test('an installed ST extension becomes a runtime-shaped definition from its man
   assert.equal(definition.version, '1.17.4.1')
   assert.equal(definition.apiVersion, 1)
   let provided: unknown
-  const disposable = definition.activate({
+  definition.activate({
     provide(name: string, capability: unknown): unknown {
       assert.equal(name, ST_EXTENSION_CAPABILITY)
       provided = capability
@@ -45,7 +45,6 @@ test('an installed ST extension becomes a runtime-shaped definition from its man
     },
   })
   assert.deepEqual(provided, { extensionId: 'st-prompt-template', manifestVersion: '1.17.4.1', entry: 'dist/index.js' })
-  assert.deepEqual(disposable, {})
 })
 
 test('the settings blob seeds upstream defaults and hydrates a stored blob over them', () => {

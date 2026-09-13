@@ -6,11 +6,12 @@
   "type": "module",
   "description": "Vite entry over the DSH web shell. npm-managed; see README for why.",
   "scripts": {
-    "build": "npm run build:sandbox && vite build && node tools/prune-sandbox-assets.mjs dist/sandbox && node tools/prune-app-assets.mjs",
+    "build": "npm run build:sandbox && npm run build:st-ext && vite build && node tools/prune-sandbox-assets.mjs dist/sandbox && node tools/prune-app-assets.mjs",
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "check:render": "node tools/render-check.mjs",
-    "build:sandbox": "vite build --config vite.sandbox.config.ts && vite build --config vite.members.config.ts && vite build --config vite.preset.config.ts && vite build --config vite.message-preset.config.ts && node tools/hash-sandbox-assets.mjs && node tools/check-bootstrap.mjs && node tools/check-preset.mjs"
+    "build:sandbox": "vite build --config vite.sandbox.config.ts && vite build --config vite.members.config.ts && vite build --config vite.preset.config.ts && vite build --config vite.message-preset.config.ts && node tools/hash-sandbox-assets.mjs && node tools/check-bootstrap.mjs && node tools/check-preset.mjs",
+    "build:st-ext": "vite build --config src/st-extensions/vite.st-ext.config.ts"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.2",

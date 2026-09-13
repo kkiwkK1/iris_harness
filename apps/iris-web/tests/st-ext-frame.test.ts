@@ -16,8 +16,8 @@ test('the srcdoc carries the identity metas, the vendor globals and the upstream
   assert.match(html, /<meta name="iris-st-ext-base" content="\/iris-st-ext\/st-prompt-template\/a1b2c3d4e5f6">/)
   assert.match(html, /<meta name="iris-st-ext-dir" content="ST-Prompt-Template">/)
   // Vendor globals before the module tag: the upstream self-start needs them.
-  const jqueryAt = html.indexOf('/st-ext/vendor/jquery.min.js')
-  const lodashAt = html.indexOf('/st-ext/vendor/lodash.min.js')
+  const jqueryAt = html.indexOf('/vendor/jquery.min.js')
+  const lodashAt = html.indexOf('/vendor/lodash.min.js')
   const moduleAt = html.indexOf('<script type="module"')
   assert.ok(jqueryAt > -1 && lodashAt > jqueryAt && moduleAt > lodashAt, 'vendor scripts precede the module tag')
   // The upstream bundle, unmodified, at the mirrored URL its relative imports resolve against.

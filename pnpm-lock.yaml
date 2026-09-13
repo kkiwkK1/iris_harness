@@ -134,9 +134,15 @@ importers:
       '@iris/compat-prompt-template':
         specifier: workspace:*
         version: link:../iris-compat-prompt-template
+      '@iris/compat-st-extension':
+        specifier: workspace:*
+        version: link:../iris-compat-st-extension
       '@iris/compat-tavernhelper':
         specifier: workspace:*
         version: link:../iris-compat-tavernhelper
+      '@iris/extension-installer':
+        specifier: workspace:*
+        version: link:../iris-extension-installer
       '@iris/llm-openai-compat':
         specifier: workspace:*
         version: link:../iris-llm-openai-compat
@@ -209,12 +215,6 @@ importers:
         specifier: workspace:*
         version: link:../iris-protocol
 
-  packages/iris-compat-st-extension:
-    dependencies:
-      typescript:
-        specifier: 5.9.3
-        version: 5.9.3
-
   packages/iris-compat-prompt-template:
     dependencies:
       ejs:
@@ -230,6 +230,12 @@ importers:
       '@types/lodash':
         specifier: ^4.17.24
         version: 4.17.25
+
+  packages/iris-compat-st-extension:
+    dependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
   packages/iris-compat-tavernhelper:
     dependencies:
