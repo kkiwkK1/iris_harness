@@ -470,6 +470,14 @@ const PROBES: Record<string, unknown> = {
   'script.renamePreset': { name: 'no-such-preset', newName: 'no-such-preset-2' },
   'script.loadPreset': { name: 'no-such-preset' },
   // —— family③ end ——
+  // —— the ST-compat plane ——
+  // Reachability probes only: a probe host with no extension plane refuses
+  // with `unsupported`, which is exactly the proof this table wants.
+  'stCompat.plane.attach': { extensionId: 'no-such-extension', pluginRevision: 0 },
+  'stCompat.plane.detach': { extensionId: 'no-such-extension' },
+  'stCompat.submit': { token: 'probe', kind: 'reply', pluginRevision: 0, result: {} },
+  'stCompat.settings': { extensionId: 'no-such-extension', pluginRevision: 0, settings: {} },
+  'stExtension.install': { path: 'no-such-directory' },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

@@ -30,3 +30,31 @@ export type {
   FindingResult,
   SourceKind,
 } from './report.ts'
+
+// The pilot's runtime half. The analysis fences above still hold: everything
+// in `host/` is pure logic (no I/O, no app-service imports); the browser-side
+// kernel and facades live in `apps/iris-web/src/st-extensions/**` and are
+// loaded only inside the extension frame.
+export { StCompatBridge, type ArmedPlane, type BeginTicket } from './host/bridge.ts'
+export { buildStExtensionDefinition, ST_EXTENSION_CAPABILITY, type StExtensionDefinition } from './host/definition.ts'
+export {
+  applyGenerateResultToContributions,
+  bridgeMessagesFromContributions,
+  contributionsHaveTemplates,
+} from './host/expansion.ts'
+export { buildMemberBundle, ST_COMPAT_MEMBER_METHODS } from './host/member-bundle.ts'
+export { StExtensionSettingsStore } from './host/settings-store.ts'
+export {
+  defaultSettingsBlob,
+  EJS_TEMPLATE_DEFAULTS,
+  hydrateSettingsBlob,
+  settingsKeyFor,
+  ST_COMPAT_SETTINGS_KEY_PREFIX,
+  type StCompatSettingsBlob,
+} from './host/settings.ts'
+export type { StBridgeContext, StBridgeResult, StBridgePayload } from './runtime/protocol.ts'
+export {
+  isStFrameToShell,
+  validateGenerateResult,
+  validateReplyResult,
+} from './runtime/protocol.ts'

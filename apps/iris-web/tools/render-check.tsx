@@ -241,6 +241,92 @@ async function main(): Promise<void> {
   // history the protocol has no operation for.
   assert.equal(settled.match(/>Regenerate</g)?.length, 1, 'exactly one Regenerate expected')
 
+  // ------------------------------------------------ plugin settings placement
+  // `iris.settings.sections` belongs on the system-plugin page, under the
+  // catalog, and nowhere else. Its first home was the diagnostics page, which
+  // is a page about the host's internals: a plugin's own settings have nothing
+  // to do with host reports, and disabling the extension left its panel sitting
+  // on a page with no relationship to the switch that had been flipped.
+  //
+  // The contributions here are fixtures registered straight on the ledger. The
+  // real contributor is the ST plane, which registers from an effect — and
+  // `renderToString` runs no effects, so a mounted plane contributes nothing
+  // here. What the fixtures do reproduce is the property the placement rests on:
+  // a contribution renders at the point's declaration, and its presence IS the
+  // ledger entry. The plane disposes that entry the moment
+  // `servedExtensionEnabled` turns false, which
+  // `tests/st-ext-plane-extension.test.ts` pins, so "dispose" below stands for
+  // "the extension was disabled" the way the browser run of that scenario does.
+  const pageOf = (markup: string, route: string): string => {
+    const at = markup.indexOf(`data-settings-route="${route}"`)
+    assert.ok(at > -1, `the ${route} page is missing from the drawer`)
+    const next = markup.indexOf('data-settings-route=', at + 1)
+    return markup.slice(at, next === -1 ? undefined : next)
+  }
+
+  const unoccupied = render(wired.store, slots.core)
+  assert.doesNotMatch(
+    pageOf(unoccupied, 'diagnostics'), /data-iris-st-ext-section/,
+    'the diagnostics page still carries a plugin settings section',
+  )
+  assert.doesNotMatch(
+    pageOf(unoccupied, 'plugins'), /data-iris-st-ext-section/,
+    'a plugin settings section rendered with no contribution behind it',
+  )
+  assert.doesNotMatch(
+    unoccupied, /Plugin settings|插件设置/,
+    'the plugin settings heading rendered over an unoccupied point — a label with nothing under it',
+  )
+
+  const disposeStExt = slots.core.register(
+    { name: 'iris.settings.sections', registrant: 'iris-st-compat', id: 'st-compat-settings', label: 'Extension settings' },
+    () => <section className="iris-st-ext-settings" data-iris-st-ext-section="st-compat-settings" />,
+  )
+  const occupied = render(wired.store, slots.core)
+  assert.match(
+    pageOf(occupied, 'plugins'), /data-iris-st-ext-section="st-compat-settings"/,
+    'the contributed panel is not on the system-plugin page',
+  )
+  assert.match(
+    pageOf(occupied, 'plugins'), /id="iris-plugin-settings-title"[^>]*>Plugin settings</,
+    'the plugin settings block has no "Plugin settings" heading',
+  )
+  assert.doesNotMatch(
+    pageOf(occupied, 'diagnostics'), /data-iris-st-ext-section/,
+    'the diagnostics page renders the contributed panel again',
+  )
+
+  const disposeSecond = slots.core.register(
+    { name: 'iris.settings.sections', registrant: 'second-plugin', id: 'second-settings', label: 'Second settings' },
+    () => <section className="iris-st-ext-settings" data-iris-st-ext-section="second-settings" />,
+  )
+  const shared = pageOf(render(wired.store, slots.core), 'plugins')
+  assert.match(
+    shared, /data-iris-st-ext-section="st-compat-settings"/,
+    'the first panel disappeared when a second plugin contributed one',
+  )
+  assert.match(
+    shared, /data-iris-st-ext-section="second-settings"/,
+    'a second plugin settings contribution does not render beside the first',
+  )
+
+  disposeStExt()
+  const afterDisable = render(wired.store, slots.core)
+  assert.doesNotMatch(
+    afterDisable, /data-iris-st-ext-section="st-compat-settings"/,
+    'a disabled plugin left its settings panel behind',
+  )
+  assert.match(
+    pageOf(afterDisable, 'plugins'), /data-iris-st-ext-section="second-settings"/,
+    'disposing one contribution removed another plugin\'s panel',
+  )
+  disposeSecond()
+  const afterBoth = render(wired.store, slots.core)
+  assert.doesNotMatch(
+    afterBoth, /data-iris-st-ext-section|Plugin settings|插件设置/,
+    'the plugin settings block left its heading behind after the last contribution went away',
+  )
+
   // ------------------------------------------------------------- hierarchy
   // The layout decisions from the browser review, pinned. Each of these was a
   // specific observation: the reading column sits on a bounded sheet so a wide

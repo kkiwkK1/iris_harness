@@ -249,6 +249,25 @@ export const requestSchemas = {
   'plugin.enable': z.object({ id: z.string().min(1).max(200) }),
   'plugin.disable': z.object({ id: z.string().min(1).max(200) }),
   'plugin.reload': z.object({ id: z.string().min(1).max(200) }),
+  /** The ST-compat plane reports an extension frame is live at this revision. */
+  'stCompat.plane.attach': z.object({ extensionId: z.string().min(1).max(200), pluginRevision: z.number().int().nonnegative(), chatId: z.string().min(1).max(200).optional() }),
+  /** The plane went away (frame rebuilt, page closed, extension disabled). */
+  'stCompat.plane.detach': z.object({ extensionId: z.string().min(1).max(200) }),
+  /** The plane's answer to one bridge round; the host re-validates the revision. */
+  'stCompat.submit': z.object({
+    token: z.string().min(1).max(100),
+    kind: z.enum(['chat-open', 'generate', 'reply']),
+    pluginRevision: z.number().int().nonnegative(),
+    result: z.unknown(),
+  }),
+  /** The facade's saveSettingsDebounced, persisted per profile under the extension's key. */
+  'stCompat.settings': z.object({
+    extensionId: z.string().min(1).max(200),
+    pluginRevision: z.number().int().nonnegative(),
+    settings: z.unknown(),
+  }),
+  /** Install a third-party ST extension from a local directory. */
+  'stExtension.install': z.object({ path: z.string().min(1).max(1000) }),
   'chat.list': z.object({}),
   'chat.create': z.object({ characterId: z.string().min(1) }),
   'chat.open': z.object({ chatId: z.string().min(1) }),
@@ -2305,6 +2324,11 @@ export interface RpcResponseMap {
   'plugin.enable': SystemPluginSnapshot
   'plugin.disable': SystemPluginSnapshot
   'plugin.reload': SystemPluginSnapshot
+  'stCompat.plane.attach': { ok: true }
+  'stCompat.plane.detach': { ok: true }
+  'stCompat.submit': { accepted: boolean, why?: string }
+  'stCompat.settings': { ok: true }
+  'stExtension.install': SystemPluginSnapshot
   /**
    * The sidebar list, and whether its order is one somebody arranged.
    *

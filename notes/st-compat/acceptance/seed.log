@@ -1,0 +1,16 @@
+2026-09-13 21:21:22 [W] iris-app-service host: connection now generates through route "conn/09608f95-831c-477c-ab3a-3c79df8b0de4" at http://127.0.0.1:12840 — key: none
+2026-09-13 21:21:22 [W] iris-app-service host: the launch environment was imported as connection profile "09608f95-831c-477c-ab3a-3c79df8b0de4" and applied: http://127.0.0.1:12840 with model "pilot-model", route "conn/09608f95-831c-477c-ab3a-3c79df8b0de4", key: none. Providers are now chosen from the connection card; the environment is no longer a route.
+SEED provider: {"baseURL":"http://127.0.0.1:12840/v1","dataDir":"C:\\Users\\kkiw\\AppData\\Local\\Temp\\iris-pilot-gBbkz3","port":"8799"}
+SEED character.import: {"character":{"characterId":"Pilot卡","name":"Pilot卡","tags":[],"updatedAt":1789305683030.0278,"description":"Pilot acceptance character: a card whose bound world book carries the upstream README example 2 template.","bookEntryCount":1}}
+2026-09-13 21:21:23 [W] iris-app-service worldbook: "pilot-book" is named by the card but was not imported with it; if you have a SillyTavern installation, point Iris at it and reopen this chat to use the real book
+SEED chat.create: {"chatId":"Pilot卡-20260913-212123"}
+SEED stExtension.install: "done"
+SEED plugin.list after install: [{"id":"tavern-helper","installed":true,"status":"enabled"},{"id":"mvu","installed":true,"status":"enabled"},{"id":"prompt-template","installed":true,"status":"disabled"}]
+SEED plugin.list after enable: [{"id":"tavern-helper","installed":true,"status":"enabled"},{"id":"mvu","installed":true,"status":"enabled"},{"id":"prompt-template","installed":true,"status":"enabled"}]
+SEED revision: 3
+SEED extensionId: "prompt-template"
+SEED plugin.list after mvu disable: [{"id":"tavern-helper","status":"enabled"},{"id":"mvu","status":"disabled"},{"id":"prompt-template","status":"enabled"}]
+SEED revision: 5
+SEED seeded variables: {"variables":{"好感度":70}}
+SEED COMPLETE: PILOT_PORT=8799 CHAT_ID=Pilot卡-20260913-212123 CHARACTER_ID=Pilot卡 DATA_DIR=C:\Users\kkiw\AppData\Local\Temp\iris-pilot-gBbkz3
+SEED PROVIDER_BASE=http://127.0.0.1:12840/v1

@@ -1,0 +1,88 @@
+{
+  "frame-health": {
+    "ok": true,
+    "readyState": "complete",
+    "hasJQuery": true,
+    "hasLodash": true,
+    "ejsPublished": true,
+    "kernelInstances": 1,
+    "settingsDom": 1
+  },
+  "step1-message-layer-write": {
+    "ok": true,
+    "messageScope": {
+      "好感度": 10
+    },
+    "chatScope": {
+      "好感度": 0
+    },
+    "floorTail": "你的善意我已收到。我对你的好感度提升了。\n新的好感度：10"
+  },
+  "step2-accumulates-across-rounds": {
+    "ok": true,
+    "messageScope": {
+      "好感度": 20
+    }
+  },
+  "step3-continues-after-reload": {
+    "ok": true,
+    "messageScope": {
+      "好感度": 30
+    },
+    "frameHealthAfterReload": {
+      "readyState": "complete",
+      "hasJQuery": true,
+      "hasLodash": true,
+      "ejsPublished": true,
+      "kernelInstances": 1,
+      "settingsDom": 1
+    }
+  },
+  "step4-continues-after-chat-switch": {
+    "ok": true,
+    "messageScope": {
+      "好感度": 40
+    }
+  },
+  "step5-disabled-frozen-raw": {
+    "ok": true,
+    "messageScope": {
+      "好感度": 40
+    },
+    "frameProbeAfterDisable": {
+      "absent": "no plane iframe"
+    },
+    "rawFloorTail": "etvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n我们又聊了一会儿。\n新的好感度：<%- getvar('好感度') %>"
+  },
+  "step6-reenabled-continues-no-replay": {
+    "ok": true,
+    "messageScope": {
+      "好感度": 50
+    },
+    "disabledFloorStillRaw": true,
+    "newFloorProcessed": true,
+    "frameHealth": {
+      "readyState": "complete",
+      "hasJQuery": true,
+      "hasLodash": true,
+      "ejsPublished": true,
+      "kernelInstances": 1,
+      "settingsDom": 1
+    }
+  },
+  "step7-mvu-mutex-single-writer": {
+    "ok": true,
+    "messageScope": {
+      "initialized_lorebooks": {},
+      "stat_data": {}
+    },
+    "mvuFault": "MVU: path \"好感度\" does not exist",
+    "note": "MVU enabled: recordVariables replaces the whole message table after the bridge merge — the two implementations keep disjoint tables and exactly one writer survives a turn"
+  },
+  "chat-scope-never-written": {
+    "ok": true,
+    "chatScope": {
+      "好感度": 0
+    }
+  }
+}

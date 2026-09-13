@@ -447,6 +447,20 @@ class InMemoryClient implements FakeClient {
       case 'plugin.reload':
         return this.#systemPlugins.reload((params as RpcRequest<'plugin.reload'>).id)
 
+      // The ST-compat plane's face. The fake runs no extension frame, so the
+      // bridge arms are recorded and forgotten, submits are refused (nothing
+      // is pending), and settings/install answer in their stored shape.
+      case 'stCompat.plane.attach':
+        return { ok: true }
+      case 'stCompat.plane.detach':
+        return { ok: true }
+      case 'stCompat.submit':
+        return { accepted: false, why: 'the fake client runs no extension plane' }
+      case 'stCompat.settings':
+        return { ok: true }
+      case 'stExtension.install':
+        return this.#systemPlugins.snapshot()
+
       case 'chat.list':
         return { chats: this.#summaries(), ordered: this.#chatOrder.length > 0 }
 
