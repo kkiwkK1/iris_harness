@@ -44,6 +44,7 @@ import {
 } from '@iris/compat-st-extension'
 import { Installer, isValidExtensionId } from '@iris/extension-installer'
 import { StExtensionAssetStore, ST_EXT_PREFIX } from './st-ext-assets.ts'
+import { installedTreePresent } from './st-reinstall.ts'
 import { AppError } from './errors.ts'
 import type { SystemPluginSnapshot } from '@iris/protocol'
 import type { StCompatOptions } from './service.ts'
@@ -854,8 +855,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (!isValidExtensionId(id)) {
         throw new AppError('invalid-request', `the extension's name "${rawManifest.display_name}" does not slugify to a valid extension id`)
       }
-      const installer = await Installer.create(paths.extensions)
-      await installer.installAs(id, { kind: 'local-directory', directoryPath })
+      // A reinstall of an extension id whose tree is still on disk re-adopts
+      // instead of installing: the uninstall rule keeps the installed tree
+      // (the artifact and the stored settings are the user's data), so the
+      // same directory meeting an existing lock is the reinstall the platform
+      // promises — not the silent overwrite the installer refuses.
+      const readopt = installedTreePresent(paths.extensions, id)
+      if (!readopt) {
+        const installer = await Installer.create(paths.extensions)
+        await installer.installAs(id, { kind: 'local-directory', directoryPath })
+      }
       const installed = JSON.parse(await readFile(join(paths.extensions, 'installed', id, 'manifest.json'), 'utf8')) as unknown
       const parsed = normalizeManifest(installed)
       if (!parsed.ok) {
