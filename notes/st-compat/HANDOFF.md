@@ -1,6 +1,6 @@
 # 任务 C 交接文档 —— ST-Prompt-Template P3 兼容试点
 
-日期：2026-09-13。分支：`dev/st-compat-pilot`（worktree `D:/workspace/小项目/iris-st-compat-pilot`），基线 C_BASE = `6180d7358`（A+B 联合门），最新提交 `e1d494b`。**主链路已在真实浏览器中打通：UC-1 全部 4 步、UC-2 全链路验证通过；UC-3 有一个已知缺口**。本文写给接手人：现状、已踩平的坑、剩余工作与操作手册。
+日期：2026-09-13。分支：`dev/st-compat-pilot`（worktree `D:/workspace/小项目/iris-st-compat-pilot`），基线 C_BASE = `f8830f71a`（A+B 最终联合门；本分支已于 2026-09-13 重放到该基线）。**主链路已在真实浏览器中打通：UC-1 全部 4 步、UC-2 全链路验证通过；UC-3 有一个已知缺口**。本文写给接手人：现状、已踩平的坑、剩余工作与操作手册。
 
 ## 1. 当前状态总览
 

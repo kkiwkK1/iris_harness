@@ -1,6 +1,6 @@
 # P3 兼容试点设计 —— ST-Prompt-Template @ f9a07da 原版产物在 Iris 中的运行
 
-日期：2026-09-13。基线：C_BASE = `6180d7358a81f9001923993659160ef892b9209f`（A+B 联合门：dev/st-extension-installer-runtime @ f5b7250 合入 dev/system-plugins @ 8fa77bb，合并树与合并前逐字节一致；报告章节顺序差异取 system-plugins 侧）。本文是施工契约；验收报告（PILOT-REPORT.md）逐项对账。
+日期：2026-09-13。基线：C_BASE = `f8830f71a1b4f12b78e5630403e3ab0375f1b8ba`（A 最终交付 `f5b7250` 与 B 最终交付 `1463557` 汇入权威 `dev/system-plugins`，并通过联合类型、构建、渲染、全仓及无语料门；包含两笔仅修复联合类型门的集成提交）。本文是施工契约；验收报告（PILOT-REPORT.md）逐项对账。
 
 ## 0. 上游机制事实（普查来源：源码成员级普查 + 本文件 §4 表）
 
