@@ -287,3 +287,7 @@ git diff --check
 ```
 
 首个施工任务应是 P0 和 P1 收口，同时启动 P2 的只读分析器。不要先做一个“安装成功”的按钮再追查运行时依赖；也不要在 P4/P5 通过前删除现有 TH/MVU 实现。
+
+## 13. 追记：P2 安装器运行时落地（2026-09-13）
+
+§3 建议目录中的 `packages/iris-extension-installer/` 已作为 `@iris/extension-installer` 落地（分支 `dev/st-extension-installer-runtime`，施工报告 `notes/st-compat/CONSTRUCTION-REPORT-INSTALLER-RUNTIME.md`）：三种来源（本地压缩包、本地目录、Git 固定 40-hex commit）、全程 staging、路径/链接/越界守卫与事后审计、确定性树 SHA-256、严格 lock（`enabled` 恒为 `false`）、原子提升（rename + lock 证据规则）、事务日志驱动的崩溃恢复、每扩展并发声明。§5 顺序中的"识别发布格式/分析入口图/生成兼容计划/用户选择"仍属分析器与上层（P3 衔接）；安装器对本地源只做最小 manifest 门。纯 HTTP 下载、tar.gz、更新/回滚事务、卸载、启用路径均未实现，是有意留白。本节与 §9.1 的 P2 行（`dev/st-compat-installer`）并存：后者记录分析器切片的历史分支安排，安装器运行时切片按其独立派工单执行。

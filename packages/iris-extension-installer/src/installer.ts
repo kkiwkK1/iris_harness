@@ -1,0 +1,228 @@
+/**
+ * The installer orchestrator: source -> staging -> validation -> hash ->
+ * atomic promotion -> installed (and disabled).
+ *
+ * Invariants this file exists to keep:
+ *  - All writes land in staging first; the only thing that ever touches the
+ *    installed tree is one rename plus the lock write.
+ *  - The lock is written after the rename and marks completeness; a target
+ *    directory without a lock is not an install (recovery removes it).
+ *  - Nothing from the artifact executes here — not install scripts, not build
+ *    scripts, not git hooks, nothing. The installer never sets enabled:true;
+ *    installation and activation are different systems' decisions.
+ *  - Failure at any phase leaves the target untouched (or, during promoting,
+ *    recoverable to untouched by the recovery scan).
+ */
+
+import fsp from 'node:fs/promises'
+import path from 'node:path'
+
+import { ArchiveSecurityError, auditContainment, extractZipSafely } from './archive.ts'
+import { hashTree } from './hash.ts'
+import { buildLock, isValidExtensionId, LOCK_FILE_NAME, parseLock, writeLock } from './lock.ts'
+import { recoverInstallations, type RecoveryAction } from './recovery.ts'
+import { acquireClaim, createLayout, ensureLayout, InstallClaimBusyError, releaseClaim, type InstallerLayout } from './staging.ts'
+import { materializeSource, SourceError, validateExtensionSource, type ExtensionSource, type SourceOptions } from './source.ts'
+import { atomicWriteJson } from './transaction.ts'
+
+export type { InstalledExtensionLock } from './lock.ts'
+
+export interface InstallOptions {
+  expectedCommit?: string
+  maxArchiveBytes?: number
+  allowLocalGit?: boolean
+  signal?: AbortSignal
+  onPhase?: (phase: string, info: { transactionId: string; artifactSha256?: string }) => void
+}
+
+export interface InstallResult {
+  transactionId: string
+  extensionId: string
+  targetPath: string
+  artifactSha256: string
+  resolvedCommit?: string
+  lock: import('./lock.ts').InstalledExtensionLock
+}
+
+export class Installer {
+  readonly layout: InstallerLayout
+  private constructor(layout: InstallerLayout) {
+    this.layout = layout
+  }
+
+  static async create(root: string): Promise<Installer> {
+    const layout = createLayout(root)
+    await ensureLayout(layout)
+    return new Installer(layout)
+  }
+
+  recover(): Promise<RecoveryAction[]> {
+    return recoverInstallations(this.layout.root)
+  }
+
+  async readLock(extensionId: string): Promise<import('./lock.ts').InstalledExtensionLock | null> {
+    return parseLock(this.layout.store.targetPath(extensionId))
+  }
+
+  /**
+   * Runs one install transaction to completion. Throws on any refusal or
+   * interruption; the transaction is marked failed and staging removed before
+   * the error propagates, so a throw never leaves a half-open claim behind.
+   */
+  async installAs(extensionId: string, source: ExtensionSource, options: InstallOptions = {}): Promise<InstallResult> {
+    validateExtensionSource(source, options)
+    if (!isValidExtensionId(extensionId)) {
+      throw new SourceError(`extensionId ${JSON.stringify(extensionId)} is not a [a-z0-9][a-z0-9._-]{0,63} slug — the id becomes a directory name, so it is validated before it ever touches the filesystem`, 'bad-extension-id')
+    }
+    if (options.expectedCommit !== undefined && source.kind === 'git' && options.expectedCommit !== source.commit) {
+      throw new SourceError('expectedCommit disagrees with the source\u2019s pinned commit — refusing to install under two opinions of what was analyzed', 'commit-mismatch')
+    }
+    const existing = await this.readLock(extensionId)
+    if (existing) {
+      throw new SourceError(`extension ${extensionId} is already installed (artifact ${existing.artifactSha256}) — updates go through the update transaction, not a silent overwrite`, 'already-installed')
+    }
+    const store = this.layout.store
+    const txn = await store.begin({
+      extensionId,
+      source,
+      ...(options.expectedCommit !== undefined ? { expectedCommit: options.expectedCommit } : {}),
+    })
+    const material = path.join(txn.stagingPath, 'material')
+    const content = path.join(material, 'content')
+    const notify = (info: { artifactSha256?: string } = {}): void => {
+      options.onPhase?.(txn.phase, { transactionId: txn.transactionId, ...info })
+    }
+    try {
+      // Phase: downloading — bytes land in staging, nowhere else. Directory
+      // and git sources materialize directly into content/; an archive's
+      // bytes land in content/ first and are unpacked beside themselves in
+      // the staged phase, then the downloaded copy is deleted.
+      const outcome = await materializeSource(source, content, {
+        ...(options.allowLocalGit !== undefined ? { allowLocalGit: options.allowLocalGit } : {}),
+        ...(options.maxArchiveBytes !== undefined ? { maxArchiveBytes: options.maxArchiveBytes } : {}),
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      })
+      if ('failure' in outcome) throw outcome.failure
+      await store.transition(txn, 'staged')
+      notify()
+
+      // Phase: staged -> validated — unpack, guards, audit, manifest.
+      if (outcome.stagedArchive !== undefined) {
+        await extractZipSafely(outcome.stagedArchive, content)
+        await fsp.rm(outcome.stagedArchive, { force: true })
+      }
+      if (source.kind === 'local-archive' || source.kind === 'local-directory') {
+        await requireManifest(content)
+      }
+      await auditContainment(content)
+      await store.transition(txn, 'validated')
+      notify()
+
+      // Phase: validated -> hashed.
+      const tree = await hashTree(content)
+      await store.transition(txn, 'hashed', { artifactSha256: tree.sha256 })
+      notify({ artifactSha256: tree.sha256 })
+
+      // Phase: hashed -> promoting. The claim is taken only now, after the
+      // expensive work: two concurrent installs both stage, but only one ever
+      // reaches the target, and the loser never re-promotes over it.
+      await acquireClaim(this.layout, extensionId, txn)
+      let promoted = false
+      let locked = false
+      try {
+        await store.transition(txn, 'promoting')
+        notify()
+        const target = txn.targetPath
+        await fsp.mkdir(path.dirname(target), { recursive: true })
+        await fsp.rename(content, target) // atomic on-volume move; same root
+        promoted = true
+        const lock = buildLock({
+          extensionId,
+          source,
+          ...(outcome.resolvedCommit !== undefined ? { resolvedCommit: outcome.resolvedCommit } : {}),
+          artifactSha256: tree.sha256,
+        })
+        await writeLock(target, lock)
+        locked = true
+        await store.transition(txn, 'installed')
+        await fsp.rm(txn.stagingPath, { recursive: true, force: true })
+        notify({ artifactSha256: tree.sha256 })
+        return {
+          transactionId: txn.transactionId,
+          extensionId,
+          targetPath: target,
+          artifactSha256: tree.sha256,
+          ...(outcome.resolvedCommit !== undefined ? { resolvedCommit: outcome.resolvedCommit } : {}),
+          lock,
+        }
+      } finally {
+        // Normal control flow reaches here only via the throws above; both
+        // flags tell the catch below exactly how far promotion got.
+        if (!(promoted && locked)) {
+          await this.recordFailure(txn, promoted, locked)
+        }
+        await releaseClaim(this.layout, extensionId, txn.transactionId)
+      }
+    } catch (err) {
+      if (txn.phase !== 'installed' && txn.phase !== 'failed') {
+        await store.transition(txn, 'failed').catch(() => {})
+      }
+      await fsp.rm(txn.stagingPath, { recursive: true, force: true }).catch(() => {})
+      throw err
+    }
+  }
+
+  /**
+   * Failure cleanup for a promotion that died mid-way. The rename-then-lock
+   * pair is not atomic across both steps, so cleanup is evidence-driven —
+   * the same rule recovery applies, applied eagerly by the live installer.
+   */
+  private async recordFailure(txn: { targetPath: string; stagingPath: string; transactionId: string }, promoted: boolean, locked: boolean): Promise<void> {
+    if (promoted && !locked) {
+      // The rename landed but the lock did not: this target is not an
+      // installed extension. Move it back into the failed transaction's
+      // staging so the evidence (txn.json says failed) and the bytes travel
+      // together, then let the staging cleanup take both.
+      await fsp.rename(txn.targetPath, path.join(txn.stagingPath, 'material', 'content')).catch(async () => {
+        await fsp.rm(txn.targetPath, { recursive: true, force: true })
+      })
+      await atomicWriteJson(path.join(txn.stagingPath, 'promotion-failure.json'), {
+        transactionId: txn.transactionId,
+        reason: 'lock-write-failed-after-rename',
+      })
+    }
+  }
+}
+
+/**
+ * Minimum manifest gate for local sources: an install must contain a
+ * manifest.json whose `js` entry names a relative in-tree file that exists.
+ * Full normalization and module analysis are the analyzer package's job; the
+ * installer only refuses to promote something that could not even be
+ * described to the analyzer.
+ */
+async function requireManifest(content: string): Promise<void> {
+  const raw = await fsp.readFile(path.join(content, 'manifest.json'), 'utf8').catch(() => {
+    throw new ArchiveSecurityError('artifact has no manifest.json — nothing to analyze, refusing to promote', 'missing-manifest')
+  })
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(raw)
+  } catch {
+    throw new ArchiveSecurityError('manifest.json is not valid JSON', 'bad-manifest')
+  }
+  const js = (manifest as { js?: unknown }).js
+  if (typeof js !== 'string' || js.length === 0) {
+    throw new ArchiveSecurityError('manifest.json declares no js entry', 'bad-manifest')
+  }
+  if (js.includes('\\') || js.includes('..') || path.isAbsolute(js) || /^[a-zA-Z]:/u.test(js)) {
+    throw new ArchiveSecurityError(`manifest js entry ${JSON.stringify(js)} is not a relative in-tree path`, 'bad-manifest')
+  }
+  const entry = path.join(content, ...js.split('/'))
+  const st = await fsp.lstat(entry).catch(() => null)
+  if (!st?.isFile()) {
+    throw new ArchiveSecurityError(`manifest js entry ${js} does not exist in the artifact`, 'bad-manifest')
+  }
+}
+
+export { LOCK_FILE_NAME }

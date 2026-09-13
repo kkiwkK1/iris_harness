@@ -258,6 +258,8 @@ importers:
 
   packages/iris-compat-tavernhelper-core: {}
 
+  packages/iris-extension-installer: {}
+
   packages/iris-llm-openai-compat:
     dependencies:
       '@deepseek-ai/cordis':
