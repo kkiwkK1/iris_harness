@@ -51,3 +51,21 @@ export function servedExtensionRow(
 export function servedExtensionEnabled(row: SystemPluginRow | undefined): boolean {
   return row?.status === 'enabled'
 }
+
+/**
+ * Whether one window message is a card frame's member-proxy call.
+ *
+ * Pure, and extracted for the same reason as the rules above: the page's
+ * `message` listener used to drop everything whose source was not the
+ * extension frame BEFORE the plane ever saw it, which made the card-facing
+ * member proxy unreachable — a card's `irisStMemberProxy` envelope arrived
+ * from a card frame, the gate swallowed it, and no member ever answered. The
+ * gate now hands these to the plane first, whose own guards (own-frame check,
+ * extension id, reply targets) refuse what they do not recognise.
+ * @param data - the message's data, as the listener read it.
+ * @returns true when the message claims the member-proxy channel.
+ */
+export function isCardMemberProxyCall(data: unknown): boolean {
+  return typeof data === 'object' && data !== null
+    && (data as Record<string, unknown>)['irisStMemberProxy'] !== undefined
+}

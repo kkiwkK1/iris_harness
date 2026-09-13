@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { servedExtensionEnabled, servedExtensionRow, type SystemPluginRow } from '../src/st-extensions/plane-extension.ts'
+import { servedExtensionEnabled, servedExtensionRow, type SystemPluginRow, isCardMemberProxyCall, } from '../src/st-extensions/plane-extension.ts'
 
 const BUNDLED = new Set(['tavern-helper', 'mvu'])
 
@@ -49,4 +49,16 @@ test('a profile whose only enabled plugin is bundled reports the extension as NO
   // And with the extension enabled, the same profile reports it running.
   const enabledRows = [...rows.slice(0, 2), row('prompt-template', true, 'enabled')]
   assert.equal(servedExtensionEnabled(servedExtensionRow(enabledRows, BUNDLED)), true)
+})
+
+test('a card member-proxy envelope is recognised through the gate, whatever the source', () => {
+  // The regression: the page's message gate used to swallow everything whose
+  // source was not the extension frame BEFORE the plane saw it, so a card's
+  // irisStMemberProxy call could never reach the member routing at all.
+  assert.equal(isCardMemberProxyCall({ irisStMemberProxy: 'prompt-template', callId: 'c1' }), true)
+  assert.equal(isCardMemberProxyCall({ irisStMemberProxy: '' }), true, 'present-and-empty still claims the channel')
+  assert.equal(isCardMemberProxyCall({ irisStExt: 'tok', type: 'bridge-result' }), false)
+  assert.equal(isCardMemberProxyCall({ irisStProject: 'tok', path: 'p1' }), false)
+  assert.equal(isCardMemberProxyCall(null), false)
+  assert.equal(isCardMemberProxyCall('string'), false)
 })
