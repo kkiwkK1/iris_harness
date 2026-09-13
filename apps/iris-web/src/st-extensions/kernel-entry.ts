@@ -18,8 +18,8 @@ import {
   StCompatState,
   substituteMacrosMinimal,
   UnsupportedStCompatApiError,
-  translationsFor,
 } from '../../../../packages/iris-compat-st-extension/src/runtime/kernel-core.ts'
+import { resolveTranslation, translationSlots, type TranslationOriginals } from './projection-i18n.ts'
 import type {
   StBridgeContext,
   StBridgePayload,
@@ -141,6 +141,27 @@ async function loadLocaleTable(language: string): Promise<Record<string, string>
   }
 }
 
+/**
+ * The source text and attribute values each element carried before its first
+ * translation.
+ *
+ * Recorded so a locale that has NO entry for a key can put the original back
+ * rather than leaving the previous locale's string stranded. The extension
+ * ships `zh-cn`/`zh-tw` only, so the app's English setting produces an empty
+ * table — and a one-way applier would leave the Chinese text from the previous
+ * pass on screen after the user switches back to English. Captured on the
+ * FIRST pass over each element, which runs before any text has been replaced.
+ */
+const translationOriginals = new WeakMap<Element, TranslationOriginals>()
+
+/**
+ * Apply a locale table to a subtree, restoring originals for absent keys.
+ *
+ * Runs on every locale push and on every hydrate, so the panel always reflects
+ * the CURRENT language — including back to the source language, which is the
+ * direction a one-way applier cannot express. See `projection-i18n.ts` for the
+ * rules this loop is deliberately thin over.
+ */
 function applyTranslations(root: ParentNode, table: Record<string, string>): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
   const elements: Element[] = []
@@ -149,11 +170,26 @@ function applyTranslations(root: ParentNode, table: Record<string, string>): voi
   // no attributes of its own and carries nothing to translate.
   if (root instanceof Element) elements.push(root)
   for (const element of elements) {
-    const attributes = new Map<string, string>()
-    for (const attribute of [...element.attributes]) attributes.set(attribute.name, attribute.value)
-    for (const edit of translationsFor({ textContent: element.textContent, attributes }, table)) {
-      if (edit.kind === 'text') element.textContent = edit.value
-      else element.setAttribute(edit.attribute, edit.value)
+    const spec = element.getAttribute('data-i18n')
+    if (spec === null || spec === '') continue
+    const slots = translationSlots(spec)
+    let originals = translationOriginals.get(element)
+    if (originals === undefined) {
+      originals = { text: element.textContent ?? '', attributes: new Map() }
+      translationOriginals.set(element, originals)
+    }
+    for (const slot of slots) {
+      const value = resolveTranslation(slot, table, originals)
+      if (slot.attribute === undefined) {
+        element.textContent = value
+        continue
+      }
+      // The attribute's source is captured the first time it is written, so a
+      // later locale with no entry restores what the element actually had.
+      if (!originals.attributes.has(slot.attribute)) {
+        originals.attributes.set(slot.attribute, element.getAttribute(slot.attribute) ?? '')
+      }
+      element.setAttribute(slot.attribute, value)
     }
   }
 }
@@ -308,7 +344,10 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
       const context = data['context'] as StBridgeContext
       state.applyContext(context)
       syncBindings()
-      applyTranslations(document, await loadLocaleTable(state.language))
+      // Same tracking as the locale branch: hydrate translates the panel too,
+      // and a projection asked for during it must not serialize mid-pass.
+      localeApplied = loadLocaleTable(state.language).then(table => { applyTranslations(document, table) })
+      await localeApplied
       // APP_READY once, then the chat-open preload — upstream's order.
       if (!appReadyFired) {
         appReadyFired = true
@@ -319,7 +358,20 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
     }
     case 'locale': {
       state.language = String(data['language'] ?? 'en')
-      applyTranslations(document, await loadLocaleTable(state.language))
+      // Tracked so a serialization asked for while the locale table is still
+      // being fetched cannot run against a half-translated panel. Without this
+      // the pair (new language label, previous language's text) goes out — the
+      // shell asks for a projection right after pushing a locale, and the
+      // request would win the race against the translation it is meant to
+      // reflect.
+      localeApplied = loadLocaleTable(state.language).then(table => { applyTranslations(document, table) })
+      await localeApplied
+      // Re-translating the panel changes the bytes the section projects, so an
+      // open projection is answered unprompted — otherwise a language switch
+      // leaves it showing the previous language until something else happens
+      // to ask. Silent until a projection has been requested once: a frame
+      // whose panel nobody displays must not chatter on every locale push.
+      if (projectionRequested) postSettingsProjection()
       return
     }
     case 'bridge': {
@@ -349,18 +401,13 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
       return
     }
     case 'settings-project': {
-      const root = document.getElementById('extensions_settings')
-      if (root === null) throw new Error('the settings fixture root disappeared')
-      // Path tags let the projection relay an interaction back to the exact
-      // element; the attribute is ours, not upstream's, and adds no behavior.
-      let seq = 0
-      for (const element of root.querySelectorAll('*')) {
-        element.setAttribute('data-iris-proj-path', `p${seq}`)
-        seq += 1
-      }
-      // The path attributes stay on: the replay looks the real element up by
-      // them, so stripping after serialize would break the projection round trip.
-      post({ irisStExt: token, type: 'settings-html', html: root.innerHTML, language: state.language })
+      projectionRequested = true
+      // Never serialize a panel whose translation is still in flight: the
+      // answer would carry the new language's label over the old language's
+      // text, and the section would show that until something else refreshed
+      // it.
+      await localeApplied
+      postSettingsProjection()
       return
     }
     case 'replay-event': {
@@ -421,6 +468,43 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
 }
 
 let appReadyFired = false
+/** Whether any section has asked for a projection; gates the unprompted push. */
+let projectionRequested = false
+/**
+ * The last locale application, awaited before any serialization.
+ *
+ * Holds the promise for the **locale table fetch plus the translation pass**,
+ * not just the fetch: `applyTranslations` is the mutation a serialization must
+ * not race, and it is the part that runs after the await.
+ */
+let localeApplied: Promise<void> = Promise.resolve()
+
+/**
+ * Serialize the settings fixture root and hand it to the shell.
+ *
+ * Path tags let the projection relay an interaction back to the exact element;
+ * the attribute is ours, not upstream's, and adds no behavior. They stay on
+ * after serialization — the replay looks the real element up by them, so
+ * stripping would break the projection round trip.
+ *
+ * An empty serialization is a legitimate answer (the extension may not have
+ * appended its panel yet). It is sent as-is and the shell treats it as "not
+ * ready": the section keeps asking, and no empty read can blank a rendered
+ * document.
+ */
+function postSettingsProjection(): void {
+  const root = document.getElementById('extensions_settings')
+  if (root === null) {
+    post({ irisStExt: token, type: 'error', where: 'settings projection', message: 'the settings fixture root disappeared' })
+    return
+  }
+  let seq = 0
+  for (const element of root.querySelectorAll('*')) {
+    element.setAttribute('data-iris-proj-path', `p${seq}`)
+    seq += 1
+  }
+  post({ irisStExt: token, type: 'settings-html', html: root.innerHTML, language: state.language })
+}
 
 // --- kernel bootstrap -------------------------------------------------------
 

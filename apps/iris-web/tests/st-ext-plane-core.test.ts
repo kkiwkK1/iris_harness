@@ -136,6 +136,97 @@ test('settings-persist reaches the host; settings-html reaches the registered pr
   stop()
 })
 
+test('an empty serialization is never delivered — the mount race cannot blank a rendered section', () => {
+  const h = harness()
+  const seen: string[] = []
+  h.plane.requestSettingsProjection(html => { seen.push(html) })
+  h.plane.onWindowMessage({
+    source: h.frame,
+    data: { irisStExt: 'tok-1', type: 'settings-html', html: '', language: 'zh-cn' },
+  } as unknown as MessageEvent)
+  assert.deepEqual(seen, [], 'the not-ready answer must not reach the section')
+  // And an empty answer must not evict a good one either.
+  h.plane.onWindowMessage({
+    source: h.frame,
+    data: { irisStExt: 'tok-1', type: 'settings-html', html: '<div>real</div>', language: 'zh-cn' },
+  } as unknown as MessageEvent)
+  h.plane.onWindowMessage({
+    source: h.frame,
+    data: { irisStExt: 'tok-1', type: 'settings-html', html: '', language: 'zh-cn' },
+  } as unknown as MessageEvent)
+  assert.deepEqual(seen, ['<div>real</div>'])
+})
+
+test('a later subscriber is handed the current frame\'s cached serialization, then a fresh ask goes out', () => {
+  const h = harness()
+  const first: string[] = []
+  const stop = h.plane.requestSettingsProjection(html => { first.push(html) })
+  h.plane.onWindowMessage({
+    source: h.frame,
+    data: { irisStExt: 'tok-1', type: 'settings-html', html: '<div>panel</div>', language: 'zh-cn' },
+  } as unknown as MessageEvent)
+  const asksBefore = h.frame.sent.filter(m => (m.message as Record<string, unknown>)['type'] === 'settings-project').length
+
+  // A remount (drawer reopened) must not wait for the round trip to show the
+  // panel it already has, but it must still re-ask: the cached bytes are the
+  // frame's last answer, not a promise it still holds.
+  const second: string[] = []
+  const stopSecond = h.plane.requestSettingsProjection(html => { second.push(html) })
+  assert.deepEqual(second, ['<div>panel</div>'])
+  const asksAfter = h.frame.sent.filter(m => (m.message as Record<string, unknown>)['type'] === 'settings-project').length
+  assert.equal(asksAfter, asksBefore + 1)
+  stop()
+  stopSecond()
+})
+
+test('reset drops the projection cache — a rebuilt frame never shows the previous revision', () => {
+  const h = harness()
+  const seen: string[] = []
+  h.plane.requestSettingsProjection(html => { seen.push(html) })
+  h.plane.onWindowMessage({
+    source: h.frame,
+    data: { irisStExt: 'tok-1', type: 'settings-html', html: '<div>old revision</div>', language: 'zh-cn' },
+  } as unknown as MessageEvent)
+  assert.deepEqual(seen, ['<div>old revision</div>'])
+  h.plane.reset()
+  const after: string[] = []
+  h.plane.requestSettingsProjection(html => { after.push(html) })
+  assert.deepEqual(after, [], 'the rebuilt frame must start blank, not replay the old panel')
+})
+
+test('settings-persist notifies subscribers, and an unsubscribed handler stops hearing it', () => {
+  const h = harness()
+  let notices = 0
+  const stop = h.plane.onSettingsPersisted(() => { notices += 1 })
+  h.plane.onWindowMessage({
+    source: h.frame,
+    data: { irisStExt: 'tok-1', type: 'settings-persist', extensionSettings: { EjsTemplate: {} } },
+  } as unknown as MessageEvent)
+  assert.equal(notices, 1)
+  stop()
+  h.plane.onWindowMessage({
+    source: h.frame,
+    data: { irisStExt: 'tok-1', type: 'settings-persist', extensionSettings: { EjsTemplate: {} } },
+  } as unknown as MessageEvent)
+  assert.equal(notices, 1)
+})
+
+test('refreshSettingsProjection re-asks without registering a handler; no frame means no send', () => {
+  const h = harness()
+  h.plane.refreshSettingsProjection()
+  assert.equal((h.frame.sent.at(-1)!.message as Record<string, unknown>)['type'], 'settings-project')
+  const empty = harness(false)
+  empty.plane.refreshSettingsProjection()
+  assert.equal(empty.frame.sent.length, 0)
+})
+
+test('a requestSettingsProjection with no frame yields a stop that is safe to call', () => {
+  const h = harness(false)
+  const stop = h.plane.requestSettingsProjection(() => {})
+  assert.equal(h.frame.sent.length, 0)
+  stop()
+})
+
 test('a card frame\'s member call is forwarded to the frame and answered back on the same card window', () => {
   const h = harness()
   h.plane.onWindowMessage({

@@ -1,4 +1,4 @@
-import { U as UnsupportedStCompatApiError } from "./chunks/kernel-core-VDxEywTX.js";
+import { U as UnsupportedStCompatApiError } from "./chunks/kernel-core-CVpTC58g.js";
 const yaml = {
   stringify() {
     throw new UnsupportedStCompatApiError("lib.js yaml.stringify (YAML-schema variables)");

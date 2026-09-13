@@ -23,11 +23,37 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { useLanguage } from '../app/i18n/use-language.ts'
 import { useSlots } from '../slots/Slot.tsx'
 import { buildExtensionSrcdoc } from './srcdoc.ts'
+import { servedExtensionEnabled, servedExtensionRow } from './plane-extension.ts'
 import { StExtPlane, type StExtPlaneHost } from './plane-core.ts'
 import { subscribeStCompatRequests } from './plane-bus.ts'
 
 /** The settings-section id this pilot registers under. */
 const SECTION_ID = 'st-compat-settings'
+
+/**
+ * The host's two bundled system plugins.
+ *
+ * The pilot serves the INSTALLED row that is neither of these — the same rule
+ * the app service's `extensionId()` applies when it resolves which extension to
+ * bridge and whose settings to load. Kept here as data rather than as a second
+ * selection rule: if the host grows a third bundled plugin, this set and that
+ * function are one edit apart, and the symptom of drift is a plane that thinks
+ * a bundled plugin is its extension.
+ */
+const BUNDLED_PLUGIN_IDS = new Set(['tavern-helper', 'mvu'])
+
+/**
+ * The projection retry schedule.
+ *
+ * A `settings-project` posted before the frame installed its message
+ * listeners — or before the extension appended its panel into the fixture
+ * root — is lost or answered empty, and the section would stay blank forever.
+ * The section asks again on this schedule until a non-empty serialization
+ * settles; the plane refuses empty answers, so a stray retry can never blank
+ * a document that already rendered.
+ */
+const PROJECTION_RETRY_MS = 300
+const PROJECTION_RETRY_ATTEMPTS = 8
 
 interface PlaneFrameSpec {
   extensionId: string
@@ -80,14 +106,29 @@ export function StExtensionPlane(): ReactElement | null {
     return new StExtPlane(host)
   }, [actions, spec])
 
-  // The enabled row decides whether a frame exists at all.
-  const enabled = snapshot?.plugins.some(plugin => plugin.installed && plugin.status === 'enabled') === true
+  // Which ST extension row this plane belongs to.
+  //
+  // The host answers the same question the same way — its `extensionId()` picks
+  // the installed row that is not one of the two bundled plugins — so this is
+  // the page's copy of ONE contract, not a second opinion about which extension
+  // the pilot serves.
+  //
+  // **"Is some plugin enabled" was the earlier reading, and it was wrong**: the
+  // bundled plugins are installed and enabled on every profile, so that
+  // condition never turned false and a DISABLED extension kept its frame and its
+  // panel on screen. The mount case only looked correct because the manifest
+  // then 404s and no frame is ever built — the live case had a frame already,
+  // and nothing took it down.
+  const served = servedExtensionRow(snapshot?.plugins, BUNDLED_PLUGIN_IDS)
+  const servedEnabled = servedExtensionEnabled(served)
 
   useEffect(() => {
     let alive = true
-    if (!enabled || snapshot === undefined) {
-      // Disabled: detach first, then drop the frame. The host fails every
-      // pending round toward the raw passthrough the moment the detach lands.
+    if (!servedEnabled) {
+      // Disabled or uninstalled: detach first, then drop the frame. The host
+      // fails every pending round toward the raw passthrough the moment the
+      // detach lands, and the section unregisters with the frame — so a panel
+      // cannot outlive the enable that put it there.
       if (spec?.extensionId !== undefined) {
         void actions.stCompatDetach(spec.extensionId).catch(() => {})
       }
@@ -119,8 +160,12 @@ export function StExtensionPlane(): ReactElement | null {
       }
     })()
     return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild only on enable-state or revision change
-  }, [actions, enabled, snapshot?.revision])
+    // `spec` is read but not a dependency on purpose: adding it would make the
+    // effect re-run on its own `setSpec`, and the early `!servedEnabled` branch
+    // is what the teardown needs — every path that can disable the extension
+    // changes `servedEnabled` or the revision, and both are listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild on enable-state or revision change
+  }, [actions, servedEnabled, served?.id, snapshot?.revision])
 
   const onFrameMessage = useCallback((event: MessageEvent): void => {
     if (event.source !== frameRef.current?.contentWindow) return
@@ -132,10 +177,27 @@ export function StExtensionPlane(): ReactElement | null {
       }
       const frameLanguage = lang === 'zh' ? 'zh-cn' : 'en'
       plane.sendLocale(frameRef.current.contentWindow as Window, frameLanguage)
+      // Readiness is the first moment the frame can answer at all; the
+      // section's retry loop has been asking into the void until now.
+      plane.refreshSettingsProjection()
       return
     }
     plane.onWindowMessage(event)
   }, [actions, chatId, lang, plane, spec])
+
+  // Language is pushed to an already-running frame too. The original code
+  // pushed it only at `ready`, so a switch after mount left the extension
+  // translating with its old table — and any open settings projection showing
+  // the old language. The re-ask beside the push is what makes the projection
+  // re-render from the freshly translated panel rather than keep its stale
+  // serialization.
+  useEffect(() => {
+    if (spec === undefined) return
+    const frame = frameRef.current?.contentWindow
+    if (frame === null || frame === undefined) return
+    plane.sendLocale(frame, lang === 'zh' ? 'zh-cn' : 'en')
+    plane.refreshSettingsProjection()
+  }, [lang, spec, plane])
 
   useEffect(() => {
     if (spec === undefined) return undefined
@@ -180,14 +242,49 @@ export function StExtensionPlane(): ReactElement | null {
 
 function StExtensionSettingsSection({ plane, frameToken }: { plane: StExtPlane, frameToken: string }): ReactElement {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const [html, setHtml] = useState<string | undefined>()
 
-  // Project once per mount; the drawer remounting the section re-projects.
+  // The projection bridge with the retry the original mount lacked. The
+  // handler is a subscription, not a one-shot: the panel keeps moving (a save
+  // rewrites it, a locale switch re-translates it) and an open section must
+  // track those updates. Identical HTML is not re-set, so an unchanged answer
+  // never rebuilds the document under the reader.
   useEffect(() => {
-    plane.requestSettingsProjection((html) => {
-      if (frameRef.current !== null) frameRef.current.srcdoc = settingsProjectionSrcdoc(html, frameToken)
+    let disposed = false
+    let settled = false
+    let attempt = 0
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+    const stop = plane.requestSettingsProjection(next => {
+      if (disposed) return
+      settled = true
+      setHtml(current => (current === next ? current : next))
     })
-    return () => {}
+    const retry = (): void => {
+      if (disposed || settled || attempt >= PROJECTION_RETRY_ATTEMPTS) return
+      attempt += 1
+      timers.push(setTimeout(() => {
+        if (disposed || settled) return
+        plane.refreshSettingsProjection()
+        retry()
+      }, PROJECTION_RETRY_MS))
+    }
+    retry()
+    return () => {
+      disposed = true
+      for (const timer of timers) clearTimeout(timer)
+      stop()
+    }
   }, [plane, frameToken])
+
+  // A save means the extension rewrote its own panel DOM, so the projection is
+  // stale. Re-ask — unless the projection holds the user's focus, where a
+  // rebuild would steal the caret and the scroll position mid-interaction. The
+  // projection is a live mirror of the real panel in that case (the control the
+  // reader touched is the one they see), so skipping is correct, not a gap.
+  useEffect(() => plane.onSettingsPersisted(() => {
+    if (document.activeElement === frameRef.current) return
+    plane.refreshSettingsProjection()
+  }), [plane])
 
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
@@ -211,7 +308,7 @@ function StExtensionSettingsSection({ plane, frameToken }: { plane: StExtPlane, 
     ref: frameRef,
     title: 'Extension settings',
     sandbox: 'allow-scripts',
-    srcDoc: '',
+    srcDoc: html === undefined ? '' : settingsProjectionSrcdoc(html, frameToken),
   }))
 }
 

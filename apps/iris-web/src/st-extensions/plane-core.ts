@@ -58,7 +58,11 @@ export class StExtPlane {
   readonly #host: StExtPlaneHost
   readonly #pendingRevisions = new Map<string, number>()
   readonly #projectHandlers = new Set<(html: string, language: string) => void>()
+  /** Notified after a `settings-persist`, so an open projection can settle. */
+  readonly #settingsPersistHandlers = new Set<() => void>()
   readonly #memberReplyTargets = new Map<string, Window>()
+  /** The current frame's latest non-empty serialization, if it answered yet. */
+  #projection: { html: string, language: string } | undefined
 
   constructor(host: StExtPlaneHost) {
     this.#host = host
@@ -104,12 +108,52 @@ export class StExtPlane {
     frame.postMessage({ irisStExt: this.#host.frameToken(), type: 'chat-open', context } satisfies StShellToFrame, '*')
   }
 
-  /** Ask the frame to serialize its settings panel (for the settings slot). */
+  /**
+   * Subscribe to settings saves.
+   *
+   * The extension rewrites its own panel DOM when a setting changes
+   * (upstream's changeHandler updates the control, then the debounced save
+   * lands here). An open projection showing the pre-change HTML would drift
+   * from the real panel, so the section re-asks on this signal — but only
+   * when it does not hold the user's focus, because rebuilding the projection
+   * document would otherwise steal the caret mid-typing.
+   */
+  onSettingsPersisted(handler: () => void): () => void {
+    this.#settingsPersistHandlers.add(handler)
+    return () => { this.#settingsPersistHandlers.delete(handler) }
+  }
+
+  /**
+   * (Re-)send the serialization request to the current frame.
+   *
+   * The projection bridge's retry primitive. A `settings-project` posted
+   * before the frame installed its message listener — or before the upstream
+   * appended its panel into `#extensions_settings` — is simply lost or
+   * answered empty, and without a re-ask the section would stay blank
+   * forever. Callers poll with this until a non-empty answer settles.
+   */
+  refreshSettingsProjection(): void {
+    const frame = this.#host.frameWindow()
+    if (frame === null) return
+    frame.postMessage({ irisStExt: this.#host.frameToken(), type: 'settings-project' } satisfies StShellToFrame, '*')
+  }
+
+  /**
+   * Ask the frame to serialize its settings panel (for the settings slot).
+   *
+   * The returned stop function unsubscribes — the handler set is the fan-out
+   * for every later answer, not a one-shot, because the panel keeps moving
+   * (saves re-write it, locale switches re-translate it) and an open section
+   * must track those updates. The cached serialization is delivered
+   * immediately when one exists, then a fresh round re-asks: cached bytes are
+   * the current frame's *last* answer, not a promise it still holds.
+   */
   requestSettingsProjection(onHtml: (html: string, language: string) => void): () => void {
     const frame = this.#host.frameWindow()
     if (frame === null) return () => {}
     this.#projectHandlers.add(onHtml)
-    frame.postMessage({ irisStExt: this.#host.frameToken(), type: 'settings-project' } satisfies StShellToFrame, '*')
+    if (this.#projection !== undefined) onHtml(this.#projection.html, this.#projection.language)
+    this.refreshSettingsProjection()
     return () => { this.#projectHandlers.delete(onHtml) }
   }
 
@@ -160,10 +204,19 @@ export class StExtPlane {
     }
   }
 
-  /** Drop every pending accounting entry (frame rebuilt). */
+  /**
+   * Drop every pending accounting entry (frame rebuilt).
+   *
+   * The projection cache goes with it: it belongs to the frame that answered,
+   * and a rebuilt frame is a different revision's panel. Keeping it would let
+   * a reload, a language switch's re-ask, or a disable/enable cycle show the
+   * previous frame's settings — exactly the stale-revision display the fence
+   * exists to prevent.
+   */
   reset(): void {
     this.#pendingRevisions.clear()
     this.#memberReplyTargets.clear()
+    this.#projection = undefined
   }
 
   #handleFrameMessage(message: StFrameToShell): void {
@@ -184,8 +237,18 @@ export class StExtPlane {
       }
       case 'settings-persist':
         this.#host.persistSettings(message.extensionSettings)
+        for (const handler of this.#settingsPersistHandlers) handler()
         return
       case 'settings-html': {
+        // An empty serialization is the "not ready yet" answer — the panel
+        // has not been appended, or the frame has not installed its
+        // listeners. It must not overwrite a good cached answer (a later
+        // empty read after a real one would blank an open section), and it
+        // must not be fanned out either: the section's retry loop keeps
+        // asking, and handing it empty HTML would only rebuild the frame
+        // to the same blank document.
+        if (message.html === '') return
+        this.#projection = { html: message.html, language: message.language }
         for (const handler of this.#projectHandlers) handler(message.html, message.language)
         return
       }

@@ -109,30 +109,9 @@ function replaceInPlace(target, next) {
   for (const key of Object.keys(target)) delete target[key];
   Object.assign(target, next);
 }
-function translationsFor(element, table) {
-  const edits = [];
-  const spec = element.attributes.get("data-i18n");
-  if (typeof spec !== "string" || spec === "") return edits;
-  for (const part of spec.split(";").map((part2) => part2.trim()).filter(Boolean)) {
-    const attributeForm = /^\[([^\]]+)\](.+)$/u.exec(part);
-    if (attributeForm !== null) {
-      const attribute = attributeForm[1];
-      const key = attributeForm[2];
-      if (attribute !== void 0 && key !== void 0) {
-        const value = table[key];
-        if (typeof value === "string") edits.push({ kind: "attribute", attribute, value });
-      }
-    } else {
-      const value = table[part];
-      if (typeof value === "string") edits.push({ kind: "text", value });
-    }
-  }
-  return edits;
-}
 export {
   StCompatState as S,
   UnsupportedStCompatApiError as U,
   escapeHtml as e,
-  substituteMacrosMinimal as s,
-  translationsFor as t
+  substituteMacrosMinimal as s
 };
