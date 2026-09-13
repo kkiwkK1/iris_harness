@@ -115,3 +115,13 @@
 ## git diff --stat / git status --porcelain
 
 见提交信息随附（提交时以 `git show --stat HEAD` 与 `git status --porcelain` 为准；本 worktree 提交后 status 应为空）。
+
+## 追记（dev/plugin-fix-installer-recovery-containment）：缺陷一 —— 恢复容器逃逸修复
+
+**缺陷**：恢复扫描的 promoting 分支直接信任 txn.json 里的 `targetPath`/`stagingPath`。txn.json 是磁盘上可篡改的文件：伪造一个 promoting 事务把 `targetPath` 指向安装根之外，恢复按"无 lock = 未安装"的规则删除该路径——一个由单个伪造 JSON 驱动的删除任意目录的武器；同理可让根外带 lock 的目录被确认成"已完成安装"。
+
+**修复**（recovery.ts）：事务记录是"意图证据"而非"指令"。staging 路径一律用扫描到的真实目录；目标路径唯一来源是 `deriveTargetPath(layout, txn)` —— extensionId 先过与安装同一的 `isValidExtensionId`，再 `path.resolve` 断言落在 targetsRoot 内。派生失败（非法 id / 越界派生）记新 outcome `untrusted-transaction`：只删 staging，其余一概不碰。promoting 的确认与回滚只看派生目标上的 lock。
+
+**恶意 txn.json 夹具（新增 3 条，均含 sentinel 断言）**：① 合法 id + targetPath 指根外带 sentinel 的目录 → 恢复后 sentinel 存在、伪造 stagingPath 指针不被使用、staging 清理、rolled-back；② 非法 id（`../evil`）→ `untrusted-transaction`，根外不动；③ targetPath 指根外且那里预置有效 lock → 不得确认完成，根外目录与 lock 原样保留。
+
+**红绿验证**：三个夹具对未修复代码 3/3 失败（13 pass / 3 fail），修复后 16/16 过。门：安装器 32 + 分析器 10 = 42 pass 0 fail；根 tsc exit 0；`git diff --check` 干净。

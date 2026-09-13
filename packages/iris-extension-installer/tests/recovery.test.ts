@@ -199,3 +199,128 @@ test('an aborted download fails the transaction and leaves nothing behind', asyn
   assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'staging')), [])
   assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'installed')), [])
 })
+
+// --- 恶意 txn.json 夹具：恢复绝不跟随事务记录里的路径 ------------------------
+//
+// txn.json 是磁盘上可被篡改的输入。一个伪造的 promoting 事务把 targetPath 指
+// 向安装根之外的目录，而恢复扫描恰好会删除"无 lock 的目标"——如果恢复信任记
+// 录里的路径，这就是一个删除任意目录的原始武器。恢复必须只用 layout + 合法
+// extensionId 重新推导的路径。
+
+/** 手写一个伪造（或被篡改）的 promoting 事务。 */
+async function plantMaliciousTxn(options: {
+  storeRoot: string
+  extensionId: string
+  targetPath: string
+  stagingPath: string
+  transactionId?: string
+}): Promise<string> {
+  const txnDir = path.join(options.storeRoot, 'staging', options.transactionId ?? 'forged-txn-id')
+  await fsp.mkdir(path.join(txnDir, 'material', 'content'), { recursive: true })
+  const txn = {
+    transactionId: options.transactionId ?? 'forged-txn-id',
+    extensionId: options.extensionId,
+    source: { kind: 'local-directory', directoryPath: 'C:\does-not-exist' },
+    stagingPath: options.stagingPath,
+    targetPath: options.targetPath,
+    phase: 'promoting',
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  await fsp.writeFile(path.join(txnDir, 'txn.json'), JSON.stringify(txn, null, 2))
+  return txnDir
+}
+
+test('a forged txn.json pointing targetPath outside the install root: the sentinel survives, only staging is cleaned', async () => {
+  const root = await tempRoot()
+  const storeRoot = path.join(root, 'store')
+  await fsp.mkdir(path.join(storeRoot, 'installed'), { recursive: true })
+
+  // The victim lives outside the install root and holds a sentinel file.
+  const victim = path.join(root, 'outside-victim')
+  const sentinel = path.join(victim, 'sentinel.txt')
+  await fsp.mkdir(victim, { recursive: true })
+  await fsp.writeFile(sentinel, 'must survive recovery')
+
+  const forgedDir = await plantMaliciousTxn({
+    storeRoot,
+    extensionId: 'demo-ext',
+    stagingPath: path.join(root, 'also-outside-staging'),
+    targetPath: victim, // the lie: "the material was renamed here"
+  })
+
+  const actions = await recoverInstallations(storeRoot)
+  const mine = actions.filter(a => a.path === forgedDir)
+  assert.equal(mine.length, 1)
+  assert.equal(mine[0]!.outcome, 'rolled-back', 'no lock at the derived target, so the txn rolls back')
+  assert.equal(mine[0]!.extensionId, 'demo-ext')
+
+  assert.equal(await fsp.readFile(sentinel, 'utf8'), 'must survive recovery', 'the sentinel must exist after recovery — the root-外的目录绝不能被跟随或删除')
+  const victimEntries = await fsp.readdir(victim)
+  assert.deepEqual(victimEntries, ['sentinel.txt'])
+  assert.ok(!await fsp.stat(path.join(root, 'also-outside-staging')).then(() => true).catch(() => false), 'txn.stagingPath 之外的伪造 staging 指针也不被使用')
+
+  const stagingDirs = await fsp.readdir(path.join(storeRoot, 'staging'))
+  assert.deepEqual(stagingDirs, [], 'only the real staging dir is removed')
+  const targets = await fsp.readdir(path.join(storeRoot, 'installed'))
+  assert.deepEqual(targets, [], 'and the derived target (installed/demo-ext) never existed, so nothing else was touched')
+})
+
+test('a forged txn.json with an invalid extensionId is quarantined, not followed', async () => {
+  const root = await tempRoot()
+  const storeRoot = path.join(root, 'store')
+  await fsp.mkdir(path.join(storeRoot, 'installed'), { recursive: true })
+
+  const victim = path.join(root, 'outside-victim-2')
+  const sentinel = path.join(victim, 'sentinel.txt')
+  await fsp.mkdir(victim, { recursive: true })
+  await fsp.writeFile(sentinel, 'must survive')
+
+  const forgedDir = await plantMaliciousTxn({
+    storeRoot,
+    extensionId: '../evil', // 穿越 id：不能作为目录名，更不能派生任何目标
+    stagingPath: path.join(storeRoot, 'staging', 'forged-txn-id'),
+    targetPath: victim,
+  })
+
+  const actions = await recoverInstallations(storeRoot)
+  const mine = actions.filter(a => a.path === forgedDir)
+  assert.equal(mine.length, 1)
+  assert.equal(mine[0]!.outcome, 'untrusted-transaction', 'invalid id: recovery refuses to derive any target from it')
+  assert.equal(await fsp.stat(sentinel).then(() => true).catch(() => false), true)
+  assert.deepEqual(await fsp.readdir(path.join(storeRoot, 'staging')), [])
+})
+
+test('a forged promoting txn cannot have a lock-外目录 confirmed as an install', async () => {
+  const root = await tempRoot()
+  const storeRoot = path.join(root, 'store')
+  await fsp.mkdir(path.join(storeRoot, 'installed'), { recursive: true })
+
+  // The attacker plants a valid-looking lock OUTSIDE the root and points the
+  // forged txn's targetPath at it, hoping recovery confirms "completed" and
+  // blesses a directory the installer never created.
+  const victim = path.join(root, 'outside-plantation')
+  await fsp.mkdir(victim, { recursive: true })
+  const { buildLock, writeLock } = await import('../src/lock.ts')
+  await writeLock(victim, buildLock({
+    extensionId: 'demo-ext',
+    source: { kind: 'local-directory', directoryPath: root },
+    artifactSha256: 'c'.repeat(64),
+  }))
+
+  await plantMaliciousTxn({
+    storeRoot,
+    extensionId: 'demo-ext',
+    stagingPath: path.join(storeRoot, 'staging', 'forged-txn-id'),
+    targetPath: victim,
+  })
+
+  const actions = await recoverInstallations(storeRoot)
+  const promoting = actions.find(a => a.outcome === 'completed')
+  assert.equal(promoting, undefined, 'confirmation happens only at the layout-derived target, never the txn\u2019s pointer')
+  const derived = path.join(storeRoot, 'installed', 'demo-ext')
+  assert.equal(await fsp.stat(derived).then(() => true).catch(() => false), false, 'the derived target has no lock, so nothing was completed there either')
+  const lockSurvives = await fsp.stat(path.join(victim, 'lock.json')).then(() => true).catch(() => false)
+  assert.equal(lockSurvives, true, 'the planted outside directory is left exactly as it was — recovery never follows the pointer')
+  assert.deepEqual(await fsp.readdir(path.join(storeRoot, 'staging')), [])
+})
