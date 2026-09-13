@@ -20,9 +20,10 @@
  *
  * @module iris-web/app/use-plugin-manifest
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { PLUGIN_ASSET_MANIFEST_PATH, parsePluginAssetManifest, type PluginAssetManifest } from '@iris/plugin-web-api'
+import type { SystemPluginSnapshot } from '@iris/protocol'
 
 /** Read and validate the aggregate manifest, or say why it could not be read. */
 async function pluginAssetManifest(): Promise<PluginAssetManifest> {
@@ -63,4 +64,310 @@ export function usePluginAssetManifest(revision: number | undefined): PluginAsse
     }
   }, [revision])
   return manifest
+}
+
+/**
+ * The PluginCenter's half of the visibility rule: what the **browser side** of
+ * each enabled plugin is doing, derived from what the shell can see on its own
+ * side of the frame wall.
+ *
+ * The frame's merge reports (`plugin-members.ts`) name per-plugin refusals
+ * inside each sandbox, but those realms are behind `srcdoc` and report to
+ * cards, not to the shell — and this task's surface is this module plus the
+ * plugin center. So the status below is assembled from the two things the
+ * shell *can* read without touching the frame protocol: the aggregate
+ * manifest (who has a bundle to serve) and the client bundle itself (fetched
+ * like the frame would fetch it, compiled — never executed — so a syntax
+ * error is named as a parse failure rather than left invisible until some
+ * card probes the refused namespace).
+ *
+ * The phases map the five observable states onto shell-visible facts:
+ *
+ * - `undeclared` — the host snapshot does not run the plugin, so no browser
+ *   asset is expected (nothing to load, nothing to retry).
+ * - `loading` — the manifest or the plugin's `client.js` is being fetched.
+ * - `loaded` — the manifest row exists for the current revision, the bundle
+ *   was fetched, and it compiles.
+ * - `degraded` — a failure was named: the bundle is missing, the fetch
+ *   failed, the manifest is malformed, or two bundles register a colliding
+ *   member name. The host plugin stays enabled; degradation is **browser
+ *   only** and never flows back into the store.
+ * - `stale` — the manifest's revision does not answer for the snapshot's
+ *   revision (an older read still in flight, or a fetch that has not caught
+ *   up to a `plugins.changed`). The rows it carries are last revision's
+ *   bytes and are shown as such — expected revision against actual — but are
+ *   not probed further.
+ */
+
+/** Why a plugin's browser face is not whole, classified for display. */
+export type PluginAssetErrorKind =
+  | 'client-missing'
+  | 'http'
+  | 'parse'
+  | 'manifest'
+  | 'revision'
+  | 'conflict'
+
+/** One classified browser-asset failure, ready for the status row. */
+export interface PluginAssetError {
+  kind: PluginAssetErrorKind
+  message: string
+  /** For `conflict`: the member name and the plugin ids claiming it. */
+  sources?: { member: string, claimants: string[] }
+}
+
+/** The browser-asset phase of one plugin, as the shell can observe it. */
+export type PluginAssetPhase = 'undeclared' | 'loading' | 'loaded' | 'degraded' | 'stale'
+
+/** What the PluginCenter shows for one plugin's browser side. */
+export interface PluginBrowserAssetStatus {
+  phase: PluginAssetPhase
+  /** The snapshot revision the browser assets should answer for. */
+  expectedRevision: number | undefined
+  /** The content rev actually served for the plugin, when known. */
+  actualRevision: string | undefined
+  error: PluginAssetError | undefined
+  /** Epoch ms of the last successful bundle fetch, when there was one. */
+  loadedAt: number | undefined
+}
+
+/** One probe's outcome, before the reduction merges it with the snapshot. */
+export interface PluginProbe {
+  phase: 'loading' | 'loaded' | 'degraded'
+  rev: string | undefined
+  error: PluginAssetError | undefined
+  loadedAt: number | undefined
+  /** The bundle text as served, kept for the cross-plugin conflict scan. */
+  source: string | undefined
+}
+
+/**
+ * Classify one `client.js` response into a probe outcome.
+ *
+ * Exported for tests: the classification is the contract the status row
+ * shows, so the kinds stay named here rather than inlined into the fetch
+ * path. A 404 names a missing bundle; any other failed HTTP status names the
+ * fetch; a bundle that fails to compile (classic script, `new Function`
+ * parses but does not run a statement) names the parse; a module bundle is
+ * taken on trust, because it cannot be compile-checked without a module
+ * context and the frame's own ready marker is its verdict.
+ */
+export function classifyClientResponse(status: number, text: string | undefined, rev: string): PluginProbe {
+  if (status === 404) {
+    return { phase: 'degraded', rev, loadedAt: undefined, source: undefined, error: { kind: 'client-missing', message: `the client bundle does not exist (HTTP 404 for rev ${rev})` } }
+  }
+  if (status < 200 || status >= 300) {
+    return { phase: 'degraded', rev, loadedAt: undefined, source: undefined, error: { kind: 'http', message: `HTTP ${String(status)} while fetching the client bundle` } }
+  }
+  if (/^\s*(import|export)\b/m.test(text ?? '')) {
+    return { phase: 'loaded', rev, loadedAt: Date.now(), source: text, error: undefined }
+  }
+  try {
+    // Compile only: `new Function` parses classic script without running a
+    // statement of it, so plugin code never executes on the shell side.
+    new Function(text ?? '')
+  } catch (error) {
+    return { phase: 'degraded', rev, loadedAt: undefined, source: undefined, error: { kind: 'parse', message: `the client bundle failed to parse (${error instanceof Error ? error.message : String(error)})` } }
+  }
+  return { phase: 'loaded', rev, loadedAt: Date.now(), source: text, error: undefined }
+}
+
+/**
+ * Extract the member names one bundle registers, best effort.
+ *
+ * The merge protocol is a runtime call
+ * (`registerPluginMembers('<id>', { name: … })`), and the shell cannot see a
+ * frame's registration — but the typical bundle passes a literal object, and
+ * a collision between two enabled plugins' literal names is visible in the
+ * two sources before either frame runs. The scan is deliberately narrow: only
+ * literal object keys directly inside a `registerPluginMembers` call are
+ * collected; computed keys and indirect registration yield nothing, because
+ * a static scan must not invent a conflict. Exported for tests.
+ */
+export function scanPluginMemberNames(source: string | undefined): string[] {
+  if (source === undefined) return []
+  const names: string[] = []
+  const call = /registerPluginMembers\s*\(\s*(['"])[^'"]*\1\s*,\s*\{/g
+  let match: RegExpExecArray | null
+  while ((match = call.exec(source)) !== null) {
+    const start = match.index + match[0].length
+    let depth = 1
+    let end = start
+    while (end < source.length && depth > 0) {
+      const char = source[end]
+      if (char === '{') depth += 1
+      else if (char === '}') depth -= 1
+      end += 1
+    }
+    const body = source.slice(start, end - 1)
+    for (const key of body.matchAll(/(?:^|[,{])\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:/g)) {
+      names.push(key[1])
+    }
+  }
+  return names
+}
+
+/**
+ * Pair up colliding member names across fetched bundles.
+ *
+ * At most one `conflict` error per plugin — the first colliding name found,
+ * with every claimant — so a row names the sources without burying the rest
+ * of the status. Exported for tests.
+ */
+export function findMemberConflicts(probes: Record<string, PluginProbe>): Record<string, PluginAssetError> {
+  const names = new Map<string, string[]>()
+  for (const [id, probe] of Object.entries(probes)) {
+    for (const name of scanPluginMemberNames(probe.source)) {
+      const claimants = names.get(name) ?? []
+      if (!claimants.includes(id)) claimants.push(id)
+      names.set(name, claimants)
+    }
+  }
+  const errors: Record<string, PluginAssetError> = {}
+  for (const [name, claimants] of names) {
+    if (claimants.length < 2) continue
+    for (const id of claimants) {
+      errors[id] ??= {
+        kind: 'conflict',
+        message: `member "${name}" is declared by more than one plugin (${claimants.join(', ')})`,
+        sources: { member: name, claimants },
+      }
+    }
+  }
+  return errors
+}
+
+/** Classify one aggregate-manifest fetch failure for display. */
+function manifestErrorKind(message: string): PluginAssetErrorKind {
+  return /not valid JSON|not an object|not a nonnegative|invalid rev|outside/.test(message) ? 'manifest' : 'http'
+}
+
+/**
+ * Browser-asset statuses for every plugin in the host snapshot, plus retry.
+ *
+ * `retry` re-runs the manifest fetch and the named plugin's bundle probe
+ * (every plugin's when no id is given). A probe that already succeeded for
+ * the current rev is reused across renders and other plugins' retries — a
+ * retry answers "look again", not "forget what worked".
+ *
+ * @param snapshot - the host's authoritative catalog; `undefined` means the
+ *   catalog itself is absent and every plugin reports `undeclared`.
+ */
+export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefined): {
+  statuses: Record<string, PluginBrowserAssetStatus>
+  retry: (pluginId?: string) => void
+} {
+  const revision = snapshot?.revision
+  const [probes, setProbes] = useState<Record<string, PluginProbe>>({})
+  const [manifest, setManifest] = useState<PluginAssetManifest | undefined>()
+  const [manifestFailure, setManifestFailure] = useState<string | undefined>()
+  const [nonce, setNonce] = useState(0)
+  const [retryIds, setRetryIds] = useState<string[]>([])
+
+  const retry = useCallback((pluginId?: string) => {
+    setRetryIds(pluginId === undefined ? [] : [pluginId])
+    setNonce(current => current + 1)
+  }, [])
+
+  useEffect(() => {
+    if (revision === undefined) {
+      setProbes({})
+      setManifest(undefined)
+      setManifestFailure(undefined)
+      return
+    }
+    let stale = false
+    setManifestFailure(undefined)
+    fetchManifest().then(
+      read => {
+        if (!stale) setManifest(read)
+      },
+      error => {
+        if (!stale) setManifestFailure(String(error))
+      },
+    )
+    return () => {
+      stale = true
+    }
+  }, [revision, nonce])
+
+  useEffect(() => {
+    // Probe each enabled plugin's bundle once the manifest answers for this
+    // revision; a probe cached for the current rev is reused, and a retried
+    // id is probed again even if a result is cached.
+    if (manifest === undefined || snapshot === undefined || manifestFailure !== undefined) return
+    if (manifest.revision !== snapshot.revision) return
+    let stale = false
+    for (const plugin of snapshot.plugins) {
+      if (!(plugin.installed && plugin.enabled && plugin.status === 'enabled')) continue
+      const entry = manifest.plugins[plugin.id]
+      const cached = probes[plugin.id]
+      if (entry === undefined) {
+        const knownMissing = cached?.phase === 'degraded' && cached.error?.kind === 'client-missing' && cached.rev === undefined
+        if (!knownMissing || retryIds.includes(plugin.id)) {
+          setProbes(current => ({
+            ...current,
+            [plugin.id]: { phase: 'degraded', rev: undefined, loadedAt: undefined, source: undefined, error: { kind: 'client-missing', message: 'the manifest has no client bundle row for this enabled plugin — client.js is missing on the server' } },
+          }))
+        }
+        continue
+      }
+      const probed = cached !== undefined && cached.rev === entry.rev && cached.phase !== 'loading'
+      if (probed && !retryIds.includes(plugin.id)) continue
+      void (async (): Promise<void> => {
+        try {
+          const response = await fetch(entry.client)
+          const text = response.ok ? await response.text() : undefined
+          const probe = classifyClientResponse(response.status, text, entry.rev)
+          if (!stale) setProbes(current => ({ ...current, [plugin.id]: probe }))
+        } catch (error) {
+          if (!stale) setProbes(current => ({
+            ...current,
+            [plugin.id]: { phase: 'degraded', rev: entry.rev, loadedAt: undefined, source: undefined, error: { kind: 'http', message: `the client bundle could not be fetched (${error instanceof Error ? error.message : String(error)})` } },
+          }))
+        }
+      })()
+    }
+    if (retryIds.length > 0) setRetryIds([])
+    return () => {
+      stale = true
+    }
+    // `probes` is read but deliberately not a dependency: the effect runs per
+    // revision and per retry, and a probe landing must not re-run it.
+  }, [manifest, manifestFailure, snapshot, retryIds])
+
+  const statuses: Record<string, PluginBrowserAssetStatus> = {}
+  if (snapshot !== undefined) {
+    const conflicts = findMemberConflicts(probes)
+    for (const plugin of snapshot.plugins) {
+      if (!(plugin.installed && plugin.enabled && plugin.status === 'enabled')) {
+        statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
+        continue
+      }
+      if (manifestFailure !== undefined) {
+        statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, actualRevision: undefined, loadedAt: undefined, error: { kind: manifestErrorKind(manifestFailure), message: `the aggregate manifest could not be read (${manifestFailure})` } }
+        continue
+      }
+      if (manifest === undefined) {
+        statuses[plugin.id] = { phase: 'loading', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
+        continue
+      }
+      if (manifest.revision !== revision) {
+        statuses[plugin.id] = { phase: 'stale', expectedRevision: revision, actualRevision: undefined, loadedAt: undefined, error: { kind: 'revision', message: `the manifest answers for revision ${String(manifest.revision)}, not the current ${String(revision)}` } }
+        continue
+      }
+      const probe = probes[plugin.id]
+      if (probe === undefined) {
+        statuses[plugin.id] = { phase: 'loading', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
+        continue
+      }
+      const conflict = conflicts[plugin.id]
+      if (conflict !== undefined) {
+        statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, actualRevision: probe.rev, loadedAt: probe.loadedAt, error: conflict }
+        continue
+      }
+      statuses[plugin.id] = { phase: probe.phase, expectedRevision: revision, actualRevision: probe.rev, error: probe.error, loadedAt: probe.loadedAt }
+    }
+  }
+  return { statuses, retry }
 }

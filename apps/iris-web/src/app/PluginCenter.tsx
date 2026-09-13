@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 
 import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
+import { usePluginBrowserAssets, type PluginAssetError, type PluginAssetErrorKind, type PluginBrowserAssetStatus } from './use-plugin-manifest.ts'
 import { useLanguage } from './i18n/use-language.ts'
 import type { Language } from './i18n/strings.ts'
 import './plugin-center.css'
@@ -54,6 +55,30 @@ const COPY = {
       disabling: 'Disabling…',
       error: 'Error',
     },
+    hostRuntime: 'Host runtime',
+    browserAsset: 'Browser asset',
+    assetPhases: {
+      undeclared: 'Not declared',
+      loading: 'Loading…',
+      loaded: 'Loaded',
+      degraded: 'Degraded',
+      stale: 'Stale revision',
+    },
+    expectedRevision: 'Expected revision',
+    actualRevision: 'Loaded revision',
+    lastLoaded: 'Last loaded',
+    lastLoadedNever: 'Never',
+    assetErrorTitle: 'Browser asset problem:',
+    assetErrorFix: 'The host plugin stays enabled; fix the browser asset, then retry. Ordinary cards keep running meanwhile.',
+    assetRetry: 'Retry asset load',
+    assetErrors: {
+      'client-missing': 'client.js does not exist.',
+      http: 'HTTP fetch of the browser asset failed.',
+      parse: 'The browser asset failed JavaScript parsing.',
+      manifest: 'The plugin manifest is malformed.',
+      revision: 'The loaded manifest does not match the current revision.',
+      conflict: 'Member name conflict between plugins.',
+    } as Record<PluginAssetErrorKind, string>,
   },
   zh: {
     lead: '系统插件为卡片提供可选的运行能力。卡片脚本权限仍在脚本页面中单独管理。',
@@ -99,6 +124,30 @@ const COPY = {
       disabling: '正在停用…',
       error: '错误',
     },
+    hostRuntime: '宿主运行时',
+    browserAsset: '浏览器资产',
+    assetPhases: {
+      undeclared: '未声明',
+      loading: '加载中…',
+      loaded: '已加载',
+      degraded: '降级',
+      stale: '旧 revision',
+    },
+    expectedRevision: '期望 revision',
+    actualRevision: '实际加载 revision',
+    lastLoaded: '最近成功加载',
+    lastLoadedNever: '从未',
+    assetErrorTitle: '浏览器资产故障：',
+    assetErrorFix: '宿主插件保持启用；请修复浏览器资产后重试，期间普通卡片照常运行。',
+    assetRetry: '重试资产加载',
+    assetErrors: {
+      'client-missing': 'client.js 不存在。',
+      http: '浏览器资产 HTTP 获取失败。',
+      parse: '浏览器资产 JavaScript 解析失败。',
+      manifest: '插件清单格式错误。',
+      revision: '已加载清单与当前 revision 不匹配。',
+      conflict: '插件之间存在成员名冲突。',
+    } as Record<PluginAssetErrorKind, string>,
   },
 } as const
 
@@ -117,6 +166,7 @@ export function PluginCenter(): ReactElement {
   const store = useIrisStore()
   const connected = useIris(state => state.connected)
   const snapshot = useIris(state => state.systemPlugins)
+  const { statuses: assetStatuses, retry: retryAsset } = usePluginBrowserAssets(snapshot)
   const [request, setRequest] = useState<{ id: string, operation: Operation } | undefined>()
   const [loadError, setLoadError] = useState<string | undefined>()
   const [operationError, setOperationError] = useState<{ id: string, message: string } | undefined>()
@@ -190,6 +240,8 @@ export function PluginCenter(): ReactElement {
             ? undefined
             : copy.waitFor(busyPlugin.name)}
         requestError={operationError?.id === plugin.id ? operationError.message : undefined}
+        asset={assetStatuses[plugin.id]}
+        onRetryAsset={() => retryAsset(plugin.id)}
         onRun={run}
       />)}
     </div>
@@ -200,13 +252,15 @@ export function PluginCenter(): ReactElement {
   </div>
 }
 
-function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, onRun }: {
+function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, asset, onRetryAsset, onRun }: {
   plugin: SystemPluginView
   snapshot: SystemPluginSnapshot
   lang: Language
   busy: boolean
   busyReason: string | undefined
   requestError: string | undefined
+  asset: PluginBrowserAssetStatus | undefined
+  onRetryAsset: () => void
   onRun: (plugin: SystemPluginView, operation: Operation) => Promise<void>
 }): ReactElement {
   const copy = COPY[lang]
@@ -234,6 +288,7 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, onR
       <div>
         <h4>{plugin.name}</h4>
         <p>{description}</p>
+        <p className="iris-plugin__id">{plugin.id}</p>
       </div>
       <span id={statusId} className={`iris-plugin__status iris-plugin__status--${plugin.status}`} role="status" aria-live="polite">
         {status}
@@ -244,6 +299,7 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, onR
       <div><dt>{copy.api}</dt><dd>v{plugin.apiVersion}</dd></div>
       <div className="iris-plugin__dependency"><dt>{copy.dependencies}</dt><dd>{dependencies.length === 0 ? copy.none : dependencies.join(', ')}</dd></div>
     </dl>
+    {asset === undefined ? null : <AssetStatus plugin={plugin} asset={asset} lang={lang} onRetry={onRetryAsset} />}
     {plugin.error === undefined ? null : <p className="iris-plugin__error" role="alert">
       <strong>{copy.reportedError}</strong> {plugin.error}
       <span>{copy.fixError}</span>
@@ -263,6 +319,46 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, onR
       </>}
     </div>
   </article>
+}
+
+/**
+ * The browser-asset half of the status surface: a second, independent row of
+ * state next to the host's enable chip. A degraded or stale asset names the
+ * expected revision, the revision actually served, the last error (classified
+ * so the six failure kinds read differently), the last successful load, and a
+ * retry that re-fetches the manifest row and the bundle — it never touches the
+ * host plugin's enabled state, which stays exactly what the snapshot says.
+ */
+function AssetStatus({ plugin, asset, lang, onRetry }: {
+  plugin: SystemPluginView
+  asset: PluginBrowserAssetStatus
+  lang: Language
+  onRetry: () => void
+}): ReactElement {
+  const copy = COPY[lang]
+  const degraded = asset.phase === 'degraded' || asset.phase === 'stale'
+  const assetId = `iris-plugin-asset-${safeId(plugin.id)}`
+  const assetErrorId = `iris-plugin-asset-error-${safeId(plugin.id)}`
+  const loadedAt = asset.loadedAt === undefined ? undefined : new Date(asset.loadedAt).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US')
+  return <div className={`iris-plugin__asset iris-plugin__asset--${asset.phase}`} id={assetId} data-plugin-asset-phase={asset.phase}>
+    <dl className="iris-plugin__asset-facts">
+      <div><dt>{copy.hostRuntime}</dt><dd>{copy.statuses[plugin.status]}</dd></div>
+      <div><dt>{copy.browserAsset}</dt><dd className="iris-plugin__asset-phase">{copy.assetPhases[asset.phase]}</dd></div>
+      <div><dt>{copy.expectedRevision}</dt><dd>{asset.expectedRevision === undefined ? copy.none : String(asset.expectedRevision)}</dd></div>
+      <div><dt>{copy.actualRevision}</dt><dd>{asset.actualRevision ?? copy.none}</dd></div>
+      <div><dt>{copy.lastLoaded}</dt><dd>{loadedAt ?? copy.lastLoadedNever}</dd></div>
+    </dl>
+    {degraded && asset.error !== undefined ? <div className="iris-plugin__asset-failure">
+      <p className="iris-plugin__asset-error" role="alert" id={assetErrorId}>
+        <strong>{copy.assetErrorTitle}</strong> {copy.assetErrors[asset.error.kind]} {asset.error.message}
+        <span>{copy.assetErrorFix}</span>
+      </p>
+      {asset.error.kind === 'conflict' && asset.error.sources !== undefined
+        ? <p className="iris-plugin__asset-conflict">{asset.error.sources.claimants.map(id => `#${id}`).join(' + ')} → {asset.error.sources.member}</p>
+        : null}
+      <button type="button" className="iris-plugin__action" aria-describedby={assetErrorId} onClick={onRetry}>{copy.assetRetry}</button>
+    </div> : null}
+  </div>
 }
 
 function Action({ plugin, operation, disabled, label, reason, danger = false, onRun }: {

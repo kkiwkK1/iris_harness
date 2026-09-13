@@ -197,6 +197,12 @@ async function main(): Promise<void> {
   assert.equal(pluginCenter.match(/data-plugin-id=/g)?.length, 2, 'the bundled catalog should render two plugins')
   assert.match(pluginCenter, /TavernHelper/, 'TavernHelper is missing from the bundled catalog')
   assert.match(pluginCenter, /MVU/, 'MVU is missing from the bundled catalog')
+  // The browser-asset surface renders beside the host chip; before any manifest
+  // fetch has answered, an enabled plugin reads as loading (SSR has no effects).
+  assert.match(pluginCenter, /data-plugin-asset-phase="loading"/, 'an enabled plugin does not show its browser asset as loading')
+  assert.match(pluginCenter, /Browser asset/, 'the browser-asset status half is missing')
+  assert.match(pluginCenter, /Expected revision/, 'the expected revision fact is missing')
+  assert.match(pluginCenter, /Last loaded/, 'the last-successful-load fact is missing')
   assert.match(pluginCenter, /Disable MVU first/, 'TavernHelper actions do not explain the enabled dependent')
   assert.match(pluginCenter, /Uninstalling keeps card and chat data/, 'the plugin center does not state what uninstall retains')
   assert.doesNotMatch(pluginCenter, /marketplace|download package/i, 'the bundled catalog is pretending to be a network installer')
@@ -226,6 +232,8 @@ async function main(): Promise<void> {
   const chinesePlugins = render(pluginWired.store, slots.core, <PluginCenter />)
   assert.match(chinesePlugins, /系统插件为卡片提供可选的运行能力/, 'the plugin center has no Chinese lead')
   assert.match(chinesePlugins, /重新安装/, 'the bundled reinstall action has no Chinese label')
+  assert.match(chinesePlugins, /浏览器资产/, 'the browser-asset status half has no Chinese label')
+  assert.match(chinesePlugins, /data-plugin-asset-phase="undeclared"/, 'a plugin the host does not run shows its browser asset as undeclared')
   setLanguage('en')
   pluginWired.dispose()
   pluginClient.dispose()

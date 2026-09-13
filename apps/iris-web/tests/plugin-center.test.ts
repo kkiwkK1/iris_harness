@@ -48,6 +48,11 @@ test('plugin center renders factual lifecycle, dependency and host-error guidanc
   assert.match(enabled, /Disable MVU first/)
   assert.match(enabled, /<button[^>]*disabled=""[^>]*title="Disable MVU first\."/)
   assert.match(enabled, /Uninstalling keeps card and chat data/)
+  // The browser-asset half of the status surface renders beside the host chip,
+  // even before any manifest fetch has answered (SSR shows the loading phase).
+  assert.match(enabled, /data-plugin-asset-phase="loading"/)
+  assert.match(enabled, /Browser asset/)
+  assert.match(enabled, /Expected revision/)
   assert.doesNotMatch(enabled, /marketplace|download package/i)
 
   const current = wired.store.getState().systemPlugins
@@ -75,4 +80,11 @@ test('plugin center renders factual lifecycle, dependency and host-error guidanc
   assert.match(chinese, /宿主错误：/)
   assert.match(chinese, />重试启用<\/button>/)
   assert.match(chinese, /请先处理上述原因/)
+  assert.match(chinese, /宿主运行时/)
+  assert.match(chinese, /浏览器资产/)
+  assert.match(chinese, /期望 revision/)
+  assert.match(chinese, /实际加载 revision/)
+  assert.match(chinese, /最近成功加载/)
+  assert.match(chinese, /data-plugin-asset-phase="loading"/)
+  assert.match(chinese, /未声明/, 'a plugin the host does not run shows its browser asset as undeclared')
 })
