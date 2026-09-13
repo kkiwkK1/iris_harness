@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -95,4 +97,74 @@ test('archive source copies bytes into staging before anything is unpacked', asy
       /symlink/,
     )
   }
+})
+
+// --- 缺陷二：来源无关的合同 ---------------------------------------------
+
+test('a git repository without a manifest is refused by the same gate as any other source', async () => {
+  const root = await tempRoot()
+  const base = path.join(root, 'src')
+  await fsp.mkdir(base, { recursive: true })
+  // The fixture writes dist/index.js etc. but no manifest.json.
+  const files = demoFileMap()
+  files.delete('manifest.json')
+  const fixture = await buildGitFixture(base, files)
+
+  const installer = await Installer.create(path.join(root, 'store'))
+  await assert.rejects(
+    installer.installAs('demo-ext', { kind: 'git', repository: fixture.repoUrl, commit: fixture.olderCommit }, { allowLocalGit: true }),
+    /manifest/,
+  )
+  // Nothing was promoted; the failed transaction cleaned its own staging.
+  assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'staging')), [])
+  assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'installed')), [])
+})
+
+test('different clone metadata, identical working tree: the same artifact hash, and no .git in the installed tree', async () => {
+  const root = await tempRoot()
+  const base = path.join(root, 'src')
+  await fsp.mkdir(base, { recursive: true })
+
+  // Two independent repositories holding byte-identical working trees but
+  // different clone metadata (author dates far apart, different messages) —
+  // therefore different commit SHAs. The artifact hash must be the hash of
+  // the working tree, not of the transport baggage around it.
+  const mkRepo = async (name: string, date: string, message: string): Promise<{ repoUrl: string; commit: string }> => {
+    const repo = path.join(base, name)
+    fs.mkdirSync(repo, { recursive: true })
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_DATE: date,
+      GIT_COMMITTER_DATE: date,
+      GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+      GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+    }
+    const run = (args: string[]): void => {
+      const r = spawnSync('git', ['-C', repo, ...args], { env })
+      if (r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r.stderr)}`)
+    }
+    run(['init', '-q', '-b', 'main', '.'])
+    for (const [rel, data] of demoFileMap()) {
+      const target = path.join(repo, ...rel.split('/'))
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, data)
+    }
+    run(['add', '-A'])
+    run(['commit', '-q', '-m', message])
+    const commit = String(spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD']).stdout).trim()
+    return { repoUrl: `file://${repo.split(path.sep).join('/')}`, commit }
+  }
+  const a = await mkRepo('repo-a', '2020-01-01T00:00:00Z', 'release 2020')
+  const b = await mkRepo('repo-b', '2026-09-13T00:00:00Z', 'rebuilt from scratch')
+  assert.notEqual(a.commit, b.commit, 'fixture sanity: different metadata must mean different commits')
+
+  const installer = await Installer.create(path.join(root, 'store'))
+  const fromA = await installer.installAs('demo-ext-a', { kind: 'git', repository: a.repoUrl, commit: a.commit }, { allowLocalGit: true })
+  const fromB = await installer.installAs('demo-ext-b', { kind: 'git', repository: b.repoUrl, commit: b.commit }, { allowLocalGit: true })
+  assert.equal(fromA.artifactSha256, fromB.artifactSha256, 'the lock hash means the working tree, not the clone')
+
+  // And the installed tree carries no clone metadata at all.
+  const installedEntries = await fsp.readdir(fromA.targetPath)
+  assert.ok(!installedEntries.includes('.git'), '.git must be gone before hashing and promotion')
+  assert.ok(installedEntries.includes('manifest.json'))
 })
