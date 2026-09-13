@@ -6795,7 +6795,21 @@ executed; module bundles are taken on trust because they cannot be
 compile-checked without a module context). For a catalog of small bundles this
 is a few requests the frames would make anyway, served from the same origin
 with rev-keyed cache-busting URLs. The probe cache reuses a successful result
-for an unchanged rev across renders and other plugins' retries.
+for an unchanged rev across renders and other plugins' retries, and the
+aggregate manifest itself is re-read on a ten-second interval while the catalog
+is live — a path that revalidates on every read — so a bundle deleted or
+restored outside the control plane reaches the surface without a click.
+
+**The declaration gap, and the evidence that fills it.** The wire snapshot
+says nothing about whether a plugin *declares* browser assets, so "enabled
+with no manifest row" is ambiguous between the bundled catalog's normal state
+(TH and MVU ship no bundle at all) and a deleted `client.js`. The shell keeps
+session-scoped evidence — every manifest row it has served, keyed by plugin id
+and revision — and a row that vanishes at the **same** revision it was served
+at reads degraded (enable, disable, install and uninstall all bump the
+revision, so a no-revision disappearance is a deletion). Without that evidence
+a fresh page load honestly reads `undeclared`; only a server-side declaration
+bit could close the gap, which is the same overturn condition as above.
 
 **What would overturn it.** A manifest route that gains per-plugin status from
 the host (a fifth manifest field, or a `plugin.assetStatus` RPC) would make the

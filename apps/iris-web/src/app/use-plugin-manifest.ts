@@ -83,15 +83,19 @@ export function usePluginAssetManifest(revision: number | undefined): PluginAsse
  *
  * The phases map the five observable states onto shell-visible facts:
  *
- * - `undeclared` — the host snapshot does not run the plugin, so no browser
- *   asset is expected (nothing to load, nothing to retry).
+ * - `undeclared` — the host snapshot does not run the plugin, or runs it
+ *   without any manifest row this session has seen (a plugin whose browser
+ *   face does not exist, the bundled catalog's normal state; the wire does
+ *   not carry a "declares assets" bit, so this is the honest reading).
  * - `loading` — the manifest or the plugin's `client.js` is being fetched.
  * - `loaded` — the manifest row exists for the current revision, the bundle
  *   was fetched, and it compiles.
  * - `degraded` — a failure was named: the bundle is missing, the fetch
  *   failed, the manifest is malformed, or two bundles register a colliding
- *   member name. The host plugin stays enabled; degradation is **browser
- *   only** and never flows back into the store.
+ *   member name. A row that vanished at the **same** revision it was served
+ *   at is a server-side deletion and reads degraded, not undeclared. The
+ *   host plugin stays enabled; degradation is **browser only** and never
+ *   flows back into the store.
  * - `stale` — the manifest's revision does not answer for the snapshot's
  *   revision (an older read still in flight, or a fetch that has not caught
  *   up to a `plugins.changed`). The rows it carries are last revision's
@@ -237,10 +241,33 @@ export function findMemberConflicts(probes: Record<string, PluginProbe>): Record
   return errors
 }
 
+/** Read and validate the aggregate manifest, or say why it could not be read. */
+async function fetchManifest(): Promise<PluginAssetManifest> {
+  const response = await fetch(PLUGIN_ASSET_MANIFEST_PATH)
+  if (!response.ok) throw new Error(`HTTP ${String(response.status)}`)
+  const parsed = parsePluginAssetManifest(await response.text())
+  if (typeof parsed === 'string') throw new Error(parsed)
+  return parsed
+}
+
 /** Classify one aggregate-manifest fetch failure for display. */
 function manifestErrorKind(message: string): PluginAssetErrorKind {
   return /not valid JSON|not an object|not a nonnegative|invalid rev|outside/.test(message) ? 'manifest' : 'http'
 }
+
+/**
+ * Rows the shell has seen the manifest carry this session, keyed by plugin id.
+ *
+ * The wire snapshot does not say whether a plugin *declares* browser assets,
+ * so "enabled, but no manifest row" is ambiguous between a plugin that never
+ * had a client bundle (the normal state — the bundled catalog ships none) and
+ * a bundle deleted from the server. A row observed earlier at the **current**
+ * revision is the evidence that separates them: enable/disable/install all
+ * bump the revision, so a row that vanished without the revision moving is a
+ * deletion, not a declaration. Session-scoped on purpose — a fresh page load
+ * after a deletion has no evidence and honestly reads `undeclared` again.
+ */
+const seenRows = new Map<string, { rev: string, revision: number }>()
 
 /**
  * Browser-asset statuses for every plugin in the host snapshot, plus retry.
@@ -248,7 +275,10 @@ function manifestErrorKind(message: string): PluginAssetErrorKind {
  * `retry` re-runs the manifest fetch and the named plugin's bundle probe
  * (every plugin's when no id is given). A probe that already succeeded for
  * the current rev is reused across renders and other plugins' retries — a
- * retry answers "look again", not "forget what worked".
+ * retry answers "look again", not "forget what worked". The manifest is also
+ * re-read on a short interval while the snapshot is live, so a bundle deleted
+ * or restored outside the control plane surfaces without a click; the path
+ * revalidates on every read, so the poll is cheap and always fresh.
  *
  * @param snapshot - the host's authoritative catalog; `undefined` means the
  *   catalog itself is absent and every plugin reports `undeclared`.
@@ -263,6 +293,8 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
   const [manifestFailure, setManifestFailure] = useState<string | undefined>()
   const [nonce, setNonce] = useState(0)
   const [retryIds, setRetryIds] = useState<string[]>([])
+  const [evidence, setEvidence] = useState(0)
+  const [poll, setPoll] = useState(0)
 
   const retry = useCallback((pluginId?: string) => {
     setRetryIds(pluginId === undefined ? [] : [pluginId])
@@ -280,7 +312,14 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
     setManifestFailure(undefined)
     fetchManifest().then(
       read => {
-        if (!stale) setManifest(read)
+        if (stale) return
+        setManifest(read)
+        for (const [id, entry] of Object.entries(read.plugins)) {
+          const held = seenRows.get(id)
+          if (held?.rev === entry.rev && held.revision === read.revision) continue
+          seenRows.set(id, { rev: entry.rev, revision: read.revision })
+          setEvidence(current => current + 1)
+        }
       },
       error => {
         if (!stale) setManifestFailure(String(error))
@@ -289,29 +328,30 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
     return () => {
       stale = true
     }
-  }, [revision, nonce])
+  }, [revision, nonce, poll])
+
+  // Poll while the catalog is live: the manifest revalidates per read, so this
+  // is how a control-plane-external change (a bundle deleted or restored on
+  // disk) reaches the surface without a click or a revision bump.
+  useEffect(() => {
+    if (revision === undefined) return
+    const timer = setInterval(() => setPoll(current => current + 1), 10_000)
+    return () => clearInterval(timer)
+  }, [revision])
 
   useEffect(() => {
     // Probe each enabled plugin's bundle once the manifest answers for this
     // revision; a probe cached for the current rev is reused, and a retried
-    // id is probed again even if a result is cached.
+    // id is probed again even if a result is cached. A missing row is the
+    // reduction's call (declaration evidence lives there), not a probe.
     if (manifest === undefined || snapshot === undefined || manifestFailure !== undefined) return
     if (manifest.revision !== snapshot.revision) return
     let stale = false
     for (const plugin of snapshot.plugins) {
       if (!(plugin.installed && plugin.enabled && plugin.status === 'enabled')) continue
       const entry = manifest.plugins[plugin.id]
+      if (entry === undefined) continue
       const cached = probes[plugin.id]
-      if (entry === undefined) {
-        const knownMissing = cached?.phase === 'degraded' && cached.error?.kind === 'client-missing' && cached.rev === undefined
-        if (!knownMissing || retryIds.includes(plugin.id)) {
-          setProbes(current => ({
-            ...current,
-            [plugin.id]: { phase: 'degraded', rev: undefined, loadedAt: undefined, source: undefined, error: { kind: 'client-missing', message: 'the manifest has no client bundle row for this enabled plugin — client.js is missing on the server' } },
-          }))
-        }
-        continue
-      }
       const probed = cached !== undefined && cached.rev === entry.rev && cached.phase !== 'loading'
       if (probed && !retryIds.includes(plugin.id)) continue
       void (async (): Promise<void> => {
@@ -354,6 +394,19 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
       }
       if (manifest.revision !== revision) {
         statuses[plugin.id] = { phase: 'stale', expectedRevision: revision, actualRevision: undefined, loadedAt: undefined, error: { kind: 'revision', message: `the manifest answers for revision ${String(manifest.revision)}, not the current ${String(revision)}` } }
+        continue
+      }
+      if (manifest.plugins[plugin.id] === undefined) {
+        // Enabled with no row: a plugin that never declared browser assets
+        // (the bundled catalog's normal state) reads `undeclared`; a row this
+        // session served at the current revision and now lost reads as a
+        // server-side deletion — `degraded`, with the retry left armed.
+        const seen = seenRows.get(plugin.id)
+        if (seen !== undefined && seen.revision === revision) {
+          statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, actualRevision: seen.rev, loadedAt: probes[plugin.id]?.loadedAt, error: { kind: 'client-missing', message: 'the manifest stopped listing this enabled plugin without a revision change — its client.js was removed from the server' } }
+        } else {
+          statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
+        }
         continue
       }
       const probe = probes[plugin.id]
