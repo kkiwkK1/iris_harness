@@ -324,7 +324,11 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
     }
     case 'bridge': {
       const envelopeToken = String(data['token'])
-      const payload = data['payload'] as StBridgePayload
+      // Chat-open broadcasts use the bridge envelope for hydration but do not
+      // expect a bridge result. The shared round type intentionally covers
+      // only result-bearing generate/reply requests, so widen it at this
+      // transport seam where the third wire shape is actually accepted.
+      const payload = data['payload'] as StBridgePayload | (StBridgeContext & { kind: 'chat-open' })
       try {
         // A chat-open round rides the bridge envelope too (the host announces
         // an open the same way it announces a generate); it hydrates and

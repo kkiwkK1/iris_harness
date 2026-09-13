@@ -164,7 +164,7 @@ export function StExtensionPlane(): ReactElement | null {
     token: spec.token,
     origin: window.location.origin,
     artifactBase: `/iris-st-ext/${spec.extensionId}/${spec.rev}`,
-    buildStamp: spec.build === '' ? undefined : spec.build,
+    ...(spec.build === '' ? {} : { buildStamp: spec.build }),
     dirName: spec.dirName,
   })
 
