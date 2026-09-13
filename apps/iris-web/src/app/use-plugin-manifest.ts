@@ -415,7 +415,7 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
   const [retryRequest, setRetryRequest] = useState<{ generation: number; pluginId?: string }>({ generation: 0 })
   const [manifestGeneration, setManifestGeneration] = useState(0)
   const consumedRetries = useRef(new Map<string, number>())
-  const [evidence, setEvidence] = useState(0)
+  const [, setEvidence] = useState(0)
   const [poll, setPoll] = useState(0)
 
   const retry = useCallback((pluginId?: string) => {

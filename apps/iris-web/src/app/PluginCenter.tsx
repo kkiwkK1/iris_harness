@@ -3,7 +3,7 @@ import type { ReactElement } from 'react'
 
 import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
-import { usePluginBrowserAssets, type PluginAssetError, type PluginAssetErrorKind, type PluginBrowserAssetStatus } from './use-plugin-manifest.ts'
+import { usePluginBrowserAssets, type PluginAssetErrorKind, type PluginBrowserAssetStatus } from './use-plugin-manifest.ts'
 import { useLanguage } from './i18n/use-language.ts'
 import type { Language } from './i18n/strings.ts'
 import './plugin-center.css'
