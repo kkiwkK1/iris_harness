@@ -23,7 +23,7 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { useLanguage } from '../app/i18n/use-language.ts'
 import { useSlots } from '../slots/Slot.tsx'
 import { buildExtensionSrcdoc } from './srcdoc.ts'
-import { servedExtensionEnabled, servedExtensionRow } from './plane-extension.ts'
+import { servedExtensionEnabled, servedExtensionRow, isCardMemberProxyCall } from './plane-extension.ts'
 import { StExtPlane, type StExtPlaneHost } from './plane-core.ts'
 import { subscribeStCompatRequests } from './plane-bus.ts'
 
@@ -168,8 +168,18 @@ export function StExtensionPlane(): ReactElement | null {
   }, [actions, servedEnabled, served?.id, snapshot?.revision])
 
   const onFrameMessage = useCallback((event: MessageEvent): void => {
-    if (event.source !== frameRef.current?.contentWindow) return
     const data = event.data as Record<string, unknown> | null
+    // A card frame's member-proxy call comes from a source that is NOT the
+    // extension frame, so it must be handed to the plane before the gate
+    // below; the plane's own guards (own-frame check, extension id, reply
+    // targets) refuse what they do not recognise. Gating first made the
+    // card-facing member proxy unreachable — every card call was swallowed
+    // here and no member ever answered.
+    if (isCardMemberProxyCall(data)) {
+      plane.onWindowMessage(event)
+      return
+    }
+    if (event.source !== frameRef.current?.contentWindow) return
     if (typeof data === 'object' && data !== null && data['type'] === 'ready') {
       // The kernel is up: arm with the open chat so the frame hydrates.
       if (spec?.extensionId !== undefined && revisionRef.current !== undefined) {
