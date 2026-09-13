@@ -131,8 +131,8 @@
 | 对象 | SHA-1 完整值 |
 | --- | --- |
 | 验收基线（任务下发） | `065cc027e9d81c3a7b0df53415e6bb61fddb7c12` |
-| dev/st-compat-pilot（含 3 个缺陷修复合并，验收时点） | `caf479c8b9dcedc06914a15fe78f806e45a6435c` |
+| dev/st-compat-pilot（含 3 个缺陷修复合并，验收时点） | `caf479c8b9dcedc06914a15fe78f806e45a6435c`（验收分支合入后为 `4be917a1c5e017c2228e0684bdd9230da53b630f`） |
 | 上游扩展锁定提交 | `f9a07da0fbe25cd310eee746c2f5af24ed61f62b` |
 | 上游 dist/index.js（sha256） | `61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd` |
 | 本报告所在提交（验收分支最终提交） | 见 `git rev-parse HEAD`（dev/st-compat-pilot-acceptance） |
-| PLUGIN_PLATFORM_BASE（dev/system-plugins 合入提交） | 合并后由 `git -C D:/workspace/小项目/iris_cordis_traven rev-parse dev/system-plugins` 给出（合并动作紧随本报告提交执行） |
+| PLUGIN_PLATFORM_BASE（dev/system-plugins 合入提交） | `39f1b2d0e37d60213b2131fd952d63c2cf4113e9` |
