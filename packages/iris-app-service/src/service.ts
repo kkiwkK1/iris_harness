@@ -460,6 +460,15 @@ export interface StCompatFloor {
   is_user: boolean
   is_system: boolean
   swipe_id: number
+  /**
+   * The floor's own message-scope variables (`chat[i].variables[swipe_id]`
+   * upstream). The reply handlers' clone chain seeds each new floor from the
+   * previous floor's layer and the template's variable cache reads
+   * message-over-chat, so a frame that hydrates without them restarts every
+   * accumulator from the chat scope — a regression SillyTavern does not have,
+   * because its floors hydrate with the persisted variables.
+   */
+  variables?: Record<string, unknown>
 }
 
 /** The extension plane's arm/submit handle, wired by the composition root. */
@@ -6289,12 +6298,16 @@ export class IrisAppService {
 
   /** The chat's floors as the upstream `chat` array reads. */
   #stCompatFloors(entry: ChatEntry, reply?: { turn: number, text: string }): StCompatFloor[] {
-    const floors: StCompatFloor[] = this.#history(entry, entry.session).map(message => ({
+    const floors: StCompatFloor[] = this.#history(entry, entry.session).map((message, index) => ({
       mes: message.text,
       name: message.name ?? (message.role === 'user' ? entry.names.user : entry.names.character),
       is_user: message.role === 'user',
       is_system: message.role === 'system',
       swipe_id: 0,
+      // The floor's persisted message layer, so a rebuilt frame (reload,
+      // chat switch, re-enable) continues the variable chain instead of
+      // restarting it from the chat scope.
+      variables: entry.variables.getVariables({ type: 'message', message_id: index }),
     }))
     if (reply !== undefined) {
       while (floors.length <= reply.turn) {
