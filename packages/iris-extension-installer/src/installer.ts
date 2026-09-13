@@ -106,14 +106,25 @@ export class Installer {
       await store.transition(txn, 'staged')
       notify()
 
-      // Phase: staged -> validated — unpack, guards, audit, manifest.
+      // Phase: staged -> validated — unpack, guards, git metadata removal,
+      // manifest. The manifest/entry gate is source-blind: a git checkout is
+      // held to exactly the same contract as an unpacked archive or a copied
+      // directory, because the analyzer's contract is with the artifact, not
+      // the transport.
       if (outcome.stagedArchive !== undefined) {
         await extractZipSafely(outcome.stagedArchive, content)
         await fsp.rm(outcome.stagedArchive, { force: true })
       }
-      if (source.kind === 'local-archive' || source.kind === 'local-directory') {
-        await requireManifest(content)
+      if (source.kind === 'git') {
+        // Remove the clone's metadata before anything reads the tree: .git is
+        // transport baggage, not artifact content. Left in, it would pollute
+        // the artifact hash with clone-local data (its own commit objects,
+        // timestamps, config), so two machines installing the same commit
+        // could lock different sha256s for identical working trees — and it
+        // must never be promoted into the installed tree.
+        await fsp.rm(path.join(content, '.git'), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
+      await requireManifest(content)
       await auditContainment(content)
       await store.transition(txn, 'validated')
       notify()
@@ -195,11 +206,14 @@ export class Installer {
 }
 
 /**
- * Minimum manifest gate for local sources: an install must contain a
- * manifest.json whose `js` entry names a relative in-tree file that exists.
- * Full normalization and module analysis are the analyzer package's job; the
- * installer only refuses to promote something that could not even be
- * described to the analyzer.
+ * The manifest/entry gate every source passes, whatever the transport: an
+ * install must contain a manifest.json whose `js` entry names a relative
+ * in-tree file that exists. A git checkout is held to exactly the same
+ * contract as an unpacked archive or a copied directory — the analyzer's
+ * contract is with the artifact, not the transport, so there is no git
+ * exemption. Full normalization and module analysis are the analyzer
+ * package's job; the installer only refuses to promote something that could
+ * not even be described to the analyzer.
  */
 async function requireManifest(content: string): Promise<void> {
   const raw = await fsp.readFile(path.join(content, 'manifest.json'), 'utf8').catch(() => {

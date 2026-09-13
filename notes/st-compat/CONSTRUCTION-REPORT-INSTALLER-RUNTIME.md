@@ -115,3 +115,13 @@
 ## git diff --stat / git status --porcelain
 
 见提交信息随附（提交时以 `git show --stat HEAD` 与 `git status --porcelain` 为准；本 worktree 提交后 status 应为空）。
+
+## 追记（dev/plugin-fix-installer-git-contract）：缺陷二 —— git 来源的合同统一与 .git 剥离
+
+**缺陷**：manifest/入口门只对 local-archive/local-directory 执行，git 来源绕过（一个没有 manifest 的仓库可以直接走完哈希与提升）；且 git 物化把克隆元数据 `.git/` 一并留进内容树——污染产物哈希（同一工作树在不同机器上克隆出不同的 .git 内容 → 不同的 artifactSha256，lock 不可复现），克隆目录还被原样提升进安装树。
+
+**修复**（installer.ts）：① `requireManifest` 移出 local-only 分支，validated 阶段对三种来源统一执行——分析器的合同对象是产物，不是传输方式；② git 来源在守卫与 manifest 门之前、哈希与提升之前删除 `content/.git`（`fs.rm` 带重试，吸收 Windows 只读对象文件的 EPERM）。
+
+**新增测试（source.test.ts，2 条）**："无 manifest 的 Git 仓库拒绝"——同一 manifest 门拒绝 git 来源，事务失败、staging 自清、无提升；"不同克隆元数据但相同工作树得到相同产物哈希"——两个独立仓库、字节相同的工作树、相差六年的作者时间戳（commit SHA 必然不同），安装后 artifactSha256 相同，且安装树内无 `.git`。
+
+**红绿验证**：两条新夹具对未修复代码 2/2 失败（4 pass / 2 fail），修复后 6/6 过。门：安装器 31 + 分析器 10 = 41 pass 0 fail；根 tsc exit 0；`git diff --check` 干净。
