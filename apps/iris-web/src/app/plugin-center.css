@@ -128,6 +128,100 @@
   grid-column: 1 / -1;
 }
 
+/* The plugin's id, under its description: the second fact every failure state
+   must name, kept small because it is an identifier, not a sentence. */
+.iris-plugin__id {
+  margin-top: 2px !important;
+  font-family: var(--iris-font-mono, monospace);
+  font-size: 11px !important;
+}
+
+/* The browser-asset half of the status surface — visually second to the host
+   chip, separated so the two states read as independent verdicts. */
+.iris-plugin__asset {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-left: 3px solid var(--iris-rule-strong);
+  background: var(--iris-bg-sunken);
+}
+
+.iris-plugin__asset--loaded {
+  border-left-color: var(--iris-accent);
+}
+
+.iris-plugin__asset--degraded,
+.iris-plugin__asset--stale {
+  border-left-color: var(--iris-danger);
+}
+
+.iris-plugin__asset-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+  margin: 0;
+}
+
+.iris-plugin__asset-facts dt,
+.iris-plugin__asset-facts dd {
+  margin: 0;
+}
+
+.iris-plugin__asset-facts dt {
+  color: var(--iris-ink-faint);
+  font-size: var(--iris-label-size);
+}
+
+.iris-plugin__asset-facts dd {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: var(--iris-ink-secondary);
+  font-size: 12px;
+}
+
+.iris-plugin__asset-phase {
+  font-weight: 600;
+}
+
+.iris-plugin__asset--loaded .iris-plugin__asset-phase {
+  color: var(--iris-accent-strong);
+}
+
+.iris-plugin__asset--degraded .iris-plugin__asset-phase,
+.iris-plugin__asset--stale .iris-plugin__asset-phase {
+  color: var(--iris-danger);
+}
+
+.iris-plugin__asset-failure {
+  margin-top: 10px;
+}
+
+.iris-plugin__asset-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--iris-danger);
+  background: var(--iris-danger-wash);
+  color: var(--iris-danger);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.iris-plugin__asset-error span {
+  display: block;
+  margin-top: 4px;
+}
+
+.iris-plugin__asset-conflict {
+  margin: 6px 0 0;
+  color: var(--iris-danger);
+  font-family: var(--iris-font-mono, monospace);
+  font-size: 11px;
+}
+
+.iris-plugin__asset-failure .iris-plugin__action {
+  margin-top: 8px;
+}
+
 .iris-plugin__error,
 .iris-plugin__blocked,
 .iris-plugin__busy {
@@ -238,6 +332,10 @@
   }
 
   .iris-plugin__facts {
+    grid-template-columns: 1fr;
+  }
+
+  .iris-plugin__asset-facts {
     grid-template-columns: 1fr;
   }
 

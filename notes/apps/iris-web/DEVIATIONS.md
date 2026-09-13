@@ -6747,3 +6747,71 @@ bilingual category search and small shell primitives; `fields.tsx` can present a
 CollapsibleSection expanded inside a task page without mutating remembered card
 state. The old UsageSection modal remains available to any caller outside this
 drawer.
+
+---
+
+## 97. The PluginCenter explains the browser half of each plugin: a second status surface beside the host chip
+
+**Kind:** deliberate improvement, with one named guess.
+
+**Upstream.** SillyTavern has no system-plugin platform, so there is no upstream
+behavior to mirror; the deviation is from *silence*. Before this change, the
+shell's half of the visibility rule was one `console.warn` when
+`/plugins/manifest.json` did not answer (`use-plugin-manifest.ts`), and the
+frame's merge reports lived inside each sandbox where cards — but no user —
+could read them. A user looking at the plugin center could not tell a plugin
+whose host runtime was fine from one whose `client.js` had been deleted.
+
+**Iris** shows two independent statuses per plugin: the host runtime verdict
+(the existing chip, driven by the snapshot) and a browser-asset verdict
+(undeclared / loading / loaded / degraded / stale), derived from what the shell
+can read without touching the frame protocol. A degraded or stale asset names
+the plugin id, the expected revision, the revision actually served, the last
+error classified into one of six kinds (client.js missing, HTTP fetch failure,
+JavaScript parse failure, manifest malformed, member-name conflict, revision
+mismatch), the last successful load time, and a retry that re-fetches the
+manifest row and the bundle. The retry never touches the host plugin's enabled
+state; degradation is browser-only and never flows back into the store, so
+ordinary cards keep running and the enable/disable buttons keep meaning exactly
+what they meant.
+
+**The named guess: the member-conflict scan.** The frame refuses a colliding
+member at registration and reports it to the card, but the shell cannot see a
+frame's registrations without new plumbing into the frame protocol, which this
+task's file boundary forbids. So the shell scans the fetched bundle sources for
+literal `registerPluginMembers('<id>', { name: … })` objects and reports a
+collision between two enabled plugins' literal names, naming both claimants.
+The scan is deliberately narrow — computed keys and indirect registration yield
+nothing — because a static scan must not invent a conflict registration itself
+would not refuse. **What would overturn it:** if a real plugin registers
+indirectly and collides, the frame still refuses its members and the card sees
+the named report; only the plugin center's conflict row would be missing. The
+correct close is surfacing the frame's per-plugin merge reports to the shell,
+not loosening the scan.
+
+**What it costs.** The plugin center now fetches every enabled plugin's
+`client.js` once per revision (compile-checked with `new Function`, never
+executed; module bundles are taken on trust because they cannot be
+compile-checked without a module context). For a catalog of small bundles this
+is a few requests the frames would make anyway, served from the same origin
+with rev-keyed cache-busting URLs. The probe cache reuses a successful result
+for an unchanged rev across renders and other plugins' retries, and the
+aggregate manifest itself is re-read on a ten-second interval while the catalog
+is live — a path that revalidates on every read — so a bundle deleted or
+restored outside the control plane reaches the surface without a click.
+
+**The declaration gap, and the evidence that fills it.** The wire snapshot
+says nothing about whether a plugin *declares* browser assets, so "enabled
+with no manifest row" is ambiguous between the bundled catalog's normal state
+(TH and MVU ship no bundle at all) and a deleted `client.js`. The shell keeps
+session-scoped evidence — every manifest row it has served, keyed by plugin id
+and revision — and a row that vanishes at the **same** revision it was served
+at reads degraded (enable, disable, install and uninstall all bump the
+revision, so a no-revision disappearance is a deletion). Without that evidence
+a fresh page load honestly reads `undeclared`; only a server-side declaration
+bit could close the gap, which is the same overturn condition as above.
+
+**What would overturn it.** A manifest route that gains per-plugin status from
+the host (a fifth manifest field, or a `plugin.assetStatus` RPC) would make the
+probe and the scan redundant; the hook is written so the fetch path is the only
+thing that would need replacing.
