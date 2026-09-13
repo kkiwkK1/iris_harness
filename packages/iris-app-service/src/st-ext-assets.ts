@@ -52,6 +52,8 @@ export class StExtensionAssetStore {
   readonly #root: string
   readonly #webDistDir: string
   readonly #facadeFiles: ReadonlyMap<string, string>
+  /** The app-build stamp facades are keyed by (exposed in both manifests). */
+  readonly #build: string
 
   /**
    * @param root - the installer layout root (`<profile>/st-extensions`); files
@@ -62,10 +64,11 @@ export class StExtensionAssetStore {
    *   (`script.js` → absolute file), so a facade's presence is declared
    *   instead of guessed from a directory scan.
    */
-  constructor(root: string, webDistDir: string, facadeFiles: ReadonlyMap<string, string>) {
+  constructor(root: string, webDistDir: string, facadeFiles: ReadonlyMap<string, string>, buildStamp = '') {
     this.#root = root
     this.#webDistDir = webDistDir
     this.#facadeFiles = facadeFiles
+    this.#build = buildStamp
   }
 
   #installedDir(extensionId: string): string {
@@ -94,7 +97,7 @@ export class StExtensionAssetStore {
     const rev = await this.#rev(extensionId)
     if (rev === undefined) return undefined
     try {
-      const raw = JSON.parse(await readFile(join(dir, 'content', 'manifest.json'), 'utf8')) as unknown
+      const raw = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')) as unknown
       const parsed = normalizeManifest(raw)
       if (!parsed.ok) return undefined
       return {
@@ -102,12 +105,42 @@ export class StExtensionAssetStore {
         rev,
         displayName: parsed.manifest.displayName,
         version: parsed.manifest.version,
-        dirName: dirNameOf(extensionId, raw),
+        dirName: await this.#dirName(extensionId, raw),
         entry: parsed.manifest.js,
+        build: this.#build,
       }
     } catch {
       return undefined
     }
+  }
+
+  /** Every enabled extension's composed manifest, for the top-level listing. */
+  async manifestList(enabled: ReadonlySet<string>): Promise<Array<Record<string, unknown>>> {
+    const out: Array<Record<string, unknown>> = []
+    for (const id of enabled) {
+      const manifest = await this.manifest(id)
+      if (manifest !== undefined) out.push(manifest)
+    }
+    return out
+  }
+
+  /**
+   * The upstream directory name, from the lock's recorded source path — the
+   * installer knows it, and the mirrored URL layout has to match it exactly
+   * or the bundle's relative imports resolve one directory off.
+   */
+  async #dirName(extensionId: string, raw: unknown): Promise<string> {
+    try {
+      const lock = JSON.parse(await readFile(join(this.#installedDir(extensionId), 'lock.json'), 'utf8')) as {
+        source?: { directoryPath?: unknown }
+      }
+      const directoryPath = lock.source?.directoryPath
+      if (typeof directoryPath === 'string' && directoryPath !== '') {
+        const base = directoryPath.replaceAll('\\', '/').split('/').filter(Boolean).at(-1)
+        if (base !== undefined && base !== '') return base
+      }
+    } catch { /* fall through to the display-name derivation */ }
+    return dirNameOf(extensionId, raw)
   }
 
   async serve(
@@ -138,10 +171,24 @@ export class StExtensionAssetStore {
       return
     }
 
+    // The top-level listing answers before the gate: it only lists the
+    // enabled extensions, and the plane needs it to learn their ids.
+    const state = view()
+    if (rest === 'manifest.json') {
+      const body = JSON.stringify({ extensions: await this.manifestList(state.enabled) })
+      res.writeHead(200, {
+        ...SHARED_HEADERS,
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-cache',
+      })
+      res.end(req.method === 'HEAD' ? undefined : body)
+      return
+    }
+
     // The enable gate, before anything is read: a disabled extension's whole
     // tree goes dark, manifest first. This is what makes "disable" true even
     // for a frame that cached its URLs.
-    const state = view()
     if (!state.enabled.has(rest.split('/')[0] ?? '')) {
       res.writeHead(404, SHARED_HEADERS)
       res.end()
@@ -179,17 +226,37 @@ export class StExtensionAssetStore {
     const subPath = segments.slice(2).join('/')
 
     let file: string | undefined
-    let immutable = true
+    // Only the upstream's own bytes are pinned by the URL's rev (it IS the
+    // installed artifact's hash): a given rev serves those bytes forever, so
+    // they may be held for a year. Facades, vendor and chunks are APP-build
+    // artifacts whose content changes independently of that rev — a rebuild
+    // with the same installed extension must reach the browser, so they
+    // revalidate. Serving them immutable would let a stale cached kernel run
+    // beside a fresh one in the same module graph: the upstream bundle's
+    // imports and the envelope-answering kernel would be different instances,
+    // and every bridge round would emit into a bus nobody listens on.
+    let immutable = false
     if (subPath.startsWith(UPSTREAM_TREE)) {
+      immutable = true
       // Real upstream bytes. The path under `third-party/` is the extension's
       // own tree, containment-checked against the installed content root.
-      const rel = subPath.slice(UPSTREAM_TREE.length)
+      // The URL carries the upstream DIRECTORY name (mirror of the ST site
+      // layout); the installed tree is the directory's CONTENT, so the first
+      // segment after third-party/ is stripped, not joined.
+      const withoutTree = subPath.slice(UPSTREAM_TREE.length)
+      const slash = withoutTree.indexOf('/')
+      if (slash <= 0) {
+        res.writeHead(404, SHARED_HEADERS)
+        res.end()
+        return
+      }
+      const rel = withoutTree.slice(slash + 1)
       if (rel === '' || rel.includes('..')) {
         res.writeHead(404, SHARED_HEADERS)
         res.end()
         return
       }
-      const contentRoot = resolve(join(this.#installedDir(id), 'content'))
+      const contentRoot = resolve(this.#installedDir(id))
       file = resolve(join(contentRoot, rel))
       if (!file.startsWith(contentRoot + sep)) {
         res.writeHead(403, SHARED_HEADERS)

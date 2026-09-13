@@ -1,118 +1,13 @@
-class UnsupportedStCompatApiError extends Error {
-  member;
-  constructor(member) {
-    super(
-      `${member} is not implemented by the Iris ST-compat layer (pilot scope). The extension called a SillyTavern API outside the mapped pilot surface; the mapped surface is listed in notes/st-compat/PILOT-DESIGN.md §4 and the acceptance report records every refusal.`
-    );
-    this.name = "UnsupportedStCompatApiError";
-    this.member = member;
-  }
-}
-function sameFloor(a, floor) {
-  const vars = floor.variables ?? {};
-  const existing = a.variables[0] ?? {};
-  return a.mes === floor.mes && a.name === floor.name && a.is_user === floor.is_user && a.is_system === floor.is_system && a.swipe_id === floor.swipe_id && JSON.stringify(existing) === JSON.stringify(vars) && JSON.stringify(a.is_ejs_processed) === JSON.stringify(floor.is_ejs_processed ?? []);
-}
-function floorToMessage(floor) {
-  const message = {
-    name: floor.name,
-    is_user: floor.is_user,
-    is_system: floor.is_system,
-    mes: floor.mes,
-    swipe_id: floor.swipe_id,
-    variables: { [String(floor.swipe_id)]: { ...floor.variables ?? {} } },
-    is_ejs_processed: [...floor.is_ejs_processed ?? [false]]
-  };
-  return message;
-}
-class StCompatState {
-  chat = [];
-  chatMetadata = {};
-  extensionSettings = {};
-  characters = [];
-  chatId = "";
-  language = "en";
-  userName = "User";
-  characterName = "Assistant";
-  characterId = -1;
-  /** The bound world book, hydrated when the host supplies one; empty otherwise. */
-  worldbooks = /* @__PURE__ */ new Map();
-  /**
-   * Apply one bridge context onto the stable objects. Floors whose content is
-   * unchanged keep their object identity; changed floors are mutated in place;
-   * new floors append; removals truncate.
-   */
-  applyContext(context) {
-    this.chatId = context.chatId;
-    this.language = context.language;
-    this.userName = context.userName;
-    this.characterName = context.characterName;
-    this.characterId = context.characterId ?? -1;
-    this.chat.length = Math.min(this.chat.length, context.chat.length);
-    for (const [index, floor] of context.chat.entries()) {
-      const existing = this.chat[index];
-      if (existing === void 0) {
-        this.chat.push(floorToMessage(floor));
-      } else if (sameFloor(existing, floor)) ;
-      else {
-        const fresh = floorToMessage(floor);
-        existing.name = fresh.name;
-        existing.is_user = fresh.is_user;
-        existing.is_system = fresh.is_system;
-        existing.mes = fresh.mes;
-        existing.swipe_id = fresh.swipe_id;
-        existing.variables = fresh.variables;
-        existing.is_ejs_processed = fresh.is_ejs_processed;
-      }
-    }
-    if (this.chat.length > context.chat.length) this.chat.length = context.chat.length;
-    replaceInPlace(this.chatMetadata, { variables: context.chatVariables });
-    const globalVariables = context.extensionSettings?.variables?.global ?? {};
-    replaceInPlace(this.extensionSettings, { ...context.extensionSettings, variables: { global: globalVariables } });
-    replaceArrayInPlace(this.characters, this.characterId >= 0 ? [{ name: context.characterName, description: "", data: {}, avatar: "none" }] : []);
-  }
-  /** The local (chat) variable layer as the upstream code leaves it. */
-  collectChatVariables() {
-    const variables = this.chatMetadata["variables"];
-    return typeof variables === "object" && variables !== null ? { ...variables } : {};
-  }
-  /** The extension's global variable layer (`extension_settings.variables.global`). */
-  collectGlobalVariables() {
-    const variables = this.extensionSettings["variables"];
-    const global = variables?.global;
-    return typeof global === "object" && global !== null ? { ...global } : {};
-  }
-}
-function replaceArrayInPlace(target, next) {
-  target.length = 0;
-  target.push(...next);
-}
-function replaceInPlace(target, next) {
-  for (const key of Object.keys(target)) delete target[key];
-  Object.assign(target, next);
-}
-function translationsFor(element, table) {
-  const edits = [];
-  const spec = element.attributes.get("data-i18n");
-  if (typeof spec !== "string" || spec === "") return edits;
-  for (const part of spec.split(";").map((part2) => part2.trim()).filter(Boolean)) {
-    const attributeForm = /^\[([^\]]+)\](.+)$/u.exec(part);
-    if (attributeForm !== null) {
-      const attribute = attributeForm[1];
-      const key = attributeForm[2];
-      if (attribute !== void 0 && key !== void 0) {
-        const value = table[key];
-        if (typeof value === "string") edits.push({ kind: "attribute", attribute, value });
-      }
-    } else {
-      const value = table[part];
-      if (typeof value === "string") edits.push({ kind: "text", value });
-    }
-  }
-  return edits;
-}
+import { U as UnsupportedStCompatApiError, S as StCompatState, t as translationsFor } from "./kernel-core-VDxEywTX.js";
 class StEventBus {
   #handlers = /* @__PURE__ */ new Map();
+  /** Notified when a handler throws — the frame's route to surface handler
+   *  crashes to the shell instead of burying them in the frame's console. */
+  #onHandlerError;
+  /** Install the shell-reporting hook (the kernel wires this at startup). */
+  onHandlerError(handler) {
+    this.#onHandlerError = handler;
+  }
   #list(type) {
     const existing = this.#handlers.get(type);
     if (existing !== void 0) return existing;
@@ -166,6 +61,7 @@ class StEventBus {
         last = await entry.handler(...args);
       } catch (cause) {
         console.error(`[iris-st-compat] event handler for "${type}" threw`, cause);
+        this.#onHandlerError?.(type, cause);
       }
     }
     return last;
@@ -177,7 +73,16 @@ const event_types = {
   GENERATION_AFTER_COMMANDS: "GENERATION_AFTER_COMMANDS",
   CHAT_COMPLETION_SETTINGS_READY: "chat_completion_settings_ready",
   MESSAGE_RECEIVED: "message_received",
-  CHARACTER_MESSAGE_RENDERED: "character_message_rendered"
+  MESSAGE_SENT: "message_sent",
+  MESSAGE_UPDATED: "message_updated",
+  MESSAGE_SWIPED: "message_swiped",
+  MESSAGE_SWIPE_DELETED: "message_swipe_deleted",
+  CHARACTER_MESSAGE_RENDERED: "character_message_rendered",
+  USER_MESSAGE_RENDERED: "user_message_rendered",
+  SETTINGS_LOADED: "settings_loaded",
+  SETTINGS_UPDATED: "settings_updated",
+  WORLDINFO_UPDATED: "worldinfo_updated",
+  WORLDINFO_ENTRIES_LOADED: "worldinfo_entries_loaded"
 };
 function meta(name) {
   const tag = document.querySelector(`meta[name="${name}"]`);
@@ -190,6 +95,13 @@ const artifactBase = meta("iris-st-ext-base");
 const extensionDirName = meta("iris-st-ext-dir");
 const state = new StCompatState();
 const bus = new StEventBus();
+bus.onHandlerError((type, cause) => {
+  const detail = cause instanceof Error ? `${cause.message}
+${cause.stack ?? ""}`.slice(0, 800) : String(cause);
+  post({ irisStExt: token, type: "error", where: `event handler: ${type}`, message: detail });
+});
+const w = window;
+w["__irisStKernelInstances"] = (w["__irisStKernelInstances"] ?? 0) + 1;
 function post(message) {
   window.parent.postMessage(message, "*");
 }
@@ -259,7 +171,7 @@ function applyTranslations(root, table) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   const elements = [];
   while (walker.nextNode()) elements.push(walker.currentNode);
-  elements.push(root);
+  if (root instanceof Element) elements.push(root);
   for (const element of elements) {
     const attributes = /* @__PURE__ */ new Map();
     for (const attribute of [...element.attributes]) attributes.set(attribute.name, attribute.value);
@@ -269,10 +181,32 @@ function applyTranslations(root, table) {
     }
   }
 }
+let settingsPersistTimer;
+function persistSettings() {
+  if (settingsPersistTimer !== void 0) clearTimeout(settingsPersistTimer);
+  settingsPersistTimer = setTimeout(() => {
+    settingsPersistTimer = void 0;
+    void bus.emit(event_types.SETTINGS_UPDATED);
+    post({ irisStExt: token, type: "settings-persist", extensionSettings: structuredCloneSafe(state.extensionSettings) });
+  }, 300);
+}
+function structuredCloneSafe(value) {
+  try {
+    return structuredClone(value);
+  } catch {
+    return JSON.parse(JSON.stringify(value));
+  }
+}
+let this_chid = -1;
+let name1 = "User";
+let name2 = "Assistant";
+let main_api = "openai";
+let user_avatar = "default";
+let online_status = "";
 function syncBindings() {
-  state.characterId;
-  state.userName;
-  state.characterName;
+  this_chid = state.characterId;
+  name1 = state.userName;
+  name2 = state.characterName;
 }
 async function runGenerateRound(payload) {
   state.applyContext(payload);
@@ -322,11 +256,35 @@ async function runReplyRound(payload) {
     globalVariables: state.collectGlobalVariables()
   };
 }
+function updateMessageBlockDom(messageId, mes) {
+  const floor = document.querySelector(`div.mes[mesid="${messageId}"] .mes_text`);
+  if (floor !== null) floor.textContent = mes;
+}
+async function renderExtensionTemplateAsync(templateKey, templateName) {
+  if (templateKey !== "third-party/ST-Prompt-Template") {
+    throw new UnsupportedStCompatApiError(`renderExtensionTemplateAsync("${templateKey}")`);
+  }
+  const response = await fetch(`${artifactBase}/scripts/extensions/third-party/ST-Prompt-Template/${templateName}.html`);
+  if (!response.ok) throw new Error(`the extension's ${templateName}.html could not be read (HTTP ${response.status})`);
+  const html = await response.text();
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  applyTranslations(container, await loadLocaleTable(state.language));
+  return container;
+}
 window.addEventListener("message", (event) => {
   if (event.source !== window.parent) return;
   const data = event.data;
   if (typeof data !== "object" || data === null || data["irisStExt"] !== token) return;
   void handleShellMessage(data).catch((cause) => postError("envelope handling failed", cause));
+});
+window.addEventListener("error", (event) => {
+  post({ irisStExt: token, type: "error", where: "uncaught error", message: `${event.message} (${event.filename}:${event.lineno})` });
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason instanceof Error ? `${event.reason.message}
+${event.reason.stack ?? ""}` : String(event.reason);
+  post({ irisStExt: token, type: "error", where: "unhandled rejection", message: reason.slice(0, 500) });
 });
 async function handleShellMessage(data) {
   switch (data["type"]) {
@@ -351,6 +309,10 @@ async function handleShellMessage(data) {
       const envelopeToken = String(data["token"]);
       const payload = data["payload"];
       try {
+        if (payload.kind === "chat-open") {
+          await handleShellMessage({ type: "chat-open", context: payload });
+          return;
+        }
         const result = payload.kind === "generate" ? await runGenerateRound(payload) : await runReplyRound(payload);
         post({ irisStExt: token, type: "bridge-result", token: envelopeToken, result });
       } catch (cause) {
@@ -405,6 +367,22 @@ async function handleShellMessage(data) {
       }
       return;
     }
+    case "probe": {
+      post({
+        irisStExt: token,
+        type: "member-result",
+        callId: "probe",
+        result: {
+          readyState: document.readyState,
+          hasJQuery: typeof window["$"] === "function",
+          hasLodash: typeof window["_"] === "function",
+          ejsPublished: window["EjsTemplate"] !== void 0,
+          kernelInstances: window["__irisStKernelInstances"],
+          settingsDom: document.getElementById("extensions_settings")?.children.length ?? -1
+        }
+      });
+      return;
+    }
     default:
       return;
   }
@@ -425,5 +403,16 @@ function jQueryReady(fn) {
   throw new Error("[iris-st-compat] jQuery ($) is not loaded; the srcdoc must carry the vendor script tags before the module tag");
 }
 export {
-  state as s
+  name2 as a,
+  bus as b,
+  user_avatar as c,
+  event_types as e,
+  main_api as m,
+  name1 as n,
+  online_status as o,
+  persistSettings as p,
+  renderExtensionTemplateAsync as r,
+  state as s,
+  this_chid as t,
+  updateMessageBlockDom as u
 };

@@ -52,10 +52,23 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       input: entries,
+      // The URL contract IS the export surface: the upstream bundle imports
+      // named bindings from these paths, so an entry that tree-shakes its
+      // exports down to a bare side-effect import hands upstream `undefined`
+      // for every facade member — which is exactly the silent death the
+      // kernel's named refusals exist to prevent. `strict` pins each entry's
+      // exports regardless of who imports them.
+      preserveEntrySignatures: 'strict',
       output: {
         format: 'es',
-        entryFileNames: 'facades/[name].js',
-        chunkFileNames: 'facades/chunks/[name]-[hash].js',
+        // The output layout must equal the URL layout: entries sit at the
+        // rev-root (script.js, scripts/events.js, …) and chunks beside them
+        // under chunks/, so rollup's relative specifiers (`./chunks/…` from
+        // script.js, `../chunks/…` from scripts/events.js) resolve INSIDE
+        // the rev segment. An extra facades/ level would push every chunk
+        // URL one hop above the rev and the route would 404 the graph.
+        entryFileNames: '[name].js',
+        chunkFileNames: 'chunks/[name]-[hash].js',
       },
     },
   },

@@ -813,7 +813,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     for (const entry of entries) {
       if (!isValidExtensionId(entry)) continue
       try {
-        const raw = JSON.parse(await readFile(join(installedDir, entry, 'content', 'manifest.json'), 'utf8')) as unknown
+        const raw = JSON.parse(await readFile(join(installedDir, entry, 'manifest.json'), 'utf8')) as unknown
         const parsed = normalizeManifest(raw)
         if (!parsed.ok) {
           ctx.logger.warn(`the installed extension "${entry}" has a manifest Iris refuses (${parsed.issues.map(issue => issue.field).join(', ')}); it stays inactive`)
@@ -832,7 +832,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const stCompat: StCompatOptions = {
     bridge: stCompatBridge,
-    extensionId: () => systemPlugins.snapshot().plugins.find(plugin => plugin.installed)?.id ?? '',
+    // The pilot serves the one ST-compat extension: an installed row that is
+    // neither builtin. The builtins install true by default and would
+    // otherwise shadow the find.
+    extensionId: () => systemPlugins.snapshot().plugins
+      .find(plugin => plugin.installed && plugin.id !== 'tavern-helper' && plugin.id !== 'mvu')?.id ?? '',
     revisionOf: (extensionId: string): number | undefined => stExtensionEnabledRevision(extensionId),
     settingsFor: (extensionId: string): Promise<unknown> => stExtensionSettings(extensionId),
     persistSettings: async (extensionId: string, blob: unknown): Promise<void> => {
@@ -852,7 +856,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       }
       const installer = await Installer.create(paths.extensions)
       await installer.installAs(id, { kind: 'local-directory', directoryPath })
-      const installed = JSON.parse(await readFile(join(paths.extensions, 'installed', id, 'content', 'manifest.json'), 'utf8')) as unknown
+      const installed = JSON.parse(await readFile(join(paths.extensions, 'installed', id, 'manifest.json'), 'utf8')) as unknown
       const parsed = normalizeManifest(installed)
       if (!parsed.ok) {
         throw new AppError('invalid-request', `the installed manifest.json is not one Iris accepts (${parsed.issues.map(issue => issue.field).join(', ')})`)
@@ -1433,7 +1437,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ? undefined
     : dirname(config.webDistIndex)
   if (webDistDir !== undefined) {
-    const stExtAssets = new StExtensionAssetStore(paths.extensions, webDistDir, await readFacadeFiles(webDistDir))
+    const facadeFiles = await readFacadeFiles(webDistDir)
+    const facadeBuildStamp = await facadeStamp(facadeFiles)
+    const stExtAssets = new StExtensionAssetStore(paths.extensions, webDistDir, facadeFiles, facadeBuildStamp)
     const stExtState = () => {
       const snapshot = systemPlugins.snapshot()
       return {
@@ -1459,7 +1465,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
  * .js file under st-ext/facades serves at its own relative path.
  */
 async function readFacadeFiles(webDistDir: string): Promise<ReadonlyMap<string, string>> {
-  const root = join(webDistDir, 'st-ext', 'facades')
+  // The build's output layout IS the served layout: entries and chunks sit
+  // directly under st-ext/ (script.js, scripts/events.js, chunks/…); vendor
+  // is excluded — the route serves it from its own branch.
+  const root = join(webDistDir, 'st-ext')
   const files = new Map<string, string>()
   const walk = async (dir: string, prefix: string): Promise<void> => {
     let names: string[] = []
@@ -1472,10 +1481,32 @@ async function readFacadeFiles(webDistDir: string): Promise<ReadonlyMap<string, 
       const full = join(dir, name)
       const info = await stat(full).catch(() => undefined)
       if (info === undefined) continue
-      if (info.isDirectory()) await walk(full, prefix === '' ? name : `${prefix}/${name}`)
-      else if (name.endsWith('.js')) files.set(prefix === '' ? name : `${prefix}/${name}`, full)
+      const nextPrefix = prefix === '' ? name : `${prefix}/${name}`
+      if (info.isDirectory()) {
+        // Vendor is served from its own branch; never in the facade map.
+        if (nextPrefix !== 'vendor') await walk(full, nextPrefix)
+        continue
+      }
+      if (name.endsWith('.js')) files.set(nextPrefix, full)
     }
   }
   await walk(root, '')
   return files
+}
+
+/**
+ * A short stamp over the facade tree's names and mtimes — the cache key the
+ * plane puts into every frame's module URL (?build=…), so an app rebuild
+ * re-keys the module graph and a poisoned immutable cache entry from an older
+ * build is never served to a newer frame.
+ */
+async function facadeStamp(files: ReadonlyMap<string, string>): Promise<string> {
+  const { createHash } = await import('node:crypto')
+  const hash = createHash('sha256')
+  for (const key of [...files.keys()].sort()) {
+    const info = await stat(files.get(key)!).catch(() => undefined)
+    hash.update(key)
+    hash.update(String(info?.mtimeMs ?? 0))
+  }
+  return hash.digest('hex').slice(0, 12)
 }

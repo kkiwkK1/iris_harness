@@ -8,6 +8,8 @@
 export const groups: Array<Record<string, unknown>> = []
 export let selected_group: string | null = null
 
-export async function getGroupMembers(): Promise<Array<Record<string, unknown>>> {
+/** Upstream iterates the return value SYNCHRONOUSLY (for…of over the array),
+ *  so this must not be async — a Promise is not iterable. */
+export function getGroupMembers(): Array<Record<string, unknown>> {
   return []
 }

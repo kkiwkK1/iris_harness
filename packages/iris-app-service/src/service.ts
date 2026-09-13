@@ -918,6 +918,7 @@ export class IrisAppService {
       // why the *product* says otherwise and a library caller does not.
       requireProvider: options.requireProvider ?? false,
       ...options.plugins === undefined ? {} : { plugins: options.plugins },
+      ...options.stCompat === undefined ? {} : { stCompat: options.stCompat },
       ...options.hostConnection === undefined ? {} : { hostConnection: options.hostConnection },
       ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
@@ -6396,6 +6397,16 @@ export class IrisAppService {
       return undefined
     }
     await this.#stCompatApplyVariables(entry, result.chatVariables, result.globalVariables)
+    // The reply's own setvar writes landed on the floor's message layer (the
+    // render handler runs with message_id set, exactly as upstream); merge
+    // them onto that scope or the update dies with the frame.
+    if (typeof result.floorVariables === 'object' && result.floorVariables !== null) {
+      try {
+        entry.variables.replaceVariables(result.floorVariables, { type: 'message', message_id: turn })
+      } catch (cause: unknown) {
+        this.#report(`the ST-compat bridge's floor variables could not be stored: ${cause instanceof Error ? cause.message : String(cause)}`, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
+      }
+    }
     return result.mes
   }
 

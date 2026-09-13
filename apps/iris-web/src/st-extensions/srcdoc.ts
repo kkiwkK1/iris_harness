@@ -9,9 +9,18 @@
  * behind those facades, so it initializes inside the same module graph, builds
  * the fixture DOM, and posts `ready` once the globals and the graph are up.
  *
- * The CSP reuses the card frame's policy on purpose: the extension compiles
- * EJS templates client-side (`new Function`), Monaco's worker may fall back to
- * a blob URL, and the card policy already draws exactly those lines.
+ * **The CSP is the card frame's, with one deliberate difference: connect-src
+ * names the shell origin explicitly instead of 'self'/'none'.** A srcdoc frame
+ * with `allow-scripts` is an OPAQUE origin (its own origin is the string
+ * "null"), and a CSP source of `'self'` matches the DOCUMENT's origin — which
+ * is no origin at all here — so the card policy's `connect-src 'none'`-or-
+ * `'self'` bans every fetch the kernel must make: the extension's
+ * settings.html, its locale tables, its own artifact bytes. CSP matching is
+ * against the REQUEST's URL, so naming the origin explicitly works; the
+ * request is still CORS (`Origin: null` against `Access-Control-Allow-Origin:
+ * *` from the route) and still confined to this host's own bytes. No remote
+ * network is granted — the same lines the card policy draws, minus the one
+ * that starves this frame.
  */
 
 import { framePolicy } from '../sandbox/srcdoc.ts'
@@ -27,6 +36,14 @@ export interface ExtensionSrcdocOptions {
   dirName: string
   /** The upstream module entry, relative to the extension directory (`dist/index.js`). */
   entry?: string
+  /**
+   * The app-build stamp. Appended to the module tag's URL as ?build=…, it
+   * re-keys the whole module graph per app build: the relative imports
+   * inherit the query, so a rebuilt facade set is a different URL set — a
+   * poisoned immutable cache entry from an older build can never be served
+   * to a newer frame.
+   */
+  buildStamp?: string
 }
 
 export function buildExtensionSrcdoc(options: ExtensionSrcdocOptions): string {
@@ -42,11 +59,18 @@ export function buildExtensionSrcdoc(options: ExtensionSrcdocOptions): string {
     throw new TypeError(`buildExtensionSrcdoc: dirName "${dirName}" contains markup or path characters`)
   }
 
+  // The card policy's own body, then connect-src swapped from its no-network
+  // default to this host's explicit origin. The appending (not replacing) is
+  // why this is a string splice on the policy the sandbox actually ships: if
+  // the card policy tightens, the extension frame tightens with it.
+  const base = framePolicy(false, origin)
+  const policy = base.replace(/connect-src[^;]*/u, `connect-src ${origin}`)
+
   const parts: string[] = []
   parts.push('<!doctype html>')
   parts.push('<html>')
   parts.push('<head>')
-  parts.push(`<meta http-equiv="Content-Security-Policy" content="${framePolicy(false, origin)}; worker-src ${origin} blob:">`)
+  parts.push(`<meta http-equiv="Content-Security-Policy" content="${policy}; worker-src ${origin} blob:">`)
   parts.push(`<meta name="iris-st-ext-token" content="${token}">`)
   parts.push(`<meta name="iris-st-ext-base" content="${artifactBase}">`)
   parts.push(`<meta name="iris-st-ext-dir" content="${dirName}">`)
@@ -59,7 +83,8 @@ export function buildExtensionSrcdoc(options: ExtensionSrcdocOptions): string {
   parts.push('<body></body>')
   // The upstream bundle, one byte changed by no one. Its relative imports
   // resolve against this URL, which is what makes the facade mirror work.
-  parts.push(`<script type="module" src="${origin}${artifactBase}/scripts/extensions/third-party/${dirName}/${entry}" crossorigin="anonymous"></script>`)
+  const buildQuery = options.buildStamp === undefined ? '' : `?build=${options.buildStamp}`
+  parts.push(`<script type="module" src="${origin}${artifactBase}/scripts/extensions/third-party/${dirName}/${entry}${buildQuery}" crossorigin="anonymous"></script>`)
   parts.push('</html>')
   return parts.join('\n')
 }

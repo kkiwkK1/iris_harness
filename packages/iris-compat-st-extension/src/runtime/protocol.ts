@@ -89,6 +89,13 @@ export interface StReplyResult {
   mes: string
   chatVariables: Record<string, unknown>
   globalVariables: Record<string, unknown>
+  /**
+   * The processed floor's OWN variable layer (`chat[turn].variables[swipe]`
+   * upstream). The reply's render handler writes setvar results here — the
+   * chat layer is untouched by that path — so the host must merge this back
+   * onto the message scope or every reply-driven update is lost.
+   */
+  floorVariables: Record<string, unknown>
 }
 
 export type StBridgeResult = StGenerateResult | StReplyResult
@@ -271,6 +278,9 @@ export function validateReplyResult(value: unknown): { ok: true } | { ok: false,
   if (typeof record['mes'] !== 'string') return { ok: false, why: 'mes is not a string' }
   if (typeof record['chatVariables'] !== 'object' || record['chatVariables'] === null) {
     return { ok: false, why: 'chatVariables is not an object' }
+  }
+  if (typeof record['floorVariables'] !== 'object' || record['floorVariables'] === null) {
+    return { ok: false, why: 'floorVariables is not an object' }
   }
   return { ok: true }
 }

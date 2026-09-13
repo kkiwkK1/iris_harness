@@ -26,6 +26,14 @@ interface Registration {
 
 export class StEventBus {
   readonly #handlers = new Map<string, Registration[]>()
+  /** Notified when a handler throws — the frame's route to surface handler
+   *  crashes to the shell instead of burying them in the frame's console. */
+  #onHandlerError: ((type: string, cause: unknown) => void) | undefined
+
+  /** Install the shell-reporting hook (the kernel wires this at startup). */
+  onHandlerError(handler: (type: string, cause: unknown) => void): void {
+    this.#onHandlerError = handler
+  }
 
   #list(type: string): Registration[] {
     const existing = this.#handlers.get(type)
@@ -88,8 +96,11 @@ export class StEventBus {
       } catch (cause: unknown) {
         // A broken handler is reported, not propagated: upstream's emitter
         // keeps dispatching, and one extension's bug must not swallow another
-        // listener's turn.
+        // listener's turn. Reported BOTH to the frame's console and — through
+        // the hook — to the shell, because a crash only the frame saw is a
+        // crash nobody can locate.
         console.error(`[iris-st-compat] event handler for "${type}" threw`, cause)
+        this.#onHandlerError?.(type, cause)
       }
     }
     return last

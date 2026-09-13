@@ -44,6 +44,19 @@ const extensionDirName = meta('iris-st-ext-dir')
 
 const state = new StCompatState()
 const bus = new StEventBus()
+// Handler crashes ride the error envelope to the shell: a facade-side or
+// upstream-side exception inside a dispatched handler must be locatable from
+// outside the frame, not buried in a console nobody opens.
+bus.onHandlerError((type, cause) => {
+  const detail = cause instanceof Error ? `${cause.message}\n${cause.stack ?? ''}`.slice(0, 800) : String(cause)
+  post({ irisStExt: token, type: 'error', where: `event handler: ${type}`, message: detail })
+})
+// Instance guard: the module chunk must evaluate exactly once per frame. A
+// second evaluation means two bus instances exist — the upstream registers
+// its handlers on one while the envelope channel answers on the other, and
+// every round silently no-ops. The probe reports the count.
+const w = window as unknown as Record<string, unknown>
+w['__irisStKernelInstances'] = ((w['__irisStKernelInstances'] as number | undefined) ?? 0) + 1
 
 function post(message: StFrameToShell): void {
   window.parent.postMessage(message, '*')
@@ -132,7 +145,9 @@ function applyTranslations(root: ParentNode, table: Record<string, string>): voi
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
   const elements: Element[] = []
   while (walker.nextNode()) elements.push(walker.currentNode as Element)
-  elements.push(root as Element)
+  // The root itself is walked too when it is an element; a Document root has
+  // no attributes of its own and carries nothing to translate.
+  if (root instanceof Element) elements.push(root)
   for (const element of elements) {
     const attributes = new Map<string, string>()
     for (const attribute of [...element.attributes]) attributes.set(attribute.name, attribute.value)
@@ -234,12 +249,15 @@ async function runReplyRound(payload: Extract<StBridgePayload, { kind: 'reply' }
   await bus.emit(event_types.MESSAGE_RECEIVED, payload.turn)
   await bus.emit(event_types.CHARACTER_MESSAGE_RENDERED, payload.turn)
 
+  const floorVarKey = String(floor.swipe_id || 0)
+  const floorVars = floor.variables[floorVarKey]
   return {
     kind: 'reply',
     turn: payload.turn,
     mes: typeof floor.mes === 'string' ? floor.mes : payload.text,
     chatVariables: state.collectChatVariables(),
     globalVariables: state.collectGlobalVariables(),
+    floorVariables: typeof floorVars === 'object' && floorVars !== null ? { ...floorVars } : {},
   }
 }
 
@@ -274,6 +292,16 @@ window.addEventListener('message', (event: MessageEvent) => {
   void handleShellMessage(data).catch(cause => postError('envelope handling failed', cause))
 })
 
+// A crash inside the extension's own realm would otherwise be invisible to the
+// shell: report it so the failure is locatable instead of a silently dead frame.
+window.addEventListener('error', event => {
+  post({ irisStExt: token, type: 'error', where: 'uncaught error', message: `${event.message} (${event.filename}:${event.lineno})` })
+})
+window.addEventListener('unhandledrejection', event => {
+  const reason = event.reason instanceof Error ? `${event.reason.message}\n${event.reason.stack ?? ''}` : String(event.reason)
+  post({ irisStExt: token, type: 'error', where: 'unhandled rejection', message: reason.slice(0, 500) })
+})
+
 async function handleShellMessage(data: Record<string, unknown>): Promise<void> {
   switch (data['type']) {
     case 'chat-open': {
@@ -298,6 +326,14 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
       const envelopeToken = String(data['token'])
       const payload = data['payload'] as StBridgePayload
       try {
+        // A chat-open round rides the bridge envelope too (the host announces
+        // an open the same way it announces a generate); it hydrates and
+        // preloads, and answers with nothing — the host keeps no pending
+        // round for it, so a bridge-result would only be reported as noise.
+        if (payload.kind === 'chat-open') {
+          await handleShellMessage({ type: 'chat-open', context: payload as unknown as StBridgeContext })
+          return
+        }
         const result = payload.kind === 'generate' ? await runGenerateRound(payload) : await runReplyRound(payload)
         post({ irisStExt: token, type: 'bridge-result', token: envelopeToken, result })
       } catch (cause: unknown) {
@@ -354,6 +390,25 @@ async function handleShellMessage(data: Record<string, unknown>): Promise<void> 
       } catch (cause: unknown) {
         post({ irisStExt: token, type: 'member-result', callId, error: cause instanceof Error ? cause.message : String(cause) })
       }
+      return
+    }
+    case 'probe': {
+      // Diagnostics for the acceptance driver: reports whether the frame's
+      // kernel and the upstream share one realm (EjsTemplate visible) and
+      // whether the kernel chunk evaluated exactly once.
+      post({
+        irisStExt: token,
+        type: 'member-result',
+        callId: 'probe',
+        result: {
+          readyState: document.readyState,
+          hasJQuery: typeof (window as unknown as Record<string, unknown>)['$'] === 'function',
+          hasLodash: typeof (window as unknown as Record<string, unknown>)['_'] === 'function',
+          ejsPublished: (window as unknown as Record<string, unknown>)['EjsTemplate'] !== undefined,
+          kernelInstances: (window as unknown as Record<string, unknown>)['__irisStKernelInstances'],
+          settingsDom: document.getElementById('extensions_settings')?.children.length ?? -1,
+        },
+      })
       return
     }
     default:

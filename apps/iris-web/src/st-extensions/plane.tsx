@@ -4,15 +4,15 @@
  * the relay between them.
  *
  * Lifecycle rules, in the order the UCs depend on them:
- * - the frame exists only while the extension is enabled; a revision bump
- *   tears it down and the next build mounts a fresh one (old frame → dead
- *   submit path: its token dies with it, and the revision check refuses it);
- * - the frame's rev comes from the composed manifest BEFORE the srcdoc is
- *   built — the mirrored URLs are rev-keyed, so nothing is guessed;
+ * - the frame exists only while an ST extension is enabled; a revision bump
+ *   tears it down and the next build mounts a fresh one (an old frame dies
+ *   with its token, and the host's revision check refuses its submits);
+ * - the frame's id/rev/dir come from the route's top-level manifest BEFORE the
+ *   srcdoc is built — the mirrored URLs are rev-keyed, so nothing is guessed;
  * - `ready` (the kernel's handshake) gates the attach RPC, so a half-built
  *   frame can never arm and answer a round; the attach carries the open chat
  *   id, so a frame built for an already-open conversation starts hydrated;
- * - dispose detaches first (the host drops its arms and fails pending rounds
+ * - disable detaches first (the host drops its arms and fails pending rounds
  *   toward the raw passthrough) and only then removes the frame.
  */
 
@@ -29,13 +29,12 @@ import { subscribeStCompatRequests } from './plane-bus.ts'
 /** The settings-section id this pilot registers under. */
 const SECTION_ID = 'st-compat-settings'
 
-/** The extension the pilot serves: one id, one directory, by design. */
-const EXTENSION_ID = 'st-prompt-template'
-const EXTENSION_DIR_NAME = 'ST-Prompt-Template'
-
 interface PlaneFrameSpec {
+  extensionId: string
   token: string
   rev: string
+  dirName: string
+  build: string
 }
 
 function randomToken(): string {
@@ -59,13 +58,13 @@ export function StExtensionPlane(): ReactElement | null {
     const host: StExtPlaneHost = {
       frameWindow: () => frameRef.current?.contentWindow ?? null,
       frameToken: () => spec?.token ?? '',
-      extensionId: () => EXTENSION_ID,
+      extensionId: () => spec?.extensionId ?? '',
       submit: input => {
         void actions.stCompatSubmit(input).catch(() => {})
       },
       persistSettings: settings => {
-        if (revisionRef.current !== undefined) {
-          void actions.stCompatSettings(EXTENSION_ID, revisionRef.current, settings).catch(() => {})
+        if (revisionRef.current !== undefined && spec?.extensionId !== undefined) {
+          void actions.stCompatSettings(spec.extensionId, revisionRef.current, settings).catch(() => {})
         }
       },
       report: (kind, detail) => {
@@ -89,40 +88,54 @@ export function StExtensionPlane(): ReactElement | null {
     if (!enabled || snapshot === undefined) {
       // Disabled: detach first, then drop the frame. The host fails every
       // pending round toward the raw passthrough the moment the detach lands.
-      void actions.stCompatDetach(EXTENSION_ID).catch(() => {})
+      if (spec?.extensionId !== undefined) {
+        void actions.stCompatDetach(spec.extensionId).catch(() => {})
+      }
       setSpec(undefined)
       return () => { alive = false }
     }
-    // Enabled: fetch the composed manifest, then build a fresh frame at the
-    // revision the manifest names. A new revision builds a new frame; the old
-    // one dies with its token.
+    // Enabled: read the top-level manifest (the route lists every enabled
+    // extension's composed manifest), then build a fresh frame from the row.
     void (async () => {
       try {
-        const response = await fetch(`/iris-st-ext/${EXTENSION_ID}/manifest.json`)
+        const response = await fetch('/iris-st-ext/manifest.json')
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const manifest = await response.json() as { rev?: unknown, dirName?: unknown }
+        const listing = await response.json() as { extensions?: Array<{ id?: unknown, rev?: unknown, dirName?: unknown, build?: unknown }> }
+        const row = listing.extensions?.[0]
         if (!alive) return
-        if (typeof manifest.rev !== 'string' || manifest.rev === '') throw new Error('the manifest carries no rev')
-        setSpec({ token: randomToken(), rev: manifest.rev })
+        if (row === undefined || typeof row.id !== 'string' || typeof row.rev !== 'string'
+          || typeof row.dirName !== 'string' || row.rev === '' || row.dirName === '') {
+          throw new Error('the manifest listing carries no usable extension row')
+        }
+        setSpec({
+          extensionId: row.id,
+          token: randomToken(),
+          rev: row.rev,
+          dirName: row.dirName,
+          build: typeof row.build === 'string' ? row.build : '',
+        })
       } catch (cause: unknown) {
         console.warn('[iris-st-compat] the extension manifest could not be read; the plane stays down', cause)
       }
     })()
     return () => { alive = false }
-  }, [actions, enabled, snapshot?.revision, snapshot])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild only on enable-state or revision change
+  }, [actions, enabled, snapshot?.revision])
 
   const onFrameMessage = useCallback((event: MessageEvent): void => {
     if (event.source !== frameRef.current?.contentWindow) return
     const data = event.data as Record<string, unknown> | null
     if (typeof data === 'object' && data !== null && data['type'] === 'ready') {
       // The kernel is up: arm with the open chat so the frame hydrates.
-      void actions.stCompatAttach(EXTENSION_ID, revisionRef.current ?? 0, chatId).catch(() => {})
+      if (spec?.extensionId !== undefined && revisionRef.current !== undefined) {
+        void actions.stCompatAttach(spec.extensionId, revisionRef.current, chatId).catch(() => {})
+      }
       const frameLanguage = lang === 'zh' ? 'zh-cn' : 'en'
       plane.sendLocale(frameRef.current.contentWindow as Window, frameLanguage)
       return
     }
     plane.onWindowMessage(event)
-  }, [actions, chatId, lang, plane])
+  }, [actions, chatId, lang, plane, spec])
 
   useEffect(() => {
     if (spec === undefined) return undefined
@@ -150,8 +163,9 @@ export function StExtensionPlane(): ReactElement | null {
   const srcdoc = buildExtensionSrcdoc({
     token: spec.token,
     origin: window.location.origin,
-    artifactBase: `/iris-st-ext/${EXTENSION_ID}/${spec.rev}`,
-    dirName: EXTENSION_DIR_NAME,
+    artifactBase: `/iris-st-ext/${spec.extensionId}/${spec.rev}`,
+    buildStamp: spec.build === '' ? undefined : spec.build,
+    dirName: spec.dirName,
   })
 
   return createElement('div', { className: 'iris-st-ext-plane', style: { display: 'none' } },
@@ -167,7 +181,7 @@ export function StExtensionPlane(): ReactElement | null {
 function StExtensionSettingsSection({ plane, frameToken }: { plane: StExtPlane, frameToken: string }): ReactElement {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
 
-  // Project once; re-projects happen when the section remounts (drawer open).
+  // Project once per mount; the drawer remounting the section re-projects.
   useEffect(() => {
     plane.requestSettingsProjection((html) => {
       if (frameRef.current !== null) frameRef.current.srcdoc = settingsProjectionSrcdoc(html, frameToken)
