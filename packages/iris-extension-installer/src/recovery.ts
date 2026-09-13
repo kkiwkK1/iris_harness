@@ -58,12 +58,22 @@ export async function recoverInstallations(root: string): Promise<RecoveryAction
  * derived target that would land outside the layout's targets root. The
  * staging path is always the scanned directory, never txn.stagingPath.
  */
-function deriveTargetPath(layout: InstallerLayout, txn: { extensionId: string; targetPath?: string }): string | null {
+function deriveTargetPath(
+  layout: InstallerLayout,
+  txn: { transactionId: string; extensionId: string; stagingPath?: string; targetPath?: string },
+  scannedStagingPath: string,
+): string | null {
   if (!isValidExtensionId(txn.extensionId)) return null
   const derived = path.resolve(layout.store.targetPath(txn.extensionId))
   if (derived !== path.resolve(layout.targetsRoot) && !derived.startsWith(path.resolve(layout.targetsRoot) + path.sep)) {
     return null
   }
+  // A transaction is trusted only as a self-consistent record. Recovery still
+  // uses the paths it derives, never these embedded strings, but disagreement
+  // means the record cannot authorize touching even the derived target.
+  if (txn.transactionId !== path.basename(scannedStagingPath)) return null
+  if (typeof txn.stagingPath !== 'string' || path.resolve(txn.stagingPath) !== path.resolve(scannedStagingPath)) return null
+  if (typeof txn.targetPath !== 'string' || path.resolve(txn.targetPath) !== derived) return null
   return derived
 }
 
@@ -82,7 +92,7 @@ async function recoverStaging(layout: InstallerLayout, actions: RecoveryAction[]
       actions.push({ path: stagingPath, outcome: 'orphaned' })
       continue
     }
-    const derivedTarget = deriveTargetPath(layout, txn)
+    const derivedTarget = deriveTargetPath(layout, txn, stagingPath)
     if (derivedTarget === null) {
       // A record this tampered (or this broken) names no target at all: its
       // staging goes, and whatever its paths claim is left untouched.
