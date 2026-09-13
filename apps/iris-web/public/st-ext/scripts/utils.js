@@ -1,5 +1,5 @@
-import { s as state } from "../chunks/scripts-events-BDoU5sfV.js";
-import "../chunks/kernel-core-VDxEywTX.js";
+import { s as state } from "../chunks/scripts-events-D2xxvW0r.js";
+import "../chunks/kernel-core-CVpTC58g.js";
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(String(text));

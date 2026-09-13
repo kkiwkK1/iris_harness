@@ -1,5 +1,5 @@
-import { s as state } from "../../../chunks/scripts-events-BDoU5sfV.js";
-import { U as UnsupportedStCompatApiError } from "../../../chunks/kernel-core-VDxEywTX.js";
+import { s as state } from "../../../chunks/scripts-events-D2xxvW0r.js";
+import { U as UnsupportedStCompatApiError } from "../../../chunks/kernel-core-CVpTC58g.js";
 const regex_placement = {
   MD_DISPLAY: 0,
   USER_INPUT: 1,

@@ -1,4 +1,4 @@
-import { U as UnsupportedStCompatApiError, S as StCompatState, t as translationsFor } from "./kernel-core-VDxEywTX.js";
+import { U as UnsupportedStCompatApiError, S as StCompatState } from "./kernel-core-CVpTC58g.js";
 class StEventBus {
   #handlers = /* @__PURE__ */ new Map();
   /** Notified when a handler throws — the frame's route to surface handler
@@ -84,6 +84,26 @@ const event_types = {
   WORLDINFO_UPDATED: "worldinfo_updated",
   WORLDINFO_ENTRIES_LOADED: "worldinfo_entries_loaded"
 };
+function translationSlots(spec) {
+  const slots = [];
+  for (const part of spec.split(";").map((part2) => part2.trim()).filter(Boolean)) {
+    const attributeForm = /^\[([^\]]+)\](.+)$/u.exec(part);
+    if (attributeForm === null) {
+      slots.push({ key: part });
+      continue;
+    }
+    const attribute = attributeForm[1];
+    const key = attributeForm[2];
+    if (attribute !== void 0 && key !== void 0) slots.push({ attribute, key });
+  }
+  return slots;
+}
+function resolveTranslation(slot, table, originals) {
+  const translated = table[slot.key];
+  if (translated !== void 0) return translated;
+  if (slot.attribute === void 0) return originals.text;
+  return originals.attributes.get(slot.attribute) ?? "";
+}
 function meta(name) {
   const tag = document.querySelector(`meta[name="${name}"]`);
   const value = tag?.getAttribute("content") ?? "";
@@ -167,17 +187,31 @@ async function loadLocaleTable(language) {
     return {};
   }
 }
+const translationOriginals = /* @__PURE__ */ new WeakMap();
 function applyTranslations(root, table) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   const elements = [];
   while (walker.nextNode()) elements.push(walker.currentNode);
   if (root instanceof Element) elements.push(root);
   for (const element of elements) {
-    const attributes = /* @__PURE__ */ new Map();
-    for (const attribute of [...element.attributes]) attributes.set(attribute.name, attribute.value);
-    for (const edit of translationsFor({ textContent: element.textContent, attributes }, table)) {
-      if (edit.kind === "text") element.textContent = edit.value;
-      else element.setAttribute(edit.attribute, edit.value);
+    const spec = element.getAttribute("data-i18n");
+    if (spec === null || spec === "") continue;
+    const slots = translationSlots(spec);
+    let originals = translationOriginals.get(element);
+    if (originals === void 0) {
+      originals = { text: element.textContent ?? "", attributes: /* @__PURE__ */ new Map() };
+      translationOriginals.set(element, originals);
+    }
+    for (const slot of slots) {
+      const value = resolveTranslation(slot, table, originals);
+      if (slot.attribute === void 0) {
+        element.textContent = value;
+        continue;
+      }
+      if (!originals.attributes.has(slot.attribute)) {
+        originals.attributes.set(slot.attribute, element.getAttribute(slot.attribute) ?? "");
+      }
+      element.setAttribute(slot.attribute, value);
     }
   }
 }
@@ -248,12 +282,15 @@ async function runReplyRound(payload) {
   ensureFloorDiv(payload.turn, payload.text);
   await bus.emit(event_types.MESSAGE_RECEIVED, payload.turn);
   await bus.emit(event_types.CHARACTER_MESSAGE_RENDERED, payload.turn);
+  const floorVarKey = String(floor.swipe_id || 0);
+  const floorVars = floor.variables[floorVarKey];
   return {
     kind: "reply",
     turn: payload.turn,
     mes: typeof floor.mes === "string" ? floor.mes : payload.text,
     chatVariables: state.collectChatVariables(),
-    globalVariables: state.collectGlobalVariables()
+    globalVariables: state.collectGlobalVariables(),
+    floorVariables: typeof floorVars === "object" && floorVars !== null ? { ...floorVars } : {}
   };
 }
 function updateMessageBlockDom(messageId, mes) {
@@ -292,7 +329,10 @@ async function handleShellMessage(data) {
       const context = data["context"];
       state.applyContext(context);
       syncBindings();
-      applyTranslations(document, await loadLocaleTable(state.language));
+      localeApplied = loadLocaleTable(state.language).then((table) => {
+        applyTranslations(document, table);
+      });
+      await localeApplied;
       if (!appReadyFired) {
         appReadyFired = true;
         await bus.emit(event_types.APP_READY);
@@ -302,7 +342,11 @@ async function handleShellMessage(data) {
     }
     case "locale": {
       state.language = String(data["language"] ?? "en");
-      applyTranslations(document, await loadLocaleTable(state.language));
+      localeApplied = loadLocaleTable(state.language).then((table) => {
+        applyTranslations(document, table);
+      });
+      await localeApplied;
+      if (projectionRequested) postSettingsProjection();
       return;
     }
     case "bridge": {
@@ -324,14 +368,9 @@ async function handleShellMessage(data) {
       return;
     }
     case "settings-project": {
-      const root = document.getElementById("extensions_settings");
-      if (root === null) throw new Error("the settings fixture root disappeared");
-      let seq = 0;
-      for (const element of root.querySelectorAll("*")) {
-        element.setAttribute("data-iris-proj-path", `p${seq}`);
-        seq += 1;
-      }
-      post({ irisStExt: token, type: "settings-html", html: root.innerHTML, language: state.language });
+      projectionRequested = true;
+      await localeApplied;
+      postSettingsProjection();
       return;
     }
     case "replay-event": {
@@ -388,6 +427,21 @@ async function handleShellMessage(data) {
   }
 }
 let appReadyFired = false;
+let projectionRequested = false;
+let localeApplied = Promise.resolve();
+function postSettingsProjection() {
+  const root = document.getElementById("extensions_settings");
+  if (root === null) {
+    post({ irisStExt: token, type: "error", where: "settings projection", message: "the settings fixture root disappeared" });
+    return;
+  }
+  let seq = 0;
+  for (const element of root.querySelectorAll("*")) {
+    element.setAttribute("data-iris-proj-path", `p${seq}`);
+    seq += 1;
+  }
+  post({ irisStExt: token, type: "settings-html", html: root.innerHTML, language: state.language });
+}
 ensureFixtureDom();
 jQueryReady(() => {
   setTimeout(() => {
