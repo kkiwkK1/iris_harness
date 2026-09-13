@@ -1,0 +1,73 @@
+{
+  "upstream-bytes-unmodified": {
+    "ok": true,
+    "installedSha256": "61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd",
+    "expected": "61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd",
+    "lockArtifactSha256": "fcd1a80ae3b479d3a4a13bd480b136268ad147b267394f660bff4778e636900e",
+    "rev": "fcd1a80ae3b4"
+  },
+  "frame-health": {
+    "ok": true,
+    "readyState": "complete",
+    "hasJQuery": true,
+    "hasLodash": true,
+    "ejsPublished": true,
+    "kernelInstances": 1,
+    "settingsDom": 1
+  },
+  "step1-expanded": {
+    "ok": true,
+    "segment": "\n你是我信赖的朋友。\n",
+    "bridgeRoundsThisGeneration": 2
+  },
+  "step2-stable-same-input": {
+    "ok": true,
+    "first": "\n你是我信赖的朋友。\n",
+    "second": "\n你是我信赖的朋友。\n"
+  },
+  "step3-branch-flips": {
+    "ok": true,
+    "segment": "\n我仍然对你保持警惕。\n"
+  },
+  "step4-disabled-raw-passthrough": {
+    "ok": true,
+    "segment": "<% if (getvar('好感度', { defaults: 0 }) > 50) { %>\n你是我信赖的朋友。\n<% } else { %>\n我仍然对你保持警惕。\n<% } %>",
+    "bridgeRoundsDuringDisabledRound": 0,
+    "frameProbeAfterDisable": {
+      "absent": "no plane iframe"
+    }
+  },
+  "step5-reenabled-single-expansion": {
+    "ok": true,
+    "segment": "\n我仍然对你保持警惕。\n",
+    "frameHealthAfterReenable": {
+      "readyState": "complete",
+      "hasJQuery": true,
+      "hasLodash": true,
+      "ejsPublished": true,
+      "kernelInstances": 1,
+      "settingsDom": 1
+    },
+    "bridgeRoundsThisRound": 2
+  },
+  "step6-restored-byte-identical": {
+    "ok": true,
+    "round1": "\n你是我信赖的朋友。\n",
+    "restored": "\n你是我信赖的朋友。\n"
+  },
+  "single-kernel-after-cycle": {
+    "ok": true,
+    "readyState": "complete",
+    "hasJQuery": true,
+    "hasLodash": true,
+    "ejsPublished": true,
+    "kernelInstances": 1,
+    "settingsDom": 1
+  },
+  "chat-variable-untouched": {
+    "ok": true,
+    "chatVariables": {
+      "好感度": 70
+    }
+  }
+}

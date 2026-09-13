@@ -12,7 +12,7 @@ import { createRequire } from 'node:module'
 const bootRequire = createRequire(fileURLToPath(new URL('../../../apps/iris/package.json', import.meta.url)))
 const { boot } = bootRequire('@deepseek-ai/dsh-app-boot')
 
-const PORT = '8799'
+const PORT = process.env.PILOT_PORT ?? '8799'
 const PORT_ENV = `PILOT_PORT=${PORT}`
 
 // ---- the scripted provider -------------------------------------------------

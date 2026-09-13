@@ -18,18 +18,47 @@ export async function startPilotProvider() {
   ].join('\n')
   let calls = 0
   const capture = { body: '' }
+  // The acceptance driver's own record: every request body appended to a JSONL
+  // file, so "what the host actually sent" is read from the provider's side of
+  // the wire (PILOT_CAPTURE names the file; absent means no capture).
+  const captureFile = process.env.PILOT_CAPTURE
+  const note = async body => {
+    if (captureFile === undefined) return
+    try {
+      const { appendFile, mkdir } = await import('node:fs/promises')
+      const { dirname } = await import('node:path')
+      await mkdir(dirname(captureFile), { recursive: true })
+      await appendFile(captureFile, `${JSON.stringify({ ts: new Date().toISOString(), call: calls, body })}\n`, 'utf8')
+    } catch { /* capture is diagnostics; a failure must not break the reply */ }
+  }
+  // A marker in the user's message picks the reply, so scenario scripts steer
+  // the model side without a second provider. Markers are upper-case words no
+  // fixture reply contains.
+  const MUTEX_REPLY = [
+    "<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>",
+    "_.set('好感度', 99);",
+    '双实现探针：这一条回复同时携带 ST 模板 setvar 与 MVU 的 _.set。',
+  ].join('\n')
 
   const server = createServer((req, res) => {
+    // ST's custom-endpoint connect fetches the model list before the first
+    // completion; answer it or the connection never goes online.
+    if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ object: 'list', data: [{ id: 'pilot-model', object: 'model' }] }))
+      return
+    }
     if (req.method !== 'POST' || !req.url.startsWith('/v1/chat/completions')) {
       res.writeHead(404).end()
       return
     }
     let body = ''
     req.on('data', chunk => { body += chunk })
-    req.on('end', () => {
+    req.on('end', async () => {
       capture.body = body
       calls += 1
-      const text = calls <= 1 ? REPLY_1 : REPLY_2
+      await note(body)
+      const text = body.includes('UC2-MUTEX') ? MUTEX_REPLY : calls <= 1 ? REPLY_1 : REPLY_2
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       // The host streams; one content frame plus usage plus DONE is enough.
       const id = 'pilot'

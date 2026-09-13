@@ -1,0 +1,269 @@
+Node version: v24.13.0. Running in undefined environment. Server directory: E:\sillyTavern\SillyTavern
+Using config path: ./config.yaml
+Using data root: D:/st-compare-data
+Preferring IPv4 for DNS resolution
+
+SillyTavern 1.18.0
+Running 'release' (51ad27fb8) - 5/3/2026, 11:45:46 PM GMT+8
+
+
+Compiling frontend libraries...
+webpack 5.105.4 compiled [1m[32msuccessfully[39m[22m in 483 ms
+
+SillyTavern is listening on IPv4: 127.0.0.1:8872
+
+=================================================
+
+Go to: http://127.0.0.1:8872/ to open SillyTavern
+
+=================================================
+
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Instantiated the tokenizer for llama
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Instantiated the tokenizer for gpt-4
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Instantiated the tokenizer for gpt-3.5-turbo
+Chat Completion request: {
+  messages: [
+    {
+      role: 'system',
+      content: "Write Pilot卡's next reply in a fictional chat between Pilot卡 and [Unnamed Persona]."
+    },
+    {
+      role: 'system',
+      content: 'Pilot acceptance character: a card whose bound world book carries the upstream README example 2 template.'
+    },
+    { role: 'system', content: '\n你是我信赖的朋友。\n' },
+    { role: 'system', content: '[Start a new Chat]' },
+    { role: 'assistant', content: '你好。' },
+    { role: 'user', content: 'ST compare round: 好感度 70' }
+  ],
+  prompt: undefined,
+  model: 'pilot-model',
+  temperature: 1,
+  max_tokens: 300,
+  max_completion_tokens: undefined,
+  stream: false,
+  presence_penalty: 0,
+  frequency_penalty: 0,
+  top_p: 1,
+  top_k: undefined,
+  stop: undefined,
+  logit_bias: undefined,
+  seed: undefined,
+  n: undefined,
+  logprobs: undefined,
+  top_logprobs: undefined
+}
+Generation failed TypeError: Invalid URL
+    at new URL (node:internal/url:828:25)
+    at new Request (file:///E:/sillyTavern/SillyTavern/node_modules/node-fetch/src/request.js:55:16)
+    at file:///E:/sillyTavern/SillyTavern/node_modules/node-fetch/src/index.js:51:19
+    at new Promise (<anonymous>)
+    at fetch (file:///E:/sillyTavern/SillyTavern/node_modules/node-fetch/src/index.js:49:9)
+    at file:///E:/sillyTavern/SillyTavern/src/endpoints/backends/chat-completions.js:2590:37
+    at Layer.handle [as handle_request] (E:\sillyTavern\SillyTavern\node_modules\express\lib\router\layer.js:95:5)
+    at next (E:\sillyTavern\SillyTavern\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch (E:\sillyTavern\SillyTavern\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] (E:\sillyTavern\SillyTavern\node_modules\express\lib\router\layer.js:95:5) {
+  code: 'ERR_INVALID_URL',
+  input: '/chat/completions'
+}
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+Available models: [ 'pilot-model' ]
+Chat Completion request: {
+  messages: [
+    {
+      role: 'system',
+      content: "Write Pilot卡's next reply in a fictional chat between Pilot卡 and [Unnamed Persona]."
+    },
+    {
+      role: 'system',
+      content: 'Pilot acceptance character: a card whose bound world book carries the upstream README example 2 template.'
+    },
+    { role: 'system', content: '\n你是我信赖的朋友。\n' },
+    { role: 'system', content: '[Start a new Chat]' },
+    { role: 'assistant', content: '你好。' },
+    { role: 'user', content: 'ST compare round: 好感度 70' },
+    { role: 'user', content: 'ST compare round: 好感度 70' }
+  ],
+  prompt: undefined,
+  model: 'pilot-model',
+  temperature: 1,
+  max_tokens: 300,
+  max_completion_tokens: undefined,
+  stream: false,
+  presence_penalty: 0,
+  frequency_penalty: 0,
+  top_p: 1,
+  top_k: undefined,
+  stop: undefined,
+  logit_bias: undefined,
+  seed: undefined,
+  n: undefined,
+  logprobs: undefined,
+  top_logprobs: undefined
+}
+Generation failed SyntaxError: Unexpected token 'd', "data: {"id"... is not valid JSON
+    at JSON.parse (<anonymous>)
+    at Response.json (file:///E:/sillyTavern/SillyTavern/node_modules/node-fetch/src/body.js:149:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async file:///E:/sillyTavern/SillyTavern/src/endpoints/backends/chat-completions.js:2599:26

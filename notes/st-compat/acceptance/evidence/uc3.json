@@ -1,0 +1,87 @@
+{
+  "step1-panel-on-plugins-route": {
+    "ok": true,
+    "nav": {
+      "ok": true
+    },
+    "section": {
+      "planePresent": true,
+      "framePresent": true,
+      "frameToken": "st-frame-v8tv3x0z3xn-mu069iq0",
+      "sectionPresent": true,
+      "projectionPresent": true
+    },
+    "heading": "Plugin settings"
+  },
+  "step2-diagnostics-has-no-panel": {
+    "ok": true,
+    "nav": {
+      "ok": true
+    },
+    "state": {
+      "sectionVisible": false,
+      "headingVisible": false,
+      "sectionInsideDiagnostics": false
+    }
+  },
+  "step3a-chinese-ui": {
+    "ok": true,
+    "heading": "插件设置",
+    "panel": "提示词模板\n是否启用扩展\n处理生成内容\n生成时注入 GENERATE 世界书条目\n生成时注入 @INJECT 世界书条目\n处理楼层消息\n渲染楼层时注入 RENDER 世界书条目\n处理代码块\n处理原始消息内容\n生成时忽略楼层消息处理\n楼层处理最大深度\n自动保存变量更新\n立即加载世界书\n禁用with语句块\n控制台显示详细信息\nGENERATE/RENDER/INJECT条目禁用视为启用\n后台编译\n环境隔离\n代码编辑器\n缓存（实验性）\n禁用\n启用\n仅世界书\n缓存大小\n缓存Hash函数\nh32\nh64"
+  },
+  "step3b-english-ui": {
+    "ok": true,
+    "heading": "Plugin settings",
+    "panel": "Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat message processing\nEnable [RENDER] feature\nEnable <pre> processing in chat messages\nEnable raw chat messages\nGenerate processing does not include chat messages\nMaximum depth of chat messages\nAutomatically save chats\nPreload World/Lorebooks\nDisable with statement\nConsole detailed log\nCompatibility with old features\nCompile in web workers\nEnvironmental isolation\nCode Editor\nCache (ex"
+  },
+  "step5-keyboard-reaches-projection": {
+    "ok": true,
+    "relayedChangeEvents": 7,
+    "checkboxFocused": true,
+    "note": "Tab into the panel own checkbox, Space to flip it; the projection relayed the change to the real panel"
+  },
+  "step6a-settings-persisted-to-disk": {
+    "ok": true,
+    "changed": true,
+    "before": "{\"EjsTemplate\":{\"enabled\":true,\"generate_enabled\":true,\"generate_loader_enabled\":true,\"render_enabled\":true,\"render_loader_enabled\":true,\"with_context_disabled\"",
+    "afterHead": "{\"EjsTemplate\":{\"enabled\":true,\"generate_enabled\":true,\"generate_loader_enabled\":true,\"render_enabled\":true,\"render_loader_enabled\":true,\"with_context_disabled\""
+  },
+  "step6b-survives-reload": {
+    "ok": true,
+    "persistedKeyChanged": true,
+    "projectionHead": "Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat mess"
+  },
+  "step7-disable-removes-everything": {
+    "ok": true,
+    "state": {
+      "planePresent": false,
+      "framePresent": false,
+      "sectionPresent": false,
+      "headingPresent": false
+    },
+    "probe": {
+      "absent": "no plane iframe"
+    }
+  },
+  "step8-reenable-rebuilds-fresh": {
+    "ok": true,
+    "oldToken": "st-frame-1v0lou77dayj-mu06a28j",
+    "newToken": "st-frame-knru5qxeea-mu06a91y",
+    "probe": {
+      "readyState": "complete",
+      "hasJQuery": true,
+      "hasLodash": true,
+      "ejsPublished": true,
+      "kernelInstances": 1,
+      "settingsDom": 1
+    }
+  },
+  "step9-disabled-reload-stays-clean": {
+    "ok": true,
+    "state": {
+      "sectionPresent": false,
+      "framePresent": false,
+      "headingPresent": false
+    }
+  }
+}
