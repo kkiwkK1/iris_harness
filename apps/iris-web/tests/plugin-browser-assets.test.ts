@@ -5,7 +5,16 @@ import {
   classifyClientResponse,
   findMemberConflicts,
   scanPluginMemberNames,
+  shouldProbeClient,
 } from '../src/app/use-plugin-manifest.ts'
+
+test('a retry generation is consumed once, after its matching manifest read', () => {
+  const failed = { phase: 'degraded' as const, rev: 'abc123def456', loadedAt: undefined, source: undefined, error: { kind: 'http' as const, message: 'old failure' } }
+  assert.equal(shouldProbeClient({ cached: failed, rev: failed.rev, retryGeneration: 1, manifestGeneration: 0, consumedGeneration: undefined, selectedForRetry: true }), false)
+  assert.equal(shouldProbeClient({ cached: failed, rev: failed.rev, retryGeneration: 1, manifestGeneration: 1, consumedGeneration: undefined, selectedForRetry: true }), true)
+  assert.equal(shouldProbeClient({ cached: failed, rev: failed.rev, retryGeneration: 1, manifestGeneration: 1, consumedGeneration: 1, selectedForRetry: true }), false)
+  assert.equal(shouldProbeClient({ cached: failed, rev: failed.rev, retryGeneration: 2, manifestGeneration: 2, consumedGeneration: 1, selectedForRetry: false }), false)
+})
 
 /**
  * The classification and conflict-scan contract behind the PluginCenter's
