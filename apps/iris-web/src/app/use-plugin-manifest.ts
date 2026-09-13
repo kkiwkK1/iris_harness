@@ -20,7 +20,7 @@
  *
  * @module iris-web/app/use-plugin-manifest
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PLUGIN_ASSET_MANIFEST_PATH, parsePluginAssetManifest, type PluginAssetManifest } from '@iris/plugin-web-api'
 import type { SystemPluginSnapshot } from '@iris/protocol'
@@ -143,6 +143,23 @@ export interface PluginProbe {
   loadedAt: number | undefined
   /** The bundle text as served, kept for the cross-plugin conflict scan. */
   source: string | undefined
+}
+
+/** Decide whether one bundle probe is due; exported to pin retry generations. */
+export function shouldProbeClient(input: {
+  cached: PluginProbe | undefined
+  rev: string
+  retryGeneration: number
+  manifestGeneration: number
+  consumedGeneration: number | undefined
+  selectedForRetry: boolean
+}): boolean {
+  const forced = input.retryGeneration > 0
+    && input.retryGeneration === input.manifestGeneration
+    && input.selectedForRetry
+    && input.consumedGeneration !== input.retryGeneration
+  if (forced) return true
+  return !(input.cached !== undefined && input.cached.rev === input.rev && input.cached.phase !== 'loading')
 }
 
 /**
@@ -291,14 +308,17 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
   const [probes, setProbes] = useState<Record<string, PluginProbe>>({})
   const [manifest, setManifest] = useState<PluginAssetManifest | undefined>()
   const [manifestFailure, setManifestFailure] = useState<string | undefined>()
-  const [nonce, setNonce] = useState(0)
-  const [retryIds, setRetryIds] = useState<string[]>([])
+  const [retryRequest, setRetryRequest] = useState<{ generation: number; pluginId?: string }>({ generation: 0 })
+  const [manifestGeneration, setManifestGeneration] = useState(0)
+  const consumedRetries = useRef(new Map<string, number>())
   const [evidence, setEvidence] = useState(0)
   const [poll, setPoll] = useState(0)
 
   const retry = useCallback((pluginId?: string) => {
-    setRetryIds(pluginId === undefined ? [] : [pluginId])
-    setNonce(current => current + 1)
+    setRetryRequest(current => ({
+      generation: current.generation + 1,
+      ...(pluginId === undefined ? {} : { pluginId }),
+    }))
   }, [])
 
   useEffect(() => {
@@ -310,10 +330,12 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
     }
     let stale = false
     setManifestFailure(undefined)
+    const requestedGeneration = retryRequest.generation
     fetchManifest().then(
       read => {
         if (stale) return
         setManifest(read)
+        setManifestGeneration(requestedGeneration)
         for (const [id, entry] of Object.entries(read.plugins)) {
           const held = seenRows.get(id)
           if (held?.rev === entry.rev && held.revision === read.revision) continue
@@ -328,7 +350,7 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
     return () => {
       stale = true
     }
-  }, [revision, nonce, poll])
+  }, [revision, retryRequest.generation, poll])
 
   // Poll while the catalog is live: the manifest revalidates per read, so this
   // is how a control-plane-external change (a bundle deleted or restored on
@@ -352,8 +374,19 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
       const entry = manifest.plugins[plugin.id]
       if (entry === undefined) continue
       const cached = probes[plugin.id]
-      const probed = cached !== undefined && cached.rev === entry.rev && cached.phase !== 'loading'
-      if (probed && !retryIds.includes(plugin.id)) continue
+      const selectedForRetry = retryRequest.pluginId === undefined || retryRequest.pluginId === plugin.id
+      const shouldProbe = shouldProbeClient({
+        cached,
+        rev: entry.rev,
+        retryGeneration: retryRequest.generation,
+        manifestGeneration,
+        consumedGeneration: consumedRetries.current.get(plugin.id),
+        selectedForRetry,
+      })
+      if (!shouldProbe) continue
+      if (retryRequest.generation > 0 && retryRequest.generation === manifestGeneration && selectedForRetry) {
+        consumedRetries.current.set(plugin.id, retryRequest.generation)
+      }
       void (async (): Promise<void> => {
         try {
           const response = await fetch(entry.client)
@@ -368,13 +401,12 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
         }
       })()
     }
-    if (retryIds.length > 0) setRetryIds([])
     return () => {
       stale = true
     }
     // `probes` is read but deliberately not a dependency: the effect runs per
     // revision and per retry, and a probe landing must not re-run it.
-  }, [manifest, manifestFailure, snapshot, retryIds])
+  }, [manifest, manifestFailure, snapshot, retryRequest, manifestGeneration])
 
   const statuses: Record<string, PluginBrowserAssetStatus> = {}
   if (snapshot !== undefined) {
