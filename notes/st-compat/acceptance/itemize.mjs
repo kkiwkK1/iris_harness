@@ -1,4 +1,4 @@
-const PORT = '8799'
+const PORT = process.env.PILOT_PORT ?? '8799'
 const chatId = process.argv[2]
 const turn = process.argv[3] === undefined ? undefined : Number(process.argv[3])
 const response = await fetch(`http://127.0.0.1:${PORT}/iris/rpc`, {

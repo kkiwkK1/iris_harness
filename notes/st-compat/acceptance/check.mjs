@@ -1,5 +1,5 @@
 // Acceptance checker: variables + itemization for the current pilot chat.
-const PORT = '8799'
+const PORT = process.env.PILOT_PORT ?? '8799'
 const chatId = process.argv[2]
 async function rpc(method, params) {
   const r = await fetch(`http://127.0.0.1:${PORT}/iris/rpc`, {
