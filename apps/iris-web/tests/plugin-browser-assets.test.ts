@@ -75,6 +75,25 @@ test('the member-name scan reads literal registerPluginMembers objects only', ()
   assert.deepEqual(scanPluginMemberNames(undefined), [])
 })
 
+test('nested values, comments and strings cannot invent top-level member names', () => {
+  const source = `
+    // registerPluginMembers('comment', { fake: 1 })
+    const text = "registerPluginMembers('string', { fake: 1 })"
+    registerPluginMembers('demo', {
+      outer: { shared: 1 },
+      handler: () => ({ nested: 2 }),
+      note: "a brace } and nested: 3",
+      /* decoy: 4, */ finalMember: true,
+    })
+  `
+  assert.deepEqual(scanPluginMemberNames(source), ['outer', 'handler', 'note', 'finalMember'])
+  const conflicts = findMemberConflicts({
+    a: { phase: 'loaded', rev: 'a', loadedAt: 1, error: undefined, source },
+    b: { phase: 'loaded', rev: 'b', loadedAt: 1, error: undefined, source: `registerPluginMembers('b', { shared: 2 })` },
+  })
+  assert.deepEqual(conflicts, {}, 'a nested property is not a registered member and cannot create a conflict')
+})
+
 test('two bundles claiming one member name are named as the conflict sources', () => {
   const probes = {
     'plugin-a': { phase: 'loaded' as const, rev: 'a', loadedAt: 1, error: undefined, source: `registerPluginMembers('plugin-a', { shared: 1, onlyA: 1 })` },

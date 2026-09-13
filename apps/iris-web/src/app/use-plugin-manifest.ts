@@ -208,22 +208,126 @@ export function classifyClientResponse(status: number, text: string | undefined,
 export function scanPluginMemberNames(source: string | undefined): string[] {
   if (source === undefined) return []
   const names: string[] = []
-  const call = /registerPluginMembers\s*\(\s*(['"])[^'"]*\1\s*,\s*\{/g
-  let match: RegExpExecArray | null
-  while ((match = call.exec(source)) !== null) {
-    const start = match.index + match[0].length
-    let depth = 1
-    let end = start
-    while (end < source.length && depth > 0) {
-      const char = source[end]
-      if (char === '{') depth += 1
-      else if (char === '}') depth -= 1
-      end += 1
+
+  const quotedEnd = (at: number): number => {
+    const quote = source[at]
+    let i = at + 1
+    while (i < source.length) {
+      if (source[i] === '\\') i += 2
+      else if (source[i] === quote) return i + 1
+      else i += 1
     }
-    const body = source.slice(start, end - 1)
-    for (const key of body.matchAll(/(?:^|[,{])\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:/g)) {
-      names.push(key[1])
+    return source.length
+  }
+  const triviaEnd = (at: number): number => {
+    let i = at
+    while (i < source.length) {
+      if (/\s/u.test(source[i]!)) { i += 1; continue }
+      if (source.startsWith('//', i)) {
+        const end = source.indexOf('\n', i + 2)
+        i = end < 0 ? source.length : end + 1
+        continue
+      }
+      if (source.startsWith('/*', i)) {
+        const end = source.indexOf('*/', i + 2)
+        i = end < 0 ? source.length : end + 2
+        continue
+      }
+      break
     }
+    return i
+  }
+  const identifierAt = (at: number): { value: string; end: number } | undefined => {
+    const match = /^[A-Za-z_$][\w$]*/u.exec(source.slice(at))
+    return match === null ? undefined : { value: match[0], end: at + match[0].length }
+  }
+  const literalKeyAt = (at: number): { value: string; end: number } | undefined => {
+    const id = identifierAt(at)
+    if (id !== undefined) return id
+    const quote = source[at]
+    if (quote !== "'" && quote !== '"') return undefined
+    const end = quotedEnd(at)
+    const raw = source.slice(at + 1, end - 1)
+    return /^[A-Za-z_$][\w$]*$/u.test(raw) ? { value: raw, end } : undefined
+  }
+  const objectKeys = (openingBrace: number): { keys: string[]; end: number } => {
+    const keys: string[] = []
+    let braces = 1
+    let parens = 0
+    let brackets = 0
+    let expectKey = true
+    let i = openingBrace + 1
+    while (i < source.length && braces > 0) {
+      const next = triviaEnd(i)
+      if (next !== i) { i = next; continue }
+      const char = source[i]!
+      if (char === "'" || char === '"' || char === '`') {
+        if (braces === 1 && parens === 0 && brackets === 0 && expectKey && char !== '`') {
+          const key = literalKeyAt(i)
+          if (key !== undefined) {
+            const colon = triviaEnd(key.end)
+            if (source[colon] === ':') {
+              keys.push(key.value)
+              expectKey = false
+              i = colon + 1
+              continue
+            }
+          }
+        }
+        i = quotedEnd(i)
+        continue
+      }
+      if (char === '{') { braces += 1; i += 1; continue }
+      if (char === '}') { braces -= 1; i += 1; continue }
+      if (char === '(') { parens += 1; i += 1; continue }
+      if (char === ')') { parens = Math.max(0, parens - 1); i += 1; continue }
+      if (char === '[') { brackets += 1; i += 1; continue }
+      if (char === ']') { brackets = Math.max(0, brackets - 1); i += 1; continue }
+      if (braces === 1 && parens === 0 && brackets === 0 && char === ',') {
+        expectKey = true
+        i += 1
+        continue
+      }
+      if (braces === 1 && parens === 0 && brackets === 0 && expectKey) {
+        const key = literalKeyAt(i)
+        if (key !== undefined) {
+          const colon = triviaEnd(key.end)
+          if (source[colon] === ':') {
+            keys.push(key.value)
+            expectKey = false
+            i = colon + 1
+            continue
+          }
+        }
+      }
+      i += 1
+    }
+    return { keys, end: i }
+  }
+
+  let i = 0
+  while (i < source.length) {
+    const next = triviaEnd(i)
+    if (next !== i) { i = next; continue }
+    if (source[i] === "'" || source[i] === '"' || source[i] === '`') {
+      i = quotedEnd(i)
+      continue
+    }
+    const token = identifierAt(i)
+    if (token === undefined) { i += 1; continue }
+    i = token.end
+    if (token.value !== 'registerPluginMembers') continue
+    let cursor = triviaEnd(i)
+    if (source[cursor] !== '(') continue
+    cursor = triviaEnd(cursor + 1)
+    if (source[cursor] !== "'" && source[cursor] !== '"') continue
+    cursor = triviaEnd(quotedEnd(cursor))
+    if (source[cursor] !== ',') continue
+    cursor = triviaEnd(cursor + 1)
+    if (source[cursor] !== '{') continue
+    const parsed = objectKeys(cursor)
+    names.push(...parsed.keys)
+    i = parsed.end
   }
   return names
 }
