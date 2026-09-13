@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import { test } from 'node:test'
 
-import { JSDOM } from 'jsdom'
+const { JSDOM } = createRequire(import.meta.url)('jsdom') as {
+  JSDOM: new (...args: unknown[]) => { window: Window & typeof globalThis }
+}
 
-import type { PluginBrowserAssetStatus, SystemPluginSnapshot } from '@iris/protocol'
+import type { SystemPluginSnapshot } from '@iris/protocol'
+import type { PluginBrowserAssetStatus } from '../src/app/use-plugin-manifest.ts'
 
 /**
  * The retry lifecycle, mounted — the acceptance this file exists for.
