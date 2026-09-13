@@ -252,7 +252,7 @@ test('a forged txn.json pointing targetPath outside the install root: the sentin
   const actions = await recoverInstallations(storeRoot)
   const mine = actions.filter(a => a.path === forgedDir)
   assert.equal(mine.length, 1)
-  assert.equal(mine[0]!.outcome, 'rolled-back', 'no lock at the derived target, so the txn rolls back')
+  assert.equal(mine[0]!.outcome, 'untrusted-transaction', 'the forged embedded paths disagree with the layout, so only staging is quarantined')
   assert.equal(mine[0]!.extensionId, 'demo-ext')
 
   assert.equal(await fsp.readFile(sentinel, 'utf8'), 'must survive recovery', 'the sentinel must exist after recovery — the root-外的目录绝不能被跟随或删除')
@@ -318,6 +318,7 @@ test('a forged promoting txn cannot have a lock-外目录 confirmed as an instal
   const actions = await recoverInstallations(storeRoot)
   const promoting = actions.find(a => a.outcome === 'completed')
   assert.equal(promoting, undefined, 'confirmation happens only at the layout-derived target, never the txn\u2019s pointer')
+  assert.equal(actions.find(a => a.extensionId === 'demo-ext')?.outcome, 'untrusted-transaction')
   const derived = path.join(storeRoot, 'installed', 'demo-ext')
   assert.equal(await fsp.stat(derived).then(() => true).catch(() => false), false, 'the derived target has no lock, so nothing was completed there either')
   const lockSurvives = await fsp.stat(path.join(victim, 'lock.json')).then(() => true).catch(() => false)
