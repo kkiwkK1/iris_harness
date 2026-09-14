@@ -253,6 +253,10 @@ it is, not as a description: what is hashed on the card path today is the
 for any npm or Git install route for a Node plugin, which is why that row and
 this question move together.
 
+A concrete answer is drafted in [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md)
+— **提案，待裁决**, a proposal awaiting the owner's ruling, not a description of
+`main`. Until it is ruled on, the question above is what stands.
+
 ## Acceptance requirements
 
 Verified for the platform as it landed: see
