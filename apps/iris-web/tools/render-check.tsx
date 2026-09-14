@@ -194,6 +194,10 @@ async function main(): Promise<void> {
   await pluginWired.store.getState().boot()
   const pluginCenter = render(pluginWired.store, slots.core, <PluginCenter />)
   assert.match(pluginCenter, /data-plugin-center="true"/, 'the plugin center did not render')
+  // The catalog's heading, exactly once, in the language then in force — the
+  // copy moved into the shared dictionaries, and this holds one heading per
+  // language on the page.
+  assert.equal(pluginCenter.match(/Bundled catalog/g)?.length, 1, 'the plugin center heading should appear exactly once in English')
   assert.equal(pluginCenter.match(/data-plugin-id=/g)?.length, 2, 'the bundled catalog should render two plugins')
   assert.match(pluginCenter, /TavernHelper/, 'TavernHelper is missing from the bundled catalog')
   assert.match(pluginCenter, /MVU/, 'MVU is missing from the bundled catalog')
@@ -231,6 +235,7 @@ async function main(): Promise<void> {
   setLanguage('zh')
   const chinesePlugins = render(pluginWired.store, slots.core, <PluginCenter />)
   assert.match(chinesePlugins, /系统插件为卡片提供可选的运行能力/, 'the plugin center has no Chinese lead')
+  assert.equal(chinesePlugins.match(/内置插件目录/g)?.length, 1, 'the plugin center heading should appear exactly once in Chinese')
   assert.match(chinesePlugins, /重新安装/, 'the bundled reinstall action has no Chinese label')
   assert.match(chinesePlugins, /浏览器资产/, 'the browser-asset status half has no Chinese label')
   assert.match(chinesePlugins, /data-plugin-asset-phase="undeclared"/, 'a plugin the host does not run shows its browser asset as undeclared')

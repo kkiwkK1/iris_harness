@@ -6815,3 +6815,46 @@ bit could close the gap, which is the same overturn condition as above.
 the host (a fifth manifest field, or a `plugin.assetStatus` RPC) would make the
 probe and the scan redundant; the hook is written so the fetch path is the only
 thing that would need replacing.
+
+---
+
+## 98. The plugin center's copy joined the shared i18n dictionaries
+
+Dated 2026-09-15. `PluginCenter.tsx` was written after the task-I dictionary
+round and carried its own inline `COPY = { en, zh }` table — about 150 lines of
+English and Chinese side by side, plus one `lang === 'zh' ? … : …` aria-label
+beside it. Why inline: the component predates none of the i18n machinery, but it
+landed from a task whose file boundary stopped at the component, and a private
+table is the shortest thing that renders both languages. It worked, at the cost
+of a second, smaller translation system beside the real one.
+
+What that cost in practice: `i18n.test.ts` audits the shared dictionaries —
+every `zh` value must contain Chinese, both columns must use the same
+`{placeholder}` names, the `t("key")` sweep must name real keys — and an inline
+table is invisible to all of it. A mis-filed English sentence in the `zh` half,
+or a placeholder renamed in one column only, would have shipped with the suite
+green. The table also duplicated machinery the dictionaries already provide:
+hand-rolled template functions where `interpolate` slots do the same job, and
+nested maps where flat keys are the file's own convention.
+
+The migration is mechanical: every string became a `pluginCenter*` key in
+`strings.ts` (`en` plus `zh`, sixty keys), the four template functions became
+slotted keys (`pluginCenterLoadFailed {detail}`, `pluginCenterWaitFor {name}`,
+`pluginCenterOperationFailed {name} {detail}`, `pluginCenterBlocked {names}`),
+and the nested maps became keyed families
+(`pluginCenterStatus*`, `pluginCenterAssetPhase*`, `pluginCenterAssetError*`,
+and the two plugin descriptions). The component's own enum-to-key tables
+(`STATUS_KEYS`, `PHASE_KEYS`, `ASSET_ERROR_KEYS`, `PENDING_KEYS`,
+`DESCRIPTION_KEYS`) stay in the file, because mapping a protocol enum onto a
+sentence is component knowledge, not copy. The mounted component reads through
+`t()`; the `PluginRow`/`AssetStatus` helpers keep their `lang` parameter and read
+through `translate(lang, …)`, the same split `StatePanel.tsx` uses. No string
+changed, no layout changed, and `plugin-center.test.ts` passed unmodified —
+which is the point: the render contract was already right, only its audit
+coverage was missing.
+
+`STRINGS.md` is not updated for the new keys; it is the dated inventory of the
+task-I round, not a living registry, and no test holds it to the dictionary.
+What would overturn this note: a third language, which would make any per-
+component table untenable anyway — the dictionaries are already the shape that
+survives one.
