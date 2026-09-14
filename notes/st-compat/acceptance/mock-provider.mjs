@@ -59,6 +59,16 @@ export async function startPilotProvider() {
       calls += 1
       await note(body)
       const text = body.includes('UC2-MUTEX') ? MUTEX_REPLY : calls <= 1 ? REPLY_1 : REPLY_2
+      const request = JSON.parse(body)
+      if (request.stream === false) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          id: 'pilot',
+          choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+        }))
+        return
+      }
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       // The host streams; one content frame plus usage plus DONE is enough.
       const id = 'pilot'

@@ -112,7 +112,7 @@ await inBrowser(async ({ cdp, sessionId, eval: page }) => {
     messageScope: msg6, disabledFloorStillRaw, newFloorProcessed, frameHealth: backProbe,
   })
 
-  // ---- check 4: with MVU enabled, exactly one writer owns the layer.
+  // ---- check 4: both processors compute; the host arbitrates one commit.
   const m7 = `UC2-MUTEX-${Date.now()}`
   await rpc('plugin.enable', { id: 'mvu' })
   await new Promise(wake => setTimeout(wake, 1200))
@@ -120,21 +120,20 @@ await inBrowser(async ({ cdp, sessionId, eval: page }) => {
   await captureForRound(m7)
   const msg7 = await variables(chatId2, 'message')
   // The scripted reply carries BOTH the template setvar (好感度 50 → 60 on the
-  // message layer) and MVU's `_.set('好感度', 99)`. recordVariables runs after
-  // the bridge's floor merge and REPLACES the whole message table, so with MVU
-  // enabled the final table is MVU's alone: the template's write is superseded,
-  // never double-applied, and MVU names the unknown path as its own fault.
+  // message layer) and MVU's `_.set('好感度', 99)`. This card has no MVU schema
+  // for that path, so MVU reports the refused write but still contributes its
+  // own envelope. The host's transaction must preserve Prompt Template's
+  // disjoint key rather than replacing the whole table with MVU's snapshot.
   const reports7 = await rpc('debug.reports', {})
   const mvuFault = (reports7.reports ?? []).filter(one => one.kind === 'mvu').at(-1)
-  const tableIsMvuOnly = typeof msg7?.stat_data === 'object' && msg7?.stat_data !== null
-  const supersededNotDoubled = msg7?.好感度 === undefined
+  const stResultSurvives = msg7?.好感度 === 60
   const namedRefusal = typeof mvuFault?.message === 'string' && mvuFault.message.includes('好感度')
-  pass('step7-mvu-mutex-single-writer', tableIsMvuOnly && supersededNotDoubled && namedRefusal, {
+  pass('step7-dual-plugin-single-host-commit', stResultSurvives && namedRefusal, {
     messageScope: msg7, mvuFault: mvuFault?.message,
-    note: 'MVU enabled: recordVariables replaces the whole message table after the bridge merge — the two implementations keep disjoint tables and exactly one writer survives a turn',
+    note: 'Prompt Template committed 60 and MVU independently reported its rejected unknown path. The exact one-commit count, disjoint-key merge and same-key winner are pinned by variable-arbitration.test.ts.',
   })
   await rpc('plugin.disable', { id: 'mvu' })
-  await shot(cdp, sessionId, 'uc2-07-mvu-mutex')
+  await shot(cdp, sessionId, 'uc2-07-variable-arbitration')
 })
 
 // The chat variable must never have been written by any of it (message layer
