@@ -321,7 +321,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | `expandHelperMacros` 走 `registerMacroLike` | 未做：`packages/iris-app-service/src/entry.ts` 里仍是第二遍宏扫描（[PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §7 阶段 0 的遗留项） | 接线即可，等 `entry.ts` 不再被重写 |
 | 普查脚本改口径 | 未做 | 给普查一个不依赖文件位置的输入 |
 | 可发布契约包 | 未做：`@iris/plugin-api` 与 `@iris/plugin-web-api` 都是 `private: true`、`0.0.0`、`exports` 指向 `./src/*.ts` | 构建 JS 与声明入口、peer 依赖策略、apiVersion 兼容承诺、验证安装后的真实 exports、避免带入第二份 Cordis 实例、包外消费者测试 |
-| 系统插件的包外安装路径 | 未做：一个 Node 系统插件必须出现在 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS` 里，或者以 ST 扩展身份经 `adoptDefinition` 进来；**没有** npm 名/Git URL 装系统插件的路 | 插件发现、资产、贡献注册与版本撤回机制一起定 |
+| 系统插件的包外安装路径 | 未做：一个 Node 系统插件必须出现在 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS` 里，或者以 ST 扩展身份经 `adoptDefinition` 进来；**没有** npm 名/Git URL 装系统插件的路。设计稿见 [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md)，**提案，待裁决**，不是现状 | 插件发现、资产、贡献注册与版本撤回机制一起定 |
 | per-plugin 帧 CSP | **不需要**：bundle 与帧同源（`selfOrigin` 已在 `script-src` 里），没有第二个远端要开 | —— |
 | 信任模型的文档 | **已由实践确定、但未成文**：系统插件是与宿主同权的 Node 代码；ST 扩展代码跑在沙盒 iframe，卡片侧只经 tokened 成员代理触达。两条不同的线共用一个控制面 | 写进 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md)：同权插件的安装源约束（对照 [PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §8 问题 1 的「哈希锁定 vs 任意 git clone」） |
 
