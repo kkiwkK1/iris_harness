@@ -131,9 +131,9 @@
 | 对象 | SHA-1 完整值 |
 | --- | --- |
 | 验收基线（任务下发） | `065cc027e9d81c3a7b0df53415e6bb61fddb7c12` |
-| dev/st-compat-pilot（含变量仲裁修复，C-final 重跑基线） | `bf51423`（完整值以合并后的 `git rev-parse HEAD` 为准） |
+| dev/st-compat-pilot（含修正后的 C-final） | `e581fa98b4f9279c6589bf3503a37eefe05e9d41` |
 | 上游扩展锁定提交 | `f9a07da0fbe25cd310eee746c2f5af24ed61f62b` |
 | 上游 dist/index.js（sha256） | `61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd` |
-| 本报告所在提交（验收分支最终提交） | 见 `git rev-parse HEAD`（dev/st-compat-pilot-acceptance） |
+| 本报告所在提交（验收分支最终提交） | `8699ccffecb226f3398d893d4ce06eb98eeb4b77` |
 | dev/system-plugins 合入提交（首轮，携带试点内容） | `39f1b2d0e37d60213b2131fd952d63c2cf4113e9` |
-| **PLUGIN_PLATFORM_BASE（dev/system-plugins 最终 HEAD）** | `a16cbd363b33f242f4593ac00c64f5c7a18465f4` |
+| **PLUGIN_PLATFORM_BASE（完整 C 合入 dev/system-plugins 的合并提交）** | `ee5b35902c5fe7b7c28fc377f916bcf03f57cade` |
