@@ -216,11 +216,22 @@ function parseArgs(argv) {
  * `execFile` refuses without a shell, and running it through a shell would put
  * this repository's non-ASCII path through cmd.exe quoting for no benefit.
  *
- * @returns {string} the path to `npm-cli.js` shipped beside this Node.
+ * Node ships npm in two layouts: on Windows `npm-cli.js` sits directly beside
+ * `node.exe` under `node_modules/`; on Linux and macOS the binary is `bin/node`
+ * and npm lives in the sibling `lib/node_modules/`. Both are tried, in that
+ * order, and the failure names every path that was looked at (this is what
+ * turned the first CI run red: only the Windows layout was known).
+ *
+ * @returns {string} the path to `npm-cli.js` shipped with this Node.
  */
 function npmCli() {
-  const cli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-  if (!existsSync(cli)) fail(`could not find npm beside node (looked at ${cli})`)
+  const bin = dirname(process.execPath)
+  const candidates = [
+    join(bin, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    join(bin, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ]
+  const cli = candidates.find((c) => existsSync(c))
+  if (!cli) fail(`could not find npm shipped with node (looked at ${candidates.join(', ')})`)
   return cli
 }
 
