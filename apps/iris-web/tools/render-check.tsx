@@ -23,6 +23,7 @@ import { App } from '../src/app/App.tsx'
 import { CharacterPage } from '../src/app/CharacterPage.tsx'
 import { Sidebar } from '../src/app/Sidebar.tsx'
 import { ConnectionPanel } from '../src/app/ConnectionPanel.tsx'
+import { PluginCenter } from '../src/app/PluginCenter.tsx'
 import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
@@ -47,6 +48,7 @@ import {
 import { UsageDetailCard } from '../src/app/UsagePopover.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
 import { searchSettings } from '../src/app/SettingsNavigation.tsx'
+import { setLanguage } from '../src/app/i18n/language.ts'
 // Aliased: `totalTokens` above is the one-generation reader, and this is the
 // aggregate one. Two functions of the same name over different types is exactly
 // the confusion the protocol drops `totalTokens` from every aggregate to avoid.
@@ -176,15 +178,154 @@ async function main(): Promise<void> {
   )
   // And the card that held the typed route has not come back.
   assert.doesNotMatch(settled, /id="iris-card-route"/, 'the route card is back — the route is typable again')
-  assert.equal(settled.match(/data-settings-destination=/g)?.length, 14, 'the settings directory should expose fourteen destinations')
-  assert.equal(settled.match(/data-settings-route=/g)?.length, 14, 'every settings destination needs one drawer-local page')
+  assert.equal(settled.match(/data-settings-destination=/g)?.length, 15, 'the settings directory should expose fifteen destinations')
+  assert.equal(settled.match(/data-settings-route=/g)?.length, 15, 'every settings destination needs one drawer-local page')
   assert.match(settled, /aria-label="Search settings categories"/, 'the category search is missing')
   assert.match(settled, /role="tablist" aria-label="Regex scope"/, 'the regex scopes are not an accessible segmented control')
   assert.deepEqual(searchSettings('上下文').map(row => row.route), ['memory/context'], 'Chinese category search did not reach context')
   assert.deepEqual(searchSettings('reading').map(row => row.route), ['appearance'], 'English category search did not reach reading')
+  assert.deepEqual(searchSettings('mvu').map(row => row.route), ['plugins'], 'plugin search did not reach the system plugin center')
+
+  // ------------------------------------------------------ system plugins
+  // Mounted directly so its own lifecycle states can be rendered without a
+  // click-only trip through the settings directory.
+  const pluginClient = createFakeClient({ chunkDelayMs: 0 })
+  const pluginWired = createIrisStore(pluginClient, { transport: 'fake', origin: 'plugin render check' })
+  await pluginWired.store.getState().boot()
+  const pluginCenter = render(pluginWired.store, slots.core, <PluginCenter />)
+  assert.match(pluginCenter, /data-plugin-center="true"/, 'the plugin center did not render')
+  assert.equal(pluginCenter.match(/data-plugin-id=/g)?.length, 2, 'the bundled catalog should render two plugins')
+  assert.match(pluginCenter, /TavernHelper/, 'TavernHelper is missing from the bundled catalog')
+  assert.match(pluginCenter, /MVU/, 'MVU is missing from the bundled catalog')
+  // The browser-asset surface renders beside the host chip; before any manifest
+  // fetch has answered, an enabled plugin reads as loading (SSR has no effects).
+  assert.match(pluginCenter, /data-plugin-asset-phase="loading"/, 'an enabled plugin does not show its browser asset as loading')
+  assert.match(pluginCenter, /Browser asset/, 'the browser-asset status half is missing')
+  assert.match(pluginCenter, /Expected revision/, 'the expected revision fact is missing')
+  assert.match(pluginCenter, /Last loaded/, 'the last-successful-load fact is missing')
+  assert.match(pluginCenter, /Disable MVU first/, 'TavernHelper actions do not explain the enabled dependent')
+  assert.match(pluginCenter, /Uninstalling keeps card and chat data/, 'the plugin center does not state what uninstall retains')
+  assert.doesNotMatch(pluginCenter, /marketplace|download package/i, 'the bundled catalog is pretending to be a network installer')
+
+  const currentPlugins = pluginWired.store.getState().systemPlugins
+  assert.ok(currentPlugins !== undefined, 'plugin state did not load for transition rendering')
+  pluginWired.store.setState({
+    systemPlugins: {
+      revision: currentPlugins.revision + 1,
+      plugins: currentPlugins.plugins.map(plugin => plugin.id === 'mvu'
+        ? { ...plugin, enabled: false, status: 'enabling' as const }
+        : plugin),
+    },
+  })
+  const enabling = render(pluginWired.store, slots.core, <PluginCenter />)
+  const mvuAt = enabling.indexOf('data-plugin-id="mvu"')
+  const mvuRow = enabling.slice(mvuAt, enabling.indexOf('</article>', mvuAt))
+  assert.match(mvuRow, /data-plugin-status="enabling"/, 'the pending runtime state is not exposed')
+  assert.match(mvuRow, />Enabling…<\/button>/, 'the active action label does not stay in its pending tense')
+  assert.doesNotMatch(mvuRow, />Enable<\/button>/, 'an enabling plugin is misleadingly offered as disabled')
+
+  await pluginWired.store.getState().refreshSystemPlugins()
+  await pluginWired.store.getState().uninstallSystemPlugin('mvu')
+  assert.match(render(pluginWired.store, slots.core, <PluginCenter />), />Reinstall<\/button>/, 'a removed bundled plugin cannot be reinstalled')
+
+  setLanguage('zh')
+  const chinesePlugins = render(pluginWired.store, slots.core, <PluginCenter />)
+  assert.match(chinesePlugins, /系统插件为卡片提供可选的运行能力/, 'the plugin center has no Chinese lead')
+  assert.match(chinesePlugins, /重新安装/, 'the bundled reinstall action has no Chinese label')
+  assert.match(chinesePlugins, /浏览器资产/, 'the browser-asset status half has no Chinese label')
+  assert.match(chinesePlugins, /data-plugin-asset-phase="undeclared"/, 'a plugin the host does not run shows its browser asset as undeclared')
+  setLanguage('en')
+  pluginWired.dispose()
+  pluginClient.dispose()
   // Only the last reply offers a retry; more than one would mean discarding
   // history the protocol has no operation for.
   assert.equal(settled.match(/>Regenerate</g)?.length, 1, 'exactly one Regenerate expected')
+
+  // ------------------------------------------------ plugin settings placement
+  // `iris.settings.sections` belongs on the system-plugin page, under the
+  // catalog, and nowhere else. Its first home was the diagnostics page, which
+  // is a page about the host's internals: a plugin's own settings have nothing
+  // to do with host reports, and disabling the extension left its panel sitting
+  // on a page with no relationship to the switch that had been flipped.
+  //
+  // The contributions here are fixtures registered straight on the ledger. The
+  // real contributor is the ST plane, which registers from an effect — and
+  // `renderToString` runs no effects, so a mounted plane contributes nothing
+  // here. What the fixtures do reproduce is the property the placement rests on:
+  // a contribution renders at the point's declaration, and its presence IS the
+  // ledger entry. The plane disposes that entry the moment
+  // `servedExtensionEnabled` turns false, which
+  // `tests/st-ext-plane-extension.test.ts` pins, so "dispose" below stands for
+  // "the extension was disabled" the way the browser run of that scenario does.
+  const pageOf = (markup: string, route: string): string => {
+    const at = markup.indexOf(`data-settings-route="${route}"`)
+    assert.ok(at > -1, `the ${route} page is missing from the drawer`)
+    const next = markup.indexOf('data-settings-route=', at + 1)
+    return markup.slice(at, next === -1 ? undefined : next)
+  }
+
+  const unoccupied = render(wired.store, slots.core)
+  assert.doesNotMatch(
+    pageOf(unoccupied, 'diagnostics'), /data-iris-st-ext-section/,
+    'the diagnostics page still carries a plugin settings section',
+  )
+  assert.doesNotMatch(
+    pageOf(unoccupied, 'plugins'), /data-iris-st-ext-section/,
+    'a plugin settings section rendered with no contribution behind it',
+  )
+  assert.doesNotMatch(
+    unoccupied, /Plugin settings|插件设置/,
+    'the plugin settings heading rendered over an unoccupied point — a label with nothing under it',
+  )
+
+  const disposeStExt = slots.core.register(
+    { name: 'iris.settings.sections', registrant: 'iris-st-compat', id: 'st-compat-settings', label: 'Extension settings' },
+    () => <section className="iris-st-ext-settings" data-iris-st-ext-section="st-compat-settings" />,
+  )
+  const occupied = render(wired.store, slots.core)
+  assert.match(
+    pageOf(occupied, 'plugins'), /data-iris-st-ext-section="st-compat-settings"/,
+    'the contributed panel is not on the system-plugin page',
+  )
+  assert.match(
+    pageOf(occupied, 'plugins'), /id="iris-plugin-settings-title"[^>]*>Plugin settings</,
+    'the plugin settings block has no "Plugin settings" heading',
+  )
+  assert.doesNotMatch(
+    pageOf(occupied, 'diagnostics'), /data-iris-st-ext-section/,
+    'the diagnostics page renders the contributed panel again',
+  )
+
+  const disposeSecond = slots.core.register(
+    { name: 'iris.settings.sections', registrant: 'second-plugin', id: 'second-settings', label: 'Second settings' },
+    () => <section className="iris-st-ext-settings" data-iris-st-ext-section="second-settings" />,
+  )
+  const shared = pageOf(render(wired.store, slots.core), 'plugins')
+  assert.match(
+    shared, /data-iris-st-ext-section="st-compat-settings"/,
+    'the first panel disappeared when a second plugin contributed one',
+  )
+  assert.match(
+    shared, /data-iris-st-ext-section="second-settings"/,
+    'a second plugin settings contribution does not render beside the first',
+  )
+
+  disposeStExt()
+  const afterDisable = render(wired.store, slots.core)
+  assert.doesNotMatch(
+    afterDisable, /data-iris-st-ext-section="st-compat-settings"/,
+    'a disabled plugin left its settings panel behind',
+  )
+  assert.match(
+    pageOf(afterDisable, 'plugins'), /data-iris-st-ext-section="second-settings"/,
+    'disposing one contribution removed another plugin\'s panel',
+  )
+  disposeSecond()
+  const afterBoth = render(wired.store, slots.core)
+  assert.doesNotMatch(
+    afterBoth, /data-iris-st-ext-section|Plugin settings|插件设置/,
+    'the plugin settings block left its heading behind after the last contribution went away',
+  )
 
   // ------------------------------------------------------------- hierarchy
   // The layout decisions from the browser review, pinned. Each of these was a

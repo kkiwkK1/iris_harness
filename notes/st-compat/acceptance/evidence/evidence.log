@@ -1,0 +1,368 @@
+2026-09-13T17:53:08.358Z uc1 upstream-bytes-unmodified: {"ok":false,"installedSha256":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd","lockArtifactSha256":"fcd1a80ae3b479d3a4a13bd480b136268ad147b267394f660bff4778e636900e","expected":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd"}
+2026-09-13T17:53:08.718Z uc1 frame-health: {"ok":false,"absent":"no plane iframe"}
+2026-09-13T17:53:10.094Z uc1 step1-expanded: {"ok":false,"segment":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>","bridgeRoundsThisGeneration":0}
+2026-09-13T17:53:10.916Z uc1 step2-stable-same-input: {"ok":true,"first":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>","second":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>"}
+2026-09-13T17:53:11.734Z uc1 step3-branch-flips: {"ok":false,"segment":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>"}
+2026-09-13T17:53:13.555Z uc1 step4-disabled-raw-passthrough: {"ok":true,"segment":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>","bridgeRoundsDuringDisabledRound":0,"frameProbeAfterDisable":{"absent":"no plane iframe"}}
+2026-09-13T17:53:14.426Z uc1 step5-reenabled-single-expansion: {"ok":false,"segment":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>","frameHealthAfterReenable":{"absent":"no plane iframe"},"bridgeRoundsThisRound":0}
+2026-09-13T17:53:15.248Z uc1 step6-restored-byte-identical: {"ok":true,"round1":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>","restored":"<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n你的善意我已收到。我对你的好感度提升了。\n新的好感度：<%- getvar('好感度') %>"}
+2026-09-13T17:53:15.249Z uc1 single-kernel-after-cycle: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T17:53:15.293Z uc1 chat-variable-untouched: {"ok":true,"chatVariables":{"好感度":70}}
+2026-09-13T17:54:37.908Z uc1 upstream-bytes-unmodified: {"ok":false,"installedSha256":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd","lockArtifactSha256":"fcd1a80ae3b479d3a4a13bd480b136268ad147b267394f660bff4778e636900e","expected":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd"}
+2026-09-13T17:54:42.671Z uc1 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T17:54:43.545Z uc1 step1-expanded: {"ok":true,"segment":"\n你是我信赖的朋友。\n","bridgeRoundsThisGeneration":2}
+2026-09-13T17:54:44.766Z uc1 step2-stable-same-input: {"ok":true,"first":"\n你是我信赖的朋友。\n","second":"\n你是我信赖的朋友。\n"}
+2026-09-13T17:54:45.589Z uc1 step3-branch-flips: {"ok":false,"segment":"\n你是我信赖的朋友。\n"}
+2026-09-13T17:54:47.618Z uc1 step4-disabled-raw-passthrough: {"ok":true,"segment":"<% if (getvar('好感度', { defaults: 0 }) > 50) { %>\n你是我信赖的朋友。\n<% } else { %>\n我仍然对你保持警惕。\n<% } %>","bridgeRoundsDuringDisabledRound":0,"frameProbeAfterDisable":{"absent":"no plane iframe"}}
+2026-09-13T17:54:52.507Z uc1 step5-reenabled-single-expansion: {"ok":false,"segment":"\n你是我信赖的朋友。\n","frameHealthAfterReenable":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1},"bridgeRoundsThisRound":2}
+2026-09-13T17:54:53.322Z uc1 step6-restored-byte-identical: {"ok":true,"round1":"\n你是我信赖的朋友。\n","restored":"\n你是我信赖的朋友。\n"}
+2026-09-13T17:54:53.323Z uc1 single-kernel-after-cycle: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T17:54:53.368Z uc1 chat-variable-untouched: {"ok":true,"chatVariables":{"好感度":70}}
+2026-09-13T18:16:22.282Z uc1 upstream-bytes-unmodified: {"ok":true,"installedSha256":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd","expected":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd","lockArtifactSha256":"fcd1a80ae3b479d3a4a13bd480b136268ad147b267394f660bff4778e636900e","rev":"fcd1a80ae3b4"}
+2026-09-13T18:16:27.086Z uc1 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T18:16:28.368Z uc1 step1-expanded: {"ok":true,"segment":"\n你是我信赖的朋友。\n","bridgeRoundsThisGeneration":2}
+2026-09-13T18:16:29.191Z uc1 step2-stable-same-input: {"ok":true,"first":"\n你是我信赖的朋友。\n","second":"\n你是我信赖的朋友。\n"}
+2026-09-13T18:16:30.422Z uc1 step3-branch-flips: {"ok":true,"segment":"\n我仍然对你保持警惕。\n"}
+2026-09-13T18:16:32.469Z uc1 step4-disabled-raw-passthrough: {"ok":true,"segment":"<% if (getvar('好感度', { defaults: 0 }) > 50) { %>\n你是我信赖的朋友。\n<% } else { %>\n我仍然对你保持警惕。\n<% } %>","bridgeRoundsDuringDisabledRound":0,"frameProbeAfterDisable":{"absent":"no plane iframe"}}
+2026-09-13T18:16:37.343Z uc1 step5-reenabled-single-expansion: {"ok":true,"segment":"\n我仍然对你保持警惕。\n","frameHealthAfterReenable":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1},"bridgeRoundsThisRound":2}
+2026-09-13T18:16:38.173Z uc1 step6-restored-byte-identical: {"ok":true,"round1":"\n你是我信赖的朋友。\n","restored":"\n你是我信赖的朋友。\n"}
+2026-09-13T18:16:38.174Z uc1 single-kernel-after-cycle: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T18:16:38.219Z uc1 chat-variable-untouched: {"ok":true,"chatVariables":{"好感度":70}}
+2026-09-13T18:27:22.543Z uc1 upstream-bytes-unmodified: {"ok":true,"installedSha256":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd","expected":"61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd","lockArtifactSha256":"fcd1a80ae3b479d3a4a13bd480b136268ad147b267394f660bff4778e636900e","rev":"fcd1a80ae3b4"}
+2026-09-13T18:27:27.293Z uc1 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T18:27:28.166Z uc1 step1-expanded: {"ok":true,"segment":"\n你是我信赖的朋友。\n","bridgeRoundsThisGeneration":2}
+2026-09-13T18:27:28.988Z uc1 step2-stable-same-input: {"ok":true,"first":"\n你是我信赖的朋友。\n","second":"\n你是我信赖的朋友。\n"}
+2026-09-13T18:27:29.815Z uc1 step3-branch-flips: {"ok":true,"segment":"\n我仍然对你保持警惕。\n"}
+2026-09-13T18:27:32.256Z uc1 step4-disabled-raw-passthrough: {"ok":true,"segment":"<% if (getvar('好感度', { defaults: 0 }) > 50) { %>\n你是我信赖的朋友。\n<% } else { %>\n我仍然对你保持警惕。\n<% } %>","bridgeRoundsDuringDisabledRound":0,"frameProbeAfterDisable":{"absent":"no plane iframe"}}
+2026-09-13T18:27:37.133Z uc1 step5-reenabled-single-expansion: {"ok":true,"segment":"\n我仍然对你保持警惕。\n","frameHealthAfterReenable":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1},"bridgeRoundsThisRound":2}
+2026-09-13T18:27:38.383Z uc1 step6-restored-byte-identical: {"ok":true,"round1":"\n你是我信赖的朋友。\n","restored":"\n你是我信赖的朋友。\n"}
+2026-09-13T18:27:38.384Z uc1 single-kernel-after-cycle: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T18:27:38.429Z uc1 chat-variable-untouched: {"ok":true,"chatVariables":{"好感度":70}}
+2026-09-13T18:29:57.470Z uc2 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T18:29:58.296Z uc2 step1-message-layer-write: {"ok":false,"messageScope":{"好感度":10},"chatScope":{"好感度":0},"floorTail":""}
+2026-09-13T18:29:59.145Z uc2 step2-accumulates-across-rounds: {"ok":true,"messageScope":{"好感度":20}}
+2026-09-13T18:30:04.150Z uc2 step3-continues-after-reload: {"ok":true,"messageScope":{"好感度":30},"frameHealthAfterReload":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:30:06.581Z uc2 step4-continues-after-chat-switch: {"ok":true,"messageScope":{"好感度":40}}
+2026-09-13T18:30:08.615Z uc2 step5-disabled-frozen-raw: {"ok":false,"messageScope":{"好感度":40},"frameProbeAfterDisable":{"absent":"no plane iframe"},"rawFloorTail":""}
+2026-09-13T18:30:13.504Z uc2 step6-reenabled-continues-no-replay: {"ok":false,"messageScope":{"好感度":50},"disabledFloorStillRaw":false,"newFloorProcessed":false,"frameHealth":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:30:15.533Z uc2 step7-mvu-mutex-single-writer: {"ok":false,"messageScope":{"initialized_lorebooks":{},"stat_data":{}},"note":"MVU enabled: recordVariables replaces the whole message table after the bridge merge; the template setvar never double-applies"}
+2026-09-13T18:30:15.596Z uc2 chat-scope-never-written: {"ok":true,"chatScope":{"好感度":0}}
+2026-09-13T18:32:43.024Z uc2 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T18:32:43.809Z uc2 step1-message-layer-write: {"ok":true,"messageScope":{"好感度":10},"chatScope":{"好感度":0},"floorTail":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：10"}
+2026-09-13T18:32:44.661Z uc2 step2-accumulates-across-rounds: {"ok":true,"messageScope":{"好感度":20}}
+2026-09-13T18:32:49.654Z uc2 step3-continues-after-reload: {"ok":true,"messageScope":{"好感度":30},"frameHealthAfterReload":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:32:52.083Z uc2 step4-continues-after-chat-switch: {"ok":true,"messageScope":{"好感度":40}}
+2026-09-13T18:32:54.120Z uc2 step5-disabled-frozen-raw: {"ok":true,"messageScope":{"好感度":40},"frameProbeAfterDisable":{"absent":"no plane iframe"},"rawFloorTail":"etvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n我们又聊了一会儿。\n新的好感度：<%- getvar('好感度') %>"}
+2026-09-13T18:32:59.015Z uc2 step6-reenabled-continues-no-replay: {"ok":false,"messageScope":{"好感度":50},"disabledFloorStillRaw":false,"newFloorProcessed":true,"frameHealth":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:33:01.038Z uc2 step7-mvu-mutex-single-writer: {"ok":false,"messageScope":{"initialized_lorebooks":{},"stat_data":{}},"note":"MVU enabled: recordVariables replaces the whole message table after the bridge merge; the template setvar never double-applies"}
+2026-09-13T18:33:01.100Z uc2 chat-scope-never-written: {"ok":true,"chatScope":{"好感度":0}}
+2026-09-13T18:36:28.212Z uc2 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T18:36:29.005Z uc2 step1-message-layer-write: {"ok":true,"messageScope":{"好感度":10},"chatScope":{"好感度":0},"floorTail":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：10"}
+2026-09-13T18:36:29.861Z uc2 step2-accumulates-across-rounds: {"ok":true,"messageScope":{"好感度":20}}
+2026-09-13T18:36:34.893Z uc2 step3-continues-after-reload: {"ok":true,"messageScope":{"好感度":30},"frameHealthAfterReload":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:36:37.343Z uc2 step4-continues-after-chat-switch: {"ok":true,"messageScope":{"好感度":40}}
+2026-09-13T18:36:39.369Z uc2 step5-disabled-frozen-raw: {"ok":true,"messageScope":{"好感度":40},"frameProbeAfterDisable":{"absent":"no plane iframe"},"rawFloorTail":"etvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n我们又聊了一会儿。\n新的好感度：<%- getvar('好感度') %>"}
+2026-09-13T18:36:44.258Z uc2 step6-reenabled-continues-no-replay: {"ok":true,"messageScope":{"好感度":50},"disabledFloorStillRaw":true,"newFloorProcessed":true,"frameHealth":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:36:46.286Z uc2 step7-mvu-mutex-single-writer: {"ok":true,"messageScope":{"initialized_lorebooks":{},"stat_data":{}},"mvuFault":"MVU: path \"好感度\" does not exist","note":"MVU enabled: recordVariables replaces the whole message table after the bridge merge — the two implementations keep disjoint tables and exactly one writer survives a turn"}
+2026-09-13T18:36:46.351Z uc2 chat-scope-never-written: {"ok":true,"chatScope":{"好感度":0}}
+2026-09-13T18:39:22.762Z uc3 step1-panel-on-plugins-route: {"ok":true,"nav":{"ok":true},"section":{"planePresent":true,"framePresent":true,"frameToken":"st-frame-8p08tj21g39-mu05rei1","sectionPresent":true,"projectionPresent":true},"heading":"Plugin settings"}
+2026-09-13T18:39:23.984Z uc3 step2-diagnostics-has-no-panel: {"ok":false,"nav":{"ok":true},"state":{"sectionPresent":true,"headingPresent":true}}
+2026-09-13T18:39:31.452Z uc3 step3a-chinese-ui: {"ok":false,"heading":"插件设置","panel":""}
+2026-09-13T18:39:38.891Z uc3 step3b-english-ui: {"ok":false,"heading":"Plugin settings","panel":""}
+2026-09-13T18:40:01.905Z uc3 step1-panel-on-plugins-route: {"ok":true,"nav":{"ok":true},"section":{"planePresent":true,"framePresent":true,"frameToken":"st-frame-re9vkfrgomr-mu05s8nr","sectionPresent":true,"projectionPresent":true},"heading":"Plugin settings"}
+2026-09-13T18:40:03.099Z uc3 step2-diagnostics-has-no-panel: {"ok":false,"nav":{"ok":true},"state":{"sectionPresent":true,"headingPresent":true}}
+2026-09-13T18:40:10.561Z uc3 step3a-chinese-ui: {"ok":false,"heading":"插件设置","panel":""}
+2026-09-13T18:40:18.001Z uc3 step3b-english-ui: {"ok":false,"heading":"Plugin settings","panel":""}
+2026-09-13T18:41:20.638Z uc3 step1-panel-on-plugins-route: {"ok":true,"nav":{"ok":true},"section":{"planePresent":true,"framePresent":true,"frameToken":"st-frame-tpilf6kgpuq-mu05txg9","sectionPresent":true,"projectionPresent":true},"heading":"Plugin settings"}
+2026-09-13T18:41:21.900Z uc3 step2-diagnostics-has-no-panel: {"ok":false,"nav":{"ok":true},"state":{"sectionPresent":true,"headingPresent":true}}
+2026-09-13T18:41:29.317Z uc3 step3a-chinese-ui: {"ok":true,"heading":"插件设置","panel":"提示词模板\n是否启用扩展\n处理生成内容\n生成时注入 GENERATE 世界书条目\n生成时注入 @INJECT 世界书条目\n处理楼层消息\n渲染楼层时注入 RENDER 世界书条目\n处理代码块\n处理原始消息内容\n生成时忽略楼层消息处理\n楼层处理最大深度\n自动保存变量更新\n立即加载世界书\n禁用with语句块\n控制台显示详细信息\nGENERATE/RENDER/INJECT条目禁用视为启用\n后台编译\n环境隔离\n代码编辑器\n缓存（实验性）\n禁用\n启用\n仅世界书\n缓存大小\n缓存Hash函数\nh32\nh64"}
+2026-09-13T18:41:36.755Z uc3 step3b-english-ui: {"ok":true,"heading":"Plugin settings","panel":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat message processing\nEnable [RENDER] feature\nEnable <pre> processing in chat messages\nEnable raw chat messages\nGenerate processing does not include chat messages\nMaximum depth of chat messages\nAutomatically save chats\nPreload
+2026-09-13T18:41:39.128Z uc3 step5-keyboard-reaches-projection: {"ok":false,"relayedChangeEvents":0,"note":"a keyboard toggle inside the projection was relayed to the real panel (irisStProject change/input event)"}
+2026-09-13T18:41:39.128Z uc3 step6a-settings-persisted-to-disk: {"ok":false,"changed":true,"before":"(no blob file yet)"}
+2026-09-13T18:41:46.553Z uc3 step6b-survives-reload: {"ok":false,"persistedKeyChanged":false,"projectionHead":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat mess"}
+2026-09-13T18:44:06.884Z uc3 step1-panel-on-plugins-route: {"ok":false,"nav":{"ok":true},"section":{"planePresent":false,"framePresent":false,"frameToken":null,"sectionPresent":false,"projectionPresent":false},"heading":null}
+2026-09-13T18:44:07.270Z uc3 step2-diagnostics-has-no-panel: {"ok":true,"nav":{"ok":true},"state":{"sectionPresent":false,"headingPresent":false}}
+2026-09-13T18:44:40.521Z uc3 step3a-chinese-ui: {"ok":false,"heading":"","panel":""}
+2026-09-13T18:45:13.765Z uc3 step3b-english-ui: {"ok":false,"heading":"","panel":""}
+2026-09-13T18:45:44.168Z uc3 step1-panel-on-plugins-route: {"ok":true,"nav":{"ok":true},"section":{"planePresent":true,"framePresent":true,"frameToken":"st-frame-mkjf02kkgfl-mu05zkr9","sectionPresent":true,"projectionPresent":true},"heading":"Plugin settings"}
+2026-09-13T18:45:45.329Z uc3 step2-diagnostics-has-no-panel: {"ok":false,"nav":{"ok":true},"state":{"sectionPresent":true,"headingPresent":true}}
+2026-09-13T18:45:52.782Z uc3 step3a-chinese-ui: {"ok":true,"heading":"插件设置","panel":"提示词模板\n是否启用扩展\n处理生成内容\n生成时注入 GENERATE 世界书条目\n生成时注入 @INJECT 世界书条目\n处理楼层消息\n渲染楼层时注入 RENDER 世界书条目\n处理代码块\n处理原始消息内容\n生成时忽略楼层消息处理\n楼层处理最大深度\n自动保存变量更新\n立即加载世界书\n禁用with语句块\n控制台显示详细信息\nGENERATE/RENDER/INJECT条目禁用视为启用\n后台编译\n环境隔离\n代码编辑器\n缓存（实验性）\n禁用\n启用\n仅世界书\n缓存大小\n缓存Hash函数\nh32\nh64"}
+2026-09-13T18:46:00.207Z uc3 step3b-english-ui: {"ok":true,"heading":"Plugin settings","panel":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat message processing\nEnable [RENDER] feature\nEnable <pre> processing in chat messages\nEnable raw chat messages\nGenerate processing does not include chat messages\nMaximum depth of chat messages\nAutomatically save chats\nPreload
+2026-09-13T18:46:05.301Z uc3 step5-keyboard-reaches-projection: {"ok":false,"relayedChangeEvents":0,"checkboxFocused":false,"note":"Tab into the panel own checkbox, Space to flip it; the projection relayed the change to the real panel"}
+2026-09-13T18:46:05.302Z uc3 step6a-settings-persisted-to-disk: {"ok":false,"changed":true,"before":"(no blob file yet)"}
+2026-09-13T18:46:12.701Z uc3 step6b-survives-reload: {"ok":false,"persistedKeyChanged":false,"projectionHead":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat mess"}
+2026-09-13T18:46:14.269Z uc3 step7-disable-removes-everything: {"ok":true,"state":{"planePresent":false,"framePresent":false,"sectionPresent":false,"headingPresent":false},"probe":{"absent":"no plane iframe"}}
+2026-09-13T18:46:21.543Z uc3 step8-reenable-rebuilds-fresh: {"ok":true,"oldToken":"st-frame-8nkvzutanqw-mu0605v5","newToken":"st-frame-qsrisuiir9s-mu060coy","probe":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:46:28.295Z uc3 step9-disabled-reload-stays-clean: {"ok":true,"state":{"sectionPresent":false,"framePresent":false,"headingPresent":false}}
+2026-09-13T18:50:07.023Z uc3 step1-panel-on-plugins-route: {"ok":true,"nav":{"ok":true},"section":{"planePresent":true,"framePresent":true,"frameToken":"st-frame-xe466to3xzr-mu0657l1","sectionPresent":true,"projectionPresent":true},"heading":"Plugin settings"}
+2026-09-13T18:50:08.210Z uc3 step2-diagnostics-has-no-panel: {"ok":true,"nav":{"ok":true},"state":{"sectionVisible":false,"headingVisible":false,"sectionInsideDiagnostics":false}}
+2026-09-13T18:50:15.674Z uc3 step3a-chinese-ui: {"ok":true,"heading":"插件设置","panel":"提示词模板\n是否启用扩展\n处理生成内容\n生成时注入 GENERATE 世界书条目\n生成时注入 @INJECT 世界书条目\n处理楼层消息\n渲染楼层时注入 RENDER 世界书条目\n处理代码块\n处理原始消息内容\n生成时忽略楼层消息处理\n楼层处理最大深度\n自动保存变量更新\n立即加载世界书\n禁用with语句块\n控制台显示详细信息\nGENERATE/RENDER/INJECT条目禁用视为启用\n后台编译\n环境隔离\n代码编辑器\n缓存（实验性）\n禁用\n启用\n仅世界书\n缓存大小\n缓存Hash函数\nh32\nh64"}
+2026-09-13T18:50:23.123Z uc3 step3b-english-ui: {"ok":true,"heading":"Plugin settings","panel":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat message processing\nEnable [RENDER] feature\nEnable <pre> processing in chat messages\nEnable raw chat messages\nGenerate processing does not include chat messages\nMaximum depth of chat messages\nAutomatically save chats\nPreload
+2026-09-13T18:50:26.211Z uc3 step5-keyboard-reaches-projection: {"ok":true,"relayedChangeEvents":7,"checkboxFocused":true,"note":"Tab into the panel own checkbox, Space to flip it; the projection relayed the change to the real panel"}
+2026-09-13T18:50:26.212Z uc3 step6a-settings-persisted-to-disk: {"ok":false,"changed":true,"before":"(no blob file yet)"}
+2026-09-13T18:50:33.588Z uc3 step6b-survives-reload: {"ok":false,"persistedKeyChanged":false,"projectionHead":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat mess"}
+2026-09-13T18:50:35.156Z uc3 step7-disable-removes-everything: {"ok":true,"state":{"planePresent":false,"framePresent":false,"sectionPresent":false,"headingPresent":false},"probe":{"absent":"no plane iframe"}}
+2026-09-13T18:50:42.406Z uc3 step8-reenable-rebuilds-fresh: {"ok":true,"oldToken":"st-frame-9isxdhalpbg-mu065r6n","newToken":"st-frame-5kcwsfm7v2m-mu065xzp","probe":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:50:49.165Z uc3 step9-disabled-reload-stays-clean: {"ok":true,"state":{"sectionPresent":false,"framePresent":false,"headingPresent":false}}
+2026-09-13T18:53:27.951Z uc3 step1-panel-on-plugins-route: {"ok":true,"nav":{"ok":true},"section":{"planePresent":true,"framePresent":true,"frameToken":"st-frame-v8tv3x0z3xn-mu069iq0","sectionPresent":true,"projectionPresent":true},"heading":"Plugin settings"}
+2026-09-13T18:53:29.177Z uc3 step2-diagnostics-has-no-panel: {"ok":true,"nav":{"ok":true},"state":{"sectionVisible":false,"headingVisible":false,"sectionInsideDiagnostics":false}}
+2026-09-13T18:53:36.649Z uc3 step3a-chinese-ui: {"ok":true,"heading":"插件设置","panel":"提示词模板\n是否启用扩展\n处理生成内容\n生成时注入 GENERATE 世界书条目\n生成时注入 @INJECT 世界书条目\n处理楼层消息\n渲染楼层时注入 RENDER 世界书条目\n处理代码块\n处理原始消息内容\n生成时忽略楼层消息处理\n楼层处理最大深度\n自动保存变量更新\n立即加载世界书\n禁用with语句块\n控制台显示详细信息\nGENERATE/RENDER/INJECT条目禁用视为启用\n后台编译\n环境隔离\n代码编辑器\n缓存（实验性）\n禁用\n启用\n仅世界书\n缓存大小\n缓存Hash函数\nh32\nh64"}
+2026-09-13T18:53:44.073Z uc3 step3b-english-ui: {"ok":true,"heading":"Plugin settings","panel":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat message processing\nEnable [RENDER] feature\nEnable <pre> processing in chat messages\nEnable raw chat messages\nGenerate processing does not include chat messages\nMaximum depth of chat messages\nAutomatically save chats\nPreload
+2026-09-13T18:53:47.166Z uc3 step5-keyboard-reaches-projection: {"ok":true,"relayedChangeEvents":7,"checkboxFocused":true,"note":"Tab into the panel own checkbox, Space to flip it; the projection relayed the change to the real panel"}
+2026-09-13T18:53:47.167Z uc3 step6a-settings-persisted-to-disk: {"ok":true,"changed":true,"before":"{\"EjsTemplate\":{\"enabled\":true,\"generate_enabled\":true,\"generate_loader_enabled\":true,\"render_enabled\":true,\"render_loader_enabled\":true,\"with_context_disabled\"","afterHead":"{\"EjsTemplate\":{\"enabled\":true,\"generate_enabled\":true,\"generate_loader_enabled\":true,\"render_enabled\":true,\"render_loader_enabled\":true,\"with_context_disabled\""
+2026-09-13T18:53:54.548Z uc3 step6b-survives-reload: {"ok":true,"persistedKeyChanged":true,"projectionHead":"Prompt template settings\nEnable extension\nGenerate processing\nEnable [GENERATE] feature\nEnable @INJECT feature\nChat mess"}
+2026-09-13T18:53:56.115Z uc3 step7-disable-removes-everything: {"ok":true,"state":{"planePresent":false,"framePresent":false,"sectionPresent":false,"headingPresent":false},"probe":{"absent":"no plane iframe"}}
+2026-09-13T18:54:03.370Z uc3 step8-reenable-rebuilds-fresh: {"ok":true,"oldToken":"st-frame-1v0lou77dayj-mu06a28j","newToken":"st-frame-knru5qxeea-mu06a91y","probe":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-13T18:54:10.112Z uc3 step9-disabled-reload-stays-clean: {"ok":true,"state":{"sectionPresent":false,"framePresent":false,"headingPresent":false}}
+2026-09-13T18:58:38.834Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":41,"newRevision":44,"oldToken":"st-frame-h78l9rh0pfr-mu06g6t6","newToken":"st-frame-yybeo4ehvqo-mu06g9zm"}
+2026-09-13T18:58:56.260Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":44,"newRevision":47,"oldToken":"st-frame-oqlipfuxerr-mu06gk90","newToken":"st-frame-5eejofeega-mu06gnfr"}
+2026-09-13T19:00:07.071Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":47,"newRevision":50,"oldToken":"st-frame-nbpaa9mxnnk-mu06i2vt","newToken":"st-frame-92z3cofqnrk-mu06i62h"}
+2026-09-13T19:00:33.575Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":50,"newRevision":53,"oldToken":"st-frame-kqrwzitz6vd-mu06incd","newToken":"st-frame-6u501vkjehq-mu06iqiz"}
+2026-09-13T19:01:20.129Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":53,"newRevision":56,"oldToken":"st-frame-x1kcxfq1fs-mu06jn8t","newToken":"st-frame-lbnp54d8o7c-mu06jqg3"}
+2026-09-13T19:02:01.315Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":56,"newRevision":59,"oldToken":"st-frame-614n6jl8ny5-mu06kj13","newToken":"st-frame-dbktdini8ti-mu06km8b"}
+2026-09-13T19:02:08.610Z revision stale-submit-refused-host-side: {"ok":false}
+2026-09-13T19:02:08.610Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:02:08.610Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:02:08.644Z revision stale-submit-refused-page-side: {"ok":false,"oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:03:15.859Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":59,"newRevision":62,"oldToken":"st-frame-0txousxk216c-mu06m4jk","newToken":"st-frame-khdm01vknv-mu06m7qp"}
+2026-09-13T19:03:23.147Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:03:23.147Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:03:23.148Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:03:23.148Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:03:41.364Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":62,"newRevision":65,"oldToken":"st-frame-6dyee9zmmgb-mu06moa7","newToken":"st-frame-hlg4rolfz05-mu06mreo"}
+2026-09-13T19:03:48.628Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:03:48.628Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:03:48.629Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:03:48.629Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:04:06.255Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":65,"newRevision":68,"oldToken":"st-frame-olli6fl7d6p-mu06n7fj","newToken":"st-frame-caumu0q59v9-mu06namy"}
+2026-09-13T19:04:13.546Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:04:13.546Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:04:13.547Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:04:13.547Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:04:46.089Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":68,"newRevision":71,"oldToken":"st-frame-lms1c5b1sm-mu06o25v","newToken":"st-frame-mtf5bwtzmfd-mu06o5d7"}
+2026-09-13T19:04:53.385Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:04:53.385Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:04:53.386Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:04:53.386Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:05:11.949Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":71,"newRevision":74,"oldToken":"st-frame-jlbrabumuha-mu06om7f","newToken":"st-frame-joibnwt4rxj-mu06opbv"}
+2026-09-13T19:05:19.232Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:05:19.232Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:05:19.233Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:05:19.234Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:05:36.352Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":74,"newRevision":77,"oldToken":"st-frame-adxtcpp7k4-mu06p4ym","newToken":"st-frame-70bycz3yyg-mu06p85r"}
+2026-09-13T19:05:43.644Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:05:43.644Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:05:43.645Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:05:43.645Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:06:30.180Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":77,"newRevision":80,"oldToken":"st-frame-yjhv2dv851g-mu06qakl","newToken":"st-frame-dtqd228sflu-mu06qdoz"}
+2026-09-13T19:06:37.463Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:06:37.464Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:06:37.464Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:06:37.464Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:06:45.474Z revision new-revision-operations-complete: {"ok":false,"freshSettingsOk":true,"memberCall":{"error":"no member result"},"hostRevision":80}
+2026-09-13T19:16:22.355Z revision reload-bumped-revision-and-frame: {"ok":true,"oldRevision":5,"newRevision":8,"oldToken":"st-frame-hrx1p2vip7e-mu072zgf","newToken":"st-frame-v4p9iplv1jj-mu0732ko"}
+2026-09-13T19:16:29.611Z revision stale-submit-refused-page-side: {"ok":true,"segmentHead":"\n你是我信赖的朋友。\n","oldContextGone":true,"zombieAnswered":"zombie-silent","oldResults":[],"note":"the old frame bridge-result reached the page from a detached source and was dropped (token+source fence); the round completed through the new frame"}
+2026-09-13T19:16:29.612Z revision stale-submit-refused-host-side: {"ok":true,"refusal":"no pending request carries this token"}
+2026-09-13T19:16:29.613Z revision stale-member-call-refused: {"ok":true,"oldContextGone":true,"note":"the rebuild destroyed the old browsing context; there is no window left to place a member call from"}
+2026-09-13T19:16:29.613Z revision stale-settings-refused: {"ok":true,"refusal":"the extension plane is stale or absent; reload the page before saving settings"}
+2026-09-13T19:16:29.625Z revision new-revision-operations-complete: {"ok":true,"freshSettingsOk":true,"memberCall":{"result":"42"},"hostRevision":8}
+2026-09-13T19:16:47.852Z fault variantA-settings-html-gone: {"ok":true,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"round":true,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"the panel has nothing to project (settings.html refused) while the extension keeps expanding; no other plugin row changed"}
+2026-09-13T19:17:31.088Z fault variantA-settings-html-gone: {"ok":true,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"round":true,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"the panel has nothing to project (settings.html refused) while the extension keeps expanding; no other plugin row changed"}
+2026-09-13T19:18:50.787Z fault variantA-settings-html-gone: {"ok":false,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"round":false,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"the panel has nothing to project (settings.html refused) while the extension keeps expanding; no other plugin row changed"}
+2026-09-13T19:19:13.055Z fault variantA-settings-html-gone: {"ok":false,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"round":false,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"the panel has nothing to project (settings.html refused) while the extension keeps expanding; no other plugin row changed"}
+2026-09-13T19:19:27.035Z fault variantB-facade-refused-degrades-clearly: {"ok":true,"frameProbe":{"absent":"probe timeout"},"pilotRoundExpanded":false,"plainCard":{"id":"Plain卡-20260914-031924","replied":true},"note":"the extension frame cannot boot without the facade; the pilot chat runs unexpanded while a plain card opens, sends, generates and saves untouched"}
+2026-09-13T19:20:59.799Z fault variantA-settings-html-gone: {"ok":false,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"round":false,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"the panel has nothing to project (settings.html refused) while the extension keeps expanding; no other plugin row changed"}
+2026-09-13T19:21:13.749Z fault variantB-facade-refused-degrades-clearly: {"ok":true,"frameProbe":{"absent":"probe timeout"},"pilotRoundExpanded":false,"plainCard":{"id":"Plain卡-20260914-032111","replied":true},"note":"the extension frame cannot boot without the facade; the pilot chat runs unexpanded while a plain card opens, sends, generates and saves untouched"}
+2026-09-13T19:21:46.683Z fault variantB-restored: {"ok":false,"absent":"probe timeout"}
+2026-09-13T19:21:48.231Z fault variantC-member-bundle-refused: {"ok":false,"memberBundleStatus":404,"pilotRoundExpanded":false,"note":"cards cannot load the member bundle (named 404) while the extension frame itself keeps expanding; nothing else changed"}
+2026-09-13T19:22:33.287Z fault variantA-settings-html-gone: {"ok":false,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"round":false,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"the panel has nothing to project (settings.html refused) while the extension keeps expanding; no other plugin row changed"}
+2026-09-13T19:22:45.985Z fault variantB-facade-refused-degrades-clearly: {"ok":true,"frameProbe":{"absent":"probe timeout"},"pilotRoundExpanded":false,"plainCard":{"id":"Plain卡-20260914-032243","replied":true},"note":"the extension frame cannot boot without the facade; the pilot chat runs unexpanded while a plain card opens, sends, generates and saves untouched"}
+2026-09-13T19:23:18.845Z fault variantB-restored: {"ok":false,"absent":"probe timeout"}
+2026-09-13T19:23:19.115Z fault variantC-member-bundle-refused: {"ok":false,"memberBundleStatus":404,"pilotRoundExpanded":false,"note":"cards cannot load the member bundle (named 404) while the extension frame itself keeps expanding; nothing else changed"}
+2026-09-13T19:23:19.387Z fault all-restored: {"ok":false,"round":false,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"]}
+2026-09-13T19:26:35.780Z fault variantA-settings-html-gone: {"ok":true,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"roundExpanded":false,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"settings.html is boot-critical upstream: without it init fails and the whole extension degrades to raw passthrough — cleanly, with the chat unbroken and no other plugin row changed"}
+2026-09-13T19:26:48.596Z fault variantB-facade-refused-degrades-clearly: {"ok":true,"frameProbe":{"absent":"probe timeout"},"pilotRoundExpanded":false,"plainCard":{"id":"Plain卡-20260914-032646","replied":true},"note":"the extension frame cannot boot without the facade; the pilot chat runs unexpanded while a plain card opens, sends, generates and saves untouched"}
+2026-09-13T19:27:21.484Z fault variantB-restored: {"ok":false,"absent":"probe timeout"}
+2026-09-13T19:27:54.625Z fault variantC-member-bundle-refused: {"ok":false,"memberBundleStatus":404,"pilotRoundExpanded":false,"note":"cards cannot load the member bundle (named 404) while the extension frame itself keeps expanding; nothing else changed"}
+2026-09-13T19:28:27.759Z fault all-restored: {"ok":false,"round":false,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"]}
+2026-09-13T19:35:13.810Z fault variantA-settings-html-gone: {"ok":false,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"roundExpanded":true,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"settings.html is boot-critical upstream: without it init fails and the whole extension degrades to raw passthrough — cleanly, with the chat unbroken and no other plugin row changed"}
+2026-09-13T19:35:27.857Z fault variantB-facade-refused-degrades-clearly: {"ok":true,"frameProbe":{"absent":"probe timeout"},"pilotRoundExpanded":false,"plainCard":{"id":"Plain卡-20260914-033525","replied":true},"note":"the extension frame cannot boot without the facade; the pilot chat runs unexpanded while a plain card opens, sends, generates and saves untouched"}
+2026-09-13T19:35:32.750Z fault variantB-restored: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T19:35:37.716Z fault variantC-member-bundle-refused: {"ok":true,"memberBundleStatus":404,"pilotRoundExpanded":true,"note":"cards cannot load the member bundle (named 404) while the extension frame itself keeps expanding; nothing else changed"}
+2026-09-13T19:35:42.895Z fault all-restored: {"ok":true,"round":true,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"]}
+2026-09-13T19:36:15.842Z fault variantA-settings-html-gone: {"ok":true,"sectionState":{"sectionPresent":true,"projectionHtmlBytes":0},"roundExpanded":true,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"],"note":"settings.html refused: the panel has nothing to project while the chat keeps working; upstream init may or may not survive (recorded), and no other plugin row changed"}
+2026-09-13T19:36:29.816Z fault variantB-facade-refused-degrades-clearly: {"ok":true,"frameProbe":{"absent":"probe timeout"},"pilotRoundExpanded":false,"plainCard":{"id":"Plain卡-20260914-033627","replied":true},"note":"the extension frame cannot boot without the facade; the pilot chat runs unexpanded while a plain card opens, sends, generates and saves untouched"}
+2026-09-13T19:36:34.661Z fault variantB-restored: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-13T19:36:39.787Z fault variantC-member-bundle-refused: {"ok":true,"memberBundleStatus":404,"pilotRoundExpanded":true,"note":"cards cannot load the member bundle (named 404) while the extension frame itself keeps expanding; nothing else changed"}
+2026-09-13T19:36:44.857Z fault all-restored: {"ok":true,"round":true,"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"]}
+2026-09-13T19:37:03.490Z uninstall uninstall-removes-frame-section-and-routes: {"ok":true,"state":{"framePresent":false,"sectionPresent":false},"probe":{"absent":"no plane iframe"},"rowAfter":{"id":"prompt-template","name":"Prompt Template/提示词模板","description":"SillyTavern extension \"Prompt Template/提示词模板\" (v1.17.4.1) running in the Iris ST-compat plane.","version":"1.17.4.1","apiVersion":1,"dependencies":[],"installed":false,"enabled":false,"status":"not-installed"},"topM
+2026-09-13T19:37:03.565Z uninstall settings-survive-uninstall: {"ok":true,"settingsBytes":725}
+2026-09-13T19:37:03.570Z uninstall data-untouched-after-uninstall: {"ok":true,"before":{"floorCount":17,"lastFloor":"我们又聊了一会儿。\n新的好感度：130","variables":{"好感度":70},"characters":["Pilot卡","Plain卡","Plain卡-2"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "},"after":{"floorCount":17,"lastFloor":"我们又聊了一会儿。\n新的好感度：130","variables":{"好感度":70},"characters":["Pilot卡","Plain卡","Plain卡-2"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度',
+2026-09-13T19:43:12.743Z uninstall uninstall-removes-frame-section-and-routes: {"ok":true,"state":{"framePresent":false,"sectionPresent":false},"probe":{"absent":"no plane iframe"},"rowAfter":{"id":"prompt-template","name":"Prompt Template/提示词模板","description":"SillyTavern extension \"Prompt Template/提示词模板\" (v1.17.4.1) running in the Iris ST-compat plane.","version":"1.17.4.1","apiVersion":1,"dependencies":[],"installed":false,"enabled":false,"status":"not-installed"},"topM
+2026-09-13T19:43:12.788Z uninstall settings-survive-uninstall: {"ok":false,"settingsBytes":0}
+2026-09-13T19:43:12.790Z uninstall data-untouched-after-uninstall: {"ok":true,"before":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "},"after":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "}}
+2026-09-13T19:43:41.401Z uninstall uninstall-removes-frame-section-and-routes: {"ok":true,"state":{"framePresent":false,"sectionPresent":false},"probe":{"absent":"no plane iframe"},"rowAfter":{"id":"prompt-template","name":"Prompt Template/提示词模板","description":"SillyTavern extension \"Prompt Template/提示词模板\" (v1.17.4.1) running in the Iris ST-compat plane.","version":"1.17.4.1","apiVersion":1,"dependencies":[],"installed":false,"enabled":false,"status":"not-installed"},"topM
+2026-09-13T19:43:41.448Z uninstall settings-survive-uninstall: {"ok":false,"settingsBytes":0}
+2026-09-13T19:43:41.451Z uninstall data-untouched-after-uninstall: {"ok":true,"before":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "},"after":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "}}
+2026-09-13T19:43:46.255Z uninstall reinstall-restores-settings-and-plane: {"ok":true,"settingsRestored":true,"frameHealth":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1},"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"]}
+2026-09-13T19:45:21.753Z uninstall uninstall-removes-frame-section-and-routes: {"ok":true,"state":{"framePresent":false,"sectionPresent":false},"probe":{"absent":"no plane iframe"},"rowAfter":{"id":"prompt-template","name":"Prompt Template/提示词模板","description":"SillyTavern extension \"Prompt Template/提示词模板\" (v1.17.4.1) running in the Iris ST-compat plane.","version":"1.17.4.1","apiVersion":1,"dependencies":[],"installed":false,"enabled":false,"status":"not-installed"},"topM
+2026-09-13T19:45:21.770Z uninstall settings-survive-uninstall: {"ok":true,"bytesBefore":726,"bytesAfter":726}
+2026-09-13T19:45:21.775Z uninstall data-untouched-after-uninstall: {"ok":true,"before":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "},"after":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "}}
+2026-09-13T19:45:55.794Z uninstall uninstall-removes-frame-section-and-routes: {"ok":true,"state":{"framePresent":false,"sectionPresent":false},"probe":{"absent":"no plane iframe"},"rowAfter":{"id":"prompt-template","name":"Prompt Template/提示词模板","description":"SillyTavern extension \"Prompt Template/提示词模板\" (v1.17.4.1) running in the Iris ST-compat plane.","version":"1.17.4.1","apiVersion":1,"dependencies":[],"installed":false,"enabled":false,"status":"not-installed"},"topM
+2026-09-13T19:45:55.844Z uninstall settings-survive-uninstall: {"ok":true,"bytesBefore":725,"bytesAfter":725}
+2026-09-13T19:45:55.847Z uninstall data-untouched-after-uninstall: {"ok":true,"before":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "},"after":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "}}
+2026-09-13T19:46:29.917Z uninstall uninstall-removes-frame-section-and-routes: {"ok":true,"state":{"framePresent":false,"sectionPresent":false},"probe":{"absent":"no plane iframe"},"rowAfter":{"id":"prompt-template","name":"Prompt Template/提示词模板","description":"SillyTavern extension \"Prompt Template/提示词模板\" (v1.17.4.1) running in the Iris ST-compat plane.","version":"1.17.4.1","apiVersion":1,"dependencies":[],"installed":false,"enabled":false,"status":"not-installed"},"topM
+2026-09-13T19:46:29.980Z uninstall settings-survive-uninstall: {"ok":true,"bytesBefore":726,"bytesAfter":726}
+2026-09-13T19:46:29.986Z uninstall data-untouched-after-uninstall: {"ok":true,"before":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "},"after":{"floorCount":1,"lastFloor":"你好。","variables":{"好感度":70},"characters":["Pilot卡"],"bookEntries":1,"bookContentHead":"<% if (getvar('好感度', { defaults: 0 }) > "}}
+2026-09-13T19:46:34.848Z uninstall reinstall-restores-settings-and-plane: {"ok":true,"settingsRestored":true,"frameHealth":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1},"rows":["tavern-helper:enabled","mvu:disabled","prompt-template:enabled"]}
+2026-09-13T19:54:01.252Z st-compare st-booted: {"ok":true,"logTail":"piling frontend libraries...\nwebpack 5.105.4 compiled \u001b[1m\u001b[32msuccessfully\u001b[39m\u001b[22m in 506 ms\n\nSillyTavern is listening on IPv4: 127.0.0.1:8872\n\n=================================================\n\nGo to: http://127.0.0.1:8872/ to open SillyTavern\n\n=================================================\n\n"}
+2026-09-13T19:54:23.461Z st-compare st-extension-live: {"ok":true,"seeded":"{\"seeded\":{},\"all\":{}}","state":"{\"ejs\":\"object\",\"chatLen\":-1}"}
+2026-09-13T19:54:29.880Z st-compare st-round-completed: {"ok":false,"floorState":{"chatLen":-1,"lastMes":"","all":{}}}
+2026-09-13T19:54:50.015Z st-compare st-booted: {"ok":true,"logTail":"piling frontend libraries...\nwebpack 5.105.4 compiled \u001b[1m\u001b[32msuccessfully\u001b[39m\u001b[22m in 499 ms\n\nSillyTavern is listening on IPv4: 127.0.0.1:8872\n\n=================================================\n\nGo to: http://127.0.0.1:8872/ to open SillyTavern\n\n=================================================\n\n"}
+2026-09-13T19:55:11.760Z st-compare st-extension-live: {"ok":true,"seeded":"{\"seeded\":{},\"all\":{}}","state":"{\"ejs\":\"object\",\"chatLen\":-1}"}
+2026-09-13T19:55:18.182Z st-compare st-round-completed: {"ok":false,"floorState":{"chatLen":-1,"lastMes":"","all":{}}}
+2026-09-13T20:05:29.308Z st-compare st-booted: {"ok":true,"logTail":"Node version: v24.13.0. Running in undefined environment. Server directory: E:\\sillyTavern\\SillyTavern\nUsing config path: ./config.yaml\n"}
+2026-09-13T20:05:45.878Z st-compare st-extension-live: {"ok":false,"seeded":"{\"error\":\"no EjsTemplate — the extension did not initialize\"}","live":"{\"ejs\":\"undefined\",\"floors\":0}"}
+2026-09-13T20:06:07.130Z st-compare st-booted: {"ok":true,"logTail":"Node version: v24.13.0. Running in undefined environment. Server directory: E:\\sillyTavern\\SillyTavern\nUsing config path: ./config.yaml\n"}
+2026-09-13T20:06:23.675Z st-compare st-extension-live: {"ok":false,"seeded":"{\"error\":\"no EjsTemplate — the extension did not initialize\"}","live":"{\"ejs\":\"undefined\",\"floors\":0}"}
+2026-09-13T20:06:45.785Z st-compare st-booted: {"ok":true,"logTail":"Node version: v24.13.0. Running in undefined environment. Server directory: E:\\sillyTavern\\SillyTavern\nUsing config path: ./config.yaml\n"}
+2026-09-13T20:07:02.342Z st-compare st-extension-live: {"ok":false,"seeded":"{\"error\":\"no EjsTemplate — the extension did not initialize\"}","live":"{\"ejs\":\"undefined\",\"floors\":0}"}
+2026-09-13T20:07:10.765Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":0,"lastMes":null}}
+2026-09-13T20:08:41.570Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:09:29.392Z st-compare st-extension-live: {"ok":false,"seeded":"{\"error\":\"no EjsTemplate — the extension did not initialize\"}","live":"{\"ejs\":\"undefined\",\"floors\":0}"}
+2026-09-13T20:09:37.817Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":0,"lastMes":null}}
+2026-09-13T20:12:27.100Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:12:40.084Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:13:30.908Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:14:18.724Z st-compare st-extension-live: {"ok":false,"seeded":"{\"error\":\"no EjsTemplate — the extension did not initialize\"}","live":"{\"ejs\":\"undefined\",\"floors\":0}"}
+2026-09-13T20:14:27.140Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":0,"lastMes":null}}
+2026-09-13T20:14:27.241Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:16:29.286Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:16:38.904Z st-compare st-extension-live: {"ok":true,"seeded":"{\"all\":{}}","live":"{\"ejs\":\"object\",\"floors\":0}"}
+2026-09-13T20:16:47.321Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":0,"lastMes":null}}
+2026-09-13T20:16:47.753Z st-compare lock-restored-after-run: {"ok":true,"movedTo":"d6f520d149ab","restored":"f9a07da"}
+2026-09-13T20:21:15.510Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:21:42.132Z st-compare st-extension-live: {"ok":true,"seeded":"{\"all\":{}}","live":"{\"ejs\":\"object\",\"floors\":0}"}
+2026-09-13T20:21:50.560Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":0,"lastMes":null}}
+2026-09-13T20:21:50.661Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:29:09.966Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:29:36.795Z st-compare st-extension-live: {"ok":true,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}","live":"{\"ejs\":\"object\",\"floors\":1}"}
+2026-09-13T20:29:45.220Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":1,"lastMes":"你好。"}}
+2026-09-13T20:29:45.325Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:30:45.240Z st-compare st-ready: {"ok":true,"mode":"persistent server reused or freshly booted"}
+2026-09-13T20:31:12.061Z st-compare st-extension-live: {"ok":true,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}","live":"{\"ejs\":\"object\",\"floors\":1}"}
+2026-09-13T20:31:20.500Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":1,"lastMes":"你好。"}}
+2026-09-13T20:31:20.599Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:42:58.182Z st-compare st-booted: {"ok":true}
+2026-09-13T20:43:01.887Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-13T20:43:09.259Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-13T20:43:18.699Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":1,"lastMes":"你好。"}}
+2026-09-13T20:43:18.814Z st-compare st-floor-and-variables: {"ok":true,"floorCount":1,"lastMesHead":"你好。","lastMesHash":"81fddea03ec6aa29ed52fc9b346ca130613650a71fd8d3ffc93077bc27806bc1","chatVariables":null,"messageVariables":[{}]}
+2026-09-13T20:43:18.814Z st-compare st-request-wi-segment: {"ok":false,"why":"the provider captured no request"}
+2026-09-13T20:43:18.815Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:43:47.750Z st-compare st-booted: {"ok":true}
+2026-09-13T20:43:51.419Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-13T20:43:58.778Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-13T20:44:08.208Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":1,"lastMes":"你好。","online":null,"toasts":[],"taValue":"ST compare round: 好感度 70"}}
+2026-09-13T20:44:08.321Z st-compare st-floor-and-variables: {"ok":true,"floorCount":1,"lastMesHead":"你好。","lastMesHash":"81fddea03ec6aa29ed52fc9b346ca130613650a71fd8d3ffc93077bc27806bc1","chatVariables":null,"messageVariables":[{}]}
+2026-09-13T20:44:08.321Z st-compare st-request-wi-segment: {"ok":false,"why":"the provider captured no request"}
+2026-09-13T20:44:08.321Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:45:02.396Z st-compare st-booted: {"ok":true}
+2026-09-13T20:45:05.993Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-13T20:45:13.356Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-13T20:45:22.782Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":1,"lastMes":"你好。","online":null,"toasts":[],"taValue":"ST compare round: 好感度 70"}}
+2026-09-13T20:45:22.883Z st-compare st-floor-and-variables: {"ok":true,"floorCount":1,"lastMesHead":"你好。","lastMesHash":"81fddea03ec6aa29ed52fc9b346ca130613650a71fd8d3ffc93077bc27806bc1","chatVariables":null,"messageVariables":[{}]}
+2026-09-13T20:45:22.884Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:45:22.883Z st-compare st-request-wi-segment: {"ok":false,"why":"the provider captured no request"}
+2026-09-13T20:45:50.017Z st-compare st-booted: {"ok":true}
+2026-09-13T20:45:53.557Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-13T20:45:56.559Z st-compare st-connected: {"ok":false,"online":null}
+2026-09-13T20:46:03.930Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-13T20:46:13.373Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":1,"lastMes":"你好。","online":null,"toasts":[],"taValue":"ST compare round: 好感度 70"}}
+2026-09-13T20:46:13.480Z st-compare st-floor-and-variables: {"ok":true,"floorCount":1,"lastMesHead":"你好。","lastMesHash":"81fddea03ec6aa29ed52fc9b346ca130613650a71fd8d3ffc93077bc27806bc1","chatVariables":null,"messageVariables":[{}]}
+2026-09-13T20:46:13.480Z st-compare st-request-wi-segment: {"ok":false,"why":"the provider captured no request"}
+2026-09-13T20:46:13.481Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:46:44.773Z st-compare st-booted: {"ok":true}
+2026-09-13T20:46:48.429Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-13T20:46:48.464Z st-compare st-settings-seen-by-page: {"ok":true,"settingsSeen":"{\"source\":\"custom\",\"url\":\"http://127.0.0.1:10606/v1\",\"main\":\"openai\",\"auto\":true}"}
+2026-09-13T20:46:51.479Z st-compare st-connected: {"ok":false,"online":null}
+2026-09-13T20:46:58.853Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-13T20:47:08.297Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":1,"lastMes":"你好。","online":null,"toasts":[],"taValue":"ST compare round: 好感度 70"}}
+2026-09-13T20:47:08.408Z st-compare st-floor-and-variables: {"ok":true,"floorCount":1,"lastMesHead":"你好。","lastMesHash":"81fddea03ec6aa29ed52fc9b346ca130613650a71fd8d3ffc93077bc27806bc1","chatVariables":null,"messageVariables":[{}]}
+2026-09-13T20:47:08.409Z st-compare st-request-wi-segment: {"ok":false,"why":"the provider captured no request"}
+2026-09-13T20:47:08.410Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:47:44.963Z st-compare st-booted: {"ok":true}
+2026-09-13T20:47:48.640Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-13T20:47:48.668Z st-compare st-settings-seen-by-page: {"ok":true,"settingsSeen":"{\"source\":\"custom\",\"url\":\"http://127.0.0.1:10724/v1\",\"main\":\"openai\",\"auto\":true}"}
+2026-09-13T20:47:52.728Z st-compare st-connected: {"ok":false,"online":null}
+2026-09-13T20:48:00.090Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-13T20:48:09.513Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":2,"lastMes":"ST compare round: 好感度 70","online":null,"toasts":[],"taValue":""}}
+2026-09-13T20:48:09.625Z st-compare st-floor-and-variables: {"ok":true,"floorCount":2,"lastMesHead":"ST compare round: 好感度 70","lastMesHash":"db207eac796c734d4c60575b8b680c2d77051e25c3295240ab7af5b1022dff9c","chatVariables":{"好感度":70},"messageVariables":null}
+2026-09-13T20:48:09.626Z st-compare st-request-wi-segment: {"ok":false,"why":"the provider captured no request"}
+2026-09-13T20:48:09.626Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-13T20:49:48.561Z st-compare st-booted: {"ok":true}
+2026-09-13T20:49:52.107Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-13T20:49:52.136Z st-compare st-settings-seen-by-page: {"ok":true,"settingsSeen":"{\"source\":\"custom\",\"url\":\"http://127.0.0.1:10947/v1\",\"main\":\"openai\",\"auto\":true}"}
+2026-09-13T20:49:56.189Z st-compare st-connected: {"ok":false,"online":null}
+2026-09-13T20:50:03.560Z st-compare st-seeded: {"ok":true,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":17,\"LAST_RECEIVE_CHARS\":24,\"好感度\":70,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-13T20:50:12.990Z st-compare st-round-completed: {"ok":true,"floorState":{"floors":3,"lastMes":"ST compare round: 好感度 70","online":null,"toasts":[],"taValue":""}}
+2026-09-13T20:50:13.109Z st-compare st-floor-and-variables: {"ok":true,"floorCount":3,"lastMesHead":"ST compare round: 好感度 70","lastMesHash":"db207eac796c734d4c60575b8b680c2d77051e25c3295240ab7af5b1022dff9c","chatVariables":{"好感度":70},"messageVariables":null}
+2026-09-13T20:50:13.109Z st-compare st-request-wi-segment: {"ok":true,"wiRole":"system","wiContent":"\n你是我信赖的朋友。\n","wiHash":"8818c8c21e43084a3a35852bc1b60996926e6da1d277a3709fb90d1aa9631ace"}
+2026-09-13T20:50:13.109Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2"}
+2026-09-14T05:02:57.872Z st-compare st-booted: {"ok":true}
+2026-09-14T05:03:02.384Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-14T05:03:02.418Z st-compare st-settings-seen-by-page: {"ok":true,"settingsSeen":"{\"source\":\"custom\",\"url\":\"http://127.0.0.1:5099/v1\",\"main\":\"openai\",\"auto\":true}"}
+2026-09-14T05:03:06.469Z st-compare st-connected: {"ok":false,"online":null}
+2026-09-14T05:03:13.849Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-14T05:03:23.279Z st-compare st-round-completed: {"ok":false,"floorState":{"floors":2,"lastMes":"ST compare round: 好感度 70","online":null,"toasts":[],"taValue":""}}
+2026-09-14T05:03:23.377Z st-compare st-request-wi-segment: {"ok":true,"wiRole":"system","wiContent":"\n你是我信赖的朋友。\n","wiHash":"8818c8c21e43084a3a35852bc1b60996926e6da1d277a3709fb90d1aa9631ace"}
+2026-09-14T05:03:23.377Z st-compare st-floor-and-variables: {"ok":true,"floorCount":2,"lastMesHead":"ST compare round: 好感度 70","lastMesHash":"db207eac796c734d4c60575b8b680c2d77051e25c3295240ab7af5b1022dff9c","chatVariables":{"好感度":70},"messageVariables":null}
+2026-09-14T05:03:23.378Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2","expected":"f9a07da0fbe2"}
+2026-09-14T05:04:24.206Z st-compare st-booted: {"ok":true}
+2026-09-14T05:04:28.624Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-14T05:04:28.653Z st-compare st-settings-seen-by-page: {"ok":true,"settingsSeen":"{\"source\":\"custom\",\"url\":\"http://127.0.0.1:5280/v1\",\"main\":\"openai\",\"auto\":true}"}
+2026-09-14T05:04:32.712Z st-compare st-connected: {"ok":false,"online":null}
+2026-09-14T05:04:40.076Z st-compare st-seeded: {"ok":false,"seeded":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-14T05:04:49.500Z st-compare st-round-completed: {"ok":true,"floorState":{"floors":3,"lastMes":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：80","online":null,"toasts":[],"taValue":""}}
+2026-09-14T05:04:49.599Z st-compare st-floor-and-variables: {"ok":true,"floorCount":3,"lastMesHead":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：80","lastMesHash":"0808a0367f59e4e337d12941854a41e3f4bb596df071b73130877f6fb0957db8","chatVariables":{"好感度":70},"messageVariables":[{"好感度":80}]}
+2026-09-14T05:04:49.599Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2","expected":"f9a07da0fbe2"}
+2026-09-14T05:04:49.599Z st-compare st-request-wi-segment: {"ok":true,"wiRole":"system","wiContent":"\n你是我信赖的朋友。\n","wiHash":"8818c8c21e43084a3a35852bc1b60996926e6da1d277a3709fb90d1aa9631ace"}
+2026-09-14T05:05:28.675Z st-compare st-booted: {"ok":true}
+2026-09-14T05:05:33.215Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-14T05:05:33.244Z st-compare st-settings-seen-by-page: {"ok":true,"settingsSeen":"{\"main\":\"openai\"}"}
+2026-09-14T05:05:37.292Z st-compare st-connect-triggered: {"ok":true,"onlineStatusElement":null}
+2026-09-14T05:05:44.665Z st-compare st-seed-requested: {"ok":true,"immediateProjection":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-14T05:05:54.093Z st-compare st-round-completed: {"ok":true,"floorState":{"floors":3,"lastMes":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：80","online":null,"toasts":[],"taValue":""}}
+2026-09-14T05:05:54.196Z st-compare st-floor-and-variables: {"ok":true,"floorCount":3,"lastMesHead":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：80","lastMesHash":"0808a0367f59e4e337d12941854a41e3f4bb596df071b73130877f6fb0957db8","chatVariables":{"好感度":70},"messageVariables":[{"好感度":80}]}
+2026-09-14T05:05:54.196Z st-compare st-request-wi-segment: {"ok":true,"wiRole":"system","wiContent":"\n你是我信赖的朋友。\n","wiHash":"8818c8c21e43084a3a35852bc1b60996926e6da1d277a3709fb90d1aa9631ace"}
+2026-09-14T05:05:54.196Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2","expected":"f9a07da0fbe2"}
+2026-09-14T05:06:46.942Z uc2 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-14T05:06:47.723Z uc2 step1-message-layer-write: {"ok":true,"messageScope":{"好感度":10},"chatScope":{"好感度":0},"floorTail":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：10"}
+2026-09-14T05:06:48.575Z uc2 step2-accumulates-across-rounds: {"ok":true,"messageScope":{"好感度":20}}
+2026-09-14T05:07:47.984Z uc2 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-14T05:07:48.814Z uc2 step1-message-layer-write: {"ok":true,"messageScope":{"好感度":10},"chatScope":{"好感度":0},"floorTail":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：10"}
+2026-09-14T05:07:49.665Z uc2 step2-accumulates-across-rounds: {"ok":true,"messageScope":{"好感度":20}}
+2026-09-14T05:07:54.706Z uc2 step3-continues-after-reload: {"ok":true,"messageScope":{"好感度":30},"frameHealthAfterReload":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-14T05:07:57.155Z uc2 step4-continues-after-chat-switch: {"ok":true,"messageScope":{"好感度":40}}
+2026-09-14T05:07:59.242Z uc2 step5-disabled-frozen-raw: {"ok":true,"messageScope":{"好感度":40},"frameProbeAfterDisable":{"absent":"no plane iframe"},"rawFloorTail":"etvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n我们又聊了一会儿。\n新的好感度：<%- getvar('好感度') %>"}
+2026-09-14T05:08:04.087Z uc2 step6-reenabled-continues-no-replay: {"ok":true,"messageScope":{"好感度":50},"disabledFloorStillRaw":true,"newFloorProcessed":true,"frameHealth":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-14T05:08:06.119Z uc2 step7-dual-plugin-single-host-commit: {"ok":false,"messageScope":{"好感度":60},"mvuFault":"MVU: path \"好感度\" does not exist","note":"Prompt Template and MVU both computed; disjoint keys survived one host transaction. The exact one-commit count and same-key winner are pinned by variable-arbitration.test.ts."}
+2026-09-14T05:08:06.207Z uc2 chat-scope-never-written: {"ok":true,"chatScope":{"好感度":0}}
+2026-09-14T05:08:28.779Z uc2 frame-health: {"ok":true,"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}
+2026-09-14T05:08:29.596Z uc2 step1-message-layer-write: {"ok":true,"messageScope":{"好感度":10},"chatScope":{"好感度":0},"floorTail":"我们又聊了一会儿。\n新的好感度：10"}
+2026-09-14T05:08:30.461Z uc2 step2-accumulates-across-rounds: {"ok":true,"messageScope":{"好感度":20}}
+2026-09-14T05:08:35.501Z uc2 step3-continues-after-reload: {"ok":true,"messageScope":{"好感度":30},"frameHealthAfterReload":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-14T05:08:37.941Z uc2 step4-continues-after-chat-switch: {"ok":true,"messageScope":{"好感度":40}}
+2026-09-14T05:08:39.978Z uc2 step5-disabled-frozen-raw: {"ok":true,"messageScope":{"好感度":40},"frameProbeAfterDisable":{"absent":"no plane iframe"},"rawFloorTail":"etvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n我们又聊了一会儿。\n新的好感度：<%- getvar('好感度') %>"}
+2026-09-14T05:08:44.908Z uc2 step6-reenabled-continues-no-replay: {"ok":true,"messageScope":{"好感度":50},"disabledFloorStillRaw":true,"newFloorProcessed":true,"frameHealth":{"readyState":"complete","hasJQuery":true,"hasLodash":true,"ejsPublished":true,"kernelInstances":1,"settingsDom":1}}
+2026-09-14T05:08:46.902Z uc2 step7-dual-plugin-single-host-commit: {"ok":true,"messageScope":{"好感度":60},"mvuFault":"MVU: path \"好感度\" does not exist","note":"Prompt Template committed 60 and MVU independently reported its rejected unknown path. The exact one-commit count, disjoint-key merge and same-key winner are pinned by variable-arbitration.test.ts."}
+2026-09-14T05:08:46.965Z uc2 chat-scope-never-written: {"ok":true,"chatScope":{"好感度":0}}
+2026-09-14T05:10:18.730Z st-compare st-booted: {"ok":true}
+2026-09-14T05:10:22.299Z st-compare st-extension-live: {"ok":true,"ready":"{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"}
+2026-09-14T05:10:22.327Z st-compare st-settings-seen-by-page: {"ok":true,"settingsSeen":"{\"source\":\"custom\",\"url\":\"http://127.0.0.1:6029/v1\",\"main\":\"openai\",\"auto\":true}"}
+2026-09-14T05:10:26.372Z st-compare st-connect-triggered: {"ok":true,"onlineStatusElement":null}
+2026-09-14T05:10:33.734Z st-compare st-seed-requested: {"ok":true,"immediateProjection":"{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"}
+2026-09-14T05:10:43.175Z st-compare st-round-completed: {"ok":true,"floorState":{"floors":3,"lastMes":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：80","online":null,"toasts":[],"taValue":""}}
+2026-09-14T05:10:43.268Z st-compare st-floor-and-variables: {"ok":true,"floorCount":3,"lastMesHead":"你的善意我已收到。我对你的好感度提升了。\n新的好感度：80","lastMesHash":"0808a0367f59e4e337d12941854a41e3f4bb596df071b73130877f6fb0957db8","chatVariables":{"好感度":70},"messageVariables":[{"好感度":80}]}
+2026-09-14T05:10:43.269Z st-compare st-request-wi-segment: {"ok":true,"wiRole":"system","wiContent":"\n你是我信赖的朋友。\n","wiHash":"8818c8c21e43084a3a35852bc1b60996926e6da1d277a3709fb90d1aa9631ace"}
+2026-09-14T05:10:43.269Z st-compare lock-held: {"ok":true,"head":"f9a07da0fbe2","expected":"f9a07da0fbe2"}

@@ -1,0 +1,38 @@
+{
+  "lock-held": {
+    "ok": true,
+    "head": "f9a07da0fbe2",
+    "expected": "f9a07da0fbe2"
+  }
+}
+\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"
+  },
+  "st-settings-seen-by-page": {
+    "ok": true,
+    "settingsSeen": "{\"source\":\"custom\",\"url\":\"http://127.0.0.1:6029/v1\",\"main\":\"openai\",\"auto\":true}"
+  },
+  "st-connect-triggered": {
+    "ok": true,
+    "onlineStatusElement": null
+  },
+  "st-seed-requested": {
+    "ok": true,
+    "immediateProjection": "{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"
+  },
+  "st-round-completed": {
+    "ok": true,
+    "floorState": {
+      "floors": 3,
+      "lastMes": "你的善意我已收到。我对你的好感度提升了。\n新的好感度：80",
+      "online": null,
+      "toasts": [],
+      "taValue": ""
+    }
+  },
+  "st-request-wi-segment": {
+    "ok": true,
+    "wiRole": "system",
+    "wiContent": "\n你是我信赖的朋友。\n",
+    "wiHash": "8818c8c21e43084a3a35852bc1b60996926e6da1d277a3709fb90d1aa9631ace"
+  }
+}

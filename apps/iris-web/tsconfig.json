@@ -27,6 +27,7 @@
 
     "paths": {
       "@iris/protocol": ["../../packages/iris-protocol/src/index.ts"],
+      "@iris/plugin-web-api": ["../../packages/iris-plugin-web-api/src/index.ts"],
       "@iris/client-fake": ["../../packages/iris-client-fake/src/index.ts"],
       "@iris/rpc-client": ["../../packages/iris-rpc-client/src/index.ts"],
       "@iris/text": ["../../packages/iris-text/src/index.ts"],

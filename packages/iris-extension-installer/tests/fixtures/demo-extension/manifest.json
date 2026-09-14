@@ -1,0 +1,5 @@
+{
+  "display_name": "Demo Extension",
+  "js": "dist/index.js",
+  "version": "1.0.0"
+}

@@ -1,0 +1,8 @@
+{
+	"display_name": "Fixture Broken Graph",
+	"loading_order": 1,
+	"requires": [],
+	"optional": [],
+	"dependencies": [],
+	"js": "src/main.js"
+}

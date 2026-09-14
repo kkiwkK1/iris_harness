@@ -1,0 +1,6 @@
+/* Resource references the analyzer lists but does not resolve (§6: 单独验证). */
+.bg {
+  background: url('../img/bg.png');
+}
+
+@import 'https://example.com/framework.css';

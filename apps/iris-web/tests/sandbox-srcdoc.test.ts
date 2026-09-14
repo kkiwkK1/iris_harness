@@ -893,3 +893,65 @@ test('a template parsed by a card rewrites its stylesheets before the browser se
     { found: '#kdn-statusbar-root' }, 'the fragment is the real one, reachable through the wrapper')
   assert.equal((wrapped.remove as () => boolean)(), true, 'forwarded methods run against the real element')
 })
+
+test('an admitted plugin loads after the bootstrap guard, before the libraries', () => {
+  /*
+   * **Position is the merge's contract** (members → bootstrap → plugins →
+   * cards): after the bootstrap because the plugin registers through the core
+   * table and checks the admission record the bootstrap published; before the
+   * card's libraries because the merge's collector must be a verdict — every
+   * tag has run or definitively not run by the time card code executes.
+   */
+  const doc = buildSrcdoc('tok', BOOT, {
+    networkGranted: false,
+    libraries: ['https://example.test/preset.js'],
+    selfOrigin: SELF,
+    systemPlugins: {
+      revision: 9,
+      tavernHelper: true,
+      mvu: false,
+      plugins: {
+        'demo-panel': { rev: '0d3a91c47ba2', client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2' },
+      },
+    },
+  })
+
+  const guard = doc.indexOf(BOOTSTRAP_TAG_MARK)
+  const plugin = doc.indexOf('data-iris-plugin="demo-panel"')
+  const library = doc.indexOf('data-iris-lib')
+  assert.ok(guard !== -1, 'the bootstrap guard was not emitted')
+  assert.ok(plugin !== -1, 'the plugin tag was not emitted')
+  assert.ok(guard < plugin, 'the plugin must load after the bootstrap published its admission record')
+  assert.ok(plugin < library, 'the plugin must load before the card libraries run')
+  // The src precedes the data attribute inside the tag, so the window opens at
+  // the tag's start, not at the attribute.
+  const tagStart = plugin === -1 ? -1 : doc.lastIndexOf('<script', plugin)
+  assert.ok(tagStart !== -1 && doc.slice(tagStart, (plugin as number) + 40).includes('/plugins/demo-panel/client.js?rev=0d3a91c47ba2'), 'the tag carries the row\'s own rev-keyed URL')
+})
+
+test('a snapshot without plugin rows emits no plugin tags', () => {
+  const doc = buildSrcdoc('tok', BOOT, {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    systemPlugins: { revision: 9, tavernHelper: true, mvu: false, plugins: {} },
+  })
+  assert.equal(doc.indexOf('data-iris-plugin'), -1, 'an empty record must not emit a tag')
+})
+
+test('a plugin id and URL are attribute-escaped in the emitted tag', () => {
+  const doc = buildSrcdoc('tok', BOOT, {
+    networkGranted: false,
+    libraries: [],
+    selfOrigin: SELF,
+    systemPlugins: {
+      revision: 9,
+      tavernHelper: true,
+      mvu: false,
+      plugins: {
+        'we"ird': { rev: '0d3a91c47ba2', client: '/plugins/x/client.js?rev=0d3a91c47ba2' },
+      },
+    },
+  })
+  assert.ok(!doc.includes('data-iris-plugin="we"ird"'), 'an unescaped id would break out of the attribute')
+})

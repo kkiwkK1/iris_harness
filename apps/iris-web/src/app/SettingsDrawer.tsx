@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
-import { Slot } from '../slots/Slot.tsx'
+import { Slot, useSlotOccupied } from '../slots/Slot.tsx'
 import type { ReadingPrefs } from '../theme/theme.ts'
 import { useLanguage } from './i18n/use-language.ts'
 import { SettingsPageSections } from './fields.tsx'
@@ -22,6 +22,7 @@ import { HostReports } from './HostReports.tsx'
 import { MemoryContextPanel } from './MemoryContextPanel.tsx'
 import { NoticeLog } from './NoticeLog.tsx'
 import { PersonaPanel } from './PersonaPanel.tsx'
+import { PluginCenter } from './PluginCenter.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
 import { PresetRegexPanel } from './PresetRegexPanel.tsx'
 import { ReadingPanel } from './ReadingPanel.tsx'
@@ -64,6 +65,7 @@ export function SettingsDrawer({ open, onClose, control }: {
   const worldbooks = useIris(state => state.worldbooks)
   const library = useIris(state => state.library)
   const backups = useIris(state => state.backups)
+  const systemPlugins = useIris(state => state.systemPlugins)
 
   useEffect(() => { if (!open) setRoute('home') }, [open])
   useEffect(() => {
@@ -81,6 +83,11 @@ export function SettingsDrawer({ open, onClose, control }: {
     'memory/context': settings?.contextWindow === undefined ? undefined : `${settings.contextWindow.toLocaleString()} tokens`,
     generation: settings?.model,
     appearance: `${control.reading.size}px`,
+    plugins: systemPlugins === undefined
+      ? undefined
+      : lang === 'zh'
+        ? `${systemPlugins.plugins.filter(plugin => plugin.status === 'enabled').length} 个运行中`
+        : `${systemPlugins.plugins.filter(plugin => plugin.status === 'enabled').length} active`,
   }
   const counts: Partial<Record<Exclude<SettingsRoute, 'home'>, number | undefined>> = {
     connections: connections.length,
@@ -90,6 +97,7 @@ export function SettingsDrawer({ open, onClose, control }: {
     worldbooks: worldbooks?.books.length,
     scripts: library?.length,
     backups: backups?.length,
+    plugins: systemPlugins?.plugins.length,
   }
   const matches = useMemo(() => searchSettings(query), [query])
   const context = chatId === undefined
@@ -138,10 +146,10 @@ export function SettingsDrawer({ open, onClose, control }: {
         <SettingsPage route="appearance" active={route === 'appearance'}><AppearanceCard /><ReadingPanel control={control} /></SettingsPage>
         <SettingsPage route="backups" active={route === 'backups'}><BackupPanel /></SettingsPage>
         <SettingsPage route="usage" active={route === 'usage'}><UsagePanel embedded open={route === 'usage'} onClose={() => navigate('home')} onOpenChat={id => { close(); void actions.openChat(id) }} /></SettingsPage>
+        <SettingsPage route="plugins" active={route === 'plugins'}><PluginCenter /><PluginSettings lang={lang} /></SettingsPage>
         <SettingsPage route="diagnostics" active={route === 'diagnostics'}>
           <HostReports /><NoticeLog /><DemoActionsSection />
           {import.meta.env.DEV ? <SandboxProbe /> : null}{import.meta.env.DEV ? <RailPreview /> : null}
-          <Slot name="iris.settings.sections" owner={{}} />
         </SettingsPage>
         <SettingsPage route="about" active={route === 'about'}><AboutCard control={control} /></SettingsPage>
       </SettingsPageSections.Provider>
@@ -152,6 +160,44 @@ export function SettingsDrawer({ open, onClose, control }: {
 function PageLead({ route, lang }: { route: SettingsRoute, lang: 'en' | 'zh' }): ReactElement | null {
   const row = destinationOf(route)
   return row === undefined ? null : <p className="iris-settings__lead">{row[lang === 'zh' ? 'summaryZh' : 'summaryEn']}</p>
+}
+
+/**
+ * The plugin settings block, under the system-plugin catalog.
+ *
+ * **Why here and not on the diagnostics page.** `iris.settings.sections` is a
+ * plugin's own settings surface, so it belongs where a person manages plugins —
+ * beside the enable/disable switch whose state decides whether it exists at all.
+ * It was first placed on the diagnostics page, where the only honest way to
+ * describe it was "extension internals", and where disabling an extension left
+ * the reader on a page that had nothing to do with the switch they had flipped.
+ * It sits under the catalog rather than inside each plugin's row because the
+ * catalog has no per-plugin detail view yet; when it grows one, a contribution
+ * registers against its plugin id and moves into that plugin's own panel.
+ *
+ * **Nothing at all when nothing is contributed** — heading included. The
+ * contribution's lifetime is the extension's enable, so a disabled extension
+ * must leave no label behind claiming there are settings to show; `useSlotOccupied`
+ * asks the same ledger `<Slot>` renders from, so the heading and the panels can
+ * never disagree.
+ * @param props.lang - the shell language, for the heading and the lead.
+ * @returns the labelled block, or null when no plugin contributes settings.
+ */
+function PluginSettings({ lang }: { lang: 'en' | 'zh' }): ReactElement | null {
+  const occupied = useSlotOccupied('iris.settings.sections')
+  if (!occupied) return null
+  const headingId = 'iris-plugin-settings-title'
+  return <section className="iris-settings__plugin-settings" aria-labelledby={headingId}>
+    <h3 id={headingId} className="iris-settings__plugin-settings-title">
+      {lang === 'zh' ? '插件设置' : 'Plugin settings'}
+    </h3>
+    <p className="iris-settings__plugin-settings-lead">
+      {lang === 'zh'
+        ? '各插件自己的设置面板。停用插件后，它的面板随之消失。'
+        : 'Settings panels contributed by plugins. Disabling a plugin takes its panel with it.'}
+    </p>
+    <Slot name="iris.settings.sections" owner={{}} />
+  </section>
 }
 
 function ScopeTabs({ value, lang, onChange }: { value: RegexScope, lang: 'en' | 'zh', onChange: (scope: RegexScope) => void }): ReactElement {

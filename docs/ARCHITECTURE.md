@@ -6,13 +6,14 @@ enforces every invariant stated here, and a change to one belongs in both places
 
 ## The shape
 
-23 packages in five layers, no cycles. Layer numbers are the longest path to a
+25 packages in five layers, no cycles. Layer numbers are the longest path to a
 leaf, computed rather than declared:
 
 ```
 L0  character  chat  llm-openai-compat  lorebook  macro  pipeline
-    protocol  regex  script  text  tokenizer                  ← no @iris deps
-L1  client-fake  persistence  preset  rpc-client  rpc-host  turn  variables
+    plugin-api  protocol  regex  script  text  tokenizer       ← no @iris deps
+L1  client-fake  persistence  plugin-web-api  preset  rpc-client
+    rpc-host  turn  variables
 L2  compat-tavernhelper  mvu
 L3  app-service
 L4  app  (apps/iris — the composition root)
@@ -34,13 +35,18 @@ and neither drags the other.
 
 `apps/iris-web` imports `@iris/protocol`, `@iris/rpc-client` (the real
 transport, which itself depends only on the contract) and `@iris/client-fake`,
-plus two packages admitted on the strength of being **dependency-free**:
-`@iris/compat-tavernhelper-core`, for the event-name tables a card subscribes to
-by literal string, and `@iris/text`, for `stringHash` and `parseRegexFromString`
-— two answers the frame and the host must compute identically, where a second
-copy drifts into a listener that never fires or a key one side matches as a
-pattern and the other as text. Each has a purity test of its own, because the
-ground they are admitted on is a claim about every future edit. Nothing else.
+plus three packages admitted on the strength that they drag **nothing else in
+behind them**: `@iris/compat-tavernhelper-core`, for the event-name tables a
+card subscribes to by literal string, and `@iris/text`, for `stringHash` and
+`parseRegexFromString` — two answers the frame and the host must compute
+identically, where a second copy drifts into a listener that never fires or a
+key one side matches as a pattern and the other as text — and
+`@iris/plugin-web-api`, for the system-plugin capability snapshot a frame is
+born with and the codec both the shell and the bootstrap read, whose only Iris
+import is the contract itself, as types (`import type` is erased before any
+bundler sees it, so the browser gains the package's bytes and nothing behind
+them). Each has a purity test of its own, because the ground they are admitted
+on is a claim about every future edit. Nothing else.
 
 This is the rule most worth enforcing and the one least visible: the browser app
 reaches workspace code through **Vite aliases, not package.json**, so it appears

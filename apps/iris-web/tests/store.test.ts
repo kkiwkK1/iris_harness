@@ -1534,8 +1534,8 @@ test('importPresetFiles answers per file — what landed, what was refused, and 
     ...stub.client,
     call: async (method, params) => {
       if (method === 'preset.importFile') {
-        const answer = answers[(params as { filename: string }).filename]
-        assert.ok(answer !== undefined, `unexpected filename ${(params as { filename: string }).filename}`)
+        const answer = answers[(params as unknown as { filename: string }).filename]
+        assert.ok(answer !== undefined, `unexpected filename ${(params as unknown as { filename: string }).filename}`)
         return answer as never
       }
       throw new Error(`unexpected ${method}`)
@@ -1706,7 +1706,7 @@ test('a script switched off in the panel reaches the card page’s own copy', as
         } as never
       }
       if (method === 'script.setEnabled') {
-        const asked = params as { enabled: boolean }
+        const asked = params as unknown as { enabled: boolean }
         return {
           scripts: [{ id: 's1', name: 'panel script', enabledByCard: true, enabled: asked.enabled, bytes: 10 }],
         } as never

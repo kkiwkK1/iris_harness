@@ -1,0 +1,14 @@
+{
+  "stale-settings-refused": {
+    "ok": true,
+    "refusal": "the extension plane is stale or absent; reload the page before saving settings"
+  },
+  "new-revision-operations-complete": {
+    "ok": true,
+    "freshSettingsOk": true,
+    "memberCall": {
+      "result": "42"
+    },
+    "hostRevision": 8
+  }
+}

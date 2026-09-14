@@ -1,0 +1,40 @@
+2026-09-14 13:07:10 [W] iris-app-service host: connection now generates through route "conn/bafcb0bd-1860-47eb-9ef8-16d8daf772df" at http://127.0.0.1:5707 — key: none
+2026-09-14 13:07:10 [W] iris-app-service host: the launch environment was imported as connection profile "bafcb0bd-1860-47eb-9ef8-16d8daf772df" and applied: http://127.0.0.1:5707 with model "pilot-model", route "conn/bafcb0bd-1860-47eb-9ef8-16d8daf772df", key: none. Providers are now chosen from the connection card; the environment is no longer a route.
+SEED provider: {"baseURL":"http://127.0.0.1:5707/v1","dataDir":"C:\\Users\\kkiw\\AppData\\Local\\Temp\\iris-pilot-odeuo8","port":"8811"}
+SEED character.import: {"character":{"characterId":"Pilot卡","name":"Pilot卡","tags":[],"updatedAt":1789362430351.4521,"description":"Pilot acceptance character: a card whose bound world book carries the upstream README example 2 template.","bookEntryCount":1}}
+2026-09-14 13:07:10 [W] iris-app-service worldbook: "pilot-book" is named by the card but was not imported with it; if you have a SillyTavern installation, point Iris at it and reopen this chat to use the real book
+SEED chat.create: {"chatId":"Pilot卡-20260914-130710"}
+SEED stExtension.install: "done"
+SEED plugin.list after install: [{"id":"tavern-helper","installed":true,"status":"enabled"},{"id":"mvu","installed":true,"status":"enabled"},{"id":"prompt-template","installed":true,"status":"disabled"}]
+SEED plugin.list after enable: [{"id":"tavern-helper","installed":true,"status":"enabled"},{"id":"mvu","installed":true,"status":"enabled"},{"id":"prompt-template","installed":true,"status":"enabled"}]
+SEED revision: 3
+SEED extensionId: "prompt-template"
+SEED plugin.list after mvu disable: [{"id":"tavern-helper","status":"enabled"},{"id":"mvu","status":"disabled"},{"id":"prompt-template","status":"enabled"}]
+SEED revision: 5
+SEED seeded variables: {"variables":{"好感度":70}}
+SEED COMPLETE: PILOT_PORT=8811 CHAT_ID=Pilot卡-20260914-130710 CHARACTER_ID=Pilot卡 DATA_DIR=C:\Users\kkiw\AppData\Local\Temp\iris-pilot-odeuo8
+SEED PROVIDER_BASE=http://127.0.0.1:5707/v1
+2026-09-14 13:07:48 [W] iris-app-service prompt: prompt c2e185655067ed4b prefix c2e185655067ed4b cache-read unreported
+2026-09-14 13:07:48 [W] iris-app-service prompt: prompt f7bd74f4bd74c31b prefix f7bd74f4bd74c31b cache-read unreported
+2026-09-14 13:07:49 [W] web-server Error: read ECONNRESET
+                            at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2026-09-14 13:07:53 [W] iris-app-service prompt: prompt 1f56edf4b1e3a210 prefix 1f56edf4b1e3a210 cache-read unreported
+2026-09-14 13:07:56 [W] iris-app-service prompt: prompt dd3520f4aa6d4e01 prefix dd3520f4aa6d4e01 cache-read unreported
+2026-09-14 13:07:58 [W] iris-app-service prompt: prompt 75799b63e9759cb1 prefix 75799b63e9759cb1 cache-read unreported
+2026-09-14 13:08:03 [W] iris-app-service prompt: prompt 9152be58c9bff1de prefix 9152be58c9bff1de cache-read unreported
+2026-09-14 13:08:05 [W] iris-app-service prompt: prompt c43569c80484024c prefix c43569c80484024c cache-read unreported
+2026-09-14 13:08:05 [W] iris-app-service mvu: MVU: path "好感度" does not exist
+2026-09-14 13:08:06 [W] web-server Error: read ECONNRESET
+                            at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2026-09-14 13:08:28 [W] iris-app-service prompt: prompt 70284a147291015f prefix 70284a147291015f cache-read unreported
+2026-09-14 13:08:29 [W] iris-app-service prompt: prompt 99ea34443183b7f4 prefix 99ea34443183b7f4 cache-read unreported
+2026-09-14 13:08:30 [W] web-server Error: read ECONNRESET
+                            at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2026-09-14 13:08:34 [W] iris-app-service prompt: prompt 3e71450ea6e87e0f prefix 3e71450ea6e87e0f cache-read unreported
+2026-09-14 13:08:37 [W] iris-app-service prompt: prompt 092f42db53b02001 prefix 092f42db53b02001 cache-read unreported
+2026-09-14 13:08:39 [W] iris-app-service prompt: prompt 3965ebba815324dc prefix 3965ebba815324dc cache-read unreported
+2026-09-14 13:08:44 [W] iris-app-service prompt: prompt e111eff87353066c prefix e111eff87353066c cache-read unreported
+2026-09-14 13:08:46 [W] iris-app-service prompt: prompt 03442f45954ddeeb prefix 03442f45954ddeeb cache-read unreported
+2026-09-14 13:08:46 [W] iris-app-service mvu: MVU: path "好感度" does not exist
+2026-09-14 13:08:46 [W] web-server Error: read ECONNRESET
+                            at TCP.onStreamRead (node:internal/stream_base_commons:216:20)

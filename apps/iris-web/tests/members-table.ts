@@ -42,6 +42,7 @@ import {
   sealLegacyCleanup,
   settledEvents,
 } from '../src/sandbox/tavern-helper.ts'
+import { registerPluginMembers } from '../src/sandbox/members-entry.ts'
 
 /** The same members `members-entry.ts` publishes, for a test's `FrameEnv`. */
 export const MEMBERS: MemberTable = {
@@ -69,4 +70,5 @@ export const MEMBERS: MemberTable = {
   UPSTREAM_CONTEXT_MEMBERS,
   recordChatEdits,
   replayChatEdits,
+  registerPluginMembers,
 }

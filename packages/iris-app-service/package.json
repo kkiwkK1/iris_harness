@@ -24,6 +24,8 @@
     "@iris/mvu": "workspace:*",
     "@iris/persistence": "workspace:*",
     "@iris/pipeline": "workspace:*",
+    "@iris/plugin-api": "workspace:*",
+    "@iris/plugin-web-api": "workspace:*",
     "@iris/preset": "workspace:*",
     "@iris/protocol": "workspace:*",
     "@iris/regex": "workspace:*",
@@ -31,6 +33,8 @@
     "@iris/script": "workspace:*",
     "@iris/tokenizer": "workspace:*",
     "@iris/turn": "workspace:*",
-    "@iris/variables": "workspace:*"
+    "@iris/variables": "workspace:*",
+    "@iris/compat-st-extension": "workspace:*",
+    "@iris/extension-installer": "workspace:*"
   }
 }

@@ -1,0 +1,76 @@
+{
+  "uninstall-removes-frame-section-and-routes": {
+    "ok": true,
+    "state": {
+      "framePresent": false,
+      "sectionPresent": false
+    },
+    "probe": {
+      "absent": "no plane iframe"
+    },
+    "rowAfter": {
+      "id": "prompt-template",
+      "name": "Prompt Template/提示词模板",
+      "description": "SillyTavern extension \"Prompt Template/提示词模板\" (v1.17.4.1) running in the Iris ST-compat plane.",
+      "version": "1.17.4.1",
+      "apiVersion": 1,
+      "dependencies": [],
+      "installed": false,
+      "enabled": false,
+      "status": "not-installed"
+    },
+    "topManifestExtensions": [],
+    "upstreamAssetStatus": 404,
+    "entryAssetStatus": 404,
+    "revUrl": "/iris-st-ext/prompt-template/fcd1a80ae3b4/..."
+  },
+  "settings-survive-uninstall": {
+    "ok": true,
+    "bytesBefore": 726,
+    "bytesAfter": 726
+  },
+  "data-untouched-after-uninstall": {
+    "ok": true,
+    "before": {
+      "floorCount": 1,
+      "lastFloor": "你好。",
+      "variables": {
+        "好感度": 70
+      },
+      "characters": [
+        "Pilot卡"
+      ],
+      "bookEntries": 1,
+      "bookContentHead": "<% if (getvar('好感度', { defaults: 0 }) > "
+    },
+    "after": {
+      "floorCount": 1,
+      "lastFloor": "你好。",
+      "variables": {
+        "好感度": 70
+      },
+      "characters": [
+        "Pilot卡"
+      ],
+      "bookEntries": 1,
+      "bookContentHead": "<% if (getvar('好感度', { defaults: 0 }) > "
+    }
+  },
+  "reinstall-restores-settings-and-plane": {
+    "ok": true,
+    "settingsRestored": true,
+    "frameHealth": {
+      "readyState": "complete",
+      "hasJQuery": true,
+      "hasLodash": true,
+      "ejsPublished": true,
+      "kernelInstances": 1,
+      "settingsDom": 1
+    },
+    "rows": [
+      "tavern-helper:enabled",
+      "mvu:disabled",
+      "prompt-template:enabled"
+    ]
+  }
+}

@@ -229,6 +229,11 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'preset.list', params: () => ({}) },
   { method: 'preset.view', params: () => ({}) },
   { method: 'preset.read', params: () => ({ name: 'Sample' }) },
+  // The plugin catalog listing. This fixture configures no runtime, so the
+  // call refuses (`requirePlugins` throws before any store is touched) — the
+  // same arm `connection.list` exercises above, and the one this check most
+  // wants seen for it: a refusal must write as little as an answer would.
+  { method: 'plugin.list', params: () => ({}) },
   // A read of the effective settings: it must answer what a scan would run
   // with, and write nothing — an earlier sibling of this seam (the sampler's
   // `settings.get`) is exactly where a silent write once hid.

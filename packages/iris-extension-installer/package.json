@@ -1,0 +1,12 @@
+{
+  "name": "@iris/extension-installer",
+  "license": "AGPL-3.0-only",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The install half of ST-extension compatibility: source resolution, staging, safe archive extraction, tree hashing, lock records, atomic promotion, and crash recovery behind install transactions. Nothing here executes extension code, install scripts, build scripts, or lifecycle hooks; enabled stays false at this layer.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  }
+}
