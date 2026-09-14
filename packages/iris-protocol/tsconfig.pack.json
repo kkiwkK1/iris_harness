@@ -1,0 +1,28 @@
+{
+  // The publishing emit for this contract package. Extends the repository base
+  // rather than restating it, so `target`, `lib` and the strictness settings
+  // are the ones the workspace typechecks against by construction — a second
+  // copy of `target` here would be a constant that drifts silently.
+  //
+  // Only the emit is different, and only here: the workspace still runs
+  // `./src/index.ts` through Node's type stripping (`exports` is untouched),
+  // and nothing reads this file except `scripts/pack-contracts.mjs`.
+  //
+  // `rewriteRelativeImportExtensions` is what makes the emit importable: the
+  // sources say `./views.ts`, and without it that specifier survives into
+  // `lib/index.js`, where no `.ts` file exists beside it.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "inlineSources": true,
+    "rewriteRelativeImportExtensions": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "rootDir": "src",
+    "outDir": "../../dist-pack/protocol/lib"
+  },
+  "include": ["src/**/*.ts"]
+}
