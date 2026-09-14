@@ -178,3 +178,32 @@ node scripts/card-surface-census.mjs --verbose   # 每个名字逐来源
 两次运行的差别只有 `IRIS_DATA_DIR` —— 带上 Iris 自己的 data 目录后，
 语料是 19 卡 / 4 预设 / 24 世界书、2261 段（脚本 50 / 界面 2211），
 `getPreset` 的读数仍然是 1 脚本 / 0 界面 / 2 次，与 §一那次不带该群的运行一致。
+
+---
+
+## 附记 2026-09-15（分支 `dev/census-reads-exports`：量具改读导出常量，③面并入 #55 对话三员）
+
+**§一那张表 ③ 面的一个数会变，这里不改它**，理由同上一条附记：那张表是一次运行的记录，
+重跑才是取新值的方式（§五）。本次运行（带 `IRIS_DATA_DIR`，语料同上：19 卡 / 4 预设 /
+24 世界书、2261 段）的变化与原因：
+
+- **「用到但没建」12 → 9，少的正是 `alert` / `confirm` / `prompt`。** #55 给虚父加了
+  `VIRTUAL_PARENT_DIALOG_MEMBERS`（三员经 parent 桥接，虚父的 get/has/isBridged 都按表作答），
+  但量具的桥接集只并了 `VIRTUAL_PARENT_SCHEDULER_MEMBERS`，把已建的三员报成缺口——
+  三个假阴性，恰落在决定「接下来建什么」的那一列。本次读数：③ 桥接+语料读到 35 · 建 26 ·
+  用到 28 · 没建 9；`alert`（1 脚本 / 10 次）、`prompt`（1 / 6）、`confirm`（1 / 1）
+  移入「用到 · 建了」，逐格计数不变。①（171 / 121，用到 36，真缺 4）、②（145 / 25 / 16 / 3）、
+  ④（10 / 10 / 5 / 0）不变。
+- **量具自己的输入换了机制。** 两条普查（本文件与本页 §一的成员普查
+  `scripts/th-member-census.mjs`）不再用 `indexOf('export const …')` 在源码文本里切片取
+  `UPSTREAM_MEMBERS`、`MEMBER_KINDS`、虚父两份成员表等——那条路的失效是**静默的**：常量一搬
+  位置，答案只会变短，不会报错（`notes/PLUGIN-FEASIBILITY.md` §8 第 3 条）。改为直接
+  `import` 导出常量：搬动或改名是加载期崩溃，不再是更短的答案。仍是切片的只剩非导出形态的
+  读取（两个代理的 dispatch 分支、`CARD_METHODS`、快照字段、播种赋值、`EXPECTED_GLOBALS`），
+  下限照旧。`apps/iris/tests/census-inputs.test.ts`（新）从另一侧闭环：脚本读到的成员数必须
+  等于导出常量的长度；牙齿已验——把 dialog 一行从桥接集去掉，数字退回 12，测试转红。
+- 代价一条：本量具现在 import 了 `frame.ts`，所以要求 `apps/iris-web` 装好依赖
+  （npm 管，`npm --prefix apps/iris-web install`）；跑它的测试本来就是同一个要求，不算新账。
+
+`upstream-surface.ts` 头注释里「声明顺序要紧」一段已随切片一起退役：顺序不再承重，
+171→316 的旧事留在原地作史。

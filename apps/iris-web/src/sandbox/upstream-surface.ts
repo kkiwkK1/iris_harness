@@ -32,25 +32,24 @@
  * lists because they are separate authorities, they are extracted from
  * different files, and a name on one says nothing about the other.
  *
- * **Declaration order matters here, unusually, and so does this comment's
- * wording.** The caliper `scripts/th-member-census.mjs` (and, until its branch
- * was retired on 2026-09-11, `scripts/th-surface-audit.mjs` too) finds the
- * Tavern Helper list by searching this file for its name and then matching
- * every quoted identifier from there to the **end of the file**. Two
- * consequences, and both are easy to trip over while doing something else:
+ * **There was a time when declaration order in this file mattered, unusually,
+ * and so did this comment's wording.** The calipers located these lists by
+ * searching the source text for a declaration and reading every quoted
+ * identifier from there — the member census read from the Tavern Helper list's
+ * name to the **end of the file**, with two consequences, both easy to trip
+ * over while doing something else: a second array placed *after* that list was
+ * swallowed into it (171 became 316 the day the context list arrived, and a
+ * caliper answering with a 316-name surface reports most of it as "declared
+ * but unused", which reads as a finding rather than as a broken extractor — so
+ * the context list went first); and the search matched comment text too, so
+ * the constant's name could not even be spelled in this prose without putting
+ * the cut above the context list and swallowing it anyway.
  *
- * - a second array placed *after* that list is swallowed into it — 171 becomes
- *   316, and a caliper answering with a 316-name surface reports most of it as
- *   "declared but unused", which reads as a finding rather than as a broken
- *   extractor. So the context list goes first;
- * - and the search finds the **first** occurrence of the name, comment text
- *   included, so spelling it in prose up here would put the cut above the
- *   context list and swallow it anyway. That is why this section talks about
- *   "the Tavern Helper list" instead of naming it.
- *
- * The census in this tree slices to the closing bracket and no longer cares;
- * the member census still reads to the end of the file, so the order still
- * matters.
+ * Both calipers import the exported constants now (2026-09-15;
+ * `apps/iris/tests/census-inputs.test.ts` asserts that what they read is what
+ * is declared here), so a moved or renamed list fails at load instead of
+ * shrinking an answer, and the order below is free again — this comment's
+ * wording with it.
  *
  * @module iris-web/sandbox/upstream-surface
  */

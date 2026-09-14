@@ -1474,3 +1474,57 @@ emitted JS **and** `.d.ts`」。实测 TypeScript 5.9.3 **只改写 JS**:
   `views.d.ts` 138 KB),`plugin-web-api` 19.5 KB,`plugin-api` 16.7 KB。
   没有做任何裁剪——协议包就是这么大,而它是插件调 RPC 唯一的类型来源。
 - 本轮没有碰 `apps/iris-web` 下的任何文件,因此没有跑它的构建。
+
+---
+
+# DEVIATIONS — dev/census-reads-exports:普查改读导出常量(不再按源码文本切片)
+
+## 改了什么
+
+两条普查(`scripts/th-member-census.mjs`、`scripts/card-surface-census.mjs`)过去用
+`indexOf('export const …')` 在**源码文本**里切片取 `UPSTREAM_MEMBERS`、`MEMBER_KINDS`、
+`VIRTUAL_PARENT_SCHEDULER_MEMBERS`——常量一搬位置就**静默**失效,头注释自己都写着
+「抽取修好前不得引用新数字」(`notes/PLUGIN-FEASIBILITY.md` §8 第 3 条)。改为 Node 24
+直接 `import` 导出常量(顺带 `UPSTREAM_CONTEXT_MEMBERS`、`FRAME_MEMBERS`、
+`VIRTUAL_PARENT_DIALOG_MEMBERS`,同一批切片),切片删除。搬动或改名从「更短的答案」
+变成「加载期崩溃」。
+
+## 面③的三个假阴性(量具的账,不是卡的)
+
+#55 给虚父加了 `VIRTUAL_PARENT_DIALOG_MEMBERS`(`alert`/`confirm`/`prompt` 经 parent
+桥接),但 card-surface-census 的桥接集只并了调度器那份表——三员被报成「用到 · 没建」,
+正好落在决定接下来建什么的那一列。并入后:③「用到 · 没建」12 → 9,三员移入
+「用到 · 建了」,计数逐格不变;①(171/121)② ④ 与 th-member(171/121)全部不变。
+
+## 没拆常量文件(任务书预设会炸,实测没炸)
+
+任务书预警常量模块可能带浏览器全局依赖、Node 里导入会炸,炸了就拆纯常量文件。实测:
+`upstream-surface.ts`、`identity.ts` 零依赖直接可导;`frame.ts` 两千五百行、拖着整个
+sandbox 依赖图,但在 Node 24 下加载无副作用(它的测试本来就在 `node --test` 里导它,
+6 调度器 + 3 对话框如数导出)。**一个文件都没拆。** 代价一条:card-surface 普查现在要求
+`apps/iris-web` 装好依赖——跑它的测试是同一个要求,不是新账。
+
+## 有意为之(任务书没点名、但不做不行的三处)
+
+- 两脚本的语料半场收进 `run()`,模块只导出语料无关的输入,用 `argv[1]` 判定是否作为
+  程序运行——否则新测试 `apps/iris/tests/census-inputs.test.ts` 一导入就会顺带扫语料。
+- `card-surface-census.mjs` 的 `ours()` 从「打印后 exit 0」改为 throw:输入在模块加载期
+  计算,导入方共享这条路径,exit 0 会把断了的量具伪装成通过。缺语料仍打印并退出 0,
+  「卡尺不是测试」的语义不变。
+- `th-member-census.mjs` 四个 `file:///D:/…/iris_cordis_traven/…` 绝对导入改成与姊妹
+  脚本一致的相对导入——旧写法把 worktree 钉死在主 checkout 的路径上,与「换地方也能跑」
+  的本次目标相反。
+- `upstream-surface.ts` 头注释「声明顺序要紧」段改写:切片没了,顺序不再承重;
+  171→316 的旧事留作史。
+
+## 验收对账
+
+- 两条普查跑通(th-member 输出与改前**逐字节一致**);面③「用到 · 没建」12 → 9,
+  面① 121/171 不变。
+- `apps/iris/tests/census-inputs.test.ts`(新,4 例):脚本读到的成员数等于导出常量的
+  长度,虚父面必须答出两份成员表的每一个名字。牙齿:去掉 dialog 一行 → 数字退回 12、
+  测试红;恢复后 4/4 绿。
+- `FORCE_COLOR=0 npm run test:no-corpus`:40 skipped, 0 failed(worktree 需先
+  `npm run build:web` 补 dist/sandbox,否则 8 个构建门测试多跳——环境账,非本次改动)。
+- `tsc --noEmit` 干净。
+- 账面:`notes/apps/iris-web/CARD-SURFACE.md` 附记 2026-09-15。

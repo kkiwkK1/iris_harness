@@ -57,18 +57,28 @@
  *    content hash first, because one script pasted into nine cards would
  *    otherwise read as nine independent votes.
  *
- * ## OUR SIDE IS EXTRACTED FROM OUR OWN SOURCE, AND REFUSES RATHER THAN SHRINKS
+ * ## OUR SIDE: THE SURFACE CONSTANTS ARE IMPORTED; THE REST IS SLICED, WITH FLOORS
  *
- * Every "built" list is read out of the implementation — `MEMBER_KINDS` in
- * `identity.ts`, the two proxies' dispatch branches in `frame.ts`, the seeded
- * globals in `preset-entry.ts` and `frame-entry.ts`. Brittle against **our**
- * source, which is the more dangerous direction: we refactor far more often
- * than upstream does, and a half-working extractor answers with a shorter
- * built list, which silently turns "unbuilt and used" into the majority finding.
+ * Three of the "our side" lists used to be read out of the implementation by
+ * searching the source text for their declarations — `UPSTREAM_MEMBERS` and
+ * `UPSTREAM_CONTEXT_MEMBERS` in `upstream-surface.ts`, `MEMBER_KINDS` and
+ * `FRAME_MEMBERS` in `identity.ts`, the virtual parent's two member lists in
+ * `frame.ts`. Brittle against **our** source, which is the more dangerous
+ * direction: we refactor far more often than upstream does, and a half-working
+ * extractor answers with a shorter built list, which silently turns "unbuilt
+ * and used" into the majority finding (`notes/PLUGIN-FEASIBILITY.md` §8,
+ * item 3). They are imported now: a renamed or moved constant is a load-time
+ * crash rather than a wrong number, and `apps/iris/tests/census-inputs.test.ts`
+ * asserts that what this census read is what the modules export.
  *
- * So each extraction has a floor, and a floor that fails stops the report
- * instead of shading it. Conclusions already recorded do not expire — they were
- * true of the revision measured — but **no new number may be quoted until the
+ * What is still read out of the implementation is read because it is not an
+ * exported constant — there is nothing to import: the two proxies' dispatch
+ * branches in `frame.ts`, `CARD_METHODS` minus `OFF_ST_SURFACE`, the snapshot's
+ * fields in the protocol's `ScriptContext`, the seeded `host[…]` assignments
+ * in `preset-entry.ts` and `frame-entry.ts`, the frame's shadowed `core` list.
+ * Each keeps a floor, and a floor that fails stops the report instead of
+ * shading it. Conclusions already recorded do not expire — they were true of
+ * the revision measured — but **no new number may be quoted until the
  * extraction is repaired and re-run**.
  *
  * ## THE MATCHING RULES, INCLUDING WHAT IS EXCLUDED AND WHY
@@ -112,13 +122,16 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 
 import { decodeCardPng, normalizeCard } from '../packages/iris-character/src/index.ts'
 import { extractScripts } from '../packages/iris-script/src/index.ts'
 import { parseChatFile } from '../packages/iris-persistence/src/index.ts'
 import { PLACEMENT, applyRegexScripts, orderScripts } from '../packages/iris-regex/src/index.ts'
+import { UPSTREAM_CONTEXT_MEMBERS, UPSTREAM_MEMBERS } from '../apps/iris-web/src/sandbox/upstream-surface.ts'
+import { FRAME_MEMBERS, MEMBER_KINDS } from '../apps/iris-web/src/sandbox/identity.ts'
+import { VIRTUAL_PARENT_DIALOG_MEMBERS, VIRTUAL_PARENT_SCHEDULER_MEMBERS } from '../apps/iris-web/src/sandbox/frame.ts'
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
 const verbose = process.argv.includes('--verbose')
@@ -140,36 +153,39 @@ const CORPORA = [
   { label: 'iris', cards: `${IRIS_DATA}/characters`, chats: `${IRIS_DATA}/chats`, presets: `${IRIS_DATA}/presets`, worlds: `${IRIS_DATA}/worlds` },
 ]
 
-if (!CORPORA.some(corpus => existsSync(corpus.cards))) {
-  console.log('card-surface-census: skipped — no card corpus at')
-  for (const corpus of CORPORA) console.log(`  ${corpus.cards}`)
-  console.log('Expected on any machine but the operator machine. Set IRIS_CORPUS to point elsewhere.')
-  process.exit(0)
-}
-
 // ---------------------------------------------------------------------------
 // 1. The four declared surfaces, and what Iris has built of each
 // ---------------------------------------------------------------------------
 
-/** Read a source file of ours, or stop the run saying which one went missing. */
+/**
+ * Read a source file of ours, or stop the run saying which one went missing.
+ *
+ * It **throws** rather than printing and exiting, for one reason that arrived
+ * with the imports: this module's inputs are computed at load, so an importer
+ * (`census-inputs.test.ts`) shares this code path, and a `process.exit` here
+ * would end that importer silently with a code that reads like success. A
+ * missing file is a broken instrument, and a broken instrument must be loud in
+ * every context that loads it.
+ */
 const ours = (path) => {
   try {
     return readFileSync(`${ROOT}${path}`, 'utf8')
   } catch {
-    console.log(`card-surface-census: cannot read ${path} — the extraction is broken, no numbers follow`)
-    process.exit(0)
+    throw new Error(`card-surface-census: cannot read ${path} — the extraction is broken, no numbers can follow`)
   }
 }
 
 /**
  * The names in one `readonly string[]` literal, bounded at its closing bracket.
  *
- * Bounded on purpose. The older caliper (`th-member-census.mjs`, now fixed the
- * same way) sliced from the constant's name to the **end of the file**, so a
- * second array anywhere below it was silently absorbed — 171 names became 316
- * the moment `upstream-surface.ts` gained the context list, and a 316-name
- * surface reports most of itself as "declared but never used", which reads as a
- * finding.
+ * Bounded on purpose. The first extractor of this shape read from the
+ * constant's name to the **end of the file**, so a second array anywhere below
+ * was silently absorbed — 171 names became 316 the moment
+ * `upstream-surface.ts` gained the context list, and a 316-name surface reports
+ * most of itself as "declared but never used", which reads as a finding. The
+ * two lists that lived in that file are imported now, so this helper's last
+ * caller is `EXPECTED_GLOBALS`, and the incident it guards against is recorded
+ * here rather than impossible.
  * @param {string} source - the module text.
  * @param {string} name - the exported constant.
  * @returns {string[]} the quoted names inside that literal.
@@ -194,8 +210,6 @@ function trapNames(source, fromMarker, toMarker) {
   ].filter(name => name !== 'symbol')
 }
 
-const surfaceSource = ours('apps/iris-web/src/sandbox/upstream-surface.ts')
-const identitySource = ours('apps/iris-web/src/sandbox/identity.ts')
 const frameSource = ours('apps/iris-web/src/sandbox/frame.ts')
 const cardApiSource = ours('apps/iris-web/src/sandbox/card-api.ts')
 const presetGlobalsSource = ours('apps/iris-web/src/sandbox/preset-globals.ts')
@@ -203,18 +217,11 @@ const presetEntrySource = ours('apps/iris-web/src/sandbox/preset-entry.ts')
 const frameEntrySource = ours('apps/iris-web/src/sandbox/frame-entry.ts')
 
 /** ① Tavern Helper's declared surface, and the members Iris classifies. */
-const TH_DECLARED = namesInArray(surfaceSource, 'UPSTREAM_MEMBERS')
-const kindsBlock = identitySource.slice(
-  identitySource.indexOf('MEMBER_KINDS'),
-  identitySource.indexOf('export function identityMembers'),
-)
-const TH_BUILT = new Set(
-  [...kindsBlock.matchAll(/^\s*'?([A-Za-z_$][A-Za-z0-9_$]*)'?\s*:\s*'(identity|shared)'/gm)].map(match => match[1]),
-)
-for (const name of namesInArray(identitySource, 'FRAME_MEMBERS')) TH_BUILT.add(name)
+export const TH_DECLARED = [...UPSTREAM_MEMBERS]
+export const TH_BUILT = new Set([...Object.keys(MEMBER_KINDS), ...FRAME_MEMBERS])
 
 /** ② upstream's `getContext()` keys, and what the facade answers. */
-const CTX_DECLARED = namesInArray(surfaceSource, 'UPSTREAM_CONTEXT_MEMBERS')
+export const CTX_DECLARED = [...UPSTREAM_CONTEXT_MEMBERS]
 /*
  * Three sources, because the facade answers from three places and a list that
  * knew one of them would report the other two as gaps:
@@ -266,29 +273,30 @@ const snapshotFields = (() => {
     match => match[1],
   )
 })()
-const CTX_BUILT = new Set([
+export const CTX_BUILT = new Set([
   ...facadeBranches,
   ...cardMethods.filter(name => !offStSurface.has(name)),
   ...snapshotFields,
 ])
 
 /** ③ the virtual parent's bridged surface. */
-const PARENT_BRIDGED = new Set([
+export const PARENT_BRIDGED = new Set([
   ...trapNames(frameSource, 'const virtualParent = new Proxy', 'set(_target, property, value): boolean {'),
-  ...namesInArray(frameSource, 'VIRTUAL_PARENT_SCHEDULER_MEMBERS'),
-  ...[
-    ...frameSource
-      .slice(
-        frameSource.indexOf('export const VIRTUAL_PARENT_SCHEDULER_MEMBERS'),
-        frameSource.indexOf('] as const', frameSource.indexOf('export const VIRTUAL_PARENT_SCHEDULER_MEMBERS')),
-      )
-      .matchAll(/'([A-Za-z_$][A-Za-z0-9_$]*)'/g),
-  ].map(match => match[1]),
+  /*
+   * The two member lists the parent proxy walks — the schedulers, and (#55)
+   * the dialog trio `alert` / `confirm` / `prompt` — are the exported constants
+   * the dispatch is written against, so they are imported rather than
+   * re-derived from the text they sit in. Leaving the second list out is not a
+   * hypothetical failure: it reported three built members as gaps, three false
+   * rows in the 用到 · 没建 column — the column that decides what to build.
+   */
+  ...VIRTUAL_PARENT_SCHEDULER_MEMBERS,
+  ...VIRTUAL_PARENT_DIALOG_MEMBERS,
 ])
 
 /** ④ the bare globals: what upstream seeds, and what Iris puts in the realm. */
-const BARE_EXPECTED = namesInArray(presetGlobalsSource, 'EXPECTED_GLOBALS')
-const BARE_BUILT = new Set([
+export const BARE_EXPECTED = namesInArray(presetGlobalsSource, 'EXPECTED_GLOBALS')
+export const BARE_BUILT = new Set([
   ...[...presetEntrySource.matchAll(/^host\['([^']+)'\]\s*=/gm)].map(match => match[1]),
   ...[...frameEntrySource.matchAll(/host\['([^']+)'\]\s*=/g)].map(match => match[1]),
   // `z` is published through an accessor rather than an assignment, so the
@@ -315,164 +323,9 @@ const FLOORS = [
   ['EXPECTED_GLOBALS', BARE_EXPECTED.length, 8],
   ['the seeded globals', BARE_BUILT.size, 12],
 ]
-const short = FLOORS.filter(([, size, floor]) => size < floor)
-if (short.length > 0) {
-  console.log('card-surface-census: an extraction came back short, so no numbers follow.')
-  for (const [label, size, floor] of short) {
-    console.log(`  ${label}: ${String(size)} names, expected at least ${String(floor)}`)
-  }
-  console.log('  Repair the extraction against the current source before quoting anything.')
-  process.exit(0)
-}
 
 // ---------------------------------------------------------------------------
-// 2. The corpus: five populations, two columns
-// ---------------------------------------------------------------------------
-
-/**
- * One body of code to scan.
- *
- * `column` is the report's two-column split: `script` is a card script body,
- * `interface` is everything that arrives as text a card renders — its own
- * display regexes, the interfaces those regexes produce in a real chat, preset
- * regexes and world book entries.
- * @typedef {{owner: string, kind: string, column: 'script'|'interface', origin: string, code: string}} Source
- */
-
-/** @type {Source[]} */
-const sources = []
-const seenBodies = new Set()
-let duplicateBodies = 0
-
-/** Add a body unless an identical one has already been counted. */
-function addSource(owner, kind, column, origin, code) {
-  const text = String(code ?? '')
-  if (text.trim().length === 0) return
-  const hash = createHash('sha1').update(text).digest('hex')
-  if (seenBodies.has(hash)) {
-    duplicateBodies += 1
-    return
-  }
-  seenBodies.add(hash)
-  sources.push({ owner, kind, column, origin, code: text })
-}
-
-/** A card's own name, which is how the two audits key a card. */
-function cardOwner(card, file) {
-  const name = card?.data?.name ?? card?.name
-  return typeof name === 'string' && name.trim().length > 0 ? name : file
-}
-
-for (const corpus of CORPORA) {
-  // — card script bodies, and the card's own regex source text —
-  if (existsSync(corpus.cards)) {
-    for (const file of readdirSync(corpus.cards).filter(name => name.toLowerCase().endsWith('.png'))) {
-      let card
-      try {
-        card = normalizeCard(decodeCardPng(readFileSync(join(corpus.cards, file))))
-      } catch {
-        continue
-      }
-      const owner = cardOwner(card, file)
-      for (const script of extractScripts(card).scripts) {
-        addSource(owner, 'card', 'script', `script:${script.name}`, script.content)
-      }
-      /*
-       * The card's own display regexes, as **source text** — whether or not a
-       * local chat ever rendered them. This is the population the older card
-       * census lacked, and it is where three of the measured gaps live: a card's
-       * interface code is in its regex whether or not this machine happens to
-       * have a conversation that triggered it.
-       */
-      for (const [at, regex] of (card?.data?.extensions?.regex_scripts ?? []).entries()) {
-        addSource(owner, 'card', 'interface', `card-regex[${String(at)}]`, regex?.replaceString)
-      }
-    }
-  }
-
-  // — the interfaces a real chat actually rendered —
-  if (existsSync(corpus.chats) && existsSync(corpus.cards)) {
-    const cardFor = (dir) => {
-      for (const candidate of [dir, dir.replace(/\d+$/, '')]) {
-        const path = join(corpus.cards, `${candidate}.png`)
-        if (!existsSync(path)) continue
-        try {
-          return normalizeCard(decodeCardPng(readFileSync(path)))
-        } catch {
-          return undefined
-        }
-      }
-      return undefined
-    }
-    for (const dir of readdirSync(corpus.chats, { withFileTypes: true })) {
-      if (!dir.isDirectory()) continue
-      const card = cardFor(dir.name)
-      if (card === undefined) continue
-      const owner = cardOwner(card, dir.name)
-      const scripts = orderScripts(
-        (card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: 'character' })),
-      )
-      if (scripts.length === 0) continue
-      for (const file of readdirSync(join(corpus.chats, dir.name)).filter(name => name.endsWith('.jsonl'))) {
-        let chat
-        try {
-          chat = parseChatFile(readFileSync(join(corpus.chats, dir.name, file), 'utf8'))
-        } catch {
-          continue
-        }
-        chat.messages.forEach((message, index) => {
-          const depth = chat.messages.length - 1 - index
-          const swipeId = typeof message.swipe_id === 'number' ? message.swipe_id : 0
-          const raw = Array.isArray(message.swipes) && message.swipes.length > 0
-            ? String(message.swipes[swipeId] ?? message.mes ?? '')
-            : String(message.mes ?? '')
-          const rendered = applyRegexScripts(
-            raw,
-            message.is_user ? PLACEMENT.USER_INPUT : PLACEMENT.AI_OUTPUT,
-            scripts,
-            { isMarkdown: true, depth },
-          )
-          for (const match of rendered.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
-            addSource(owner, 'card', 'interface', 'rendered', match[1])
-          }
-        })
-      }
-    }
-  }
-
-  // — preset regexes: a population neither audit reads —
-  if (existsSync(corpus.presets)) {
-    for (const file of readdirSync(corpus.presets).filter(name => name.endsWith('.json'))) {
-      let preset
-      try {
-        preset = JSON.parse(readFileSync(join(corpus.presets, file), 'utf8'))
-      } catch {
-        continue
-      }
-      for (const [at, regex] of (preset?.extensions?.regex_scripts ?? []).entries()) {
-        addSource(`preset:${file.replace(/\.json$/, '')}`, 'preset', 'interface', `preset-regex[${String(at)}]`, regex?.replaceString)
-      }
-    }
-  }
-
-  // — world book entries: the other population neither audit reads —
-  if (existsSync(corpus.worlds)) {
-    for (const file of readdirSync(corpus.worlds).filter(name => name.endsWith('.json'))) {
-      let book
-      try {
-        book = JSON.parse(readFileSync(join(corpus.worlds, file), 'utf8'))
-      } catch {
-        continue
-      }
-      for (const [uid, entry] of Object.entries(book?.entries ?? {})) {
-        addSource(`world:${file.replace(/\.json$/, '')}`, 'world', 'interface', `entry:${uid}`, entry?.content)
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 3. The detectors
+// 2. The detectors
 // ---------------------------------------------------------------------------
 
 /** The window hops a card takes on its way out of its frame. */
@@ -760,7 +613,7 @@ function reachesBare(code, name, owner) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. The fixture: shapes the detectors must see, and shapes they must not
+// 3. The fixture: shapes the detectors must see, and shapes they must not
 // ---------------------------------------------------------------------------
 
 /*
@@ -861,27 +714,18 @@ const fixtureFailures = FIXTURE.filter(([, run, expected]) => run() !== expected
 )
 
 // ---------------------------------------------------------------------------
-// 5. Count
+// 4. Tally, faces, discovery
 // ---------------------------------------------------------------------------
-
-/** Per-source alias tables, computed once. */
-const prepared = sources.map(source => ({
-  ...source,
-  ctxAliases: contextAliases(source.code),
-  shadowed: shadowedWindows(source.code),
-  parentAliases: parentAliases(source.code, shadowedWindows(source.code)),
-}))
-
-const shadowedBodies = prepared.filter(source => source.shadowed.size > 0).length
 
 /**
  * Tally one face.
  * @param {string[]} declared - the names upstream declares.
  * @param {Set<string>} built - the names Iris answers.
  * @param {(source: object, name: string) => number} probe - hits in one body.
+ * @param {object[]} prepared - the corpus, with per-source alias tables.
  * @returns {Map<string, {script: Set<string>, iface: Set<string>, kinds: Set<string>, calls: number}>}
  */
-function tally(declared, built, probe) {
+function tally(declared, built, probe, prepared) {
   const usage = new Map()
   for (const name of declared) usage.set(name, { script: new Set(), iface: new Set(), kinds: new Set(), calls: 0 })
   for (const source of prepared) {
@@ -937,8 +781,12 @@ const FACES = [
   },
 ]
 
-/** Every `parent.X` / alias `.X` name the corpus reads, for face ③. */
-function discoverParentNames() {
+/**
+ * Every `parent.X` / alias `.X` name the corpus reads, for face ③.
+ * @param {object[]} prepared - the corpus, with per-source alias tables.
+ * @returns {string[]} the discovered parent-face names.
+ */
+function discoverParentNames(prepared) {
   const found = new Set()
   for (const source of prepared) {
     const patterns = [
@@ -957,139 +805,333 @@ function discoverParentNames() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Print
+// 5. Run
 // ---------------------------------------------------------------------------
 
 const pad = (value, width) => String(value).padStart(width)
 
-if (fixtureFailures.length > 0) {
-  console.log('## DETECTOR FIXTURE FAILED — every number below is unreliable')
-  for (const line of fixtureFailures) console.log(`  ${line}`)
-  console.log('')
-  console.log('  A missed shape reports as "0 sources", which reads exactly like')
-  console.log('  "nobody uses it" — and that column decides what not to build.')
-  console.log('')
-} else {
-  const seen = FIXTURE.filter(row => row[2]).length
-  console.log(`## detector fixture: ${String(seen)} shapes seen, ${String(FIXTURE.length - seen)} correctly ignored`)
-}
+/**
+ * Run the census against the corpora, or say why there is nothing to count.
+ *
+ * Everything above this — the imported surface constants, the sliced built
+ * lists, the detectors, the fixture — is corpus-independent on purpose:
+ * `census-inputs.test.ts` imports this module for its inputs and must not scan
+ * a corpus (or exit) to get them.
+ */
+function run() {
+  if (!CORPORA.some(corpus => existsSync(corpus.cards))) {
+    console.log('card-surface-census: skipped — no card corpus at')
+    for (const corpus of CORPORA) console.log(`  ${corpus.cards}`)
+    console.log('Expected on any machine but the operator machine. Set IRIS_CORPUS to point elsewhere.')
+    return
+  }
 
-console.log('\n## corpus scanned (deduplicated by content hash)')
-for (const corpus of CORPORA) {
-  const present = ['cards', 'chats', 'presets', 'worlds'].filter(part => existsSync(corpus[part]))
-  console.log(
-    `  ${corpus.label.padEnd(5)} ${present.length === 0 ? 'absent' : present.join(', ')}`
-    + (present.length === 4 ? '' : `   (missing: ${['cards', 'chats', 'presets', 'worlds'].filter(part => !present.includes(part)).join(', ') || 'none'})`),
-  )
-}
-const byKind = kind => sources.filter(source => source.kind === kind)
-const byColumn = column => sources.filter(source => source.column === column)
-console.log(`  bodies                    ${pad(sources.length, 5)}   (script ${String(byColumn('script').length)} / interface ${String(byColumn('interface').length)})`)
-console.log(`  identical bodies dropped  ${pad(duplicateBodies, 5)}`)
-console.log(`  sources (cards)           ${pad(new Set(byKind('card').map(source => source.owner)).size, 5)}`)
-console.log(`  sources (presets)         ${pad(new Set(byKind('preset').map(source => source.owner)).size, 5)}`)
-console.log(`  sources (world books)     ${pad(new Set(byKind('world').map(source => source.owner)).size, 5)}`)
-console.log(`  bodies shadowing parent/top, bare spelling set aside: ${String(shadowedBodies)}`)
-console.log(
-  `  host-window aliases dropped as ambiguous: ${String(ambiguousAliases.size)}`
-  + (ambiguousAliases.size === 0 ? '' : ` (${[...ambiguousAliases].join(', ')})`),
-)
-console.log(
-  `  host-window aliases taken with several bindings: ${String(multiplyBoundAliases.size)}`
-  + (multiplyBoundAliases.size === 0 ? '' : ` (${[...multiplyBoundAliases].join(', ')})`),
-)
+  const short = FLOORS.filter(([, size, floor]) => size < floor)
+  if (short.length > 0) {
+    console.log('card-surface-census: an extraction came back short, so no numbers follow.')
+    for (const [label, size, floor] of short) {
+      console.log(`  ${label}: ${String(size)} names, expected at least ${String(floor)}`)
+    }
+    console.log('  Repair the extraction against the current source before quoting anything.')
+    return
+  }
 
-for (const face of FACES) {
-  const declared = face.declared ?? [...new Set([...face.built, ...discoverParentNames()])]
-  const usage = tally(declared, face.built, face.probe)
-  const used = declared.filter(name => usage.get(name).script.size + usage.get(name).iface.size > 0)
-  const sourcesOf = name => usage.get(name).script.size + usage.get(name).iface.size
+  /**
+   * One body of code to scan.
+   *
+   * `column` is the report's two-column split: `script` is a card script body,
+   * `interface` is everything that arrives as text a card renders — its own
+   * display regexes, the interfaces those regexes produce in a real chat, preset
+   * regexes and world book entries.
+   * @typedef {{owner: string, kind: string, column: 'script'|'interface', origin: string, code: string}} Source
+   */
 
-  console.log(`\n\n═══ ${face.key} ${face.label}`)
-  console.log(`    逐成员账目曾在 ${face.authority}；现状以下表为准，此处只给来源计数与两列`)
-  console.log(`    ${face.declared === undefined ? '桥接 + 语料读到' : '声明'} ${String(declared.length)}`
-    + ` · Iris 建 ${String(declared.filter(name => face.built.has(name)).length)}`
-    + ` · 语料用到 ${String(used.length)}`
-    + ` · 用到但没建 ${String(used.filter(name => !face.built.has(name)).length)}`)
+  /** @type {Source[]} */
+  const sources = []
+  const seenBodies = new Set()
+  let duplicateBodies = 0
 
-  const rows = [...used].sort((a, b) => sourcesOf(b) - sourcesOf(a) || usage.get(b).calls - usage.get(a).calls)
-  const table = (label, names) => {
-    if (names.length === 0) return
-    console.log(`\n  ── ${label}`)
-    console.log('     脚本  界面  调用  成员                             来源种类')
-    for (const name of names) {
-      const entry = usage.get(name)
-      console.log(
-        `     ${pad(entry.script.size, 4)}  ${pad(entry.iface.size, 4)}  ${pad(entry.calls, 4)}  ${name.padEnd(32)} ${[...entry.kinds].join(',')}`,
-      )
-      if (!verbose) continue
-      const owners = [...entry.script].map(owner => `脚本:${owner}`).concat([...entry.iface].map(owner => `界面:${owner}`))
-      for (const owner of owners) console.log(`             ${owner}`)
+  /** Add a body unless an identical one has already been counted. */
+  function addSource(owner, kind, column, origin, code) {
+    const text = String(code ?? '')
+    if (text.trim().length === 0) return
+    const hash = createHash('sha1').update(text).digest('hex')
+    if (seenBodies.has(hash)) {
+      duplicateBodies += 1
+      return
+    }
+    seenBodies.add(hash)
+    sources.push({ owner, kind, column, origin, code: text })
+  }
+
+  /** A card's own name, which is how the two audits key a card. */
+  function cardOwner(card, file) {
+    const name = card?.data?.name ?? card?.name
+    return typeof name === 'string' && name.trim().length > 0 ? name : file
+  }
+
+  for (const corpus of CORPORA) {
+    // — card script bodies, and the card's own regex source text —
+    if (existsSync(corpus.cards)) {
+      for (const file of readdirSync(corpus.cards).filter(name => name.toLowerCase().endsWith('.png'))) {
+        let card
+        try {
+          card = normalizeCard(decodeCardPng(readFileSync(join(corpus.cards, file))))
+        } catch {
+          continue
+        }
+        const owner = cardOwner(card, file)
+        for (const script of extractScripts(card).scripts) {
+          addSource(owner, 'card', 'script', `script:${script.name}`, script.content)
+        }
+        /*
+         * The card's own display regexes, as **source text** — whether or not a
+         * local chat ever rendered them. This is the population the older card
+         * census lacked, and it is where three of the measured gaps live: a card's
+         * interface code is in its regex whether or not this machine happens to
+         * have a conversation that triggered it.
+         */
+        for (const [at, regex] of (card?.data?.extensions?.regex_scripts ?? []).entries()) {
+          addSource(owner, 'card', 'interface', `card-regex[${String(at)}]`, regex?.replaceString)
+        }
+      }
+    }
+
+    // — the interfaces a real chat actually rendered —
+    if (existsSync(corpus.chats) && existsSync(corpus.cards)) {
+      const cardFor = (dir) => {
+        for (const candidate of [dir, dir.replace(/\d+$/, '')]) {
+          const path = join(corpus.cards, `${candidate}.png`)
+          if (!existsSync(path)) continue
+          try {
+            return normalizeCard(decodeCardPng(readFileSync(path)))
+          } catch {
+            return undefined
+          }
+        }
+        return undefined
+      }
+      for (const dir of readdirSync(corpus.chats, { withFileTypes: true })) {
+        if (!dir.isDirectory()) continue
+        const card = cardFor(dir.name)
+        if (card === undefined) continue
+        const owner = cardOwner(card, dir.name)
+        const scripts = orderScripts(
+          (card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: 'character' })),
+        )
+        if (scripts.length === 0) continue
+        for (const file of readdirSync(join(corpus.chats, dir.name)).filter(name => name.endsWith('.jsonl'))) {
+          let chat
+          try {
+            chat = parseChatFile(readFileSync(join(corpus.chats, dir.name, file), 'utf8'))
+          } catch {
+            continue
+          }
+          chat.messages.forEach((message, index) => {
+            const depth = chat.messages.length - 1 - index
+            const swipeId = typeof message.swipe_id === 'number' ? message.swipe_id : 0
+            const raw = Array.isArray(message.swipes) && message.swipes.length > 0
+              ? String(message.swipes[swipeId] ?? message.mes ?? '')
+              : String(message.mes ?? '')
+            const rendered = applyRegexScripts(
+              raw,
+              message.is_user ? PLACEMENT.USER_INPUT : PLACEMENT.AI_OUTPUT,
+              scripts,
+              { isMarkdown: true, depth },
+            )
+            for (const match of rendered.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
+              addSource(owner, 'card', 'interface', 'rendered', match[1])
+            }
+          })
+        }
+      }
+    }
+
+    // — preset regexes: a population neither audit reads —
+    if (existsSync(corpus.presets)) {
+      for (const file of readdirSync(corpus.presets).filter(name => name.endsWith('.json'))) {
+        let preset
+        try {
+          preset = JSON.parse(readFileSync(join(corpus.presets, file), 'utf8'))
+        } catch {
+          continue
+        }
+        for (const [at, regex] of (preset?.extensions?.regex_scripts ?? []).entries()) {
+          addSource(`preset:${file.replace(/\.json$/, '')}`, 'preset', 'interface', `preset-regex[${String(at)}]`, regex?.replaceString)
+        }
+      }
+    }
+
+    // — world book entries: the other population neither audit reads —
+    if (existsSync(corpus.worlds)) {
+      for (const file of readdirSync(corpus.worlds).filter(name => name.endsWith('.json'))) {
+        let book
+        try {
+          book = JSON.parse(readFileSync(join(corpus.worlds, file), 'utf8'))
+        } catch {
+          continue
+        }
+        for (const [uid, entry] of Object.entries(book?.entries ?? {})) {
+          addSource(`world:${file.replace(/\.json$/, '')}`, 'world', 'interface', `entry:${uid}`, entry?.content)
+        }
+      }
     }
   }
 
-  table('用到 · 没建', rows.filter(name => !face.built.has(name)))
-  table('用到 · 建了', rows.filter(name => face.built.has(name)))
+  /** Per-source alias tables, computed once. */
+  const prepared = sources.map(source => ({
+    ...source,
+    ctxAliases: contextAliases(source.code),
+    shadowed: shadowedWindows(source.code),
+    parentAliases: parentAliases(source.code, shadowedWindows(source.code)),
+  }))
 
-  const unusedBuilt = declared.filter(name => face.built.has(name) && sourcesOf(name) === 0)
-  const unusedUnbuilt = declared.filter(name => !face.built.has(name) && sourcesOf(name) === 0)
-  console.log(`\n  ── 没用到 · 建了：${String(unusedBuilt.length)}`)
-  if (unusedBuilt.length > 0) console.log(`     ${unusedBuilt.join(', ')}`)
-  console.log(`  ── 没用到 · 没建：${String(unusedUnbuilt.length)}`)
-  if (unusedUnbuilt.length > 0) console.log(`     ${unusedUnbuilt.join(', ')}`)
-}
+  const shadowedBodies = prepared.filter(source => source.shadowed.size > 0).length
 
-// ---------------------------------------------------------------------------
-// 7. What the two new populations contribute on their own
-// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Print
+  // ---------------------------------------------------------------------------
 
-/*
- * The reason this file exists, isolated so it can be checked: which names are
- * reached **only** from a preset regex or a world book entry — the two
- * populations no other census reads. A name in this list is invisible to every
- * other instrument in the tree.
- */
-/*
- * Printed rather than merely applied, and printed **after** the faces because
- * that is when the tallies have run. Every one of these is a name the corpus
- * contains and this census does not count, so the list is the difference
- * between "nobody reaches for it" and "one source defines its own function of
- * that name" — and 创世回廊's `deletePreset` / `loadPreset` sat in the gap
- * column looking like the former, beside a real gap.
- */
-console.log('\n\n═══ 源自身定义的同名函数（按口径不计入「够到宿主」）')
-if (selfDeclared.size === 0) console.log('  none.')
-else {
-  for (const [name, owners] of [...selfDeclared].sort((a, b) => b[1].size - a[1].size)) {
-    console.log(`  ${name.padEnd(24)} ${[...owners].join(', ')}`)
+  if (fixtureFailures.length > 0) {
+    console.log('## DETECTOR FIXTURE FAILED — every number below is unreliable')
+    for (const line of fixtureFailures) console.log(`  ${line}`)
+    console.log('')
+    console.log('  A missed shape reports as "0 sources", which reads exactly like')
+    console.log('  "nobody uses it" — and that column decides what not to build.')
+    console.log('')
+  } else {
+    const seen = FIXTURE.filter(row => row[2]).length
+    console.log(`## detector fixture: ${String(seen)} shapes seen, ${String(FIXTURE.length - seen)} correctly ignored`)
   }
-}
 
-console.log('\n\n═══ 只有预设正则 / 世界书条目才够到的名字（其他普查看不见的部分）')
-const onlyNewPopulations = []
-for (const face of FACES) {
-  const declared = face.declared ?? [...new Set([...face.built, ...discoverParentNames()])]
-  const usage = tally(declared, face.built, face.probe)
-  for (const name of declared) {
-    const entry = usage.get(name)
-    if (entry.script.size + entry.iface.size === 0) continue
-    if (entry.kinds.has('card')) continue
-    onlyNewPopulations.push({
-      face: face.key,
-      name,
-      built: face.built.has(name),
-      kinds: [...entry.kinds].join(','),
-      calls: entry.calls,
-    })
-  }
-}
-if (onlyNewPopulations.length === 0) {
-  console.log('  none — every name the presets and world books reach for, a card reaches for too.')
-} else {
-  console.log('     面  建了  调用  成员                             来源种类')
-  for (const row of onlyNewPopulations) {
+  console.log('\n## corpus scanned (deduplicated by content hash)')
+  for (const corpus of CORPORA) {
+    const present = ['cards', 'chats', 'presets', 'worlds'].filter(part => existsSync(corpus[part]))
     console.log(
-      `     ${row.face}   ${row.built ? '是  ' : '否  '}  ${pad(row.calls, 4)}  ${row.name.padEnd(32)} ${row.kinds}`,
+      `  ${corpus.label.padEnd(5)} ${present.length === 0 ? 'absent' : present.join(', ')}`
+      + (present.length === 4 ? '' : `   (missing: ${['cards', 'chats', 'presets', 'worlds'].filter(part => !present.includes(part)).join(', ') || 'none'})`),
     )
   }
+  const byKind = kind => sources.filter(source => source.kind === kind)
+  const byColumn = column => sources.filter(source => source.column === column)
+  console.log(`  bodies                    ${pad(sources.length, 5)}   (script ${String(byColumn('script').length)} / interface ${String(byColumn('interface').length)})`)
+  console.log(`  identical bodies dropped  ${pad(duplicateBodies, 5)}`)
+  console.log(`  sources (cards)           ${pad(new Set(byKind('card').map(source => source.owner)).size, 5)}`)
+  console.log(`  sources (presets)         ${pad(new Set(byKind('preset').map(source => source.owner)).size, 5)}`)
+  console.log(`  sources (world books)     ${pad(new Set(byKind('world').map(source => source.owner)).size, 5)}`)
+  console.log(`  bodies shadowing parent/top, bare spelling set aside: ${String(shadowedBodies)}`)
+  console.log(
+    `  host-window aliases dropped as ambiguous: ${String(ambiguousAliases.size)}`
+    + (ambiguousAliases.size === 0 ? '' : ` (${[...ambiguousAliases].join(', ')})`),
+  )
+  console.log(
+    `  host-window aliases taken with several bindings: ${String(multiplyBoundAliases.size)}`
+    + (multiplyBoundAliases.size === 0 ? '' : ` (${[...multiplyBoundAliases].join(', ')})`),
+  )
+
+  for (const face of FACES) {
+    const declared = face.declared ?? [...new Set([...face.built, ...discoverParentNames(prepared)])]
+    const usage = tally(declared, face.built, face.probe, prepared)
+    const used = declared.filter(name => usage.get(name).script.size + usage.get(name).iface.size > 0)
+    const sourcesOf = name => usage.get(name).script.size + usage.get(name).iface.size
+
+    console.log(`\n\n═══ ${face.key} ${face.label}`)
+    console.log(`    逐成员账目曾在 ${face.authority}；现状以下表为准，此处只给来源计数与两列`)
+    console.log(`    ${face.declared === undefined ? '桥接 + 语料读到' : '声明'} ${String(declared.length)}`
+      + ` · Iris 建 ${String(declared.filter(name => face.built.has(name)).length)}`
+      + ` · 语料用到 ${String(used.length)}`
+      + ` · 用到但没建 ${String(used.filter(name => !face.built.has(name)).length)}`)
+
+    const rows = [...used].sort((a, b) => sourcesOf(b) - sourcesOf(a) || usage.get(b).calls - usage.get(a).calls)
+    const table = (label, names) => {
+      if (names.length === 0) return
+      console.log(`\n  ── ${label}`)
+      console.log('     脚本  界面  调用  成员                             来源种类')
+      for (const name of names) {
+        const entry = usage.get(name)
+        console.log(
+          `     ${pad(entry.script.size, 4)}  ${pad(entry.iface.size, 4)}  ${pad(entry.calls, 4)}  ${name.padEnd(32)} ${[...entry.kinds].join(',')}`,
+        )
+        if (!verbose) continue
+        const owners = [...entry.script].map(owner => `脚本:${owner}`).concat([...entry.iface].map(owner => `界面:${owner}`))
+        for (const owner of owners) console.log(`             ${owner}`)
+      }
+    }
+
+    table('用到 · 没建', rows.filter(name => !face.built.has(name)))
+    table('用到 · 建了', rows.filter(name => face.built.has(name)))
+
+    const unusedBuilt = declared.filter(name => face.built.has(name) && sourcesOf(name) === 0)
+    const unusedUnbuilt = declared.filter(name => !face.built.has(name) && sourcesOf(name) === 0)
+    console.log(`\n  ── 没用到 · 建了：${String(unusedBuilt.length)}`)
+    if (unusedBuilt.length > 0) console.log(`     ${unusedBuilt.join(', ')}`)
+    console.log(`  ── 没用到 · 没建：${String(unusedUnbuilt.length)}`)
+    if (unusedUnbuilt.length > 0) console.log(`     ${unusedUnbuilt.join(', ')}`)
+  }
+
+  // ---------------------------------------------------------------------------
+  // What the two new populations contribute on their own
+  // ---------------------------------------------------------------------------
+
+  /*
+   * The reason this file exists, isolated so it can be checked: which names are
+   * reached **only** from a preset regex or a world book entry — the two
+   * populations no other census reads. A name in this list is invisible to every
+   * other instrument in the tree.
+   */
+  /*
+   * Printed rather than merely applied, and printed **after** the faces because
+   * that is when the tallies have run. Every one of these is a name the corpus
+   * contains and this census does not count, so the list is the difference
+   * between "nobody reaches for it" and "one source defines its own function of
+   * that name" — and 创世回廊's `deletePreset` / `loadPreset` sat in the gap
+   * column looking like the former, beside a real gap.
+   */
+  console.log('\n\n═══ 源自身定义的同名函数（按口径不计入「够到宿主」）')
+  if (selfDeclared.size === 0) console.log('  none.')
+  else {
+    for (const [name, owners] of [...selfDeclared].sort((a, b) => b[1].size - a[1].size)) {
+      console.log(`  ${name.padEnd(24)} ${[...owners].join(', ')}`)
+    }
+  }
+
+  console.log('\n\n═══ 只有预设正则 / 世界书条目才够到的名字（其他普查看不见的部分）')
+  const onlyNewPopulations = []
+  for (const face of FACES) {
+    const declared = face.declared ?? [...new Set([...face.built, ...discoverParentNames(prepared)])]
+    const usage = tally(declared, face.built, face.probe, prepared)
+    for (const name of declared) {
+      const entry = usage.get(name)
+      if (entry.script.size + entry.iface.size === 0) continue
+      if (entry.kinds.has('card')) continue
+      onlyNewPopulations.push({
+        face: face.key,
+        name,
+        built: face.built.has(name),
+        kinds: [...entry.kinds].join(','),
+        calls: entry.calls,
+      })
+    }
+  }
+  if (onlyNewPopulations.length === 0) {
+    console.log('  none — every name the presets and world books reach for, a card reaches for too.')
+  } else {
+    console.log('     面  建了  调用  成员                             来源种类')
+    for (const row of onlyNewPopulations) {
+      console.log(
+        `     ${row.face}   ${row.built ? '是  ' : '否  '}  ${pad(row.calls, 4)}  ${row.name.padEnd(32)} ${row.kinds}`,
+      )
+    }
+  }
+}
+
+/*
+ * Run as a program, not as an import. The census half scans the corpora and
+ * prints; an importer (`census-inputs.test.ts`) must be able to take the
+ * module's exported inputs without any of that happening. The `argv[1]`
+ * comparison is what `node scripts/card-surface-census.mjs` and
+ * `npm run census:card-surface` both satisfy, and what an import does not.
+ */
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  run()
 }
