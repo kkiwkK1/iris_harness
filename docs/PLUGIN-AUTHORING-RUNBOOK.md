@@ -1,17 +1,23 @@
 # Iris 插件制作与执行手册
 
-2026-09-12，针对 `dev/system-plugins` 当前实现及契约包迁移工作区。配套 [基础设施接口清单](INFRASTRUCTURE-INTERFACES.md)。本手册包含今天能执行的制作路径与后续发布要求；尚未实现的接口不可照草案调用。
+2026-09-15，针对 `main` 的 `2eccf30`（PR #88「Add the system plugin platform and ST extension pilot」）。配套 [基础设施接口清单](INFRASTRUCTURE-INTERFACES.md)。
+
+上一版写于 2026-09-12，基线是尚未合入的 `dev/system-plugins`，因此把「外部 client.js 扫描」「成员合并」列为未完成。这些已随 #88 落地：帧侧成员贡献、`/plugins` 下发、设置面贡献与 ST 扩展安装都有可执行路径，本版把它们写进制作步骤。仍未实现的接口（通用存储/设置、生成钩子、系统插件的 npm/Git 安装）照旧不可照草案调用，完整清单见接口清单 §8。
 
 ## 1. 先决定插件运行在哪里
 
 | 需求 | 位置 | 今天的接入方式 |
 | --- | --- | --- |
-| 宿主算法、共享业务能力、自动处理 | Node 系统插件 | 实现 SystemPluginDefinition，加入内置目录，宿主通过 capability 使用 |
-| 插件中心的管理操作 | shell UI | 使用现有 plugin.*，以返回快照和事件更新 |
-| 页面按钮/面板 | shell UI 插槽 | 仓库内 UI 接线；外部 client.js 扫描尚未完成 |
-| 卡片自带交互/脚本 | iframe 沙盒 | 既有卡片脚本授权和 TH 兼容面；不能提升为 Node 插件 |
+| 宿主算法、共享业务能力、自动处理 | Node 系统插件 | 实现 `SystemPluginDefinition`，加入内置目录，宿主通过 capability 使用 |
+| 卡片脚本能调用的新成员 | 插件自带 `client.js`，跑在卡片 iframe | 写一个经典脚本 bundle，放进安装目录，帧按快照装载并做成员合并（§4「帧侧成员贡献」） |
+| 未经修改的 SillyTavern 扩展 | shell 内的隐藏 facade iframe | 从目录或钉死 commit 的 Git 安装；ST 扩展**就是**一个系统插件，走同一套启停（§「安装一个 ST 扩展」） |
+| 插件中心的管理操作 | shell UI | 使用现有 `plugin.*`，以返回快照和事件更新 |
+| 页面按钮/面板 | shell UI 插槽 | 仓库内 UI 接线；设置区块可经 `iris.settings.sections` 贡献，但今天只有 shell 内代码能注册 |
+| 卡片自带交互/脚本 | 卡片 iframe 沙盒 | 既有卡片脚本授权和 TH 兼容面；不能提升为 Node 插件 |
 
-当前插件中心只能安装 runtime 构造时给出的目录条目。没有“输入 npm 名称/Git URL 就安装”的能力，也没有通用热更新源码加载器。reload 会释放并重新激活当前已载入的 definition；编辑磁盘 TypeScript 后通常需要重启开发宿主。
+一个 Node 系统插件要么出现在 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`（`packages/iris-app-service/src/plugins/builtins.ts`）里，要么以 ST 扩展身份经 `adoptDefinition` 被接纳。**没有**「输入 npm 名称/Git URL 就装一个系统插件」的能力，也没有通用热更新源码加载器。ST 扩展那条路是给 ST 扩展的，不是给任意 Node 代码的后门。
+
+`reload` 会释放并重新激活当前**已载入**的 definition；编辑磁盘 TypeScript 后通常需要重启开发宿主。
 
 ## 2. 最小宿主插件
 
@@ -39,11 +45,13 @@ export const demoCounter: SystemPluginDefinition = {
 }
 ```
 
+契约来自 `@iris/plugin-api`（[plugin-api/src/index.ts](../packages/iris-plugin-api/src/index.ts)）。app-service 只做 re-export，不要深导入它的 runtime 实现文件。
+
 把它导入 `plugins/builtins.ts` 并加到 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`。这只是登记可安装实现，不要因此扩大默认启用集。当前默认启用 TH 与 MVU，新 demo 应由使用者主动安装/启用。
 
-id 建议固定为短的小写 ASCII/kebab-case；显示名可以修改，id 改名等于新的持久化身份。当前 runtime 仅有部分 id 校验，不要把它当安全路径片段直接拼到资产或存储路径。
+id 建议固定为短的小写 ASCII/kebab-case；显示名可以修改，id 改名等于新的持久化身份。runtime 只校验长度（1–200）、唯一性、apiVersion 与自依赖，不要把它当安全路径片段直接拼到资产或存储路径——资产路由自己另有 `safePluginId` 与包含性检查。
 
-如果能力没有消费者，插件状态即使显示 enabled，也不会产生产品功能。编写者须列出“谁调用 capability、何时调用、输入输出、错误处理”，再把消费者接入既有业务路径。不要为调用一个 demo 另建通用绕过验证的 RPC。
+如果能力没有消费者，插件状态即使显示 enabled，也不会产生产品功能。编写者须列出「谁调用 capability、何时调用、输入输出、错误处理」，再把消费者接入既有业务路径。不要为调用一个 demo 另建通用绕过验证的 RPC。
 
 ### 声明和使用依赖
 
@@ -106,7 +114,7 @@ renderSnapshot/showError 是使用者的 UI 回调。不要将该示例直接放
 
 ### 新增业务 RPC
 
-宿主自有方法仍走中央路径：requestSchemas、响应类型、handler/注册处一起添加，并更新 fake/transport 测试。**插件自有方法自 2026-09-13 起可走运行期登记**，不再需要改协议核心：
+宿主自有方法仍走中央路径：requestSchemas、响应类型、handler/注册处一起添加，并更新 fake/transport 测试。插件自有方法可走运行期登记，不需要改协议核心——**但 main 上还没有生产使用者**：随包发布的插件方法全部是静态 schema，这条路径目前只由 [system-plugin-rpc.test.ts](../packages/iris-app-service/tests/system-plugin-rpc.test.ts) 与 [rpc-registry.test.ts](../packages/iris-protocol/tests/rpc-registry.test.ts) 钉住。用它之前先确认你的方法确实「随插件启停而存在」。
 
 ```ts
 import { z } from 'zod' // 或任何 safeParse 形状兼容的 schema 库
@@ -129,7 +137,7 @@ activate(scope) {
 }
 ```
 
-语义（全部有行为测试钉住，见接口清单 §7 毕业记录）：
+语义（全部有行为测试钉住，见接口清单 §8 毕业记录）：
 
 - **方法名是组合层事实**：撞内置名或撞已占用名在 activate 内抛错，只失败当事插件，先到者继续服务；不按加载顺序遮蔽。
 - **每次调用经当事插件的 lease**：停用后新调用立即答 `unsupported`；请求携带的 `pluginRevision` 过期即拒；停用会排空在途调用后再释放注册。
@@ -137,19 +145,102 @@ activate(scope) {
 - **类型层**：动态方法的 params/响应在客户端类型里是 `unknown`，注册处的 schema 就是它的类型；不要用 `as any` 或全局索引签名换取假的类型化。
 - **fake 对应面**：测试/演示夹具用 `fakeClient.registerPluginMethod(method, schema, handler, { pluginId })`；命名 `pluginId` 的方法随该目录行启停失效，与宿主行为合同一致。
 
-静态表仍是宿主方法的正确归属：能为所有构建实现的方法不要塞进插件；插件方法的判定标准是"它随插件启停而存在"。不要通过 `as any`、全局 string 索引签名或绕过 parseRequest 把"能发送"当作完成接口支持。
+静态表仍是宿主方法的正确归属：能为所有构建实现的方法不要塞进插件。不要通过 `as any`、全局 string 索引签名或绕过 `parseRequest` 把「能发送」当作完成接口支持。
 
-### UI 和帧侧贡献
+### 帧侧成员贡献（client.js）
 
-五个现有槽位见接口清单；楼层动作现成例子是 `apps/iris-web/src/app/DemoActionsSection.tsx`。注册必须收回，不能污染全局 window。
+这是插件让**卡片脚本**看见新成员的唯一路径。
 
-目前 `@iris/plugin-web-api` 只提供 TH/MVU 快照及编解码，不提供通用 registerPluginMembers。动态脚本加载完成前，不能靠增加一个 dsh.client 字段就让插件自动出现在页面。shell 与卡 iframe 的加载目标、权限和清理是两套执行边界，未来资产 manifest 必须区分它们。
+**放在哪。** 宿主级安装目录：`<dataDir>/system-plugins/<id>/client/client.js`（`.map` 同目录，可选）。插件激活时自己写出来是可行做法——ST 兼容面就是这么做的（参考 `buildStExtensionDefinition` 的 activation 与 [member-bundle.ts](../packages/iris-compat-st-extension/src/host/member-bundle.ts)）。
+
+**长什么样。** **经典脚本**，不是 ES 模块，不导出任何东西，运行到最后调用核心成员表：
+
+```js
+(function () {
+  'use strict';
+  var members = globalThis['__iris_members__'];
+  members.registerPluginMembers('demo-counter', { demoCounter: Object.freeze({ next: next }) });
+})();
+```
+
+**字面量 id 与字面量键名是承重的**：插件中心的 `scanPluginMemberNames`（`apps/iris-web/src/app/use-plugin-manifest.ts:208`）读源文本来报告这个 bundle 注册了哪些成员，拼接出来的 id 或计算出来的键名会让它对你失明——插件照跑，诊断列变瞎。
+
+**怎么被送到帧里。** 宿主 `/plugins` 路由（[plugin-assets.ts](../packages/iris-app-service/src/plugin-assets.ts)）：
+
+- `/plugins/manifest.json` 是聚合清单 `{ revision, plugins: { <id>: { rev, client } } }`，**只收已启用且磁盘上确有 bundle 的插件**，键排序，永远 `no-cache`。
+- `/plugins/<id>/client.js?rev=<12 位十六进制>` 是 bundle。rev 是字节的 sha1 前 12 位。**`?rev=` 与当前内容 rev 相等才发 `immutable`**，其余情况一律 `no-cache`；插件一停用，清单里没有行，这个 URL 也 404。
+- 路由挂在 `irisRpc.guard` 之后，与其他 Iris 路由同一道防护。**刻意没有**走 `@deepseek-ai/dsh-client-modules`，理由在模块头（`packages/iris-app-service/src/plugin-assets.ts:16`）。
+
+**帧怎么接纳它。** shell 把清单行并进帧快照（`sandboxPluginRuntime(snapshot, manifest)`），srcdoc 按行写 `<script src="…" crossorigin="anonymous" data-iris-plugin="<id>">`。标签顺序是**成员表 → bootstrap → 插件 → 卡片**：bootstrap 先把「本帧准入了哪些插件」公布到 `__iris_plugins_admitted__`，插件脚本才跑。
+
+登记闸门 `registerPluginMembers`（`apps/iris-web/src/sandbox/members-entry.ts:90`）依次检查：**准入**（id 不在准入记录里就拒——被停用插件的缓存 bundle 即使执行了也登记不进任何东西）→ **形状** → **撞核心表** → **撞别的插件** → **重复登记**。任一条都是抛错并点名插件与成员，不是静默覆盖。通过后成员被**冻结**。
+
+**拒绝是按插件的，不是按帧的**（`apps/iris-web/src/sandbox/plugin-members.ts`）：核心表缺席才整帧拒跑；你的 bundle 被拦、解析失败或在 ready 标记之前抛了，只废掉你自己的成员，报告点名你和原因，别的卡片照常运行；卡片探测被拒命名空间时拿到的是那条报告，而不是一个裸 `undefined`。插件中心的资产状态列读的就是这些判定。
+
+**revision 绑定。** 帧在 `runCard` 时捕获 revision 并一直带着它。插件启停会推高 revision，shell 比对 `ready.systemPlugins.revision === pluginRevision` 销毁旧帧，宿主 `assertCurrent` 拒绝过期栅栏的请求，资产面 404 掉旧 bundle URL——三处一致，旧帧不会带着旧能力提交。
+
+核心成员名单 `MEMBER_KINDS` 与 `CARD_METHODS`（37 项）仍归 shell 所有，插件不能往里加；你只能在自己的命名空间下贡献。
+
+### 设置面贡献
+
+设置抽屉的插件页有一个 `iris.settings.sections` 槽。注册：
+
+```ts
+const dispose = slots.core.register(
+  { name: 'iris.settings.sections', registrant: 'demo-counter', id: 'demo-counter-settings', label: 'Demo counter' },
+  () => <DemoCounterSettings />,
+)
+```
+
+`SettingsDrawer` 里的 `PluginSettings` 用 `useSlotOccupied('iris.settings.sections')` 查占位，**没有任何贡献时连标题和引导语都不渲染**——贡献的生命周期就是插件的启用期，停用后不能留下一个声称「这里有设置」的空标题。撤销必须收回，不能污染全局 window。
+
+**今天只有 shell 内驻留的代码能注册**：`SystemPluginActivationScope` 上没有 settings 接口，宿主侧的 Node 插件贡献不了设置区块。唯一的真实注册者是 shell 里的 ST 扩展面（`apps/iris-web/src/st-extensions/plane.tsx`）。这是接口清单 §8 里记着的缺口，不是可以绕过的实现细节。
+
+### 变量写入规则
+
+产生消息变量变更的处理者**返回完整的变量表**，由宿主仲裁，不要自己往变量库里写：
+
+- 参与合并的只有该处理者相对**共同基线**的**增量**。这既保住互不相干的写入，也阻止后手的完整快照抹掉前手的无关键。
+- 顺序照抄上游 ST：Prompt-Template 在前，MVU 这类卡脚本在后。
+- **后者胜**，每一次覆盖记成一条冲突（`key` / `earlierPluginId` / `laterPluginId` / `winnerPluginId`），以 `{ kind: 'variables', grade: 'note' }` 报出来。
+- 结算只有一处：`packages/iris-app-service/src/service.ts:5148`，随后一次 `replaceVariables` 落盘。
+
+算法在 [variable-arbitration.ts](../packages/iris-app-service/src/variable-arbitration.ts)。**注意这不是插件可用的 API**：该模块是宿主内部的，结算处写死了 `'prompt-template'` 与 `'mvu'` 两个 id（`service.ts:5119`、`:5142`）。第三个写变量的插件今天接不进来，要先把提案注册做成接口。
 
 ### 持久化
 
-插件开关由 runtime 写 `system-plugins.json`，不要在插件中手改。聊天/变量继续由既有 store 写，算法返回结果即可。卸载默认保留业务数据；删除数据应是另一个明确动作。
+插件开关由 runtime 写 `system-plugins.json`（profile 根，`packages/iris-app-service/src/index.ts:779`），不要在插件中手改。**先落盘再改内存**：写失败会把持久化行回滚并抛 `internal`，所以不会出现「界面已启用、重启后消失」。偏好文件读不动时全部插件置 `error` 且**保留原文件**——不要写「修复」逻辑去覆盖它。
 
-通用插件 storage/settings namespace 尚未实现。确需持久化的新插件，先定义宿主提供的窄存储接口，经过路径包含性、原子写、损坏保留、profile lock 等约束后再用，不能把 profile 路径暴露给卡片脚本。密钥不得进入普通插件 JSON、日志或快照。
+聊天/变量继续由既有 store 写，算法返回结果即可。卸载默认保留业务数据；删除数据应是另一个明确动作。
+
+通用插件 storage/settings namespace 尚未实现（ST 扩展的设置走的是专门的闭包，不是通用接口）。确需持久化的新插件，先定义宿主提供的窄存储接口，经过路径包含性、原子写、损坏保留、profile lock 等约束后再用，不能把 profile 路径暴露给卡片脚本。密钥不得进入普通插件 JSON、日志或快照。
+
+## 安装一个 ST 扩展
+
+一个未经修改的 SillyTavern 扩展可以装进 Iris，在 shell 的隐藏 facade iframe 里运行。**它就是一个系统插件**：安装后被 `adoptDefinition` 接纳，之后的启停/卸载走的是同一套 `plugin.*`。
+
+**安装。** RPC `stExtension.install({ path })`，`path` 指向一个含 `manifest.json` 的本地目录。宿主读 `display_name`、slugify 成 id、校验合法，**安装树仍在则直接重新接纳**（这是「重装」，不是静默覆盖），否则真正安装，再 `normalizeManifest` → `adoptDefinition`（`packages/iris-app-service/src/index.ts:846`）。
+
+**安装器接受什么。** 三种源（[source.ts](../packages/iris-extension-installer/src/source.ts)）：`local-archive`、`local-directory`、`git`。git 的约束是硬的：
+
+- 必须 `https://`（`file://` 只在 `allowLocalGit` 下给测试用），URL 含空白或引号直接拒；
+- 必须钉**完整 40 位十六进制 commit**——会动的 ref 会让锁记录说谎；
+- 固定 argv、不过 shell，每次调用 `-c core.hooksPath=` 清空钩子，fetch 带 `--depth 1 --no-recurse-submodules --no-tags`：拉下来的树在 fetch/checkout 期间执行不了任何东西。
+
+**分析报告说什么。** 静态分析（[analyze.ts](../packages/iris-compat-st-extension/src/analyze.ts)，TypeScript AST，**不执行、不联网**）把扩展导入的每个 ST 模块路径对照 17 条映射表判定：`mapped`（facade 有）、`missing`、或 `unknown`（唯一后缀候选，点名候选而不下断言）。未映射路径在运行期抛 `UnsupportedStCompatApiError`。试点对象的**锁定**报告是 `packages/iris-compat-st-extension/reports/st-prompt-template@f9a07da.report.json`。已记录的行为偏差（`messageFormatting` 只做 HTML 转义、`saveChatConditional` 是 no-op、token 计数是估算、事件映射不完整）见 [PILOT-REPORT](../notes/st-compat/PILOT-REPORT.md)。
+
+**启停与卸载。** 就是 `plugin.enable` / `plugin.disable` / `plugin.uninstall`，没有第二套生命周期。停用后 `/iris-st-ext/<id>/…` 的每条路径都 404（manifest 也不例外），plane iframe 消失，模板原文直通。**卸载保留安装树与设置文件**——artifact 和设置是用户数据；同一目录再装就是重装。
+
+**试点只服务一个扩展**：快照里第一个非内置的已安装行（`packages/iris-app-service/src/index.ts:838`）。
+
+**证据与复跑。** 浏览器验收脚本与逐轮证据在 `notes/st-compat/acceptance/`（`seed.mjs`、`run-uc1.mjs` / `run-uc2.mjs` / `run-uc3.mjs`、`run-revision.mjs`、`run-fault.mjs`、`run-uninstall.mjs`、`run-st-compare.mjs`，夹具 `lib.mjs` / `cdp.mjs` / `mock-provider.mjs` / `pilot-host.mjs`，证据目录 `evidence/`）。复跑用隔离端口：
+
+```powershell
+$env:PILOT_PORT = '8811'
+node notes/st-compat/acceptance/run-uc1.mjs
+```
+
+结论与逐项判定见 [PILOT-REPORT](../notes/st-compat/PILOT-REPORT.md)；平台侧的联合验收见 [PLUGIN-PLATFORM-ACCEPTANCE](../notes/PLUGIN-PLATFORM-ACCEPTANCE-2026-09-13.md)。
 
 ## 5. 安装依赖、构建与执行
 
@@ -163,7 +254,7 @@ pnpm install --frozen-lockfile --offline
 npm ci --offline
 ```
 
-离线 metadata 缺失或 package.json/lockfile 不一致时，先报告真实原因，由该变更的 owner 修复依赖声明/锁文件；不要用临时手建 junction 作为最终交付，也不要提交不明 license/锁文件噪声。Vite/tsc 的路径 alias 通过并不保证 Node 运行期能找到 workspace 包。
+**实测过的失败**：只要有一条依赖边变化（新增依赖、改版本、新 workspace 包），pnpm 11.24 的供应链校验会去读全部 lockfile 条目的 registry 元数据，离线镜像没有就死在 `ERR_PNPM_NO_OFFLINE_META`——`--config.minimumReleaseAge=0` 绕不过去，而同一次运行还会打印「Lockfile is up to date, resolution step is skipped」，容易误读成安装成功。这种情况下必须在**那个 worktree**里跑一次联网 `pnpm install`，然后确认 lockfile 的 diff 只落在 importer 条目上。不要用临时手建 junction 作为最终交付，也不要提交不明 license/锁文件噪声。Vite/tsc 的路径 alias 通过并不保证 Node 运行期能找到 workspace 包。
 
 ```powershell
 # 仓库根
@@ -179,7 +270,7 @@ npm test
 npm run test:no-corpus
 ```
 
-执行验证宿主前创建全新临时数据目录，并选择空闲端口。以下在仓库根运行；只适合插件管理验证，不发送真实模型请求：
+执行验证宿主前创建全新临时数据目录，并选择空闲端口。**每份数据目录只能跑一个宿主**：`host-lock.ts` 的 `acquireHostLock` 写 `host.lock`，没有绕过开关；端口被占是 `EADDRINUSE` 直接启动失败，绝不会「换个地方起来」。以下在仓库根运行；只适合插件管理验证，不发送真实模型请求：
 
 ```powershell
 $pluginPreviewPort = 8788
@@ -194,7 +285,9 @@ $env:IRIS_WEB_DIST = Join-Path (Get-Location).Path 'apps/iris-web/dist/index.htm
 node apps/iris/bin.ts
 ```
 
-前台运行，浏览器打开 `http://127.0.0.1:8788`（若换端口则相应修改），进入设置 → Advanced/高级 → 系统插件。用 Ctrl+C 停止本终端启动的宿主。不要让多个宿主共用正式数据目录；临时 profile 路径留作验收证据，确认不需恢复时再清理。端口 8790 的现有进程不属于本任务。
+前台运行，浏览器打开 `http://127.0.0.1:8788`（若换端口则相应修改），进入设置 → 插件。用 Ctrl+C 停止本终端启动的宿主。不要让多个宿主共用正式数据目录；临时 profile 路径留作验收证据，确认不需恢复时再清理。端口 8787/8790 的现有进程不属于本任务。
+
+注意 ST 扩展的资产路由只在配置了 `webDistIndex`（即上面的 `IRIS_WEB_DIST`）时才注册；不带它启动的宿主可以管理插件，但装不出可用的 ST 扩展面。
 
 现有两个内置插件：先停 MVU，才能停 TH；重新启用 MVU 会恢复所需依赖。卸载后可从同一目录重新安装。源码更新后的测试从停止/重启开发宿主开始；reload 测的是副作用释放与重新激活。
 
@@ -210,40 +303,59 @@ node apps/iris/bin.ts
 | 运行期 RPC 方法 | 启用后可调用且 schema 生效；停用/过期 revision 答 unsupported 且 schema 同撤；reload 不累积注册；重名只失败当事插件 |
 | 激活失败 | 已注册的部分资源回收；其他插件可继续工作 |
 | 存储失败 | 不伪报成功，不覆盖损坏偏好；错误可见 |
+| `client.js` 下发 | 清单只列已启用且有 bundle 的插件；`?rev=` 命中才 immutable；停用后清单无行且 URL 404；CORS/nosniff 齐全 |
+| 成员合并 | 撞 core、插件互撞、重复登记、坏形状、未获准插件、半登记状态——六种都按插件名拒绝且报告可读；核心表缺席才整帧拒跑 |
+| 变量仲裁 | 互不相干的写入都保住；重叠路径后者胜且冲突被报出；只有一处结算 |
 | MVU 停用期聊天 | 不初始化/更新/补放命令；重新启用不重放停用期文本 |
 | TH 停用 | 原生对话、宏、世界书与静态消息仍能使用；依赖 TH 的脚本明确不可用 |
 | 旧 iframe | 延迟 ready、RPC、fetch 返回不能复活旧 run 或带旧能力提交 |
 | 重连/重启 | 新会话可接受新进程较低 revision；同会话不倒退 |
 | 卸载重装 | 聊天、变量和应保留设置不丢失 |
+| ST 扩展安装 | 上游字节零修改；分析报告与安装锁一致；停用后原文直通、桥接轮数为 0；卸载保留安装树与设置 |
 | UI | 中英文、键盘、窄屏、等待与失败状态均可操作 |
 
 现成测试起点：
 
 ```powershell
-node --test packages/iris-plugin-api/tests/*.test.ts packages/iris-plugin-web-api/tests/*.test.ts packages/iris-app-service/tests/system-plugins.test.ts packages/iris-app-service/tests/system-plugin-extraction.test.ts packages/iris-app-service/tests/system-plugin-rpc.test.ts packages/iris-protocol/tests/rpc.test.ts packages/iris-protocol/tests/rpc-registry.test.ts packages/iris-client-fake/tests/system-plugins.test.ts packages/iris-client-fake/tests/plugin-methods.test.ts apps/iris-web/tests/system-plugins-store.test.ts apps/iris-web/tests/plugin-center.test.ts apps/iris-web/tests/system-plugin-sandbox-lifecycle.test.ts
+node --test packages/iris-plugin-api/tests/*.test.ts packages/iris-plugin-web-api/tests/*.test.ts packages/iris-app-service/tests/system-plugins.test.ts packages/iris-app-service/tests/system-plugin-extraction.test.ts packages/iris-app-service/tests/system-plugin-rpc.test.ts packages/iris-app-service/tests/plugin-assets.test.ts packages/iris-app-service/tests/variable-arbitration.test.ts packages/iris-app-service/tests/st-compat-floor-variables.test.ts packages/iris-app-service/tests/st-reinstall.test.ts packages/iris-protocol/tests/rpc.test.ts packages/iris-protocol/tests/rpc-registry.test.ts packages/iris-client-fake/tests/system-plugins.test.ts packages/iris-client-fake/tests/plugin-methods.test.ts apps/iris/tests/plugin-assets-plane.test.ts apps/iris/tests/rpc-transport.test.ts apps/iris/tests/architecture.test.ts apps/iris-web/tests/system-plugins-store.test.ts apps/iris-web/tests/plugin-center.test.ts apps/iris-web/tests/plugin-member-merge.test.ts apps/iris-web/tests/plugin-browser-assets.test.ts apps/iris-web/tests/plugin-browser-assets-mount.test.ts apps/iris-web/tests/sandbox-srcdoc.test.ts apps/iris-web/tests/system-plugin-sandbox-lifecycle.test.ts
 ```
 
-先完成 web build 再读取 no-corpus 结果，避免因缺 dist 多跳过测试。记录实际 fail/skip 和原因，不把“测试文件未能启动”算成测试通过。
+ST 试点另有 `packages/iris-compat-st-extension/tests/*.test.ts`、`packages/iris-extension-installer/tests/*.test.ts` 与 `apps/iris-web/tests/st-ext-*.test.ts`；浏览器夹具 `qa/plugin-platform/browser-fixture.mjs` 用生产 `buildSrcdoc` 与生产 bootstrap/members bundle 跑一次真实装载。
+
+先完成 web build 再读取 no-corpus 结果，避免因缺 dist 多跳过测试（无语料时的预期是 40 skipped / 0 failed，见 [PILOT-REPORT](../notes/st-compat/PILOT-REPORT.md)）。记录实际 fail/skip 和原因，不把「测试文件未能启动」算成测试通过。
 
 ## 7. 常见故障
 
 | 现象 | 优先检查 |
 | --- | --- |
 | `Cannot find package @iris/text` 或契约包 | workspace/file 依赖链接与对应包管理器安装；不是先改业务代码 |
+| `ERR_PNPM_NO_OFFLINE_META` | 有依赖边变化，离线镜像没有该包元数据；在该 worktree 跑一次联网 `pnpm install`，再确认 lockfile diff 只落在 importer 条目 |
 | tsc 通过、Node 测试启动失败 | tsc/Vite alias 与 Node 包解析是不同路径 |
 | 插件 enabled 但没效果 | 是否有 capability 消费者；是否缓存旧对象；是否实际接入业务调用 |
-| `unsupported` | 未注册方法、插件停用或 revision 过期，读取完整错误 |
+| `unsupported` | 未注册方法、插件停用、revision 过期，或宿主根本没配置该控制面（`requirePlugins`/`requireStCompat`）；读取完整错误 |
 | 插件一直 disabling | 未释放 lease、无截止的异步工作、任务内 await 停用自身 |
-| 缺失前端成员 | 当前并无通用成员合并；核对实际能力快照与资产加载目标 |
+| 卡片看不到插件成员 | 按插件的拒绝报告读：bundle 是否在 `<dataDir>/system-plugins/<id>/client/client.js`；插件是否启用（停用即无清单行、URL 404）；`registerPluginMembers` 是否撞了核心表或别的插件；脚本是否跑到最后一句 |
+| 插件中心成员列是空的但插件在跑 | `scanPluginMemberNames` 读的是源文本；id 或成员键名不是字面量就扫不到 |
+| 旧帧仍在用旧能力 | revision 绑定三处（shell 比对、宿主 `assertCurrent`、资产面 404）是否都走到；不要用最新 store revision 替换旧请求的 |
 | 重启后面板状态倒退 | 会话边界、list/event 竞态和旧 mutation 回包 |
 | 修改文件后 reload 没变化 | 当前 reload 复用已载入 definition，需要重启开发宿主 |
+| 宿主起不来，报端口占用 | 每份数据目录只跑一个宿主（`host.lock`，无绕过）；换空闲端口和新临时数据目录，不要去杀未知进程 |
 
 ## 8. 独立插件仓库与交付
 
-当前两个契约包 `private: true`，版本 0.0.0，导出 TS 源码。它们是工作区契约，不是可以对外发布并承诺兼容的 npm SDK。
+当前两个契约包 `@iris/plugin-api` 与 `@iris/plugin-web-api` 都是 `private: true`、版本 `0.0.0`、`exports` 指向 `./src/*.ts`（TS 源码）。它们是工作区契约，不是可以对外发布并承诺兼容的 npm SDK。同样地，**一个 Node 系统插件今天必须在仓库内**：要么进 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`，要么以 ST 扩展身份被 `adoptDefinition` 接纳，没有第三条路。
 
-独立发布前完成：构建 JS 与声明文件、约定 apiVersion 兼容、验证安装后的真实 exports、避免带入第二份不兼容 Cordis 实例、提供包外消费者测试；再完成插件发现/资产/贡献注册和版本撤回机制。不能用把 private 改 false 来代替这些步骤。
+独立发布前需要完成的具体项：
 
-每份交付至少包含：插件 id 与职责、运行位置、契约/实现版本、声明依赖、贡献接口、数据归属、失败和释放路径、测试结果、浏览器复现步骤、提交号与基线。PR 描述区分“代码实现”“测试通过”“浏览器验收”“已合并”。
+- 构建 JS 产物与 `.d.ts` 声明入口，`exports` 不再指向 `.ts` 源码；
+- 去掉 `private: true` 之前先定版本与 `apiVersion` 兼容承诺（破坏性变更出新版本，不原地改）；
+- peer 依赖策略：Cordis 必须是 peer，避免装进第二份不兼容的 Cordis 实例；
+- 验证安装后的真实 exports（从包外消费，不是从 workspace alias）；
+- 包外消费者测试，跑在一个不含本仓库 alias 的目录里；
+- 之后才是插件发现、资产下发注册、贡献注册与版本撤回机制。
+
+把 `private` 改成 `false` 不能代替上面任何一步。
+
+每份交付至少包含：插件 id 与职责、运行位置、契约/实现版本、声明依赖、贡献接口（capability / 运行期 RPC / 帧侧成员 / 设置区块，逐项说明）、数据归属、失败和释放路径、测试结果、浏览器复现步骤、提交号与基线。PR 描述区分「代码实现」「测试通过」「浏览器验收」「已合并」。
 
 多人协作：每个文件只设一个当前 owner；协议注册、runtime、frame 组装的交界按顺序集成。旧扩展设计里的静态卸载方式不再用于本控制面；未实现的设计必须留在待办区，不能写进可执行范例。
