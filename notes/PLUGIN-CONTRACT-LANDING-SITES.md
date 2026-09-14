@@ -1,5 +1,21 @@
 # PLUGIN-CONTRACT-LANDING-SITES —— 第二批施工落点底稿
 
+> **状态(2026-09-15):四个落点都已经落地。** 系统插件平台与 ST 扩展试点在 PR #88
+> 合入 `main`(`2eccf30`),两份接口文档在 PR #89 重记基线(`1383a12`)。因此:
+>
+> - 每个落点的「切面设计草案」「工作量」「实施顺序建议」是**历史底稿**,记录当时的
+>   取舍与风险判断,不是待办;落点二开头已有的 2026-09-13 状态块是同一件事的早期记录,
+>   它说的那次落地的内容随 #88 进了 main(提交号 `ab3da4d` 是分支上的坐标,不在 main
+>   的历史里)。
+> - 行号以 `ae55920` 工作区为准,那是一个未合入的现场保存点;**本文的 `file:line`
+>   一律不能当作 main 的坐标**,以符号名定位。
+> - 草案与实现有出入的地方,以实现为准——最明显的一处在落点二:dsh `client-modules`
+>   组合行没有挂,插件 bundle 直接从安装目录伺服。
+> - **当前还缺什么,以 [docs/INFRASTRUCTURE-INTERFACES.md](../docs/INFRASTRUCTURE-INTERFACES.md)
+>   §8 为准**;本文不随版本更新。
+>
+> 正文以下原样保留,未作改写。
+
 - 日期:2026-09-12。工作目录 `D:/workspace/小项目/iris-system-plugins`(独立 worktree),分支 `dev/system-plugins`,现场保存点 `ae55920`。**只读勘察,未改任何产品代码。**
 - 性质:为四件 Claude 侧施工(运行期 RPC schema 注册 + Partial Handlers、`/plugins/<id>/client.js` 资产面、dsh.client 清单扫描 + 成员表合并、可变资产清单)写落点底稿。每个落点:现状(`file:line`)→ 切面设计草案 → 风险(语义交界,标出 Codex 的行)→ 工作量。
 - 行号以 `ae55920` 工作区为准。`packages/iris-plugin-api` / `iris-plugin-web-api` 由并行代理孵化,本稿只引用其**未来**的接口名;所有现存类型引自 `packages/iris-app-service/src/system-plugins.ts`。
@@ -17,6 +33,8 @@
 ---
 
 ## 1. 落点一:运行期 RPC schema 注册 + Partial Handlers + fake 开放分发
+
+→ 已落地(#88):协议运行期注册表 `rpc-registry.ts`、`scope.registerRpc` 成对登记、fake 的 `registerPluginMethod`。与草案的一处偏离:`Handlers` **没有**改 Partial,刻意保持全量(理由在 `service.ts` 的注释里)。
 
 ### 1.1 现状
 
@@ -130,6 +148,8 @@ Iris 侧路由 + manifest 聚合 + CORS 头 2–3 天;dsh 注入行接线 + main
 
 ## 3. 落点三:dsh.client 清单扫描 + 成员表合并
 
+→ 已落地(#88):帧侧成员合并按「core 缺席整帧拒跑、单个插件缺席只拒该插件并点名」实现,重名明确拒绝,销毁重建与 revision 一致。与草案的一处偏离:成员扫描读的是插件 bundle 源码里的 `registerPluginMembers` 字面量(`scanPluginMemberNames`),不是 dsh 的 `dsh.client` 清单声明。
+
 ### 3.1 现状
 
 **清单扫描的宿主半边** = 落点二的 dsh 内核(Iris 未接线)+ 插件目录扫描(要新建,`dsh.client` 声明形状见 2.1)。壳半边:`main.tsx` 的 `ClientModuleLoaderTarget` 接线(`main.tsx:23-26`)已就位,页内 boot 图(`main.tsx:5-10`)在宿主平面启用后撤掉。
@@ -188,6 +208,8 @@ registerPluginMembers(pluginId: string, members: Record<string, unknown>): void
 ---
 
 ## 4. 落点四:可变资产清单 —— 哪些构建期闸要改成运行期闸
+
+→ 已落地(#88):可变清单作为**第二份**清单落地,构建期 `manifest.json` 的四个固定键原样不动(理由写在 `PluginAssetManifest` 的文档注释里);浏览器允许表按草案扩充。
 
 ### 4.1 现状闸清单
 

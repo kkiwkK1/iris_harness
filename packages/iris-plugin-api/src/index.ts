@@ -22,31 +22,30 @@
  *   serialized transitions, profile-local persistence, the Cordis child
  *   fibers themselves, and the drain that a disable waits behind.
  *
- * The vocabulary is shared with the third-party extension design — its
- * contract document, `docs/EXTENSIONS`, lives on the
- * `dev/feat-extension-system` branch — not duplicated by it. That document
- * describes the *runtime
- * services* a plugin may reach once it is active — a storage namespace under
- * the profile, an event tap, the generation-pipeline hooks, a contributed
- * settings face — and is written for extensions that arrive the privileged
- * way: one npm package, one row. This package describes one layer earlier in
- * the paper stack, *what a plugin is and how it activates*, which is the same
- * control plane whether the implementation shipped with Iris or came from
- * outside it. The two documents meet in these types rather than growing a
- * second vocabulary: the `apiVersion` on a `SystemPluginDefinition` is the
- * same versioning device as the `iris.apiVersion` an extension manifest
- * declares, and the rule for breaking either is the same — a new version,
- * never an in-place edit. A dynamic extension contributes through this
- * contract's install/activate paths and through the capability names its
- * activation publishes; it does not register a second registry
- * (`docs/SYSTEM-PLUGINS.md`, Authority and scope).
+ * Two documents on `main` describe the rest, and this comment names them
+ * rather than the third-party extension design it used to cite: that design's
+ * contract document, `docs/EXTENSIONS`, exists only on the unmerged
+ * `dev/feat-extension-system` branch, so a reader here could not open it.
+ *
+ * - `docs/SYSTEM-PLUGINS.md` — the architecture decision these types encode:
+ *   one control plane whether the implementation shipped with Iris or arrived
+ *   from outside, the lifecycle contract, the trust model, and the list of
+ *   what is not built. A dynamic extension contributes through this contract's
+ *   install/activate paths and through the capability names its activation
+ *   publishes; it does not register a second registry (that document's
+ *   "Authority and scope").
+ * - `docs/INFRASTRUCTURE-INTERFACES.md` — the maintained inventory of what a
+ *   plugin can actually reach on `main`, §8 being the gap list. This package
+ *   describes *what a plugin is and how it activates*; the runtime services a
+ *   plugin might reach once active — a storage namespace under the profile, an
+ *   event tap, generation-pipeline hooks, a contributed settings face — are
+ *   one layer later in the paper stack, and none of them exists yet.
  *
  * Dependencies, by contract: none of Iris's. The Cordis import is type-only —
  * the activation scope hands a plugin its host context, and Cordis is the
- * framework a plugin is written against, which is the same dependency set the
- * extension design's §2.1 grants an extension package. A runtime import
- * added here would widen what the contract drags into every consumer, so a
- * source scan pins the rule (`tests/contract.test.ts`).
+ * framework a plugin is written against. A runtime import added here would
+ * widen what the contract drags into every consumer, so a source scan pins the
+ * rule (`tests/contract.test.ts`).
  *
  * @module @iris/plugin-api
  */
