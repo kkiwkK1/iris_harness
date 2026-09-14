@@ -125,6 +125,27 @@
 
 **协议集中是硬约束**:`@iris/protocol` 不得导入任何 `@iris` 包(`apps/iris/tests/architecture.test.ts:114`)。插件不能自带 zod 让协议引用;要么形状留在协议里(TH 不从契约剥离),要么协议获得运行期合并机制。同一测试 `:135` 规定浏览器只能导入 `@iris/protocol`、`@iris/client-fake`、`@iris/rpc-client`、`@iris/compat-tavernhelper-core`——th-core 已被允许进浏览器,帧与宿主共用它;剥离时事件名与正则解析的两侧对齐要另想办法。
 
+### 6.1 状态(2026-09-15,对照 `main` 的 `2eccf30` / PR #88)
+
+本节的分析未改写;下表只标注上面每一行今天是否还成立。**活的清单在
+[docs/INFRASTRUCTURE-INTERFACES.md](../docs/INFRASTRUCTURE-INTERFACES.md) §8**,
+本表不随版本更新。
+
+| §6 的行 | 状态 |
+|---|---|
+| RPC 方法贡献:协议 schema 运行期合并点 + `parseRequest` 查它 | 已落地 #88(`rpc-registry.ts`;`scope.registerRpc` 成对登记)。**但 main 上无生产使用者**,随包发布的插件方法全是静态 schema |
+| `Handlers` 改 Partial | **未做,且刻意不做**——理由写在 `service.ts` 该类型的注释里 |
+| fake client 的 `never` 穷尽守卫改开放分发表 | 部分:开放表已加(`registerPluginMethod`),`never` 守卫保留 |
+| 生成钩子(`beforePrompt`/`afterReplyText`/`onSettle`) | 未做;TH/MVU 仍在固定调用点经 capability 取用 |
+| 变量库访问器 + `baselineFor` 提供者 | 未做为 API;`variable-arbitration.ts` 是宿主内部模块,结算处写死两个 pluginId |
+| 卡文件字段的 per-plugin 命名空间 | 未做 |
+| 快照/上下文贡献(`contributeContext`) | 未做;`context.ts` 仍是单体 |
+| 设置 / 存储命名空间 | 未做;ST 扩展设置走专门闭包,不是通用接口 |
+| i18n 命名空间合并 | 未做;插件中心文案仍是内联 `COPY` |
+| 宏贡献(`registerMacroLike`) | 未做;`expandHelperMacros` 仍是第二遍扫描 |
+| 前端 UI:宿主平面 `/plugins` + 清单、成员表合并、可变长资产清单 | 已落地 #88。清单是**第二份**清单,构建期 `manifest.json` 的四个固定键未动;**未走 `dsh.client` 扫描**,理由在 `plugin-assets.ts` 模块头 |
+| per-plugin 帧 CSP | 不需要:bundle 与帧同源,已在 `selfOrigin` 内 |
+
 ## 7. 难度与路线
 
 | 阶段 | 内容 | 量级 |
@@ -135,6 +156,7 @@
 | 2 前端宿主平面 | `/plugins` 下发 + `dsh.client` 清单扫描(`PLAN.md` 原始设计);成员表合并协议(含「表缺席即拒跑」的重新定义);资产清单可变长;硬编码面板迁到 slot;MVU 的帧侧垫片与 `CleanupOffer` 迁入 | 一到两周 |
 | 3 酒馆助手按域拆 | 照 `notes/AUDIT-CORDIS.md` §4「按域拆子插件」:worldbook / preset / script-compat 成 `@iris/app-service` 的兄弟插件,各自 `inject: ['irisRpc', …]` 自带 handler;先拆宿主 handler,再拆沙盒文件;协议形状暂留中央 | 数周;四个普查脚本要同步改口径 |
 | 4 管理 UI 与信任模型 | 安装 / 启用 / 禁用 / 更新。先答:插件是与 Iris 同权的受信代码(ST 形态),还是也进沙盒?TH 的活恰恰需要全权 | 设计决定先于工程量 |
+| **状态(2026-09-15,`main` 的 `2eccf30` / PR #88)** | 阶段 1:**部分**——运行期 RPC 注册与契约包已落地,`Handlers` Partial 刻意不做,四个生成钩子与设置/存储命名空间未做,MVU 仍留在 app-service 内。阶段 2:**已落地**——`/plugins` 下发与聚合清单(不走 `dsh.client`)、成员表合并(核心表缺席整帧拒跑、单插件缺席只拒该插件)、资产清单可变长(独立的第二份清单);硬编码面板迁 slot 与 MVU 帧侧垫片迁入**未做**。阶段 3:未开始。阶段 4:管理 UI 已落地(插件中心 + ST 扩展安装);**信任模型由实践确定但未成文**——系统插件是与宿主同权的 Node 代码,ST 扩展代码跑在沙盒 iframe、卡片侧只经 tokened 成员代理触达。逐项与证据见 [docs/INFRASTRUCTURE-INTERFACES.md](../docs/INFRASTRUCTURE-INTERFACES.md) §8 | 已合 1 支(#88) |
 
 ## 8. 开放问题
 

@@ -2,7 +2,17 @@
 
 Architecture: `docs/SYSTEM-PLUGINS.md`.
 
-Status: implementation in progress. No completion claims yet.
+Status (2026-09-15): landed on `main` as `2eccf30` (PR #88, "Add the system
+plugin platform and ST extension pilot"). This file is the *delivery ownership*
+record for the extraction workstreams; the results are not kept here. The
+acceptance records are
+[插件平台联合验收](PLUGIN-PLATFORM-ACCEPTANCE-2026-09-13.md) — host runtime,
+dynamic RPC, `/plugins` assets, member merge, stale-revision isolation — and
+[ST 试点验收报告](st-compat/PILOT-REPORT.md) — the ST extension pilot's
+UC-1/2/3, revision isolation, fault isolation, uninstall, and the ST 1.18.0
+comparison. The interface surface as it stands on main, and what is still
+missing, are in
+[docs/INFRASTRUCTURE-INTERFACES.md](../docs/INFRASTRUCTURE-INTERFACES.md) §8.
 
 ## Delivery ownership
 
@@ -18,4 +28,8 @@ isolated `iris-system-plugins` worktree. The coordinator owns commits and PRs.
 
 ## Results
 
-Pending integrated implementation and verification.
+Integrated, verified and merged. Both acceptance rounds passed; see the two
+records linked above for the per-check evidence. The live list of what is
+implemented and what is not is maintained in
+[docs/INFRASTRUCTURE-INTERFACES.md](../docs/INFRASTRUCTURE-INTERFACES.md) §8,
+not here — this file is not updated per release.
