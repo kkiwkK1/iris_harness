@@ -121,8 +121,8 @@ log('plugin.list after enable', list2.plugins.map(p => ({ id: p.id, installed: p
 log('revision', list2.revision)
 log('extensionId', extensionId)
 
-// 用例前置：旧 MVU 实现必须停用（同一功能只能有一个活动实现），
-// 否则 MVU 的 init/replay 会覆盖楼层变量表。
+// Most scenarios isolate Prompt Template. UC-2 explicitly enables MVU for its
+// final round and verifies the shared host-side variable transaction.
 await rpc('plugin.disable', { id: 'mvu' })
 const list3 = await rpc('plugin.list', {})
 log('plugin.list after mvu disable', list3.plugins.map(p => ({ id: p.id, status: p.status })))
