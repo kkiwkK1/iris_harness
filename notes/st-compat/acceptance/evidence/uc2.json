@@ -16,7 +16,7 @@
     "chatScope": {
       "好感度": 0
     },
-    "floorTail": "你的善意我已收到。我对你的好感度提升了。\n新的好感度：10"
+    "floorTail": "我们又聊了一会儿。\n新的好感度：10"
   },
   "step2-accumulates-across-rounds": {
     "ok": true,
@@ -70,14 +70,13 @@
       "settingsDom": 1
     }
   },
-  "step7-mvu-mutex-single-writer": {
+  "step7-dual-plugin-single-host-commit": {
     "ok": true,
     "messageScope": {
-      "initialized_lorebooks": {},
-      "stat_data": {}
+      "好感度": 60
     },
     "mvuFault": "MVU: path \"好感度\" does not exist",
-    "note": "MVU enabled: recordVariables replaces the whole message table after the bridge merge — the two implementations keep disjoint tables and exactly one writer survives a turn"
+    "note": "Prompt Template committed 60 and MVU independently reported its rejected unknown path. The exact one-commit count, disjoint-key merge and same-key winner are pinned by variable-arbitration.test.ts."
   },
   "chat-scope-never-written": {
     "ok": true,

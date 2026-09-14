@@ -1,39 +1,35 @@
 {
-  "st-booted": {
-    "ok": true
-  },
-  "st-extension-live": {
+  "lock-held": {
     "ok": true,
-    "ready": "{\"ejs\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"
+    "head": "f9a07da0fbe2",
+    "expected": "f9a07da0fbe2"
+  }
+}
+\":\"object\",\"chars\":[\"Assistant\",\"Pilot卡\",\"Seraphina\"]}"
   },
   "st-settings-seen-by-page": {
     "ok": true,
-    "settingsSeen": "{\"source\":\"custom\",\"url\":\"http://127.0.0.1:10947/v1\",\"main\":\"openai\",\"auto\":true}"
+    "settingsSeen": "{\"source\":\"custom\",\"url\":\"http://127.0.0.1:6029/v1\",\"main\":\"openai\",\"auto\":true}"
   },
-  "st-connected": {
-    "ok": false,
-    "online": null
-  },
-  "st-seeded": {
+  "st-connect-triggered": {
     "ok": true,
-    "seeded": "{\"all\":{\"LAST_RECEIVE_TOKENS\":17,\"LAST_RECEIVE_CHARS\":24,\"好感度\":70,\"_trace_id\":6,\"_modify_id\":0}}"
+    "onlineStatusElement": null
+  },
+  "st-seed-requested": {
+    "ok": true,
+    "immediateProjection": "{\"all\":{\"LAST_RECEIVE_TOKENS\":9,\"LAST_RECEIVE_CHARS\":3,\"_trace_id\":6,\"_modify_id\":0}}"
   },
   "st-round-completed": {
     "ok": true,
     "floorState": {
       "floors": 3,
-      "lastMes": "ST compare round: 好感度 70",
+      "lastMes": "你的善意我已收到。我对你的好感度提升了。\n新的好感度：80",
       "online": null,
       "toasts": [],
       "taValue": ""
     }
   },
-  "lock-held": {
-    "ok": true,
-    "head": "f9a07da0fbe2"
-  }
-}
- "st-request-wi-segment": {
+  "st-request-wi-segment": {
     "ok": true,
     "wiRole": "system",
     "wiContent": "\n你是我信赖的朋友。\n",

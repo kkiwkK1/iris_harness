@@ -4,7 +4,7 @@
 
 ## 结论
 
-**全部检查通过。** UC-1（10/10）、UC-2（9/9）、UC-3（9/9）、旧 revision 隔离（6/6）、故障隔离（5/5）、卸载与数据规则（4/4）、ST 1.18.0 同输入对照（核心项：生成前消息字节级一致）全部成立。过程中发现并修复 3 个产品缺陷（见 §缺陷），全部按流程以独立分支修复、合回 `dev/st-compat-pilot`、验收分支更新到新头后复测。
+**全部检查通过。** UC-1（10/10）、UC-2（9/9）、UC-3（9/9）、旧 revision 隔离（6/6）、故障隔离（5/5）、卸载与数据规则（4/4）、ST 1.18.0 同输入对照（核心项：生成前消息字节级一致）全部成立。过程中发现并修复 4 个产品缺陷（见 §缺陷），全部按流程以独立分支修复、合回 `dev/st-compat-pilot`、验收分支更新到新头后复测。
 
 ## 1. UC-1：生成前模板处理（run-uc1.mjs，证据 `evidence/uc1.json`）
 
@@ -25,9 +25,9 @@
 | setvar 写入正确的消息变量层 | ✅ | 回复轮后 message 层 = 10，chat 层保持 0；楼层文本模板被剥离（`新的好感度：10`） |
 | 刷新、切换会话后仍可读取 | ✅ | 页面刷新一轮后 10→30；RPC 切换会话再切回一轮后 30→40（依赖缺陷修复 #1） |
 | 停用、重启用不重放 | ✅ | 停用期变量冻结在 40、原文楼层保留 `<%`；重启用后 40→50 继续，停用期楼层未被补处理 |
-| 与 MVU 互斥、不双写 | ✅ | 双开一轮：MVU 的 `recordVariables` 在桥合并之后**整表替换**消息层，最终表为 MVU 形（stat_data），ST 模板写入被取代而非叠加；MVU 对不存在路径给出具名拒绝（`MVU: path "好感度" does not exist`）。两实现变量表不相交，每轮恰好一个写者 |
+| 与 MVU 双开、宿主只提交一次 | ✅ | 双开一轮：Prompt Template 把消息层 50→60；MVU 也被调用并具名拒绝不存在路径（`MVU: path "好感度" does not exist`）；最终消息层保留 `好感度=60`。集成测试同时计数两个处理器各 1 次、`iris/variables` 事件恰好 1 次，并覆盖不同键合并与同键按 ST 顺序由 MVU 获胜 |
 
-互斥前置：种子脚本停用 mvu（`plugin.disable mvu`），与 RUNBOOK「一个功能一个活动实现」一致。
+种子脚本先停用 MVU，以便 UC-2 前六轮单独测 Prompt Template；第七轮显式启用 MVU，验证双处理器共享一次宿主事务。系统不再依赖“只准一个活动实现”来避免数据丢失。
 
 ## 3. UC-3：设置面板（run-uc3.mjs，证据 `evidence/uc3.json` + 截图 uc3-01..09）
 
@@ -68,7 +68,7 @@
 
 ## 7. ST 1.18.0 同输入对照（run-st-compare.mjs，证据 `evidence/st-compare.json`、`st-capture.jsonl`、`provider-capture.jsonl`）
 
-装置：`E:/sillyTavern/SillyTavern`（只读）+ 独立 dataRoot `D:/st-compare-data`；扩展锁定 `f9a07da`（ST 的第三方自动更新曾把安装拉到 d6f520d，已 `git reset --hard` 恢复，并在对照驱动中拦截 `/api/extensions/update` 后重跑）；同一脚本化 provider；同一卡（含绑定世界书与模板条目）；同一输入（好感度=70、同消息结构、英文界面）。
+装置：从只读参考树复制到 `D:/workspace/小项目/iris-st-variable-arbitration-fixture` 的一次性 ST 1.18.0 副本，独立 dataRoot `cfinal-data-4`，明确排除 `secrets.json`；扩展副本锁定 `f9a07da`，对照驱动拒绝任何 `E:` 根路径且只校验、不修复提交；同一脚本化 provider；同一卡（含绑定世界书与模板条目）；同一输入（好感度=70、同消息结构、英文界面）。
 
 | 对照项 | Iris | ST 1.18.0 @ f9a07da | 分类 |
 | --- | --- | --- | --- |
@@ -79,15 +79,16 @@
 | 设置持久化 | `extension_settings.EjsTemplate` → profile 内 `st-extension-settings/st-compat/<id>.json`（独立文件，原子写） | 同一 blob 存于 ST 的 `settings.json` 内 | **Iris 有意偏离**（存储位置），blob 形状一致 |
 | 事件面 | 仅映射试点所需事件（CHAT_CHANGED/生成前/回复落层等），未映射项具名报错 | 全事件 | **Iris 有意偏离**（试点范围，PILOT-DESIGN §2 在案） |
 | 楼层渲染 | 虚拟 DOM + 逐楼层处理；`messageFormatting` 为 HTML 转义、`saveChatConditional` no-op、token 计数为估计值 | 真实 DOM/完整存档/精确计数 | **Iris 有意偏离**（在案偏差，非本阶段缺陷） |
-| 手动对照发现 | — | ST 第三方扩展 auto_update 会在页面加载时 pull origin/main | 对 Iris 无影响（Iris 无该机制）；对 ST 装置要求锁定（已恢复并拦截） |
+| 手动对照发现 | — | ST 第三方扩展 auto_update 会在页面加载时 pull origin/main | 对 Iris 无影响；一次性副本中拦截更新，并在结束时验证锁仍为 `f9a07da` |
 
-对照期间对 ST 装置的写入仅限 dataRoot（`D:/st-compare-data`）与对被自动更新破坏的扩展仓库的**恢复性** `git reset --hard f9a07da`；`E:` 安装目录其余部分未触碰。
+对照期间所有写入均位于 D 盘一次性副本及其独立 dataRoot；`E:` 参考树只读，未执行 reset、checkout、安装、启动或数据写入。
 
 ## 8. 发现并修复的产品缺陷（各独立分支，已合回 dev/st-compat-pilot）
 
 1. **`dev/plugin-fix-st-compat-floor-variables`**：桥上下文不携带楼层消息变量（`StFloorSnapshot.variables` 协议早已声明但宿主从未填充）。上游模板缓存按「消息层覆盖 chat 层」合成且新楼层从上一楼层克隆，帧重建（刷新/切会话/停启用）后累加链从空层重启——实测持久值 20 下一轮读成 0 并回写回归。修复后跨刷新/切换/重启用连续（30→40→冻结→50）。
 2. **`dev/plugin-fix-st-compat-member-proxy-gate`**：卡面成员代理不可达——plane 挂载的页面级消息门在委托给 plane 之前丢弃了一切「来源 ≠ 扩展帧」的消息，而成员调用恰恰来自卡帧。实测卡帧信封到达页面后无任何应答。修复：门把 `irisStMemberProxy` 信封先行交给 plane（其自有守卫不变），判定抽为纯函数 `isCardMemberProxyCall` 并红绿钉住。
 3. **`dev/plugin-fix-st-compat-reinstall`**：卸载规则保留安装树，但同 id 重装撞上安装器 `already-installed` 拒绝，承诺的重装路径不存在。修复：`installFromDirectory` 在锁存在时幂等重adopt（谓词读 lock——安装器最后写入的文件，半开事务不会误判），仅对新 id 走安装事务。
+4. **`dev/plugin-fix-st-compat-variable-arbitration`**：Prompt Template 先直接写消息层，随后 MVU 用完整快照再次 `replaceVariables`，一轮产生两次宿主提交并丢掉前一插件的不相交键。修复：两插件只返回提案；宿主按 ST 的注册顺序计算差量、合并不相交键、同键由后执行者获胜并报告双方插件 ID 与键名，最后只跨一次持久化边界。集成测试覆盖双处理器调用次数、最终表、提交次数、同键/不同键和任一插件停用后的单插件行为。
 
 另记录一项**环境发现**（非产品缺陷）：验收初期 ZCode 内嵌预览页面残留连接 8799 端口的宿主，其扩展平面持续替桥应答，造成「无浏览器仍展开」「页面桥计数为 0」的矛盾观测。将验收宿主迁移到隔离端口 8811 后矛盾消失；验收夹具端口随之参数化（`PILOT_PORT`）。
 
@@ -99,7 +100,7 @@
 | Web `npx tsc --noEmit` | exit 0 |
 | `npm run build`（web，含沙箱+st-ext 门面+主构建） | exit 0 |
 | `npm run check:render` | `render check: ok`（exit 0） |
-| 根 `npm test` | **4042 pass / 0 fail** / 11 skipped（IRIS_BROWSER/IRIS_LIVE opt-in） |
+| 根 `npm test` | **4046 pass / 0 fail** / 11 skipped（corpus/browser/live 等 opt-in） |
 | `npm run test:no-corpus` | 40 skipped / **0 failed** |
 | `git diff --check` | 干净 |
 
@@ -108,7 +109,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `uc1.json` / `uc1-01-frame-healthy.png` / `uc1-04-disabled-plane-gone.png` / `uc1-07-final-state.png` | UC-1 十项判定与帧截图 |
-| `uc2.json` / `uc2-01-message-layer.png` / `uc2-05-disabled-raw-floor.png` / `uc2-07-mvu-mutex.png` | UC-2 九项判定与截图 |
+| `uc2.json` / `uc2-01-message-layer.png` / `uc2-05-disabled-raw-floor.png` / `uc2-07-variable-arbitration.png` | UC-2 九项判定与截图 |
 | `uc3.json` / `uc3-01..09*.png` | UC-3 九项判定（双语面板、键盘、持久化、停用/重启用/停用刷新） |
 | `revision.json` / `revision-01-rebuilt.png` / `revision-02-new-frame-works.png` | 旧 revision 隔离 |
 | `fault.json` / `fault-01-settings-html-gone.png` / `fault-02-facade-refused.png` | 故障隔离三变体 |
@@ -122,16 +123,15 @@
 1. 试点仅映射上游事件面的试点子集；未映射成员调用具名抛 `UnsupportedStCompatApiError`（在案设计）。
 2. `messageFormatting` 为 HTML 转义、`saveChatConditional` no-op、token 计数为估计值——在案有意偏离。
 3. settings.html 对上游 init 的存活影响存在时序不确定性（变体 A 观测：两次运行一次降级为 raw、一次继续展开）；无论哪种，聊天与其它插件不受影响（已记录）。
-4. MVU 双开时的互斥是「最后写者胜 + 具名拒绝」，不是前置禁用；平台前置仍要求单实现（种子停用 mvu）。
-5. ST 对照中回复回声数值（Iris 80 vs ST 观测值）随各自此前的消息层历史变化——机制等价，数值不做跨系统断言。
-6. E: ST 安装的扩展 auto_update=true 意味着任何 ST 页面加载都可能移动其提交；本验收以 reset 恢复 + 驱动拦截收尾，后续装置使用者需注意。
+4. ST 对照中回复回声数值随各自此前的消息层历史变化；本轮一次性干净数据副本从 70 得到 80，跨系统判定仍以处理机制、变量层与请求字节为准。
+5. 对照驱动必须由 `ST_COMPARE_ROOT` / `ST_COMPARE_DATA_ROOT` 指向 D 盘一次性副本；脚本会拒绝 `E:`，并拦截副本中的扩展自动更新。
 
 ## 12. 最终完整 SHA
 
 | 对象 | SHA-1 完整值 |
 | --- | --- |
 | 验收基线（任务下发） | `065cc027e9d81c3a7b0df53415e6bb61fddb7c12` |
-| dev/st-compat-pilot（含 3 个缺陷修复合并，验收时点） | `caf479c8b9dcedc06914a15fe78f806e45a6435c`（验收分支合入后为 `4be917a1c5e017c2228e0684bdd9230da53b630f`） |
+| dev/st-compat-pilot（含变量仲裁修复，C-final 重跑基线） | `bf51423`（完整值以合并后的 `git rev-parse HEAD` 为准） |
 | 上游扩展锁定提交 | `f9a07da0fbe25cd310eee746c2f5af24ed61f62b` |
 | 上游 dist/index.js（sha256） | `61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd` |
 | 本报告所在提交（验收分支最终提交） | 见 `git rev-parse HEAD`（dev/st-compat-pilot-acceptance） |
