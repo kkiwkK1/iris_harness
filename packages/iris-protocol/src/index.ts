@@ -34,7 +34,6 @@ export {
 } from './events.ts'
 
 export type {
-  SystemPluginId,
   SystemPluginSnapshot,
   SystemPluginView,
 } from './system-plugins.ts'

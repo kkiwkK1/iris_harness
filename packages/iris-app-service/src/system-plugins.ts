@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 
 import { Context, type Fiber } from '@deepseek-ai/cordis'
-import { registerRequestSchema, type SystemPluginId, type SystemPluginSnapshot, type SystemPluginView } from '@iris/protocol'
+import { registerRequestSchema, type SystemPluginSnapshot, type SystemPluginView } from '@iris/protocol'
 import type {
   ScopedPluginRevision,
   ScopedRequestSchema,
@@ -13,6 +13,7 @@ import type {
 
 import { atomicWriteFile } from './atomic.ts'
 import { AppError } from './errors.ts'
+import { MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from './plugins/builtins.ts'
 
 /*
  * The plugin contract lives in `@iris/plugin-api` — definition, activation
@@ -141,8 +142,8 @@ export class SystemPluginRuntime {
     this.#onError = options.onError ?? (() => {})
     this.#writePreferences = options.writePreferences ?? atomicWriteFile
     this.#defaultEnabled = new Set(options.defaultEnabled ?? [
-      'tavern-helper' satisfies SystemPluginId,
-      'mvu' satisfies SystemPluginId,
+      TAVERN_HELPER_PLUGIN_ID,
+      MVU_PLUGIN_ID,
     ])
 
     for (const raw of options.definitions) {

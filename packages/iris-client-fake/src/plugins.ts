@@ -1,6 +1,5 @@
 /** The bundled system-plugin lifecycle, held in memory for demos and tests. */
 import type {
-  SystemPluginId,
   SystemPluginSnapshot,
   SystemPluginView,
 } from '@iris/protocol'
@@ -30,29 +29,35 @@ const BUNDLED = [
     enabled: true,
     status: 'enabled',
   },
-] satisfies readonly (SystemPluginView & { id: SystemPluginId })[]
+] satisfies readonly SystemPluginView[]
 
 /**
  * A stateful fake of the control plane.
  *
- * It deliberately models only the bundled catalog. Accepting an arbitrary id
- * here would tell the plugin center that a package exists when no implementation
- * was registered for it.
+ * The method surface models only its catalog: an id absent from it is refused,
+ * because telling the plugin center that a package exists when no
+ * implementation was registered for it is the lie this fake exists not to
+ * tell. The catalog itself is injectable — `bundled` — so a test can seat a
+ * non-builtin id, the way an adopted ST extension arrives in the host, and
+ * drive its lifecycle through the same transitions; ids outside the seated
+ * catalog are refused exactly as before.
  */
 export class FakeSystemPlugins {
   #revision = 1
   readonly #emit: (snapshot: SystemPluginSnapshot) => void
   readonly #refuse: Refuse
-  readonly #plugins = new Map<string, SystemPluginView>(
-    BUNDLED.map(plugin => [plugin.id, { ...plugin, dependencies: [...plugin.dependencies] }]),
-  )
+  readonly #plugins: Map<string, SystemPluginView>
 
   constructor(
     emit: (snapshot: SystemPluginSnapshot) => void,
     refuse: Refuse,
+    bundled: readonly SystemPluginView[] = BUNDLED,
   ) {
     this.#emit = emit
     this.#refuse = refuse
+    this.#plugins = new Map(
+      bundled.map(plugin => [plugin.id, { ...plugin, dependencies: [...plugin.dependencies] }]),
+    )
   }
 
   snapshot(): SystemPluginSnapshot {
