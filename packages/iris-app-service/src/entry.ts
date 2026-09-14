@@ -59,6 +59,7 @@ import {
   EMPTY_MVU,
   type MvuCapability,
   type MvuExecution,
+  type MvuUpdate,
 } from './plugins/mvu.ts'
 import { COMPAT_TAVERN_HELPER } from './plugins/tavern-helper.ts'
 import type { MvuData } from '@iris/mvu'
@@ -1064,10 +1065,32 @@ export class ChatEntry {
     onReport?: (message: string) => void,
     execution?: MvuExecution | null,
   ): MvuData {
+    const computed = this.computeVariables(turn, text, onReport, execution)
+    if (computed === undefined) return this.baselineFor(turn)
+    this.variables.replaceVariables(
+      computed.data as unknown as Variables,
+      { type: 'message', message_id: turn },
+    )
+    return computed.data
+  }
+
+  /**
+   * Compute MVU's proposal without crossing the storage edge.
+   *
+   * The service uses this form when another reply processor also changed the
+   * message layer: both processors compute, then one arbitrator commits once.
+   * `recordVariables` remains the compatibility wrapper for direct callers.
+   */
+  computeVariables(
+    turn: number,
+    text: string,
+    onReport?: (message: string) => void,
+    execution?: MvuExecution | null,
+  ): MvuUpdate | undefined {
     const baseline = this.baselineFor(turn)
-    if (execution === null) return baseline
+    if (execution === null) return undefined
     const engine = execution?.capability ?? mvuCapability(this.#plugins, COMPAT_MVU)
-    if (engine === undefined) return baseline
+    if (engine === undefined) return undefined
 
     const result = engine.update(text, baseline)
     for (const report of result.reports) onReport?.(report)
@@ -1079,12 +1102,8 @@ export class ChatEntry {
     const current = execution === undefined
       ? mvuCapability(this.#plugins, COMPAT_MVU) === engine
       : execution.isCurrent()
-    if (!current) return baseline
-    this.variables.replaceVariables(
-      result.data as unknown as Variables,
-      { type: 'message', message_id: turn },
-    )
-    return result.data
+    if (!current) return undefined
+    return result
   }
 
   /**

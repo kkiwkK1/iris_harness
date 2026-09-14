@@ -84,7 +84,7 @@ import { cardWorldbookDigest, cardWorldbookView, charWorldbookNames, WorldbookSt
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
-import { forbiddenSegmentIn } from '@iris/variables'
+import { forbiddenSegmentIn, type Variables } from '@iris/variables'
 // —— family①: identity & messages ——
 import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
@@ -112,6 +112,7 @@ import type { ScriptVariableStore } from './script-variables.ts'
 import { CONTINUE_POSTFIX_SEPARATORS, type SettingsStore } from './settings.ts'
 import { trimToEndSentence } from './reply-trim.ts'
 import { textOf } from './views.ts'
+import { arbitrateMessageVariables, type VariableProposal } from './variable-arbitration.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
@@ -5106,12 +5107,24 @@ export class IrisAppService {
       // recordVariables and the store would otherwise see unprocessed. A no-op
       // when the plane is absent or unarmed, and an impersonation — a user
       // line — never goes through it, the same rule the variables live under.
+      const messageOption = { type: 'message' as const, message_id: turn }
+      const variableBaseline = entry.variables.getVariables(messageOption)
+      const proposals: VariableProposal[] = []
       if (reason === 'completed' && options.recordVariables !== false && turn !== undefined) {
         const processed = await this.#processReplyViaStCompat(entry, turn, settledText)
-        if (processed !== undefined) settledText = processed
+        if (processed !== undefined) {
+          settledText = processed.text
+          if (processed.floorVariables !== undefined) {
+            proposals.push({
+              pluginId: 'prompt-template',
+              before: variableBaseline,
+              after: processed.floorVariables,
+            })
+          }
+        }
       }
       if (options.recordVariables !== false) {
-        entry.recordVariables(
+        const mvu = entry.computeVariables(
           turn,
           settledText,
           message => {
@@ -5124,6 +5137,23 @@ export class IrisAppService {
           },
           options.mvu,
         )
+        if (mvu !== undefined) {
+          proposals.push({
+            pluginId: 'mvu',
+            before: entry.baselineFor(turn) as unknown as Variables,
+            after: mvu.data as unknown as Variables,
+          })
+        }
+        if (proposals.length > 0) {
+          const settled = arbitrateMessageVariables(variableBaseline, proposals)
+          entry.variables.replaceVariables(settled.variables, messageOption)
+          for (const conflict of settled.conflicts) {
+            this.#report(
+              `message variable conflict on "${conflict.key}": ${conflict.earlierPluginId} ran before ${conflict.laterPluginId}; ${conflict.winnerPluginId} won`,
+              { kind: 'variables', grade: 'note', chatId: entry.chatId },
+            )
+          }
+        }
       }
       // Before `#storeRewritten`, which may rebuild the log: `rebuild` carries
       // per-candidate records across by position, so a record that exists
@@ -6382,7 +6412,11 @@ export class IrisAppService {
    * UC-2's site: run the reply through the extension plane before it lands.
    * Returns the processed floor text, or undefined to keep the raw text.
    */
-  async #processReplyViaStCompat(entry: ChatEntry, turn: number, text: string): Promise<string | undefined> {
+  async #processReplyViaStCompat(
+    entry: ChatEntry,
+    turn: number,
+    text: string,
+  ): Promise<{ text: string, floorVariables?: Variables } | undefined> {
     const st = this.#options.stCompat
     if (st === undefined) return undefined
     const extensionId = st.extensionId()
@@ -6410,17 +6444,15 @@ export class IrisAppService {
       return undefined
     }
     await this.#stCompatApplyVariables(entry, result.chatVariables, result.globalVariables)
-    // The reply's own setvar writes landed on the floor's message layer (the
-    // render handler runs with message_id set, exactly as upstream); merge
-    // them onto that scope or the update dies with the frame.
-    if (typeof result.floorVariables === 'object' && result.floorVariables !== null) {
-      try {
-        entry.variables.replaceVariables(result.floorVariables, { type: 'message', message_id: turn })
-      } catch (cause: unknown) {
-        this.#report(`the ST-compat bridge's floor variables could not be stored: ${cause instanceof Error ? cause.message : String(cause)}`, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
-      }
+    // The reply's setvar result is a proposal, not a storage instruction. The
+    // settle edge combines it with MVU in upstream handler order and performs
+    // the message-layer write once.
+    return {
+      text: result.mes,
+      ...typeof result.floorVariables === 'object' && result.floorVariables !== null
+        ? { floorVariables: result.floorVariables }
+        : {},
     }
-    return result.mes
   }
 
   /**
