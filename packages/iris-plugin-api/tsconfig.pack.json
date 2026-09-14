@@ -1,0 +1,20 @@
+{
+  // The publishing emit for this contract package; see
+  // `packages/iris-protocol/tsconfig.pack.json` for why it extends the base
+  // instead of restating `target`, and why
+  // `rewriteRelativeImportExtensions` is load-bearing.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "inlineSources": true,
+    "rewriteRelativeImportExtensions": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "rootDir": "src",
+    "outDir": "../../dist-pack/plugin-api/lib"
+  },
+  "include": ["src/**/*.ts"]
+}

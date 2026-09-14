@@ -1345,3 +1345,132 @@ step is skipped"。校验失败发生在链接完成之前,于是三处 `node_mo
 `@types/js-yaml@4.0.9`(store 里本来就有,因为 `@iris/mvu` 声明着同样的版本)。
 `apps/iris-web` 是 npm 管的,协调者已经跑过 `npm install --offline`,`@iris/text`
 的 symlink 在位,本轮未再跑。锁文件的三处 importer 条目按手工改动同步更新。
+
+---
+
+# DEVIATIONS — 契约包的发布形（插件仓库的第一步，2026-09-15）
+
+分支 `dev/plugin-contracts-packable`,基线 `main` 2eccf30。
+本次只加东西:一个脚本、三个 `tsconfig.pack.json`、两个测试、一份文档
+(`docs/PLUGIN-CONTRACT-PACKAGING.md`)。**没有任何产品代码变更**,
+三个契约包的 `src/` 一个字节没动,清单也没动。
+
+## 上游是怎么做的:不做
+
+SillyTavern 没有给扩展作者任何东西可以"安装"。扩展是被**按路径**装载的:
+`public/scripts/extensions.js:434` 拼出 `/scripts/extensions/${name}/${manifest.js}`
+并动态 import;扩展反过来也按路径 import 宿主,实测本机唯一装着的第三方扩展
+`ST-Prompt-Template` 的产物里写的是 `from"../../../../../script.js"`
+(五级相对路径,直接指进 ST 被 serve 的源码树)。因此上游没有契约包、没有版本号、
+没有 peer,也没有任何机制能说"这个扩展针对的是 1.18 的 API"——
+`manifest.json` 里的 `requires`/`dependencies` 说的是**别的扩展**,不是宿主 API 版本。
+兼容性完全靠"别改那个文件",而这正是本项目要换掉的地基的一部分。
+
+本次加的是上游没有的那一层:三个包能被打成 tarball,装进一个仓库外的
+`node_modules`,类型解析走已发布的 `exports`,不需要任何工作区、`paths` 或别名。
+
+## 工作区不变,发布是另一件事
+
+三个包在工作区里依然 `"private": true` / `"version": "0.0.0"` /
+`exports` 指向 `./src/index.ts`,Node 照旧直接跑源码。发布**不是**把 `private`
+改成 `false`:那条路要求工作区同时相信 `exports` 的两种指向,并且会产生一个
+"清单说自己是 npm 包、磁盘上却没有 `lib/`"的半发布态。
+`npm run pack:contracts -- --version <semver>` 只读工作区,只往 `dist-pack/`
+(已 gitignore)写,幂等,先删自己上一轮的输出。
+
+## 四处清单改写
+
+1. `private` 与 `0.0.0` 靠**缺席**消失(生成而不是拷贝后打补丁),
+   所以"漏删"这条路径不存在。
+2. `exports` 整条替换成 `{ types: ./lib/index.d.ts, default: ./lib/index.js }`;
+   工作区那条 `"./src/*"` 子路径**不发布**——它在已发布的包里是一句
+   "每个内部文件都是公开入口"的承诺,而正是这条承诺让本仓库的
+   `architecture.test.ts` 当年不得不加宽它的 import 扫描。
+3. `workspace:*` → 本次发布的版本号,**精确固定**而不是 `^`:三个包一起发,
+   `^` 会允许装上一个比所针对的 `plugin-api` 更新的 `protocol`。
+4. `@deepseek-ai/cordis` 从 `dependencies` 移到 `peerDependencies`。
+   工作区里只有一份所以怎么写都行;发布形里必须是 peer,因为插件装上自己的
+   第二份就得到第二个模块实例,而本项目所有 Cordis 声明合并都指向
+   `declare module '@deepseek-ai/cordis'`(`notes/PLAN.md` 选
+   `@deepseek-ai/cordis` 而非上游 `cordis` 的理由,正是所有 `dsh-*` 包都把它
+   当 peer 并合并进那一个模块名)。两个实例的症状是**没有症状**:
+   宿主的 `Context` 与插件的 `Context` 成了无关类型,插件 `provide` 的能力进了
+   宿主永远不读的注册表,不报任何错。
+
+## 版本策略(写下来,不由本次决定)
+
+`apiVersion: 1` ↔ 包 major `1`;预发布 `1.0.0-alpha.N`;
+破坏性契约变更是 `apiVersion: 2` ↔ major `2`,三个包同时升——它们是一份契约的
+三个面,"哪三个版本互相配套"不应该由插件作者查表。
+`--version` 必填且必须是合法 semver,**没有默认值**:这个数字是一次关于兼容承诺的
+决定,一个会替你猜的脚本每次重跑都在悄悄替你做这个决定。
+
+## 测试与牙齿
+
+`apps/iris/tests/contract-pack.test.ts`(1 例,实测 6.0 秒,**不加 gate**——
+任务书的门槛是 ~20 秒,`scripts/check-corpus-skips.mjs` 的 40 不动)真跑一遍脚本,
+把三个 tarball 解开到一个上面没有工作区的临时 `node_modules`,然后问两种工具:
+`tsc --noEmit`(无 `paths`、无别名,只走已发布 `exports` 的 `types` 条件)和
+`import()`(真的加载 `lib/index.js`:`requestSchemas` 133 个键,
+`parsePluginAssetManifest` 解析一份合法清单)。
+`apps/iris/tests/pack-manifest.test.ts`(9 例,~80 毫秒)只测那个纯函数与
+"缺 `--version` 必须拒绝"。
+
+两件工具自身的坑先记下来:
+
+- **`tar` 不能用。** 第一版 shell 出去调 `tar -xzf`,在本机红了:
+  PATH 上第一个 `tar` 是 MSYS 的 GNU tar,它把 `C:\Users\...\x.tgz` 里的冒号读成
+  远程主机,报 `tar (child): Cannot connect to C: resolve failed`。
+  Windows 自带的 bsdtar 和任何 Linux runner 都不会——而这恰好是一个
+  "主题就是'在别人的机器上行不行'"的测试最不该依赖的东西。改成 50 行 ustar
+  读取器(`node:zlib` + 512 字节头,认 `prefix` 与 pax 的 `path` 记录),零依赖。
+- **`rmSync` 静默不删。** 脚本第一句就是删掉自己上一轮的输出。实测本机的 agent
+  沙箱会拦截项目目录下的删除:`rmSync('dist-pack', { recursive: true, force: true })`
+  **不抛错、不删任何东西**(同一句在 scratchpad 里正常工作),于是两次不同
+  `--version` 的运行在 `dist-pack/` 里留下六个 tarball,整轮运行什么都没报。
+  这不是本次改动引入的,也不是脚本的错——但"删除静默失败"恰好是这一步存在的理由
+  本身,所以删完之后加了检查:目录不空就退出并说明。测试侧零成本地捎上了这条——
+  运行前往输出目录放两个诱饵(一个假 `.tgz`、一个上一轮才有的 `lib/ghost.js`),
+  运行后断言它们消失,且目录里的 `.tgz` 恰好是本轮那三个。
+- **`skipLibCheck: true` 会让"类型退化成 `any`"变成绿的。** 样例插件里因此有两条
+  `@ts-expect-error`:类型一旦退化,那两行就不再报错,`tsc` 转而报
+  "Unused '@ts-expect-error' directive"。断言方向是"`any` 不存在",
+  而这个方向不可能被蒙对。实测有效(把 `'no.such.method'` 改成合法方法名后,
+  红的是 `error TS2578`)。
+
+六个具名变异,每个都让一条具名断言变红:
+
+| 变异 | 红在哪 |
+| --- | --- |
+| 生成的 `exports` 改回指向 `src` | contract-pack「published exports must face lib, never src」+ pack-manifest 同名断言 |
+| `rewriteRelativeImportExtensions: false` | **`tsc` 先拒绝编译**(`TS5096`),打包步骤失败 |
+| 产物里把 `.js` specifier 改回 `.ts`(为够到扫描而造的) | contract-pack「a .ts specifier survived into the emitted JavaScript」;把该断言也放倒后,红的是 `ERR_MODULE_NOT_FOUND: ...bundle-specifiers.ts` |
+| `workspace:*` 原样发布 | contract-pack「published an unresolvable workspace range」+ pack-manifest「a workspace range becomes the version being published」 |
+| cordis 发成 `dependencies` 而非 peer | contract-pack「must not depend on Cordis」 |
+| `--version` 给一个默认值 `0.0.0` | pack-manifest「refuses to run without a version」 |
+
+第二行值得单说:预期的红点是产物扫描,实际的红点比它早一格——
+`allowImportingTsExtensions` 在本仓库的配置下只有配 `rewriteRelativeImportExtensions`
+才能 emit,所以这个开关**删不掉**。守住它的是编译器,不是测试;
+第三行那个人造变异就是为了证明扫描和 `import()` 两道网自己也确实带电。
+
+## 与任务书的偏离(一条,实测推翻)
+
+任务书写 `rewriteRelativeImportExtensions`「so `./x.ts` becomes `./x.js` in the
+emitted JS **and** `.d.ts`」。实测 TypeScript 5.9.3 **只改写 JS**:
+`lib/index.js` 是 `from "./bundle-specifiers.js"`,`lib/index.d.ts` 仍是
+`from './bundle-specifiers.ts'`。不是故障——消费侧 `tsc` 把声明文件里的 `./x.ts`
+解析到同目录的 `x.d.ts`,在一个 `skipLibCheck` **关闭**的探针里也没有出现任何
+"Cannot find module"。记账是因为若这条解析规则变了,症状会是插件作者那边类型全变
+`any`,而那时没人会想起来这里曾经有个预期差。
+
+## 发现但没改
+
+- `.d.ts.map` 指向 `../src/*.ts`,而 `files: ["lib"]` 不含 `src`,
+  于是从插件仓库对契约类型"跳转到定义"会落空。`sourceMap` 这半已经用
+  `inlineSources` 补上(`.js.map` 自带源码);`.d.ts.map` 那半没补,因为修它要么改
+  `files`(发布形的决定),要么删 `declarationMap`(任务书明确要求开)。
+- 三个 tarball 的体积很不均:`iris-protocol` 275 KB(`rpc.d.ts` 一个文件 135 KB,
+  `views.d.ts` 138 KB),`plugin-web-api` 19.5 KB,`plugin-api` 16.7 KB。
+  没有做任何裁剪——协议包就是这么大,而它是插件调 RPC 唯一的类型来源。
+- 本轮没有碰 `apps/iris-web` 下的任何文件,因此没有跑它的构建。

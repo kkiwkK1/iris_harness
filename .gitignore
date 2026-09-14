@@ -23,3 +23,9 @@ qa/results/
 # source. The scripts that produce them are committed.
 qa/shots-*/
 qa/*-state.json
+
+# The contract packages' publishing output: a staging tree and tarballs built
+# from the workspace by `npm run pack:contracts`. Derived, versioned by the
+# argument that produced it, and deleted at the start of every run — the
+# script is committed, its output is not (docs/PLUGIN-CONTRACT-PACKAGING.md).
+dist-pack*/
