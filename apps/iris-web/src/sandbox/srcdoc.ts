@@ -24,6 +24,12 @@
 import { BOOTSTRAP_TAG_MARK, bootstrapGuard } from './bootstrap-contract.ts'
 import { fromProxied, toProxied } from './bundle-proxy.ts'
 import { isAllowedRemote, REMOTE_ALLOWLIST } from './policy.ts'
+import {
+  DEFAULT_SANDBOX_PLUGIN_RUNTIME,
+  SYSTEM_PLUGIN_RUNTIME_META,
+  encodeSandboxPluginRuntime,
+  type SandboxPluginRuntime,
+} from '@iris/plugin-web-api'
 
 /**
  * The frame's content security policy.
@@ -517,10 +523,13 @@ export function buildSrcdoc(
      * The pushed channel stays for **updates**; this is only the initial value.
      */
     context?: unknown
+    /** System-plugin capabilities fixed for this frame's whole lifetime. */
+    systemPlugins?: SandboxPluginRuntime
   },
 ): string {
   const { networkGranted, libraries, selfOrigin, members } = options
   const { body, context } = options
+  const systemPlugins = options.systemPlugins ?? DEFAULT_SANDBOX_PLUGIN_RUNTIME
   /*
    * The message's own sheet, taken off the body and held for the head. See
    * `MESSAGE_CSS_MARK` for why it arrives this way; `sheet` is empty for every
@@ -579,6 +588,7 @@ export function buildSrcdoc(
      * quietly flattening.
      */
     `<meta name="iris-origin" content="${attribute(selfOrigin)}">`,
+    `<meta name="${SYSTEM_PLUGIN_RUNTIME_META}" content="${attribute(encodeSandboxPluginRuntime(systemPlugins))}">`,
     /*
      * The FontAwesome sentinel, and **its filename participates in behaviour**.
      *
@@ -755,6 +765,31 @@ export function buildSrcdoc(
      * and why each step is there.
      */
     `<script>${bootstrapGuard()}</script>`,
+    /*
+     * The admitted plugins' own scripts, **after** the bootstrap and blocking —
+     * one tag per row of the snapshot's `plugins` record, in the merge's tag
+     * order (members → bootstrap → plugins → cards,
+     * `notes/PLUGIN-CONTRACT-LANDING-SITES.md` §3).
+     *
+     * After the bootstrap because a plugin registers its members through the
+     * core table's `registerPluginMembers`, which must already be published,
+     * and the bootstrap has already published which plugins this frame admits —
+     * so a tag the snapshot no longer carries (a stale cached srcdoc is not
+     * possible, but a stale cached *bundle* under a live tag is) registers
+     * nothing and is refused at the gate. Before the card's libraries for the
+     * same reason the bootstrap is: by the time card code runs, every
+     * registration has happened or definitively not happened, which is what
+     * lets the merge's collector be a verdict rather than a poll.
+     *
+     * `crossorigin="anonymous"` pairs with the host route's CORS headers the
+     * same way it does for the member table and the preset above; the URL is
+     * the row's own rev-keyed client URL, immutable per content, so a frame's
+     * tags and its snapshot can never disagree about which bytes a plugin's
+     * name answers for.
+     */
+    ...Object.entries(systemPlugins.plugins ?? {}).map(([pluginId, entry]) =>
+      `<script src="${attribute(entry.client)}" crossorigin="anonymous" data-iris-plugin="${attribute(pluginId)}"></script>`,
+    ),
     /*
      * `crossorigin="anonymous"`, and it only works as **one half of a pair**.
      *

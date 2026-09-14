@@ -22,8 +22,10 @@ import { appendCandidate, selectCandidate, selectedCandidate, SwipeError, type C
 import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
+import { StCompatBridge, applyGenerateResultToContributions, bridgeMessagesFromContributions, contributionsHaveTemplates, validateReplyResult } from '@iris/compat-st-extension'
+import type { StBridgeContext, StBridgeResult } from '@iris/compat-st-extension'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, SystemPluginSnapshot, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -82,7 +84,7 @@ import { cardWorldbookDigest, cardWorldbookView, charWorldbookNames, WorldbookSt
 import { activationSettingsOf } from './worldbook-settings.ts'
 import type { CharacterLibrary } from './library.ts'
 import { assertStorable, buildCardContext, commitChatMetadata, type ExtensionSettingsStore } from './context.ts'
-import { forbiddenSegmentIn } from '@iris/variables'
+import { forbiddenSegmentIn, type Variables } from '@iris/variables'
 // —— family①: identity & messages ——
 import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
@@ -95,6 +97,9 @@ import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
 import type { PruneOptions } from './prune.ts'
+import { MVU_CAPABILITY } from './plugins/capabilities.ts'
+import type { MvuExecution } from './plugins/mvu.ts'
+import type { SystemPluginLease, SystemPluginRuntime } from './system-plugins.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
 // —— family②: regex ——
@@ -107,6 +112,7 @@ import type { ScriptVariableStore } from './script-variables.ts'
 import { CONTINUE_POSTFIX_SEPARATORS, type SettingsStore } from './settings.ts'
 import { trimToEndSentence } from './reply-trim.ts'
 import { textOf } from './views.ts'
+import { arbitrateMessageVariables, type VariableProposal } from './variable-arbitration.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
@@ -243,7 +249,18 @@ function continuedSeedText(seedText: string, postfix: string): string {
  */
 const WORLD_INFO_BUDGET_SHARE = 0.25
 
-/** Every method, keyed by name. */
+/**
+ * Every method this build implements, keyed by name — and total on purpose.
+ *
+ * The wire can lack a method since runtime RPC registration landed
+ * (`docs/SYSTEM-PLUGINS.md`): a plugin's method arrives through the registry,
+ * and the transport answers anything unregistered `unsupported`. What stays
+ * total is this build's own claim — a method in the static vocabulary that
+ * the literal does not implement is a compile error, not a silent refusal.
+ * When a capability moves out to a system plugin, its methods leave the
+ * static vocabulary for the runtime registry, `RpcMethod` shrinks with it,
+ * and this table shrinks by the same keys — one tripwire, no holes.
+ */
 export type Handlers = {
   [M in RpcMethod]: (params: RpcRequest<M>) => Promise<RpcResponse<M>>
 }
@@ -437,12 +454,47 @@ function withTableContexts(
 }
 
 /** What the service needs that it does not own. */
+/** One floor of the bridge context, as the upstream `chat` array reads. */
+export interface StCompatFloor {
+  mes: string
+  name: string
+  is_user: boolean
+  is_system: boolean
+  swipe_id: number
+  /**
+   * The floor's own message-scope variables (`chat[i].variables[swipe_id]`
+   * upstream). The reply handlers' clone chain seeds each new floor from the
+   * previous floor's layer and the template's variable cache reads
+   * message-over-chat, so a frame that hydrates without them restarts every
+   * accumulator from the chat scope — a regression SillyTavern does not have,
+   * because its floors hydrate with the persisted variables.
+   */
+  variables?: Record<string, unknown>
+}
+
+/** The extension plane's arm/submit handle, wired by the composition root. */
+export interface StCompatOptions {
+  bridge: StCompatBridge
+  /** The extension's runtime revision while enabled, undefined otherwise. */
+  revisionOf(extensionId: string): number | undefined
+  /** The extension id the pilot serves (single-extension pilot). */
+  extensionId(): string
+  /** The stored settings blob for the extension, hydrated over defaults. */
+  settingsFor(extensionId: string): Promise<unknown>
+  /** Persist the extension's settings blob. */
+  persistSettings(extensionId: string, blob: unknown): Promise<void>
+  /** Install a third-party ST extension from a local directory; returns the new snapshot. */
+  installFromDirectory(directoryPath: string): Promise<SystemPluginSnapshot>
+}
+
 export interface AppServiceOptions {
   /** Normally `ctx.llm.stream` bound to the registry. */
   stream: StreamFn
   library: CharacterLibrary
   chats: ChatStore
   settings: SettingsStore
+  /** The profile's live system-plugin owner. Absent preserves legacy library behavior. */
+  plugins?: SystemPluginRuntime
   /**
    * The user's decisions about card scripts.
    *
@@ -629,6 +681,15 @@ export interface AppServiceOptions {
    */
   trimBlockFloors?: number
   /**
+   * The ST-compat pilot's bridge, when this host runs the extension plane.
+   *
+   * Presence is the switch, like every other optional store: absent means no
+   * plane can ever arm, so every bridge call site short-circuits to the raw
+   * text without spending a microsecond on it — the disabled extension's
+   * templates reach the prompt untouched, which is the UC-1 disabled case.
+   */
+  stCompat?: StCompatOptions
+  /**
    * Where the `script` scope persists.
    *
    * Optional like the other stores. It is passed here as well as to the
@@ -735,10 +796,12 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection' | 'stCompat'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
+      plugins?: SystemPluginRuntime
+      stCompat?: StCompatOptions
       scripts?: ScriptPolicyStore
       scriptLibrary?: ScriptLibraryStore
       extensionSettings?: ExtensionSettingsStore
@@ -864,6 +927,8 @@ export class IrisAppService {
       // Off unless a composition says otherwise: see the option's docblock for
       // why the *product* says otherwise and a library caller does not.
       requireProvider: options.requireProvider ?? false,
+      ...options.plugins === undefined ? {} : { plugins: options.plugins },
+      ...options.stCompat === undefined ? {} : { stCompat: options.stCompat },
       ...options.hostConnection === undefined ? {} : { hostConnection: options.hostConnection },
       ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
       ...options.scripts === undefined ? {} : { scripts: options.scripts },
@@ -1691,6 +1756,23 @@ export class IrisAppService {
     const scripts = this.#options.scripts
     const scriptLibrary = this.#options.scriptLibrary
     const cardStorage = this.#options.cardStorage
+    const plugins = this.#options.plugins
+
+    const requirePlugins = (): SystemPluginRuntime => {
+      if (plugins === undefined) {
+        throw new AppError('unsupported', 'system plugins are not configured on this host')
+      }
+      return plugins
+    }
+
+    const requireStCompat = (): StCompatOptions => {
+      const st = this.#options.stCompat
+      if (st === undefined) {
+        throw new AppError('unsupported', 'the ST-compat extension plane is not configured on this host')
+      }
+      return st
+    }
+    this.#requireStCompat = requireStCompat
 
     /**
      * The library, or a refusal that names what is missing.
@@ -1858,6 +1940,55 @@ export class IrisAppService {
      * would be the one that forgets.
      */
     const handlers: Handlers = {
+      'plugin.list': async () => requirePlugins().snapshot(),
+      'plugin.install': async ({ id }) => await requirePlugins().install(id),
+      'plugin.uninstall': async ({ id }) => await requirePlugins().uninstall(id),
+      'plugin.enable': async ({ id }) => await requirePlugins().enable(id),
+      'plugin.disable': async ({ id }) => await requirePlugins().disable(id),
+      'plugin.reload': async ({ id }) => await requirePlugins().reload(id),
+
+      // The ST-compat pilot's plane face. The arm/detach pair is the bridge's
+      // whole liveness model; submit re-validates the revision so a stale
+      // frame cannot answer a round opened by a newer one; settings persist
+      // only for an extension that is enabled right now.
+      'stCompat.plane.attach': async ({ extensionId, pluginRevision, chatId }) => {
+        const st = this.#requireStCompat()
+        st.bridge.arm(extensionId, pluginRevision)
+        // A freshly built frame needs the chat it was opened for: the attach
+        // names it, and the chat-open round hydrates the frame the same way
+        // an open would have. Unarmed or unknown chat, this is a plain arm.
+        if (chatId !== undefined) {
+          const entry = chats.cached(chatId)
+          if (entry !== undefined) await this.#stCompatAnnounceChatOpen(entry, chatId)
+        }
+        return { ok: true as const }
+      },
+
+      'stCompat.plane.detach': async ({ extensionId }) => {
+        const st = this.#requireStCompat()
+        st.bridge.detach(extensionId)
+        return { ok: true as const }
+      },
+
+      'stCompat.submit': async ({ token, kind, pluginRevision, result }) => {
+        const st = this.#requireStCompat()
+        if (kind === 'chat-open') return { accepted: false as const, why: 'chat-open rounds expect no result' }
+        const submission = st.bridge.submit({ token, kind, revision: pluginRevision, result: result as StBridgeResult })
+        return submission.ok ? { accepted: true as const } : { accepted: false as const, why: submission.why }
+      },
+
+      'stCompat.settings': async ({ extensionId, pluginRevision, settings }) => {
+        const st = this.#requireStCompat()
+        const revision = st.revisionOf(extensionId)
+        if (revision === undefined || revision !== pluginRevision) {
+          throw new AppError('unsupported', 'the extension plane is stale or absent; reload the page before saving settings')
+        }
+        await st.persistSettings(extensionId, settings)
+        return { ok: true as const }
+      },
+
+      'stExtension.install': async ({ path }) => await this.#requireStCompat().installFromDirectory(path),
+
       'chat.list': async () => {
         const order = this.#options.chatOrder
         return {
@@ -1887,6 +2018,11 @@ export class IrisAppService {
         // indistinguishable from text the card meant to put there.
         const reopened = chats.cached(chatId) !== undefined
         const entry = await chats.open(chatId)
+        // UC-1/2's CHAT_CHANGED: the extension plane preloads the chat the way
+        // upstream does on a chat switch. Fired only when a plane is armed —
+        // an absent plane skips in microseconds, and the frame's preload then
+        // runs when the plane attaches and names this chat.
+        await this.#stCompatAnnounceChatOpen(entry, chatId)
         if (reopened && entry.extensionPrompts.size > 0) {
           this.#report(
             `${String(entry.extensionPrompts.size)} script injection(s) are still live on this chat from an`
@@ -3199,7 +3335,7 @@ export class IrisAppService {
         return { name: typeof bound === 'string' ? bound : null }
       },
       'worldbook.settings': async () => ({ settings: this.#options.settings.worldbookSettings() }),
-      'worldbook.setSettings': async patch => ({
+      'worldbook.setSettings': async ({ pluginRevision: _pluginRevision, ...patch }) => ({
         settings: await this.#options.settings.setWorldbookSettings(patch),
       }),
       'worldbook.charNames': async ({ characterId, withCard }) => {
@@ -4317,6 +4453,50 @@ export class IrisAppService {
 
       // —— family③ end ——
     }
+
+    type PluginOwnedHandler = (params: PluginRevisionRequest) => Promise<unknown>
+    const guardTavernHelper = (method: RpcMethod, onlyWhenFenced = false): void => {
+      const original = handlers[method] as PluginOwnedHandler
+      ;(handlers as unknown as Record<RpcMethod, PluginOwnedHandler>)[method] = async params => {
+        if (plugins === undefined || (onlyWhenFenced && params.pluginRevision === undefined)) {
+          return await original(params)
+        }
+        const lease = plugins.lease('tavern-helper', params.pluginRevision)
+        try {
+          return await original(params)
+        } finally {
+          lease.release()
+        }
+      }
+    }
+
+    // These arms exist only for a card-script runtime. The consent-management
+    // methods (script.list/setEnabled/setDocumentGrant/setScriptsAllowed) stay
+    // outside this list so the user can inspect and change policy while the
+    // runtime itself is disabled. runEnded is cleanup and must remain callable
+    // after invalidation.
+    for (const method of [
+      'storage.set', 'storage.remove', 'storage.clear',
+      'script.getVariables', 'script.setVariables', 'script.swipeTo', 'script.slash',
+      'script.fetch', 'script.context', 'script.saveMetadata', 'script.createChatMessages',
+      'script.deleteChatMessages', 'script.getPreset', 'script.evalTemplate',
+      'script.replaceScriptButtons', 'script.saveChat', 'script.setExtensionPrompt',
+      'script.body', 'script.setExtensionSettings', 'script.generateRaw',
+      'script.setChatMessages', 'script.generate', 'script.getCharacter',
+      'script.chatHistoryBrief', 'script.chatHistoryDetail', 'script.rotateChatMessages',
+      'script.createOrReplacePreset', 'script.deletePreset', 'script.renamePreset',
+      'script.loadPreset', 'regex.tavernList', 'regex.tavernReplace', 'regex.tavernFormat',
+    ] satisfies readonly RpcMethod[]) guardTavernHelper(method)
+
+    // These storage arms are shared with native panels. A frame carries the
+    // fence; a native caller does not, so disabling Tavern Helper removes its
+    // facade without disabling the settings and world-book editors.
+    for (const method of [
+      'worldbook.load', 'worldbook.get', 'worldbook.replace', 'worldbook.create',
+      'worldbook.bindChat', 'worldbook.setGlobalSelect', 'worldbook.delete',
+      'worldbook.setCharBooks', 'worldbook.setSettings',
+    ] satisfies readonly RpcMethod[]) guardTavernHelper(method, true)
+
     return handlers
   }
 
@@ -4765,26 +4945,60 @@ export class IrisAppService {
       : ''
     const instruction = instructionText === '' ? undefined : entry.substitute(instructionText)
 
-    const running: Promise<Candidate | string> = request.kind === 'send'
-      // The storage direction runs on what the user typed, before it enters the
-      // log — the one point where a message is written for the first time.
-      ? driver.send(
-        entry.session,
-        runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
-        events,
-      )
-      : request.kind === 'regenerate'
-        ? driver.regenerate(entry.session, events)
-        : request.kind === 'continue'
-          ? driver.continueTurn(entry.session, events, nudge, continuePostfix)
-          : driver.impersonate(entry.session, events, instruction)
+    const impersonating = request.kind === 'impersonate'
+    const pluginLeases: SystemPluginLease[] = []
+    const plugins = this.#options.plugins
+    if (plugins?.isEnabled('tavern-helper') === true) {
+      pluginLeases.push(plugins.lease('tavern-helper'))
+    }
+    // Three states are intentional: an app service composed without a plugin
+    // runtime keeps the legacy always-on MVU behavior (`undefined`); a runtime
+    // with MVU disabled pins this turn off (`null`); an enabled runtime captures
+    // the admitted incarnation through settlement.
+    let mvuExecution: MvuExecution | null | undefined = plugins === undefined ? undefined : null
+    if (!impersonating && plugins?.isEnabled('mvu') === true) {
+      const lease = plugins.lease('mvu')
+      const capability = plugins.capability<MvuExecution['capability']>('mvu', MVU_CAPABILITY)
+      if (capability === undefined) {
+        lease.release()
+        for (const held of pluginLeases) held.release()
+        throw new AppError('internal', 'MVU is enabled without its runtime capability')
+      }
+      pluginLeases.push(lease)
+      mvuExecution = { capability, isCurrent: lease.isCurrent }
+    }
+    let leasesReleased = false
+    const releasePluginLeases = (): void => {
+      if (leasesReleased) return
+      leasesReleased = true
+      for (const lease of pluginLeases.reverse()) lease.release()
+    }
+
+    let running: Promise<Candidate | string>
+    try {
+      running = request.kind === 'send'
+        // The storage direction runs on what the user typed, before it enters the
+        // log — the one point where a message is written for the first time.
+        ? driver.send(
+          entry.session,
+          runScripts(request.text, 'user', entry.scripts, { substitute: entry.substitute }),
+          events,
+        )
+        : request.kind === 'regenerate'
+          ? driver.regenerate(entry.session, events)
+          : request.kind === 'continue'
+            ? driver.continueTurn(entry.session, events, nudge, continuePostfix)
+            : driver.impersonate(entry.session, events, instruction)
+    } catch (error: unknown) {
+      releasePluginLeases()
+      throw error
+    }
 
     // Announced after the call, not before: `send` appends the user's line
     // synchronously at the top of the driver, and until it has, the spare key
     // slot belongs to that line rather than to the reply. Nothing can have been
     // emitted yet — the first delta waits on the network — and the ordering is
     // pinned by test rather than argued.
-    const impersonating = request.kind === 'impersonate'
     this.#options.broadcast({
       type: 'stream.start',
       chatId,
@@ -4795,16 +5009,31 @@ export class IrisAppService {
     })
 
     void running.then(
-      result => this.#settle(
-        entry,
-        turn,
-        // An impersonation resolves with its text rather than a candidate: the
-        // driver has already landed that text as the turn's user line.
-        typeof result === 'string' ? result : textOf(result.message),
-        'completed',
-        { recordVariables: !impersonating },
-      ),
-      error => this.#fail(entry, turn, signal, error, request.kind),
+      async result => {
+        try {
+          await this.#settle(
+            entry,
+            turn,
+            // An impersonation resolves with its text rather than a candidate:
+            // the driver has already landed that text as the turn's user line.
+            typeof result === 'string' ? result : textOf(result.message),
+            'completed',
+            {
+              recordVariables: !impersonating,
+              ...mvuExecution === undefined ? {} : { mvu: mvuExecution },
+            },
+          )
+        } finally {
+          releasePluginLeases()
+        }
+      },
+      async error => {
+        try {
+          await this.#fail(entry, turn, signal, error, request.kind, mvuExecution)
+        } finally {
+          releasePluginLeases()
+        }
+      },
     )
 
     return turn
@@ -4840,7 +5069,7 @@ export class IrisAppService {
     turn: number,
     text: string,
     reason: 'completed' | 'aborted',
-    options: { recordVariables?: boolean } = {},
+    options: { recordVariables?: boolean, mvu?: MvuExecution | null } = {},
   ): Promise<void> {
     // Whether this turn has already had its terminal event. Set **before** the
     // `stream.end` broadcast rather than after it: once the frame is handed to
@@ -4873,15 +5102,58 @@ export class IrisAppService {
       // message lives under. Recording would also hang a table on a turn that
       // has no candidate for it, and the next real turn's baseline walk would
       // then stop one turn early.
+      // The extension plane runs the reply's templates before anything reads
+      // the text: its variable writes and its floor rewrite are the same facts
+      // recordVariables and the store would otherwise see unprocessed. A no-op
+      // when the plane is absent or unarmed, and an impersonation — a user
+      // line — never goes through it, the same rule the variables live under.
+      const messageOption = { type: 'message' as const, message_id: turn }
+      const variableBaseline = entry.variables.getVariables(messageOption)
+      const proposals: VariableProposal[] = []
+      if (reason === 'completed' && options.recordVariables !== false && turn !== undefined) {
+        const processed = await this.#processReplyViaStCompat(entry, turn, settledText)
+        if (processed !== undefined) {
+          settledText = processed.text
+          if (processed.floorVariables !== undefined) {
+            proposals.push({
+              pluginId: 'prompt-template',
+              before: variableBaseline,
+              after: processed.floorVariables,
+            })
+          }
+        }
+      }
       if (options.recordVariables !== false) {
-        entry.recordVariables(turn, settledText, message => {
-          this.#report(message, {
-            kind: 'mvu',
-            grade: 'fault',
-            chatId: entry.chatId,
-            ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+        const mvu = entry.computeVariables(
+          turn,
+          settledText,
+          message => {
+            this.#report(message, {
+              kind: 'mvu',
+              grade: 'fault',
+              chatId: entry.chatId,
+              ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+            })
+          },
+          options.mvu,
+        )
+        if (mvu !== undefined) {
+          proposals.push({
+            pluginId: 'mvu',
+            before: entry.baselineFor(turn) as unknown as Variables,
+            after: mvu.data as unknown as Variables,
           })
-        })
+        }
+        if (proposals.length > 0) {
+          const settled = arbitrateMessageVariables(variableBaseline, proposals)
+          entry.variables.replaceVariables(settled.variables, messageOption)
+          for (const conflict of settled.conflicts) {
+            this.#report(
+              `message variable conflict on "${conflict.key}": ${conflict.earlierPluginId} ran before ${conflict.laterPluginId}; ${conflict.winnerPluginId} won`,
+              { kind: 'variables', grade: 'note', chatId: entry.chatId },
+            )
+          }
+        }
       }
       // Before `#storeRewritten`, which may rebuild the log: `rebuild` carries
       // per-candidate records across by position, so a record that exists
@@ -4995,6 +5267,7 @@ export class IrisAppService {
     signal: AbortSignal,
     error: unknown,
     kind: 'send' | 'regenerate' | 'continue' | 'impersonate',
+    mvu: MvuExecution | null | undefined,
   ): Promise<void> {
     const partial = entry.pending?.text ?? ''
     // Three outcomes, not two. A budget expiring in the adapter aborts a
@@ -5044,7 +5317,13 @@ export class IrisAppService {
         // The interrupted path. Both paths converge here, which is why the
         // reason has to travel with the call: by the time the event is built,
         // nothing in the entry says whether the text arrived or was cut off.
-        await this.#settle(entry, turn, partial, 'aborted')
+        await this.#settle(
+          entry,
+          turn,
+          partial,
+          'aborted',
+          mvu === undefined ? {} : { mvu },
+        )
         return
       } catch (cause: unknown) {
         this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
@@ -5216,6 +5495,10 @@ export class IrisAppService {
     }
 
     const resolved = [...built.contributions, ...injectedContributions(entry, built.contributions)]
+    // The extension plane expands templates here — before classification and
+    // before the itemization records — so the recorded account and the sent
+    // request are the same bytes. A no-op when the plane is absent or unarmed.
+    await this.#expandContributionsViaStCompat(entry, resolved, generationType)
 
     // Which parts change between turns, and therefore which ones the reorder
     // moves out of the stable prefix. Two phases on purpose: the **verdict** is
@@ -5463,6 +5746,8 @@ export class IrisAppService {
       ...persona === undefined ? {} : { persona },
     })
     const resolved = [...built.contributions, ...injectedContributions(entry, built.contributions)]
+    // The preview bridges too: the panel must show what would actually be sent.
+    await this.#expandContributionsViaStCompat(entry, resolved, 'normal')
     // The verdict, not the record: a preview must show the layout the next real
     // turn will send, and must not advance the classifier's generation counter
     // — `prompt.itemize` is a read.
@@ -6013,6 +6298,190 @@ export class IrisAppService {
    *   defaulted: a default would silently file the host's own requests as a
    *   card's, which is the reading the split exists to make possible.
    */
+  // ------------------------------------------------------------------
+  // The ST-compat pilot's bridge call sites. Three rules run through all of
+  // them: an absent `stCompat` option or an unarmed bridge is a synchronous
+  // no-op (the raw text proceeds, which IS the disabled-extension behavior);
+  // every submit is validated against the revision the round opened at; and a
+  // failed or timed-out round degrades to the raw text with a report line,
+  // never to a half-applied rewrite.
+
+  static readonly #ST_COMPAT_DEADLINE_MS = 1500
+  /** Bound in handlers(); the option is per-instance. */
+  #requireStCompat: () => StCompatOptions = () => { throw new AppError('unsupported', 'the ST-compat extension plane is not configured on this host') }
+
+  async #stCompatContext(entry: ChatEntry, floors: StCompatFloor[]): Promise<Record<string, unknown>> {
+    const st = this.#options.stCompat
+    if (st === undefined) return {}
+    const settings = await st.settingsFor(st.extensionId())
+    return {
+      chat: floors,
+      chatVariables: entry.variables.getVariables({ type: 'chat' }),
+      extensionSettings: settings,
+      language: 'en',
+      userName: entry.names.user,
+      characterName: entry.names.character,
+      characterId: -1,
+      chatId: entry.chatId,
+    }
+  }
+
+  /** The chat's floors as the upstream `chat` array reads. */
+  #stCompatFloors(entry: ChatEntry, reply?: { turn: number, text: string }): StCompatFloor[] {
+    const floors: StCompatFloor[] = this.#history(entry, entry.session).map((message, index) => ({
+      mes: message.text,
+      name: message.name ?? (message.role === 'user' ? entry.names.user : entry.names.character),
+      is_user: message.role === 'user',
+      is_system: message.role === 'system',
+      swipe_id: 0,
+      // The floor's persisted message layer, so a rebuilt frame (reload,
+      // chat switch, re-enable) continues the variable chain instead of
+      // restarting it from the chat scope.
+      variables: entry.variables.getVariables({ type: 'message', message_id: index }),
+    }))
+    if (reply !== undefined) {
+      while (floors.length <= reply.turn) {
+        floors.push({ mes: '', name: entry.names.character, is_user: false, is_system: false, swipe_id: 0 })
+      }
+      floors[reply.turn] = { mes: reply.text, name: entry.names.character, is_user: false, is_system: false, swipe_id: 0 }
+    }
+    return floors
+  }
+
+  /** Write the bridge's variable layers back: chat scope into the chat, global into the blob. */
+  async #stCompatApplyVariables(entry: ChatEntry, chatVariables: unknown, globalVariables: unknown): Promise<void> {
+    const st = this.#options.stCompat
+    if (st === undefined) return
+    if (typeof chatVariables === 'object' && chatVariables !== null) {
+      try {
+        entry.variables.replaceVariables(chatVariables as Record<string, unknown>, { type: 'chat' })
+      } catch (cause: unknown) {
+        this.#report(`the ST-compat bridge returned chat variables Iris could not store: ${cause instanceof Error ? cause.message : String(cause)}`, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
+      }
+    }
+    if (typeof globalVariables === 'object' && globalVariables !== null) {
+      try {
+        const extensionId = st.extensionId()
+        const blob = await st.settingsFor(extensionId) as { variables?: { global?: Record<string, unknown> } }
+        blob.variables = { global: globalVariables as Record<string, unknown> }
+        await st.persistSettings(extensionId, blob)
+      } catch (cause: unknown) {
+        this.#report(`the ST-compat bridge's global variables could not be persisted: ${cause instanceof Error ? cause.message : String(cause)}`, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
+      }
+    }
+  }
+
+  /**
+   * UC-1's site: expand prompt templates through the extension plane.
+   * Mutates `contributions` in place before classification and itemization, so
+   * `prompt.itemize` and the sent request carry the same expanded bytes.
+   */
+  async #expandContributionsViaStCompat(entry: ChatEntry, contributions: Contribution[], generationType: string): Promise<void> {
+    const st = this.#options.stCompat
+    if (st === undefined) return
+    if (!contributionsHaveTemplates(contributions)) return
+    const extensionId = st.extensionId()
+    const revision = st.revisionOf(extensionId)
+    if (revision === undefined) return
+    const ticket = st.bridge.begin({
+      extensionId,
+      kind: 'generate',
+      revision,
+      payload: {
+        kind: 'generate',
+        generateType: generationType,
+        messages: bridgeMessagesFromContributions(contributions),
+        ...await this.#stCompatContext(entry, this.#stCompatFloors(entry)),
+      },
+      deadlineMs: IrisAppService.#ST_COMPAT_DEADLINE_MS,
+    })
+    if (ticket === null) return
+    this.#options.broadcast({ type: 'st-compat.request', token: ticket.token, extensionId, kind: 'generate', revision, payload: ticket.event.payload })
+    const result = await ticket.wait
+    if (result === null || result.kind !== 'generate') return
+    try {
+      applyGenerateResultToContributions(contributions, result)
+    } catch (cause: unknown) {
+      this.#report(`the ST-compat bridge's expansion was refused: ${cause instanceof Error ? cause.message : String(cause)}`, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
+      return
+    }
+    await this.#stCompatApplyVariables(entry, result.chatVariables, result.globalVariables)
+  }
+
+  /**
+   * UC-2's site: run the reply through the extension plane before it lands.
+   * Returns the processed floor text, or undefined to keep the raw text.
+   */
+  async #processReplyViaStCompat(
+    entry: ChatEntry,
+    turn: number,
+    text: string,
+  ): Promise<{ text: string, floorVariables?: Variables } | undefined> {
+    const st = this.#options.stCompat
+    if (st === undefined) return undefined
+    const extensionId = st.extensionId()
+    const revision = st.revisionOf(extensionId)
+    if (revision === undefined) return undefined
+    const ticket = st.bridge.begin({
+      extensionId,
+      kind: 'reply',
+      revision,
+      payload: {
+        kind: 'reply',
+        turn,
+        text,
+        ...await this.#stCompatContext(entry, this.#stCompatFloors(entry, { turn, text })),
+      },
+      deadlineMs: IrisAppService.#ST_COMPAT_DEADLINE_MS,
+    })
+    if (ticket === null) return undefined
+    this.#options.broadcast({ type: 'st-compat.request', token: ticket.token, extensionId, kind: 'reply', revision, payload: ticket.event.payload })
+    const result = await ticket.wait
+    if (result === null || result.kind !== 'reply') return undefined
+    const check = validateReplyResult(result)
+    if (!check.ok) {
+      this.#report(`the ST-compat bridge's reply processing was refused: ${check.why}`, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
+      return undefined
+    }
+    await this.#stCompatApplyVariables(entry, result.chatVariables, result.globalVariables)
+    // The reply's setvar result is a proposal, not a storage instruction. The
+    // settle edge combines it with MVU in upstream handler order and performs
+    // the message-layer write once.
+    return {
+      text: result.mes,
+      ...typeof result.floorVariables === 'object' && result.floorVariables !== null
+        ? { floorVariables: result.floorVariables }
+        : {},
+    }
+  }
+
+  /**
+   * One chat-open round: the plane hydrates its frame and the extension's
+   * preload runs. Fired again by a plane attach naming an already-open chat,
+   * so a frame built for an open conversation starts hydrated.
+   */
+  async #stCompatAnnounceChatOpen(entry: ChatEntry, chatId: string): Promise<void> {
+    const st = this.#options.stCompat
+    if (st === undefined) return
+    const extensionId = st.extensionId()
+    const revision = st.revisionOf(extensionId)
+    if (revision === undefined) return
+    const payload = {
+      kind: 'chat-open',
+      generateType: '',
+      messages: [],
+      ...await this.#stCompatContext(entry, this.#stCompatFloors(entry)),
+    }
+    this.#options.broadcast({
+      type: 'st-compat.request',
+      token: `chat-open-` + String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8),
+      extensionId,
+      kind: 'chat-open',
+      revision,
+      payload,
+    })
+  }
+
   async *#stream(
     options: GenerateOptions,
     entry?: ChatEntry,

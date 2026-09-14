@@ -1,0 +1,111 @@
+Node version: v24.13.0. Running in undefined environment. Server directory: D:\workspace\小项目\iris-st-variable-arbitration-fixture
+Using config path: ./config.yaml
+Cookie secret is missing from data root. Generating a new one...
+Using data root: D:\workspace\小项目\iris-st-variable-arbitration-fixture\cfinal-data-4
+Preferring IPv4 for DNS resolution
+
+SillyTavern 1.18.0
+Running 'release' (51ad27fb8) - 5/3/2026, 11:45:46 PM GMT+8
+
+Content file user.css copied to D:\workspace\小项目\iris-st-variable-arbitration-fixture\cfinal-data-4\_css
+Content file errors/forbidden-by-whitelist.html copied to D:\workspace\小项目\iris-st-variable-arbitration-fixture\cfinal-data-4\_errors
+Content file errors/host-not-allowed.html copied to D:\workspace\小项目\iris-st-variable-arbitration-fixture\cfinal-data-4\_errors
+Content file errors/unauthorized.html copied to D:\workspace\小项目\iris-st-variable-arbitration-fixture\cfinal-data-4\_errors
+Content file errors/url-not-found.html copied to D:\workspace\小项目\iris-st-variable-arbitration-fixture\cfinal-data-4\_errors
+
+If you don't want to receive content updates in the future, set skipContentCheck to true in the config.yaml file.
+
+
+Compiling frontend libraries...
+webpack 5.105.4 compiled [1m[32msuccessfully[39m[22m in 8325 ms
+
+SillyTavern is listening on IPv4: 127.0.0.1:8874
+
+=================================================
+
+Go to: http://127.0.0.1:8874/ to open SillyTavern
+
+=================================================
+
+Extensions available for default-user [
+  { type: 'system', name: 'assets' },
+  { type: 'system', name: 'attachments' },
+  { type: 'system', name: 'caption' },
+  { type: 'system', name: 'connection-manager' },
+  { type: 'system', name: 'expressions' },
+  { type: 'system', name: 'gallery' },
+  { type: 'system', name: 'memory' },
+  { type: 'system', name: 'quick-reply' },
+  { type: 'system', name: 'regex' },
+  { type: 'system', name: 'stable-diffusion' },
+  { type: 'system', name: 'token-counter' },
+  { type: 'system', name: 'translate' },
+  { type: 'system', name: 'tts' },
+  { type: 'system', name: 'vectors' },
+  { type: 'global', name: 'third-party/ST-Prompt-Template' }
+]
+ElevenLabs API key not found
+FetchError: request to http://127.0.0.1:10947/v1/models failed, reason: connect ECONNREFUSED 127.0.0.1:10947
+    at ClientRequest.<anonymous> (file:///E:/sillyTavern/SillyTavern/node_modules/node-fetch/src/index.js:108:11)
+    at ClientRequest.emit (node:events:508:28)
+    at emitErrorEvent (node:_http_client:108:11)
+    at Socket.socketErrorListener (node:_http_client:575:5)
+    at Socket.emit (node:events:508:28)
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  type: 'system',
+  errno: 'ECONNREFUSED',
+  code: 'ECONNREFUSED',
+  erroredSysCall: 'connect'
+}
+Available models: [ 'pilot-model' ]
+Instantiated the tokenizer for gpt-3.5-turbo
+Chat Completion request: {
+  messages: [
+    {
+      role: 'system',
+      content: "Write Pilot卡's next reply in a fictional chat between Pilot卡 and [Unnamed Persona]."
+    },
+    {
+      role: 'system',
+      content: 'Pilot acceptance character: a card whose bound world book carries the upstream README example 2 template.'
+    },
+    { role: 'system', content: '\n你是我信赖的朋友。\n' },
+    { role: 'system', content: '[Start a new Chat]' },
+    { role: 'assistant', content: '你好。' },
+    { role: 'user', content: 'ST compare round: 好感度 70' }
+  ],
+  prompt: undefined,
+  model: 'pilot-model',
+  temperature: 1,
+  max_tokens: 300,
+  max_completion_tokens: undefined,
+  stream: false,
+  presence_penalty: 0,
+  frequency_penalty: 0,
+  top_p: 1,
+  top_k: undefined,
+  stop: undefined,
+  logit_bias: undefined,
+  seed: undefined,
+  n: undefined,
+  logprobs: undefined,
+  top_logprobs: undefined
+}
+Chat Completion response: {
+  id: 'pilot',
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: "<% setvar('好感度', getvar('好感度', { defaults: 0 }) + 10) -%>\n" +
+          '你的善意我已收到。我对你的好感度提升了。\n' +
+          "新的好感度：<%- getvar('好感度') %>"
+      },
+      finish_reason: 'stop'
+    }
+  ],
+  usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }
+}

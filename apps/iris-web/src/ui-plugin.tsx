@@ -24,6 +24,7 @@ import { createIrisStore } from './client/store.ts'
 import { createClient } from './client/create-client.ts'
 import { SlotProvider } from './slots/Slot.tsx'
 import { createIrisSlots } from './slots/slots.ts'
+import { StExtensionPlane } from './st-extensions/plane.tsx'
 
 /** What the shell mounts: `scope.uiRenderer.mount(container)` returns a disposer. */
 export interface UiRenderer {
@@ -75,6 +76,7 @@ export function apply(ctx: Context): void {
         <StrictMode>
           <SlotProvider core={slots.core}>
             <StoreProvider store={wired.store}>
+              <StExtensionPlane />
               <App />
             </StoreProvider>
           </SlotProvider>

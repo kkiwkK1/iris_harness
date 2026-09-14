@@ -1,0 +1,15 @@
+{
+  "name": "@iris/plugin-web-api",
+  "license": "AGPL-3.0-only",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The browser-side system-plugin face: the capability snapshot a sandbox frame is born with, and the codec the shell and the bootstrap must read identically. Type-only dependency on the contract; pulls nothing in behind it.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "dependencies": {
+    "@iris/protocol": "workspace:*"
+  }
+}

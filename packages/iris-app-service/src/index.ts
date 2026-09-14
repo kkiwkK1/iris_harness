@@ -10,8 +10,8 @@
  * @module @iris/app-service
  */
 
-import { readFile } from 'node:fs/promises'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
+import { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
@@ -34,6 +34,20 @@ import { DiagnosticBuffer } from './diagnostics.ts'
 import { acquireHostLock } from './host-lock.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
+import {
+  buildStExtensionDefinition,
+  defaultSettingsBlob,
+  hydrateSettingsBlob,
+  normalizeManifest,
+  StCompatBridge,
+  StExtensionSettingsStore,
+} from '@iris/compat-st-extension'
+import { Installer, isValidExtensionId } from '@iris/extension-installer'
+import { StExtensionAssetStore, ST_EXT_PREFIX } from './st-ext-assets.ts'
+import { installedTreePresent } from './st-reinstall.ts'
+import { AppError } from './errors.ts'
+import type { SystemPluginSnapshot } from '@iris/protocol'
+import type { StCompatOptions } from './service.ts'
 import { IrisAppService } from './service.ts'
 import { ConnectionStore } from './connections.ts'
 import { PersonaStore } from './persona.ts'
@@ -46,6 +60,7 @@ import { ScriptButtonStore } from './script-buttons.ts'
 import { WorldbookStore } from './worldbooks.ts'
 import { openGlobalScope } from './context.ts'
 import { DEFAULT_PRUNE } from './prune.ts'
+import { PluginAssetStore, type PluginAssetState } from './plugin-assets.ts'
 import { serveSandboxAsset } from './sandbox-assets.ts'
 import { stampShellIndex } from './shell-csp.ts'
 import { ScriptCache } from './script-cache.ts'
@@ -54,6 +69,9 @@ import { ScriptPolicyStore } from './scripts.ts'
 import { ScriptLibraryStore } from './script-library.ts'
 import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
+import { SystemPluginRuntime } from './system-plugins.ts'
+import { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
+import { PLUGIN_ASSET_PREFIX } from '@iris/plugin-web-api'
 
 export {
   BackupStore,
@@ -67,6 +85,17 @@ export {
   type BackupStoreOptions,
 } from './backups.ts'
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
+export {
+  SystemPluginRuntime,
+  type SystemPluginActivationScope,
+  type SystemPluginDefinition,
+  type SystemPluginLease,
+  type SystemPluginRuntimeOptions,
+} from './system-plugins.ts'
+export { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
+export type { SystemPluginCapabilities } from './plugins/capabilities.ts'
+export { createTavernHelperCapability, type TavernHelperCapability } from './plugins/tavern-helper.ts'
+export { createMvuCapability, type MvuCapability } from './plugins/mvu.ts'
 export {
   ConnectionStore,
   keyFilePathFor,
@@ -117,6 +146,11 @@ export {
   uniqueId,
   type ProfilePaths,
 } from './paths.ts'
+export {
+  PluginAssetStore,
+  type PluginAssetState,
+  type PluginAssetStateView,
+} from './plugin-assets.ts'
 export {
   applyCardOverrides,
   buildPrompt,
@@ -587,6 +621,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // that forgot to be profile-scoped.
   const paths = profilePaths(dataDir, config.profile ?? DEFAULT_PROFILE)
   warnOnPreProfileLayout(ctx, dataDir, paths.root)
+  // The profile root is created here, once, because boot itself writes into
+  // it before any store's first save does: the system-plugin runtime's
+  // `initialize` persists its boot-revision increment immediately, and every
+  // store's mkdir is lazy (on first write), so on a fresh profile the write
+  // raced nothing — the directory simply did not exist yet, and the host
+  // died in `atomicWriteFile` before serving a single request.
+  await mkdir(paths.root, { recursive: true })
 
   // Retention for the diagnostic bus. Reports already reached the logger and
   // stopped there, so a debug page had nothing to ask for; this keeps a bounded
@@ -733,6 +774,122 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     )
   }
 
+  const systemPlugins = new SystemPluginRuntime({
+    context: ctx,
+    file: join(paths.root, 'system-plugins.json'),
+    definitions: BUILTIN_SYSTEM_PLUGIN_DEFINITIONS,
+    onError: error => { reportStoreProblem(error.message) },
+  })
+  await systemPlugins.initialize()
+
+  // ---- The ST-compat pilot (P3) ------------------------------------------
+  // Installed third-party ST extensions join the runtime here: every directory
+  // under installed/ with a valid lock becomes a definition the runtime runs
+  // with the same lifecycle it gives TH and MVU, and the bridge the generation
+  // path consults is built beside them. The pilot serves ONE extension id —
+  // the first installed one — and says so rather than pretending otherwise.
+  const stExtensionSettingsStore = new StExtensionSettingsStore(
+    join(paths.root, 'st-extension-settings'),
+    message => { ctx.logger.warn(message) },
+  )
+  const stCompatBridge = new StCompatBridge()
+  ctx.effect(() => () => { stCompatBridge.dispose() }, 'irisApp.stCompat.bridge')
+
+  const stExtensionEnabledRevision = (extensionId: string): number | undefined => {
+    const snapshot = systemPlugins.snapshot()
+    const row = snapshot.plugins.find(plugin => plugin.id === extensionId)
+    if (row === undefined || !row.installed || row.status !== 'enabled') return undefined
+    return snapshot.revision
+  }
+  const stExtensionSettings = async (extensionId: string): Promise<Record<string, unknown>> => {
+    return hydrateSettingsBlob(await stExtensionSettingsStore.read(extensionId) ?? defaultSettingsBlob())
+  }
+
+  // Boot scan: adopt every already-installed extension before any request can
+  // name it. A lock without a manifest is reported and skipped, never fatal —
+  // one broken install must not take the plugin plane down.
+  try {
+    const installedDir = join(paths.extensions, 'installed')
+    const entries = await readdir(installedDir).catch(() => [] as string[])
+    for (const entry of entries) {
+      if (!isValidExtensionId(entry)) continue
+      try {
+        const raw = JSON.parse(await readFile(join(installedDir, entry, 'manifest.json'), 'utf8')) as unknown
+        const parsed = normalizeManifest(raw)
+        if (!parsed.ok) {
+          ctx.logger.warn(`the installed extension "${entry}" has a manifest Iris refuses (${parsed.issues.map(issue => issue.field).join(', ')}); it stays inactive`)
+          continue
+        }
+        systemPlugins.adoptDefinition(buildStExtensionDefinition({
+          id: entry,
+          manifest: parsed.manifest,
+          memberBundlePath: join(dataDir, 'system-plugins', entry, 'client', 'client.js'),
+        }), { installed: true })
+      } catch (cause: unknown) {
+        ctx.logger.warn(`the installed extension "${entry}" could not be adopted: ${String(cause)}`)
+      }
+    }
+  } catch { /* the extensions root does not exist yet — nothing installed */ }
+
+  const stCompat: StCompatOptions = {
+    bridge: stCompatBridge,
+    // The pilot serves the one ST-compat extension: an installed row that is
+    // neither builtin. The builtins install true by default and would
+    // otherwise shadow the find.
+    extensionId: () => systemPlugins.snapshot().plugins
+      .find(plugin => plugin.installed && plugin.id !== 'tavern-helper' && plugin.id !== 'mvu')?.id ?? '',
+    revisionOf: (extensionId: string): number | undefined => stExtensionEnabledRevision(extensionId),
+    settingsFor: (extensionId: string): Promise<unknown> => stExtensionSettings(extensionId),
+    persistSettings: async (extensionId: string, blob: unknown): Promise<void> => {
+      await stExtensionSettingsStore.write(extensionId, blob)
+    },
+    installFromDirectory: async (directoryPath: string): Promise<SystemPluginSnapshot> => {
+      // The id is the manifest's display name, slugified to the installer's
+      // own rule — the same derivation the asset route's dirName uses, so the
+      // installed tree and its URLs agree.
+      const rawManifest = JSON.parse(await readFile(join(directoryPath, 'manifest.json'), 'utf8')) as { display_name?: unknown }
+      if (typeof rawManifest.display_name !== 'string' || rawManifest.display_name === '') {
+        throw new AppError('invalid-request', 'the extension directory has no manifest.json display_name to install under')
+      }
+      const id = rawManifest.display_name.toLowerCase().replace(/[^a-z0-9._-]/gu, '-').replace(/^-+|-+$/gu, '')
+      if (!isValidExtensionId(id)) {
+        throw new AppError('invalid-request', `the extension's name "${rawManifest.display_name}" does not slugify to a valid extension id`)
+      }
+      // A reinstall of an extension id whose tree is still on disk re-adopts
+      // instead of installing: the uninstall rule keeps the installed tree
+      // (the artifact and the stored settings are the user's data), so the
+      // same directory meeting an existing lock is the reinstall the platform
+      // promises — not the silent overwrite the installer refuses.
+      const readopt = installedTreePresent(paths.extensions, id)
+      if (!readopt) {
+        const installer = await Installer.create(paths.extensions)
+        await installer.installAs(id, { kind: 'local-directory', directoryPath })
+      }
+      const installed = JSON.parse(await readFile(join(paths.extensions, 'installed', id, 'manifest.json'), 'utf8')) as unknown
+      const parsed = normalizeManifest(installed)
+      if (!parsed.ok) {
+        throw new AppError('invalid-request', `the installed manifest.json is not one Iris accepts (${parsed.issues.map(issue => issue.field).join(', ')})`)
+      }
+      systemPlugins.adoptDefinition(buildStExtensionDefinition({
+        id,
+        manifest: parsed.manifest,
+        memberBundlePath: join(dataDir, 'system-plugins', id, 'client', 'client.js'),
+      }), { installed: true })
+      return systemPlugins.snapshot()
+    },
+  }
+
+  ctx.effect(
+    () => async () => { await systemPlugins.dispose() },
+    'irisApp.systemPlugins',
+  )
+  ctx.effect(
+    () => systemPlugins.onChange(snapshot => {
+      ctx.irisRpc.broadcast({ type: 'plugins.changed', snapshot })
+    }),
+    'irisApp.systemPlugins.changed',
+  )
+
   const chats = new ChatStore(
     paths.chats, library, scriptVariables, globalScope, worldbooks,
     // Read through a closure rather than captured: the selection is a setting
@@ -774,6 +931,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       presetName => scripts.presetRegex(presetName),
       reportMalformedPresetRegex,
     ),
+    systemPlugins,
   )
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.
@@ -889,6 +1047,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     library,
     chats,
     settings,
+    plugins: systemPlugins,
+    stCompat,
     scripts,
     scriptLibrary,
     extensionSettings,
@@ -966,6 +1126,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // the check worth having here.
   ctx.effect(() => {
     const disposers = [
+      ctx.irisRpc.register('plugin.list', handlers['plugin.list']),
+      ctx.irisRpc.register('plugin.install', handlers['plugin.install']),
+      ctx.irisRpc.register('plugin.uninstall', handlers['plugin.uninstall']),
+      ctx.irisRpc.register('plugin.enable', handlers['plugin.enable']),
+      ctx.irisRpc.register('plugin.disable', handlers['plugin.disable']),
+      ctx.irisRpc.register('plugin.reload', handlers['plugin.reload']),
+      ctx.irisRpc.register('stCompat.plane.attach', handlers['stCompat.plane.attach']),
+      ctx.irisRpc.register('stCompat.plane.detach', handlers['stCompat.plane.detach']),
+      ctx.irisRpc.register('stCompat.submit', handlers['stCompat.submit']),
+      ctx.irisRpc.register('stCompat.settings', handlers['stCompat.settings']),
+      ctx.irisRpc.register('stExtension.install', handlers['stExtension.install']),
       ctx.irisRpc.register('debug.reports', handlers['debug.reports']),
       ctx.irisRpc.register('storage.set', handlers['storage.set']),
       ctx.irisRpc.register('storage.remove', handlers['storage.remove']),
@@ -1214,4 +1385,137 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       'irisApp: shell Content-Security-Policy',
     )
   }
+
+  /*
+   * The browser face of installed system plugins: the aggregate manifest at
+   * `/plugins/manifest.json` and each enabled plugin's client bundle at
+   * `/plugins/<id>/client.js` (`plugin-assets.ts`, which is where the URL
+   * contract, the install-directory layout and their reasons live).
+   *
+   * Registered unconditionally, unlike the sandbox route above, for two
+   * reasons: it serves profile data rather than a build — the plugin install
+   * directory exists whenever the host does — and `/plugins/manifest.json` is
+   * a real answer in every state (the current enabled set, possibly empty),
+   * where a sandbox route without a dist would have nothing but 404s to say.
+   * Nothing in the built dist lives under `/plugins`, so the fallback seat
+   * loses nothing it could ever have served.
+   *
+   * The prefix is fixed by the contract package rather than configured, the
+   * same way the meta name is: the frame's plugin tags and this route must
+   * spell one URL, and a contract with a per-deployment override is two
+   * contracts.
+   *
+   * Guarded like every route above, and for the same reason: these bytes are
+   * plugin code this process did not author, and the `/plugins` prefix is as
+   * readable to a hostile same-origin page as the RPC endpoint is.
+   */
+  const pluginAssets = new PluginAssetStore(join(dataDir, 'system-plugins'))
+  // Read per request, never captured: the manifest and the bundle gate must
+  // answer the enable state as it is *now*, and a disable that committed
+  // after this plugin started is a fact the next request already carries. The
+  // triple is the same one the browser's `sandboxPluginRuntime` reduces on —
+  // installed, enabled, and the transition complete — restated per row rather
+  // than reduced to booleans, because the asset plane is per-plugin flat:
+  // MVU's implicit dependency on Tavern Helper is a capability-plane rule and
+  // has no business hiding one plugin's bundle behind another's state.
+  const pluginAssetState = (): PluginAssetState => {
+    const snapshot = systemPlugins.snapshot()
+    return {
+      revision: snapshot.revision,
+      enabled: new Set(snapshot.plugins
+        .filter(plugin => plugin.installed && plugin.enabled && plugin.status === 'enabled')
+        .map(plugin => plugin.id)),
+    }
+  }
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'prefix',
+      path: PLUGIN_ASSET_PREFIX,
+      handler: ctx.irisRpc.guard((req, res) => pluginAssets.serve(req, res, pluginAssetState)),
+    }),
+    `irisApp: GET ${PLUGIN_ASSET_PREFIX}`,
+  )
+
+  // The ST-compat pilot's browser payload: upstream bytes, facades and vendor
+  // globals under one revision-keyed mount, gated on the enable state per
+  // request like the plugin route above. Registered unconditionally — the
+  // extensions root exists whenever a profile exists, and the route 404s for
+  // a host with nothing enabled, which is what "absent" must look like on the
+  // wire rather than a missing endpoint a reader would confuse for a down one.
+  const webDistDir: string | undefined = config.webDistIndex === undefined || config.webDistIndex === ''
+    ? undefined
+    : dirname(config.webDistIndex)
+  if (webDistDir !== undefined) {
+    const facadeFiles = await readFacadeFiles(webDistDir)
+    const facadeBuildStamp = await facadeStamp(facadeFiles)
+    const stExtAssets = new StExtensionAssetStore(paths.extensions, webDistDir, facadeFiles, facadeBuildStamp)
+    const stExtState = () => {
+      const snapshot = systemPlugins.snapshot()
+      return {
+        enabled: new Set(snapshot.plugins
+          .filter(plugin => plugin.installed && plugin.enabled && plugin.status === 'enabled')
+          .map(plugin => plugin.id)),
+      }
+    }
+    ctx.effect(
+      () => ctx.webServer.register({
+        kind: 'prefix',
+        path: ST_EXT_PREFIX,
+        handler: ctx.irisRpc.guard((req, res) => stExtAssets.serve(req, res, stExtState)),
+      }),
+      `irisApp: GET ${ST_EXT_PREFIX}`,
+    )
+  }
+}
+
+/**
+ * The built facade entries by URL path. The build's output IS the URL
+ * contract, so the map is read off the directory rather than restated: every
+ * .js file under st-ext/facades serves at its own relative path.
+ */
+async function readFacadeFiles(webDistDir: string): Promise<ReadonlyMap<string, string>> {
+  // The build's output layout IS the served layout: entries and chunks sit
+  // directly under st-ext/ (script.js, scripts/events.js, chunks/…); vendor
+  // is excluded — the route serves it from its own branch.
+  const root = join(webDistDir, 'st-ext')
+  const files = new Map<string, string>()
+  const walk = async (dir: string, prefix: string): Promise<void> => {
+    let names: string[] = []
+    try {
+      names = await readdir(dir)
+    } catch {
+      return
+    }
+    for (const name of names) {
+      const full = join(dir, name)
+      const info = await stat(full).catch(() => undefined)
+      if (info === undefined) continue
+      const nextPrefix = prefix === '' ? name : `${prefix}/${name}`
+      if (info.isDirectory()) {
+        // Vendor is served from its own branch; never in the facade map.
+        if (nextPrefix !== 'vendor') await walk(full, nextPrefix)
+        continue
+      }
+      if (name.endsWith('.js')) files.set(nextPrefix, full)
+    }
+  }
+  await walk(root, '')
+  return files
+}
+
+/**
+ * A short stamp over the facade tree's names and mtimes — the cache key the
+ * plane puts into every frame's module URL (?build=…), so an app rebuild
+ * re-keys the module graph and a poisoned immutable cache entry from an older
+ * build is never served to a newer frame.
+ */
+async function facadeStamp(files: ReadonlyMap<string, string>): Promise<string> {
+  const { createHash } = await import('node:crypto')
+  const hash = createHash('sha256')
+  for (const key of [...files.keys()].sort()) {
+    const info = await stat(files.get(key)!).catch(() => undefined)
+    hash.update(key)
+    hash.update(String(info?.mtimeMs ?? 0))
+  }
+  return hash.digest('hex').slice(0, 12)
 }

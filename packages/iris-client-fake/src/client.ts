@@ -13,7 +13,9 @@
 
 import {
   parseRequest,
+  registerRequestSchema,
   toEntryDigest,
+  type AnyRpcMethod,
   type CharacterSummary,
   type ChatSearchHit,
   type ChatSearchMatch,
@@ -27,6 +29,7 @@ import {
   type RpcRequest,
   type RegexScriptView,
   type RpcResponse,
+  type RuntimeRequestSchema,
   type ScopedRegexView,
   type ScriptView,
   type UserScript,
@@ -43,6 +46,7 @@ import {
   saveConnection,
 } from './connections.ts'
 import { mergeOverrides, mergeSettings } from './settings.ts'
+import { FakeSystemPlugins } from './plugins.ts'
 import {
   DEFAULT_SETTINGS,
   FAKE_GLOBAL_REGEX,
@@ -108,6 +112,17 @@ export interface FakeClient extends IrisClient {
   setConnected(value: boolean): void
   /** Drop every timer in flight. Call from a test's teardown. */
   dispose(): void
+  /**
+   * Register one runtime method — the fixture-facing face of the host's
+   * dynamic half. Schema and handler are taken together and one disposer
+   * removes both; `pluginId` gates the method on that catalog row.
+   */
+  registerPluginMethod<T>(
+    method: string,
+    schema: RuntimeRequestSchema<T>,
+    handler: (params: T) => unknown,
+    options?: { pluginId?: string },
+  ): () => void
 }
 
 /** An in-flight generation. */
@@ -242,6 +257,21 @@ class InMemoryClient implements FakeClient {
   #chunkDelayMs: number
   #chunkCount: number
   #nextId = 1
+  /** The same bundled catalog and dependency rules the real control plane exposes. */
+  readonly #systemPlugins: FakeSystemPlugins
+  /**
+   * Methods a fixture registered at runtime — the fake of the host's dynamic
+   * half. Keyed by name; the schema half lives in the protocol registry, so
+   * `call`'s validation gate sees it exactly as the host's would. A method
+   * here never shadows a built-in: the registry refuses built-in names before
+   * the handler is stored.
+   */
+  readonly #pluginMethods = new Map<string, {
+    /** Refuses while the owning catalog row is off, when one was named. */
+    assertAvailable: () => void
+    handler: (params: unknown) => unknown
+    disposeSchema: () => void
+  }>()
   /**
    * The books selected for every chat.
    *
@@ -285,6 +315,10 @@ class InMemoryClient implements FakeClient {
     this.#globalSettings = { ...DEFAULT_SETTINGS }
     this.#chunkDelayMs = options.chunkDelayMs ?? 24
     this.#chunkCount = options.chunkCount ?? 28
+    this.#systemPlugins = new FakeSystemPlugins(
+      snapshot => this.#emit({ type: 'plugins.changed', snapshot }),
+      (code, message) => { throw new FakeRpcError(code, message) },
+    )
   }
 
   get connected(): boolean {
@@ -325,20 +359,108 @@ class InMemoryClient implements FakeClient {
     }
   }
 
-  async call<M extends RpcMethod>(method: M, params: RpcRequest<M>): Promise<RpcResponse<M>> {
+  /**
+   * Register one runtime method, the way a system plugin's activation does on
+   * the host.
+   *
+   * Both halves are taken together — the request schema into the protocol's
+   * registry (which refuses built-in names and duplicate registrations, so a
+   * fixture cannot shadow the static surface) and the handler here — and the
+   * returned disposer removes both. `pluginId`, when given, gates the method
+   * on that catalog row the way the host gates its own: while the row is
+   * disabled the method answers `unsupported`, which is what UI tests rehearse
+   * with «disable, then call».
+   * @param method - the method name; must not be a built-in or taken.
+   * @param schema - validates params, exactly as a static schema would.
+   * @param handler - receives the validated params.
+   * @param options - `pluginId` names the catalog row the method belongs to.
+   * @returns the disposer removing the registration.
+   */
+  registerPluginMethod<T>(
+    method: string,
+    schema: RuntimeRequestSchema<T>,
+    handler: (params: T) => unknown,
+    options?: { pluginId?: string },
+  ): () => void {
+    const disposeSchema = registerRequestSchema(method, schema)
+    const pluginId = options?.pluginId
+    this.#pluginMethods.set(method, {
+      assertAvailable: () => {
+        if (pluginId !== undefined && !this.#systemPlugins.isEnabled(pluginId)) {
+          throw new FakeRpcError(
+            'unsupported',
+            `system plugin "${pluginId}" is disabled; method "${method}" is unavailable`,
+          )
+        }
+      },
+      handler: params => handler(params as T),
+      disposeSchema,
+    })
+    return () => {
+      // Identity-free on purpose: one registration per name (the registry saw
+      // to that), so evicting the name is evicting this registration.
+      if (this.#pluginMethods.get(method)?.disposeSchema !== disposeSchema) return
+      this.#pluginMethods.delete(method)
+      disposeSchema()
+    }
+  }
+
+  async call<M extends AnyRpcMethod>(method: M, params: RpcRequest<M>): Promise<RpcResponse<M>> {
     // Validate exactly where the host would. A UI that sends a malformed
-    // payload should find out against the fake, not against the transport.
+    // payload should find out against the fake, not against the transport —
+    // and a runtime method is validated by its registered schema here too,
+    // which is the whole reason the schema half is registered at all.
     const parsed = parseRequest(method, params)
     if (!parsed.ok) throw new FakeRpcError(parsed.error.code, parsed.error.message)
+    const pluginMethod = this.#pluginMethods.get(method as string)
+    if (pluginMethod !== undefined) {
+      pluginMethod.assertAvailable()
+      return await pluginMethod.handler(parsed.params) as RpcResponse<M>
+    }
     // The cast mirrors the host dispatcher's: `parsed.params` is the validated
     // body of THIS method, and the switch below is what proves it, arm by arm.
-    return this.#dispatch(method, parsed.params) as Promise<RpcResponse<M>>
+    // Reaching the switch with a runtime method's name means its schema was
+    // registered without a handler here — half a registration, which the
+    // switch's default arm refuses by name.
+    return this.#dispatch(method as RpcMethod, parsed.params) as Promise<RpcResponse<M>>
   }
 
   // ---------------------------------------------------------------- dispatch
 
   async #dispatch(method: RpcMethod, params: unknown): Promise<unknown> {
     switch (method) {
+      case 'plugin.list':
+        return this.#systemPlugins.snapshot()
+
+      case 'plugin.install':
+        return this.#systemPlugins.install((params as RpcRequest<'plugin.install'>).id)
+
+      case 'plugin.uninstall':
+        return this.#systemPlugins.uninstall((params as RpcRequest<'plugin.uninstall'>).id)
+
+      case 'plugin.enable':
+        return this.#systemPlugins.enable((params as RpcRequest<'plugin.enable'>).id)
+
+      case 'plugin.disable':
+        return this.#systemPlugins.disable((params as RpcRequest<'plugin.disable'>).id)
+
+      case 'plugin.reload':
+        return this.#systemPlugins.reload((params as RpcRequest<'plugin.reload'>).id)
+
+      // The ST-compat plane's face. The fake runs no extension frame, so the
+      // bridge arms are recorded and forgotten, submits are refused (nothing
+      // is pending), and settings/install answer in their stored shape.
+      case 'stCompat.plane.attach':
+        return { ok: true }
+      case 'stCompat.plane.detach':
+        return { ok: true }
+      case 'stCompat.submit':
+        return { accepted: false, why: 'the fake client runs no extension plane' }
+      case 'stCompat.settings':
+        return { ok: true }
+      case 'stExtension.install':
+        return this.#systemPlugins.snapshot()
+
       case 'chat.list':
         return { chats: this.#summaries(), ordered: this.#chatOrder.length > 0 }
 

@@ -10,6 +10,7 @@
  */
 
 import type { ChatSummary, ChatView, DebugReport } from './views.ts'
+import type { SystemPluginSnapshot } from './system-plugins.ts'
 
 /** One frame pushed to the browser. */
 export type IrisEvent =
@@ -137,6 +138,22 @@ export type IrisEvent =
   }
   /** The conversation list changed. */
   | { type: 'chats.updated', chats: ChatSummary[] }
+  /** The profile's system-plugin lifecycle changed. */
+  | { type: 'plugins.changed', snapshot: SystemPluginSnapshot }
+  /**
+   * One ST-compat bridge round, broadcast to the shell plane that armed itself
+   * for this extension and revision. The payload carries the full context the
+   * extension frame hydrates from — the plane is a pure relay and decides
+   * nothing; the host validates every submit against the round's revision.
+   */
+  | {
+      type: 'st-compat.request'
+      token: string
+      extensionId: string
+      kind: 'chat-open' | 'generate' | 'reply'
+      revision: number
+      payload: unknown
+    }
 
 /** Discriminant of an event frame. */
 export type IrisEventType = IrisEvent['type']

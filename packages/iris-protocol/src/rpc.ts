@@ -15,9 +15,12 @@
 
 import { z } from 'zod'
 
+import type { RuntimeRequestSchema } from './rpc-registry.ts'
+import { lookupRequestSchema } from './rpc-registry.ts'
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
 import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
+import type { SystemPluginSnapshot } from './system-plugins.ts'
 // —— family①: identity & messages ——
 import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
 
@@ -240,6 +243,31 @@ const userScriptRequest = z.looseObject({
 
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
+  'plugin.list': z.object({}),
+  'plugin.install': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.uninstall': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.enable': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.disable': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.reload': z.object({ id: z.string().min(1).max(200) }),
+  /** The ST-compat plane reports an extension frame is live at this revision. */
+  'stCompat.plane.attach': z.object({ extensionId: z.string().min(1).max(200), pluginRevision: z.number().int().nonnegative(), chatId: z.string().min(1).max(200).optional() }),
+  /** The plane went away (frame rebuilt, page closed, extension disabled). */
+  'stCompat.plane.detach': z.object({ extensionId: z.string().min(1).max(200) }),
+  /** The plane's answer to one bridge round; the host re-validates the revision. */
+  'stCompat.submit': z.object({
+    token: z.string().min(1).max(100),
+    kind: z.enum(['chat-open', 'generate', 'reply']),
+    pluginRevision: z.number().int().nonnegative(),
+    result: z.unknown(),
+  }),
+  /** The facade's saveSettingsDebounced, persisted per profile under the extension's key. */
+  'stCompat.settings': z.object({
+    extensionId: z.string().min(1).max(200),
+    pluginRevision: z.number().int().nonnegative(),
+    settings: z.unknown(),
+  }),
+  /** Install a third-party ST extension from a local directory. */
+  'stExtension.install': z.object({ path: z.string().min(1).max(1000) }),
   'chat.list': z.object({}),
   'chat.create': z.object({ characterId: z.string().min(1) }),
   'chat.open': z.object({ chatId: z.string().min(1) }),
@@ -2220,8 +2248,36 @@ export const requestSchemas = {
 /** Every callable method. */
 export type RpcMethod = keyof typeof requestSchemas
 
-/** The validated request body of one method. */
-export type RpcRequest<M extends RpcMethod> = z.infer<(typeof requestSchemas)[M]>
+/**
+ * Any callable method name: the built-in vocabulary above, plus names whose
+ * schemas a system plugin registered at runtime (`./rpc-registry.ts`).
+ *
+ * `RpcMethod` itself is **not** widened — it feeds `RpcResponseMap` and the
+ * exhaustiveness guards that keep the static surface honest. The `(string & {})`
+ * member accepts any literal without collapsing it to `string`, so a caller
+ * naming a built-in still gets that method's types and a caller naming a
+ * runtime method gets `unknown` on both sides; the registration site is where
+ * a dynamic method's schema — its type — lives.
+ */
+export type AnyRpcMethod = RpcMethod | (string & {})
+
+/** Incarnation fence attached by a controlled card frame. */
+export interface PluginRevisionRequest {
+  pluginRevision?: number
+}
+
+/**
+ * The validated request body of one method.
+ *
+ * For a runtime-registered method the params are `unknown` beyond the fence:
+ * the schema that would narrow them was handed to the registry, not to the
+ * type system, and a cast at the call site is the caller saying so. The fence
+ * is inside the true arm only — `unknown & PluginRevisionRequest` collapses
+ * to `PluginRevisionRequest`, which would make an object literal with real
+ * params an excess-property error and quietly un-generalize the dynamic arm.
+ */
+export type RpcRequest<M extends AnyRpcMethod> =
+  M extends RpcMethod ? z.infer<(typeof requestSchemas)[M]> & PluginRevisionRequest : unknown
 
 /**
  * What the three `regex.*Preset*` methods answer with.
@@ -2262,6 +2318,17 @@ export interface PresetRegexAnswer {
 
 /** What each method resolves with. */
 export interface RpcResponseMap {
+  'plugin.list': SystemPluginSnapshot
+  'plugin.install': SystemPluginSnapshot
+  'plugin.uninstall': SystemPluginSnapshot
+  'plugin.enable': SystemPluginSnapshot
+  'plugin.disable': SystemPluginSnapshot
+  'plugin.reload': SystemPluginSnapshot
+  'stCompat.plane.attach': { ok: true }
+  'stCompat.plane.detach': { ok: true }
+  'stCompat.submit': { accepted: boolean, why?: string }
+  'stCompat.settings': { ok: true }
+  'stExtension.install': SystemPluginSnapshot
   /**
    * The sidebar list, and whether its order is one somebody arranged.
    *
@@ -2846,7 +2913,7 @@ export interface RpcResponseMap {
 }
 
 /** The response of one method. */
-export type RpcResponse<M extends RpcMethod> = RpcResponseMap[M]
+export type RpcResponse<M extends AnyRpcMethod> = M extends RpcMethod ? RpcResponseMap[M] : unknown
 
 /** A failure the client can render. */
 export interface RpcError {
@@ -2911,7 +2978,7 @@ export class RpcCallError extends Error implements RpcError {
 }
 
 /** One request frame on the wire. */
-export interface RpcRequestFrame<M extends RpcMethod = RpcMethod> {
+export interface RpcRequestFrame<M extends AnyRpcMethod = RpcMethod> {
   /** Correlates the response. */
   id: string
   method: M
@@ -2919,7 +2986,7 @@ export interface RpcRequestFrame<M extends RpcMethod = RpcMethod> {
 }
 
 /** One response frame on the wire. */
-export type RpcResponseFrame<M extends RpcMethod = RpcMethod> =
+export type RpcResponseFrame<M extends AnyRpcMethod = RpcMethod> =
   | { id: string, ok: true, result: RpcResponse<M> }
   | { id: string, ok: false, error: RpcError }
 
@@ -2930,19 +2997,29 @@ export type RpcResponseFrame<M extends RpcMethod = RpcMethod> =
  * discriminated result rather than throwing, so the transport answers with an
  * `invalid-request` frame instead of tearing down the connection — a malformed
  * frame from one page must not disconnect the others.
+ *
+ * The static vocabulary is consulted first, then the runtime registry
+ * (`./rpc-registry.ts`): a method neither knows is `unsupported`, and a
+ * runtime-registered schema is held to the same reading a static one is —
+ * including the `pluginRevision` preservation below, which is
+ * method-agnostic and therefore covers runtime methods without a line of
+ * their own.
  * @param method - the requested method.
  * @param params - the raw body.
  * @returns the parsed params, or the reason they were refused.
  */
-export function parseRequest<M extends RpcMethod>(
+export function parseRequest<M extends AnyRpcMethod>(
   method: M,
   params: unknown,
 ): { ok: true, params: RpcRequest<M> } | { ok: false, error: RpcError } {
-  // Widened to `unknown` rather than to `RpcRequest<M>`: the map's value type is
-  // a union of concrete schemas, and asserting it into the per-method schema
-  // type is the cast TypeScript rightly refuses. The narrowing happens once, on
-  // the parsed result, where the schema has already proved the shape.
-  const schema = requestSchemas[method] as z.ZodType<unknown> | undefined
+  // Widened to the registry's structural type rather than to
+  // `RpcRequest<M>`: the map's value type is a union of concrete schemas, and
+  // asserting it into the per-method schema type is the cast TypeScript
+  // rightly refuses. The narrowing happens once, on the parsed result, where
+  // the schema has already proved the shape. Both arms answer `safeParse`,
+  // which is everything this function reads.
+  const schema: RuntimeRequestSchema | undefined
+    = (requestSchemas as Record<string, RuntimeRequestSchema>)[method] ?? lookupRequestSchema(method)
   if (schema === undefined) {
     return { ok: false, error: { code: 'unsupported', message: `unknown method "${String(method)}"` } }
   }
@@ -2950,5 +3027,22 @@ export function parseRequest<M extends RpcMethod>(
   if (!result.success) {
     return { ok: false, error: { code: 'invalid-request', message: result.error.issues[0]?.message ?? 'invalid params' } }
   }
-  return { ok: true, params: result.data as RpcRequest<M> }
+  let pluginRevision: number | undefined
+  if (params !== null && typeof params === 'object' && Object.hasOwn(params, 'pluginRevision')) {
+    const value = (params as Record<string, unknown>)['pluginRevision']
+    if (!Number.isSafeInteger(value) || (value as number) < 0) {
+      return {
+        ok: false,
+        error: { code: 'invalid-request', message: 'pluginRevision must be a nonnegative safe integer' },
+      }
+    }
+    pluginRevision = value as number
+  }
+  return {
+    ok: true,
+    params: {
+      ...(result.data as object),
+      ...pluginRevision === undefined ? {} : { pluginRevision },
+    } as RpcRequest<M>,
+  }
 }

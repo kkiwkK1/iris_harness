@@ -7145,3 +7145,50 @@ trip that also asserts no spawn argument contains the key),
 renamed file on POSIX) and `packages/iris-app-service/tests/connections.test.ts`
 (two assertions restated: the stored file has **no** plaintext key and the store
 answers with it anyway).
+
+## 76. Reply variable processors propose changes; the host commits one arbitrated table
+
+**Measured 2026-09-14 in a disposable SillyTavern copy.** The fixture lived at
+`D:/workspace/小项目/iris-st-variable-arbitration-fixture`: ST `51ad27fb`,
+ST-Prompt-Template `f9a07da`, JS-Slash-Runner `cd9f523`, and no file under the
+`E:` reference installation was written. ST-Prompt-Template registers its
+reply handler with `eventSource.makeFirst(CHARACTER_MESSAGE_RENDERED, ...)`;
+the Tavern Helper script runtime and MVU receive the same event afterwards. A
+synthetic assistant floor carrying both EJS `setvar` and an MVU command was
+then emitted through ST's real `MESSAGE_RECEIVED` → render →
+`CHARACTER_MESSAGE_RENDERED` path. The stored floor retained Prompt Template's
+top-level `好感度: 10` while MVU added its own state envelope (`stat_data`,
+`display_data`, `delta_data`, `schema`). In other words, upstream composes the
+processors over one floor; it does not erase the first processor's unrelated
+keys with the second processor's complete snapshot.
+
+The pilot lock's MVU artifact `61010dab` was also tried in that disposable
+copy. It stopped during startup at its lodash `debounce` call (`Expected a
+function`) against this locked TH/ST pair, so it supplied no reply-handler
+measurement. The runnable local MVU artifact used for the event measurement
+was `6a11e2f8`; the ordering fact itself comes from ST-Prompt-Template's locked
+registration site and Tavern Helper's real event dispatch. This distinction is
+recorded rather than relabelling the newer artifact as the pilot lock.
+
+**Iris's old path contradicted both the measured result and its own storage
+contract.** `#processReplyViaStCompat` called `replaceVariables` with the ST
+floor, then `ChatEntry.recordVariables` called it again with MVU's whole table.
+The second append made the first one disappear and C-final incorrectly called
+that “mutual exclusion”. It was two writers and two commits, with loss hidden
+by last-writer-wins.
+
+The settlement edge now treats each result as a proposal against the inherited
+baseline. It computes the proposal's changed paths, applies Prompt Template
+first and MVU second, and crosses `VariableStore.replaceVariables` once. Changes
+to different paths survive together. When both proposals change the same path
+(or one changes an ancestor of the other), the later upstream handler wins and
+a `variables/note` names the path, both plugin IDs, and the winner. Disabled
+processors submit no proposal; the remaining processor still commits exactly
+once. `ChatEntry.computeVariables` is the compute-only MVU edge;
+`recordVariables` remains its one-call compatibility wrapper for callers that
+have no co-processor.
+
+**Held by** `packages/iris-app-service/tests/variable-arbitration.test.ts`: the
+two handler counts, final table, one host commit, disjoint and same-path cases,
+the conflict report, and both one-plugin states. The pure nested-path case pins
+that arbitration applies deltas rather than complete snapshots.

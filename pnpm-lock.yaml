@@ -134,9 +134,15 @@ importers:
       '@iris/compat-prompt-template':
         specifier: workspace:*
         version: link:../iris-compat-prompt-template
+      '@iris/compat-st-extension':
+        specifier: workspace:*
+        version: link:../iris-compat-st-extension
       '@iris/compat-tavernhelper':
         specifier: workspace:*
         version: link:../iris-compat-tavernhelper
+      '@iris/extension-installer':
+        specifier: workspace:*
+        version: link:../iris-extension-installer
       '@iris/llm-openai-compat':
         specifier: workspace:*
         version: link:../iris-llm-openai-compat
@@ -155,6 +161,12 @@ importers:
       '@iris/pipeline':
         specifier: workspace:*
         version: link:../iris-pipeline
+      '@iris/plugin-api':
+        specifier: workspace:*
+        version: link:../iris-plugin-api
+      '@iris/plugin-web-api':
+        specifier: workspace:*
+        version: link:../iris-plugin-web-api
       '@iris/preset':
         specifier: workspace:*
         version: link:../iris-preset
@@ -219,6 +231,12 @@ importers:
         specifier: ^4.17.24
         version: 4.17.25
 
+  packages/iris-compat-st-extension:
+    dependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   packages/iris-compat-tavernhelper:
     dependencies:
       '@deepseek-ai/dsh-llm':
@@ -245,6 +263,8 @@ importers:
         version: 4.0.9
 
   packages/iris-compat-tavernhelper-core: {}
+
+  packages/iris-extension-installer: {}
 
   packages/iris-llm-openai-compat:
     dependencies:
@@ -305,6 +325,18 @@ importers:
         version: link:../iris-chat
 
   packages/iris-pipeline: {}
+
+  packages/iris-plugin-api:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.2
+        version: 4.0.2(@deepseek-ai/cordis-plugin-include@1.0.7)(@deepseek-ai/cordis-plugin-loader@1.0.3)
+
+  packages/iris-plugin-web-api:
+    dependencies:
+      '@iris/protocol':
+        specifier: workspace:*
+        version: link:../iris-protocol
 
   packages/iris-preset:
     dependencies:

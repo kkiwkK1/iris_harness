@@ -98,6 +98,30 @@ export function Slot<K extends IrisSlotName>({
 const EMPTY: readonly StoredEntry[] = []
 
 /**
+ * Whether a point has any contribution right now.
+ *
+ * A composition site that wants furniture *around* a point — a heading, a rule,
+ * a labelled block — has to know whether the point is occupied before drawing
+ * it: `<Slot>` renders nothing at all when it is empty, so a heading beside it
+ * would otherwise stand over nothing (and, for a point a plugin occupies only
+ * while it is enabled, would linger after the plugin goes away).
+ *
+ * Reads the same ledger through the same subscription as `<Slot>`, so the two
+ * answers agree within a commit rather than one lagging the other.
+ * @param name - the declared point.
+ * @returns true when at least one contribution is registered.
+ */
+export function useSlotOccupied(name: IrisSlotName): boolean {
+  const core = useSlots()
+  const subscribe = useCallback(
+    (onChange: () => void) => (core === undefined ? () => undefined : core.subscribe(name, onChange)),
+    [core, name],
+  )
+  const snapshot = useCallback(() => (core === undefined ? EMPTY : core.entries(name)), [core, name])
+  return useSyncExternalStore(subscribe, snapshot, snapshot).length > 0
+}
+
+/**
  * Render one contribution.
  *
  * The entry's component is type-erased at the ledger boundary — the register

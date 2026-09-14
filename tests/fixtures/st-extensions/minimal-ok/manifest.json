@@ -1,0 +1,13 @@
+{
+	"display_name": "Fixture Minimal OK",
+	"loading_order": "10",
+	"requires": [],
+	"optional": [],
+	"dependencies": [],
+	"js": "src/entry.js",
+	"css": "css/style.css",
+	"author": "iris-fixture",
+	"version": "1.0.0",
+	"homePage": "https://example.invalid/minimal-ok",
+	"auto_update": false
+}

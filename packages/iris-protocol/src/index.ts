@@ -33,6 +33,12 @@ export {
   type IrisEventType,
 } from './events.ts'
 
+export type {
+  SystemPluginId,
+  SystemPluginSnapshot,
+  SystemPluginView,
+} from './system-plugins.ts'
+
 /*
  * The entry-listing mapper, in the contract for the reason the specifier walker
  * above is: the host derives digests from real books and the fake client from
@@ -43,17 +49,25 @@ export { toEntryDigest } from './digests.ts'
 
 export {
   parseRequest,
+  type PluginRevisionRequest,
   type PresetRegexAnswer,
   requestSchemas,
   RpcCallError,
   type RpcError,
   type RpcMethod,
+  type AnyRpcMethod,
   type RpcRequest,
   type RpcRequestFrame,
   type RpcResponse,
   type RpcResponseFrame,
   type RpcResponseMap,
 } from './rpc.ts'
+
+export {
+  lookupRequestSchema,
+  registerRequestSchema,
+  type RuntimeRequestSchema,
+} from './rpc-registry.ts'
 
 export type {
   BackupPreview,
@@ -147,12 +161,17 @@ export {
 export interface IrisClient {
   /**
    * Call one method.
+   *
+   * `AnyRpcMethod`: beside the static vocabulary, a name whose schema a
+   * system plugin registered at runtime is callable here too, with `unknown`
+   * params and response — the registration site is where that method's types
+   * live.
    * @param method - the method name.
    * @param params - its validated params.
    * @returns the method's response.
    * @throws {RpcError} shaped rejection when the host refuses.
    */
-  call<M extends import('./rpc.ts').RpcMethod>(
+  call<M extends import('./rpc.ts').AnyRpcMethod>(
     method: M,
     params: import('./rpc.ts').RpcRequest<M>,
   ): Promise<import('./rpc.ts').RpcResponse<M>>

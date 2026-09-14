@@ -254,6 +254,12 @@ test('the avatar route answers only for cards that have a picture', async () => 
  * not exist is not this test's business.
  */
 const PROBES: Record<string, unknown> = {
+  'plugin.list': {},
+  'plugin.install': { id: 'no-such-plugin' },
+  'plugin.uninstall': { id: 'no-such-plugin' },
+  'plugin.enable': { id: 'no-such-plugin' },
+  'plugin.disable': { id: 'no-such-plugin' },
+  'plugin.reload': { id: 'no-such-plugin' },
   'chat.list': {},
   'chat.create': { characterId: 'no-such-card' },
   'chat.open': { chatId: 'no-such-chat' },
@@ -464,6 +470,14 @@ const PROBES: Record<string, unknown> = {
   'script.renamePreset': { name: 'no-such-preset', newName: 'no-such-preset-2' },
   'script.loadPreset': { name: 'no-such-preset' },
   // —— family③ end ——
+  // —— the ST-compat plane ——
+  // Reachability probes only: a probe host with no extension plane refuses
+  // with `unsupported`, which is exactly the proof this table wants.
+  'stCompat.plane.attach': { extensionId: 'no-such-extension', pluginRevision: 0 },
+  'stCompat.plane.detach': { extensionId: 'no-such-extension' },
+  'stCompat.submit': { token: 'probe', kind: 'reply', pluginRevision: 0, result: {} },
+  'stCompat.settings': { extensionId: 'no-such-extension', pluginRevision: 0, settings: {} },
+  'stExtension.install': { path: 'no-such-directory' },
 }
 
 test('every method in the contract is actually reachable over the wire', async () => {

@@ -1,0 +1,52 @@
+{
+  "variantA-settings-html-gone": {
+    "ok": true,
+    "sectionState": {
+      "sectionPresent": true,
+      "projectionHtmlBytes": 0
+    },
+    "roundExpanded": true,
+    "rows": [
+      "tavern-helper:enabled",
+      "mvu:disabled",
+      "prompt-template:enabled"
+    ],
+    "note": "settings.html refused: the panel has nothing to project while the chat keeps working; upstream init may or may not survive (recorded), and no other plugin row changed"
+  },
+  "variantB-facade-refused-degrades-clearly": {
+    "ok": true,
+    "frameProbe": {
+      "absent": "probe timeout"
+    },
+    "pilotRoundExpanded": false,
+    "plainCard": {
+      "id": "Plain卡-20260914-033627",
+      "replied": true
+    },
+    "note": "the extension frame cannot boot without the facade; the pilot chat runs unexpanded while a plain card opens, sends, generates and saves untouched"
+  },
+  "variantB-restored": {
+    "ok": true,
+    "readyState": "complete",
+    "hasJQuery": true,
+    "hasLodash": true,
+    "ejsPublished": true,
+    "kernelInstances": 1,
+    "settingsDom": 1
+  },
+  "variantC-member-bundle-refused": {
+    "ok": true,
+    "memberBundleStatus": 404,
+    "pilotRoundExpanded": true,
+    "note": "cards cannot load the member bundle (named 404) while the extension frame itself keeps expanding; nothing else changed"
+  },
+  "all-restored": {
+    "ok": true,
+    "round": true,
+    "rows": [
+      "tavern-helper:enabled",
+      "mvu:disabled",
+      "prompt-template:enabled"
+    ]
+  }
+}

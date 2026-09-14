@@ -41,6 +41,7 @@ import {
 } from './usage-summary.ts'
 import { resolveCardWorldbook, WorldbookStore } from './worldbooks.ts'
 import type { ScriptVariableStore } from './script-variables.ts'
+import type { SystemPluginCapabilities } from './plugins/capabilities.ts'
 
 /** Provenance stamped on a greeting, which no model produced. */
 const GREETING_SOURCE = { provider: 'iris', model: 'greeting' } as const
@@ -170,6 +171,8 @@ export class ChatStore {
    * its retention setting — between this store and the service's handlers.
    */
   readonly #backups: BackupStore
+  /** Live system-plugin capabilities shared by every open entry. */
+  readonly #plugins: SystemPluginCapabilities | undefined
 
   /**
    * @param dir - the folder holding chat files.
@@ -193,6 +196,7 @@ export class ChatStore {
     backups?: BackupStore,
     scopedRegex?: (characterId: string) => Promise<ScopedRegexPolicy>,
     presetRegex?: () => Promise<PresetRegexTier | undefined>,
+    plugins?: SystemPluginCapabilities,
   ) {
     this.#dir = dir
     this.#library = library
@@ -207,6 +211,7 @@ export class ChatStore {
     this.#backups = backups ?? new BackupStore(dir)
     this.#scopedRegex = scopedRegex
     this.#presetRegex = presetRegex
+    this.#plugins = plugins
   }
 
   /**
@@ -525,6 +530,7 @@ export class ChatStore {
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
       ...this.#persona === undefined ? {} : { persona: this.#persona },
+      ...this.#plugins === undefined ? {} : { plugins: this.#plugins },
     })
     // The log carries the conversation; the variables ride alongside it and
     // have to be put back explicitly. So does what each generation cost — the
@@ -583,6 +589,7 @@ export class ChatStore {
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
       ...this.#persona === undefined ? {} : { persona: this.#persona },
+      ...this.#plugins === undefined ? {} : { plugins: this.#plugins },
     })
     seedGreeting(entry, card, { user: userName, char: name })
     seedInitialVariables(entry)
@@ -686,6 +693,7 @@ export class ChatStore {
       ...scriptScope === undefined ? {} : { scriptScope },
       ...this.#globalScope === undefined ? {} : { globalScope: this.#globalScope },
       ...this.#persona === undefined ? {} : { persona: this.#persona },
+      ...this.#plugins === undefined ? {} : { plugins: this.#plugins },
     })
     child.hydrateVariables(lines)
     // A branch inherits the history it was cut from, and that history was paid

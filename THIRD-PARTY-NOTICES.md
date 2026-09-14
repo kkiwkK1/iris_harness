@@ -304,6 +304,28 @@ modelled on — and out of which five files were transcribed.
 
 ---
 
+## jQuery (ST-compat pilot vendor)
+
+- **Project** — jQuery · `https://jquery.com` (the copy read: the file the reference
+  SillyTavern install ships at `public/lib/jquery-3.5.1.min.js`)
+- **Version** — 3.5.1 (stated in the file's own banner comment)
+- **Licence** — MIT (the copyright and licence statement the file itself carries)
+- **How used** — copied verbatim into `apps/iris-web/public/st-ext/vendor/jquery.min.js`
+  and served into the ST-compat pilot's extension frame as the global `$`,
+  which the unmodified ST-Prompt-Template bundle requires for its self-start
+  and its DOM work. Not bundled, not modified, not reachable from card frames.
+
+## lodash (ST-compat pilot vendor)
+
+- **Project** — lodash · `https://lodash.com` (the copy read: the file the
+  reference SillyTavern install carries in its dependencies,
+  `node_modules/lodash/lodash.min.js`)
+- **Version** — the version the minified banner in the shipped file states
+- **Licence** — MIT (per the banner the file itself carries)
+- **How used** — copied verbatim into `apps/iris-web/public/st-ext/vendor/lodash.min.js`
+  and served into the ST-compat pilot's extension frame as the global `_`,
+  which the upstream code assumes present. Same fences as jQuery above.
+
 ## npm dependencies
 
 Taken from `pnpm licenses list --json` against the current lockfile:
