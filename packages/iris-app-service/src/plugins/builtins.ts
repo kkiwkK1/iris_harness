@@ -11,10 +11,21 @@ import {
   type TavernHelperCapability,
 } from './tavern-helper.ts'
 
+/**
+ * The two bundled ids, named once, here.
+ *
+ * They are deliberately plain strings: the catalog holds definitions adopted
+ * from installed ST extensions beside these, so the protocol's closed
+ * `SystemPluginId` union retired rather than stretching, and the runtime's
+ * default-enabled set imports the names instead of retyping the literals.
+ */
+export const TAVERN_HELPER_PLUGIN_ID = 'tavern-helper'
+export const MVU_PLUGIN_ID = 'mvu'
+
 /** Tavern Helper and MVU, available for profile-local install and activation. */
 export const BUILTIN_SYSTEM_PLUGIN_DEFINITIONS: readonly SystemPluginDefinition[] = [
   {
-    id: 'tavern-helper',
+    id: TAVERN_HELPER_PLUGIN_ID,
     name: 'Tavern Helper',
     description: 'Card-script compatibility APIs and variable macros.',
     version: '0.0.0',
@@ -27,15 +38,15 @@ export const BUILTIN_SYSTEM_PLUGIN_DEFINITIONS: readonly SystemPluginDefinition[
     },
   },
   {
-    id: 'mvu',
+    id: MVU_PLUGIN_ID,
     name: 'MVU',
     description: 'Initial variables, reply updates, and variable-state replay.',
     version: '0.0.0',
     apiVersion: 1,
-    dependencies: ['tavern-helper'],
+    dependencies: [TAVERN_HELPER_PLUGIN_ID],
     activate(scope) {
       const helper = scope.getDependency<TavernHelperCapability>(
-        'tavern-helper',
+        TAVERN_HELPER_PLUGIN_ID,
         TAVERN_HELPER_CAPABILITY,
       )
       if (helper === undefined) {

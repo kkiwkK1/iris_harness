@@ -7192,3 +7192,63 @@ have no co-processor.
 two handler counts, final table, one host commit, disjoint and same-path cases,
 the conflict report, and both one-plugin states. The pure nested-path case pins
 that arbitration applies deltas rather than complete snapshots.
+
+## 77. The system-plugin id is an open string; the builtin names anchor once in `plugins/builtins.ts`
+
+The protocol carried two vocabularies for one identifier.
+`packages/iris-protocol/src/system-plugins.ts` declared
+`type SystemPluginId = 'tavern-helper' | 'mvu'` while the very same file's
+`SystemPluginView.id` — the field every catalog row actually travels in — was
+`string`, and `SystemPluginDefinition.id` in `@iris/plugin-api` was `string`
+too. The union therefore governed nothing on the wire; it governed only which
+literals the host and the fake could write without friction, and it had already
+begun to lie: `adoptDefinition` is the installed-ST-extension handshake, its
+whole purpose is to seat a definition whose id is *not* one of the two builtin
+names, and every such row was natural — a `string` — while the union sat above
+it pretending the catalog was closed. The two-system-plugin catalog was a fact
+about today's defaults, and a type is the wrong place to record a fact that the
+adoption path exists to overturn.
+
+The union is deleted, not widened: `SystemPluginId` no longer exists in
+`@iris/protocol` and `index.ts` no longer exports it, because an alias to
+`string` would have kept the name alive as an invitation to re-close it. The
+three importers return to the type the wire always used — the runtime's
+`system-plugins.ts` and the fake's `plugins.ts` drop the import, and the fake's
+bundled rows are now typed `satisfies readonly SystemPluginView[]` instead of
+`SystemPluginView & { id: SystemPluginId }`. Nothing needed an `as`: the
+assignment was always legal, the union was only in the way. The builtin names
+themselves are anchored once, in
+`packages/iris-app-service/src/plugins/builtins.ts`, as
+`TAVERN_HELPER_PLUGIN_ID` and `MVU_PLUGIN_ID` next to the definitions that
+carry them; the runtime's default-enabled set — previously pinned by
+`tavern-helper' satisfies SystemPluginId` — imports the two constants rather
+than retyping the literals, so the pin the union used to provide is now
+structural: the defaults are built from the same names the definitions
+declare, and a rename in one place is a compile error in the other. The rest
+of the host still names the ids by literal (`service.ts` leases,
+`capabilities.ts` reads, `diagnostics.ts`); those files were deliberately not
+touched here — they name ids in *behavior* positions, not in type positions,
+and were never governed by the union.
+
+The fake needed one seam to stay honest rather than get looser. Its method
+surface keeps the rule that an id absent from the catalog is refused —
+"the fake refuses ids outside its bundled catalog" passes unchanged — but the
+catalog itself is now injectable: `FakeSystemPlugins` takes an optional
+`bundled` parameter defaulting to the bundled rows, so a test can seat a
+non-builtin id the way the host seats an adopted extension and drive it
+through the same lifecycle transitions. Without the seam the retirement was
+untestable in the fake, and an untestable widening is how fakes rot into lies.
+
+**Held by** `packages/iris-client-fake/tests/system-plugins.test.ts`, new
+final test: a row literal with `id: 'demo-x'` satisfies `SystemPluginView`
+(type level — under the old intersection this literal is the thing that could
+not be written), seats through the injected catalog, enables to `enabled` and
+uninstalls to `not-installed` through the real transitions, and `demo-y`, an
+id outside the seated catalog, is still refused `not-found`. Full-repo
+`tsc --noEmit` is clean, the three touched packages' suites pass
+(1256 app-service, 107 protocol + client-fake), and
+`system-plugins.test.ts` / `plugin-methods.test.ts` are green on both sides
+of the host/fake line. What would reopen this: a need to switch exhaustively
+over builtin ids or to give one builtin id its own protocol surface — at
+which point the constant pair in `builtins.ts` is the place a closed list
+would grow back, visibly, in one file.

@@ -1,7 +1,11 @@
-/** Built-in system plugins shipped with Iris. */
-export type SystemPluginId = 'tavern-helper' | 'mvu'
-
-/** One catalog entry together with its profile-local runtime state. */
+/**
+ * One catalog entry together with its profile-local runtime state.
+ *
+ * `id` is an open string, deliberately not a union of the builtin names: an ST
+ * extension adopted through the host's `adoptDefinition` handshake arrives
+ * with an id of its own, and a catalog row must hold that id beside the
+ * builtins without a cast.
+ */
 export interface SystemPluginView {
   id: string
   name: string

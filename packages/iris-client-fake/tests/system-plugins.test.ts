@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { SystemPluginSnapshot } from '@iris/protocol'
+import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
+import { FakeRpcError } from '../src/index.ts'
+import { FakeSystemPlugins } from '../src/plugins.ts'
 import { testClient, recorder } from './helpers.ts'
 
 function plugin(snapshot: SystemPluginSnapshot, id: string) {
@@ -102,4 +104,39 @@ test('the fake refuses ids outside its bundled catalog', async () => {
   )
   assert.equal((await client.call('plugin.list', {})).plugins.length, 2)
   client.dispose()
+})
+
+test('a non-builtin id seats a catalog row, types and runs without a cast', () => {
+  // Type level: `id` is an open string, so a row an installed ST extension
+  // brought needs no `as` and no intersection with a builtin-id union.
+  const adopted = {
+    id: 'demo-x',
+    name: 'Demo X',
+    description: 'A row an installed ST extension brought, not a bundled one.',
+    version: '0.1.0',
+    apiVersion: 1,
+    dependencies: [],
+    installed: false,
+    enabled: false,
+    status: 'not-installed',
+  } satisfies SystemPluginView
+
+  const fake = new FakeSystemPlugins(
+    (_snapshot: SystemPluginSnapshot) => {},
+    (code, message) => { throw new FakeRpcError(code, message) },
+    [adopted],
+  )
+
+  // Runtime level: the seated row rides the same lifecycle as the bundled ones.
+  const enabled = fake.enable('demo-x')
+  assert.deepEqual(enabled.plugins.map(row => row.id), ['demo-x'])
+  assert.equal(enabled.plugins[0]?.status, 'enabled')
+
+  const uninstalled = fake.uninstall('demo-x')
+  assert.equal(uninstalled.plugins[0]?.status, 'not-installed')
+
+  assert.throws(
+    () => fake.install('demo-y'),
+    (error: unknown) => (error as { code?: string }).code === 'not-found',
+  )
 })
