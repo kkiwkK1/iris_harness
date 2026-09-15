@@ -334,20 +334,23 @@ export class ChatStore {
    * entries: the two can differ only inside a card's uncommitted replay batch,
    * and a search that sees the committed conversation is the honest answer.
    * @param query - the fragment to find. Blank after trimming is refused.
-   * @param options - case sensitivity (default false) and the per-chat cap on
-   *   reported matches (default {@link DEFAULT_SEARCH_MATCH_LIMIT}).
+   * @param options - case sensitivity (default false), the per-chat cap on
+   *   reported matches (default {@link DEFAULT_SEARCH_MATCH_LIMIT}), and an
+   *   optional {@link SearchScanMeter} the scan's work is counted into — a
+   *   measurement out-param for tests, never set by product callers.
    * @returns chats with at least one matching floor, newest activity first.
    *   A file that cannot be read or parsed is skipped, exactly as `list` does.
    * @throws {AppError} `invalid-request` when the query is empty.
    */
   async search(
     query: string,
-    options?: { caseSensitive?: boolean, limit?: number },
+    options?: { caseSensitive?: boolean, limit?: number, meter?: SearchScanMeter },
   ): Promise<ChatSearchHit[]> {
     const needle = query.trim()
     if (needle.length === 0) throw invalid('the search query is empty')
     const caseSensitive = options?.caseSensitive ?? false
     const limit = options?.limit ?? DEFAULT_SEARCH_MATCH_LIMIT
+    const meter = options?.meter
     // One fold of the needle, not one per line.
     const folded = caseSensitive ? needle : needle.toLowerCase()
 
@@ -359,7 +362,7 @@ export class ChatStore {
       } catch {
         continue
       }
-      const hit = searchChatText(chatId, text, folded, { caseSensitive, limit })
+      const hit = searchChatText(chatId, text, folded, { caseSensitive, limit, ...(meter !== undefined ? { meter } : {}) })
       if (hit !== undefined) hits.push(hit)
     }
     // The sidebar list's order, so a search reads as the list, filtered.
@@ -1128,6 +1131,31 @@ const SNIPPET_BEFORE = 48
 const SNIPPET_AFTER = 96
 
 /**
+ * What one scan actually did, counted instead of timed.
+ *
+ * A measurement out-param, not a wire field: a caller hands in an object,
+ * {@link searchChatText} accumulates into it, and nothing in the answer or
+ * the product behaviour depends on it being there. It exists because the
+ * proportionality tests used to hold "the scan stays proportional to the
+ * bytes" with a stopwatch, and a stopwatch measures the machine as much as
+ * the code. The counts are the same invariant with the machine taken out:
+ * a linear scan folds each line's characters exactly once and pays for a
+ * `JSON.parse` only on the header and the lines the fold flags, so the
+ * counters grow with the bytes; the quadratic degradation the docblock
+ * warns about — re-folding every earlier line on each step — shows up as
+ * `foldedChars` growing with bytes × lines, on a fixture small enough that
+ * no wall clock could separate the two.
+ */
+export interface SearchScanMeter {
+  /** Characters passed over by the per-line fold-or-take check, summed. */
+  foldedChars: number
+  /** Lines that paid for a `JSON.parse`: one header per scanned file, then flagged lines only. */
+  parsedLines: number
+  /** Files handed to the scan; one {@link searchChatText} call is one file. */
+  scannedFiles: number
+}
+
+/**
  * Scan one chat file's text for floors containing the needle.
  *
  * The needle arrives already case-folded when the search is insensitive, and
@@ -1141,20 +1169,25 @@ const SNIPPET_AFTER = 96
  * @param needle - the (already folded) fragment to find.
  * @param caseSensitive - whether the needle is literal.
  * @param limit - the most matches to report.
+ * @param meter - optional out-param the scan accumulates its work into; see
+ *   {@link SearchScanMeter}. Absent means unmeasured, which is every product
+ *   call.
  * @returns the hit, or undefined when no floor matches.
  */
 export function searchChatText(
   chatId: string,
   text: string,
   needle: string,
-  options: { caseSensitive: boolean, limit: number },
+  options: { caseSensitive: boolean, limit: number, meter?: SearchScanMeter },
 ): ChatSearchHit | undefined {
-  const { caseSensitive, limit } = options
+  const { caseSensitive, limit, meter } = options
+  if (meter !== undefined) meter.scannedFiles += 1
   const lines = text.split('\n').filter(line => line.trim().length > 0)
   if (lines.length < 2) return undefined
 
   let header: SillyTavernChatHeader
   try {
+    if (meter !== undefined) meter.parsedLines += 1
     header = JSON.parse(lines[0] ?? '{}') as SillyTavernChatHeader
   } catch {
     return undefined
@@ -1166,10 +1199,12 @@ export function searchChatText(
     if (matches.length >= limit) break
     const line = lines[index] ?? ''
     const folded = caseSensitive ? line : line.toLowerCase()
+    if (meter !== undefined) meter.foldedChars += folded.length
     if (folded.includes(needle) === false) continue
 
     let floor: SillyTavernMessage
     try {
+      if (meter !== undefined) meter.parsedLines += 1
       floor = JSON.parse(line) as SillyTavernMessage
     } catch {
       continue
