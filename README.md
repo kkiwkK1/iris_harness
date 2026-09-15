@@ -1,11 +1,16 @@
 # Iris
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+
+一个跑在 Cordis 插件架构上的 SillyTavern 兼容宿主:角色卡、世界书、预设与聊天记录在这里照常工作,聊天文件就是 SillyTavern 自己的 JSONL,两边可以来回开。**兼容是地板,不是天花板**——一张在 SillyTavern 能跑的卡必须在这里能跑;凡是这里故意做得不一样的地方,都是一条**写明代价的文档化特性**,记在偏离账本里(见 [§11](#11-设计文档)),而不是一次没人审视过的偏好。
 
 ```
 pnpm install
 pnpm build:web
 pnpm start        # 启动时打印界面地址,浏览器打开即可
 ```
+
+文档地图见 **[docs/README.md](docs/README.md)**:13 份现状文档各管哪一段、按什么顺序读,以及 `docs/`(活文档)与 `notes/`(有日期的记录)的区别。
 
 ---
 
@@ -34,7 +39,7 @@ pnpm start        # 起宿主
 宿主的一切配置都是环境变量,启动命令的形状是:
 
 ```sh
-# POSIX shell
+# POSIX shell。PowerShell 里逐行 `$env:IRIS_PORT = '8787'`,再 `pnpm start`。
 IRIS_API_KEY_ENV=DEEPSEEK_API_KEY \
 IRIS_BASE_URL=https://api.deepseek.com/v1 \
 IRIS_MODEL=deepseek-chat \
@@ -43,19 +48,9 @@ IRIS_DATA_DIR=./data \
 pnpm start
 ```
 
-```powershell
-# PowerShell
-$env:IRIS_API_KEY_ENV = 'DEEPSEEK_API_KEY'
-$env:IRIS_BASE_URL   = 'https://api.deepseek.com/v1'
-$env:IRIS_MODEL      = 'deepseek-chat'
-$env:IRIS_PORT       = '8787'
-$env:IRIS_DATA_DIR   = './data'
-pnpm start
-```
-
 - **`IRIS_API_KEY_ENV` 是另一个环境变量的_名字_,不是密钥本身。** 程序拿这个名字去 `process.env[...]` 取值。上例中密钥放在 `DEEPSEEK_API_KEY` 里。未设表示端点不需要鉴权(本地模型正是如此)。
 - **`IRIS_BASE_URL`** 是 OpenAI 兼容端点的根,`/chat/completions` 由程序追加;**`IRIS_MODEL`** 是新聊天默认用的模型 id。**首次启动时,这两个值(连同 `IRIS_API_KEY_ENV` 指向的密钥)会被导入成供应商列表里的第一个供应商并直接启用**——之后由列表说话,环境变量不再是一条可选的路由,见 [§3](#3-连接模型)。
-- **`IRIS_PORT`** 是 loopback 端口;**`IRIS_DATA_DIR`** 是存放 profile 的目录(默认 `./data`,已被 gitignore)。**一个数据目录只能有一个宿主**,见下面的「多实例」。
+- **`IRIS_PORT`** 是 loopback 端口(默认 `8787`);**`IRIS_DATA_DIR`** 是存放 profile 的目录(默认 `./data`,已被 gitignore)。**一个数据目录只能有一个宿主**,见下面的「多实例」。
 - **密钥永不进仓库。** `key.txt`、`*.key`、`secrets.json`、`.env*`、`data/` 都在 `.gitignore` 里;CI 不引用任何 secret。密钥要么走 `IRIS_API_KEY_ENV` 指向的环境变量,要么由界面的连接面板保存到 `<IRIS_DATA_DIR>/<profile>/connections.json`——**存进去是加密的**(Windows 上那把数据密钥绑定当前登录账户,所以 profile 拷到别处密钥就打不开了,见 [§3](#3-连接模型))。那个目录仍然属于跑它的人,**不要提交或分享**。
 
 全表(数据目录、ST 安装目录、模板开关、超时、开发源白名单)、`cordis.yml` 的组合方式与故障排查,见 **[§12 宿主参考](#12-宿主参考)**。
@@ -71,13 +66,9 @@ IRIS_PORT=8790 IRIS_DATA_DIR=./data-dev pnpm start
 
 这是被强制执行的,不是一句建议。宿主启动时会在 `<IRIS_DATA_DIR>/host.lock` 上用 `open(path, 'wx')` 抢一个锁,锁里记着 pid、**实际绑定**的端口、启动时刻与机器名。如果那个 pid 还活着,**第二个宿主直接拒绝启动**,并打印一句话说明锁文件在哪、谁占着、它说自己绑在哪个端口,以及两条出路(停掉那个宿主,或把 `IRIS_DATA_DIR` 指到别处)。如果那个 pid 已经不在了,锁是**残留**的:新宿主接管它并在日志里说一声——那句话就是「上一个宿主不是正常退出的」这一事实的唯一信号。
 
-**为什么非拦不可。** 这里每一个存储(settings、connections、chats、script-variables……)都是「内存里一整份、有改动就整文件重写」。两个宿主开着同一个目录,就是同一批文件的两份内存副本,后写的那个会把先写的那个**更新过的**文件整个盖掉——两边都不报错。丢掉的是对方读进内存之后学到的一切:楼层、用量、脚本变量、刚存的一个供应商。这在这台机器上真的发生过,而且症状被当成产品缺陷查了三轮(`notes/packages/iris-app-service/DEVIATIONS.md` §71)。
+**为什么非拦不可。** 这里每一个存储(settings、connections、chats、script-variables……)都是「内存里一整份、有改动就整文件重写」。两个宿主开着同一个目录,就是同一批文件的两份内存副本,后写的那个会把先写的那个**更新过的**文件整个盖掉——两边都不报错,丢掉的是对方读进内存之后学到的一切。这在这台机器上真的发生过,症状被当成产品缺陷查了三轮(`notes/packages/iris-app-service/DEVIATIONS.md` §71)。**没有绕过的开关,是故意的**:需要绕过的那一刻,恰恰就是「这次应该没事」的那一刻。代价由我们自己承担——验收用的宿主从此跑在**拷贝出来的数据目录**上。
 
-**没有绕过的开关,是故意的。** 需要绕过的那一刻,恰恰就是「这次应该没事」的那一刻,也正是出事故的那一刻。代价由我们自己承担:验收用的宿主从此跑在**拷贝出来的数据目录**上。
-
-**正常退出释放锁,崩溃不释放。** 崩溃留下的残留锁交给上面那条存活检查——这比指望一个已经死掉的进程去清理自己的文件可靠。
-
-顺带一提:**端口被占是另一回事**,而且宿主此时根本起不来(`listen` 失败,boot 失败)。现在它给的是一句人话,而不是一串指向 `@deepseek-ai/dsh-host-webserver` 的 Cordis 插件树堆栈。
+顺带一提:**端口被占是另一回事**,而且宿主此时根本起不来(`listen` 失败,boot 失败),给的是一句人话而不是一串 Cordis 插件树堆栈。
 
 ## 3. 连接模型
 
@@ -109,10 +100,7 @@ IRIS_PORT=8790 IRIS_DATA_DIR=./data-dev pnpm start
 
 想让密钥完全不进 profile,用 `IRIS_API_KEY_ENV`(见 [§2](#2-启动));界面里填过的密钥优先于环境变量,因为更具体的那个是这个人刚刚选的。设计、四种失败模式与代价见 [notes/packages/iris-app-service/DEVIATIONS.md](notes/packages/iris-app-service/DEVIATIONS.md) §75。
 
-填好之后点**测试连接**。它探 `GET /models`,回答带具名判词,而不是一句「失败了」:
-
-- `missing-key` —— 在任何请求发出**之前**就判定,不会把空密钥送上网;
-- `unauthorized`(401/403)、`timeout`、`network`、`http-error`、`bad-response`、`no-endpoint`。
+填好之后点**测试连接**。它探 `GET /models`,回答带具名判词而不是一句「失败了」:`missing-key`(在任何请求发出**之前**就判定,不会把空密钥送上网)、`unauthorized`(401/403)、`timeout`、`network`、`http-error`、`bad-response`、`no-endpoint`。
 
 测试成功后模型列表会喂给一个下拉框,**末尾固定有一项「自定义…」**:选它就变回输入框,可以手填列表里没有的模型名——内测中的模型往往不在 `/models` 里,列表是捷径而不是关卡。**切换端点或密钥不需要重启宿主**:启用一个供应商会在运行时重新装配适配器,重启后仍然记得上次启用的那个。
 
@@ -146,9 +134,7 @@ Iris 读 SillyTavern 的文件,聊天记录用的就是 SillyTavern 自己的 JS
 
 这是一条被强制执行的纪律,不是一句承诺:`IRIS_ST_DIR` 那条路径**只读**,只打开 `worlds/*.json` 与 `settings.json`;而且它与 `IRIS_DATA_DIR` 落在同一棵树上时,**宿主启动就拒绝运行**,不是等到第一次写入才出事——那个重叠正是「我们从不写你的安装」停止为真的方式。
 
-**但这句话有一个边界,必须自己知道**:如果你把 **`IRIS_DATA_DIR` 本身**指向 SillyTavern 的 `data/<用户>`,那就是把它交给 Iris 当数据目录了,Iris 会往那里写自己的 `connections.json`、`personas.json` 等等。**只读的是 `IRIS_ST_DIR`,不是「任何指向 ST 的路径」。**
-
-所以推荐的做法是:**角色卡与聊天用复制,书和预设用 `IRIS_ST_DIR` 只读引用。**
+**但这句话有一个边界,必须自己知道**:如果你把 **`IRIS_DATA_DIR` 本身**指向 SillyTavern 的 `data/<用户>`,那就是把它交给 Iris 当数据目录了,Iris 会往那里写自己的 `connections.json`、`personas.json` 等等。**只读的是 `IRIS_ST_DIR`,不是「任何指向 ST 的路径」。** 所以推荐的做法是:**角色卡与聊天用复制,书和预设用 `IRIS_ST_DIR` 只读引用。**
 
 ### 两条路,各管一段
 
@@ -176,19 +162,11 @@ Iris 列聊天时只读 `chats/` 这一层里的 `*.jsonl`,**不往子目录里�
 
 ### 带什么 / 不带什么
 
-| 带过来 | 不带过来 |
-| --- | --- |
-| 角色卡(复制) | **聊天记录**——必须逐个导入,见上 |
-| 聊天记录(逐个导入) | **世界书的扫描设置**——见下,这一条最容易让人以为书坏了 |
-| 世界书(只读引用 / 按需取) | 角色卡里的**运行时状态**:脚本变量、脚本按钮的改动 |
-| 预设(从安装导入) | 扩展及其设置 |
-| **全局选书**(`globalSelect`) | 你在 ST 里装的其它扩展的数据 |
+**带过来**:角色卡(复制)、聊天记录(逐个导入)、世界书(只读引用 / 按需取)、预设(从安装导入)、**全局选书**(`globalSelect`)。**不带过来**:**世界书的扫描设置**(见下,这一条最容易让人以为书坏了)、角色卡里的**运行时状态**(脚本变量、脚本按钮的改动)、你在 ST 里装的扩展及其数据。
 
 ### 世界书的命中会和你习惯的不一样
 
-迁移**只带全局选书**,**不带扫描设置**:扫描深度、预算、递归、整词匹配等等,全部回到 SillyTavern 的出厂默认。在 ST 里调过这些的话,**同一本书在这里会多触发或少触发一些条目**——书在、条目也在,只是触发的那一组变了。设置抽屉的「世界书」面板里可以按同样的名字调回去。
-
-**有一个例外:是否给扫描缓冲加说话人前缀(`include_names`)在界面上没有开关**,它固定按上游默认 `true` 走。ST 里把它关掉过的话,这边的命中集会比你习惯的宽一点。
+迁移**只带全局选书**,**不带扫描设置**:扫描深度、预算、递归、整词匹配等等,全部回到 SillyTavern 的出厂默认。在 ST 里调过这些的话,**同一本书在这里会多触发或少触发一些条目**——书在、条目也在,只是触发的那一组变了。设置抽屉的「世界书」面板里可以按同样的名字调回去。**有一个例外:是否给扫描缓冲加说话人前缀(`include_names`)在界面上没有开关**,它固定按上游默认 `true` 走;ST 里把它关掉过的话,这边的命中集会比你习惯的宽一点。
 
 ### 卡片带过来之后
 
@@ -208,6 +186,10 @@ Iris 不会把你在这里玩出来的东西写回卡文件。脚本变量、脚
 - 脚本跑在**真隔离沙箱**里(不透明源的 iframe,带 CSP),不是页面全权。策略见 [docs/SANDBOX.md](docs/SANDBOX.md),授权规则见 [docs/AUTORUN.md](docs/AUTORUN.md)。
 - **拒绝之后**,卡的界面与脚本不会运行;卡本身照常可以对话。
 - 想改主意:设置抽屉里的**脚本**面板。
+
+### 插件中心:系统插件与 ST 扩展
+
+卡脚本之外还有一层:**系统插件**——与宿主同权的 Node 代码,拥有一项能力(而不是一段内容),在 Cordis 的子 fiber 上启停,卸载时副作用完整回滚。SillyTavern 扩展**就是**一个系统插件,走同一套启停。设置里的**插件中心**是它们的管理面:列出已装的、启用/停用/重载/卸载,以及从**钉死 commit 的 Git 仓库**安装与更新——安装分两步(先预览解析出的清单,再在同意页上确认),装下来的字节被哈希锁定、每次开机复核、不符就不激活,失败态全部有名字并能在这一页被处置。**没有**「输入一个 npm 名字就装一个系统插件」这回事。架构与信任模型见 [docs/SYSTEM-PLUGINS.md](docs/SYSTEM-PLUGINS.md),安装路径见 [docs/SYSTEM-PLUGIN-INSTALL.md](docs/SYSTEM-PLUGIN-INSTALL.md),自己做一个见 [docs/PLUGIN-AUTHORING-RUNBOOK.md](docs/PLUGIN-AUTHORING-RUNBOOK.md);**今天到底哪些接口可以调用**,以 [docs/INFRASTRUCTURE-INTERFACES.md](docs/INFRASTRUCTURE-INTERFACES.md) §8 那张表为准。
 
 ## 7. 卡的界面空白 / 没出来时
 
@@ -235,6 +217,8 @@ Iris 不会把你在这里玩出来的东西写回卡文件。脚本变量、脚
 
 ## 8. 工作区布局
 
+`packages/` 下 **27 个包**(`ls packages`),分层与不变量见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
 | 路径 | 内容 |
 | --- | --- |
 | `apps/iris` | 宿主进程:`cordis.yml` 组合 + 端到端测试 + 全树级测试(架构不变量、文档引用) |
@@ -254,12 +238,17 @@ Iris 不会把你在这里玩出来的东西写回卡文件。脚本变量、脚
 | `packages/iris-script` | 卡片脚本提取(三种在野存储形状归一)与远程来源白名单 |
 | `packages/iris-compat-tavernhelper`(`-core`) | 酒馆助手 API 面与事件总线 |
 | `packages/iris-compat-prompt-template` | ST-Prompt-Template(EJS)兼容,围栏子进程求值 |
+| `packages/iris-compat-st-extension` | ST 扩展兼容的**分析**半边:清单归一、宿主模块表、模块图分析产出 `CompatibilityReport`。不下载、不启动、不碰网络 |
+| `packages/iris-extension-installer` | 安装器:下载、安全解包、哈希锁定的事务。与上一个包在锁文件里碰头(制品哈希 × 报告摘要) |
 | `packages/iris-llm-openai-compat` | 一个适配器覆盖 OpenAI 兼容的各家端点 |
 | `packages/iris-protocol` | 宿主与浏览器之间的契约,请求方向带 zod 校验 |
+| `packages/iris-plugin-api` | 系统插件的宿主侧契约:definition、activation scope、lease |
+| `packages/iris-plugin-web-api` | 系统插件的浏览器侧契约:帧出生时拿到的能力快照与其编解码 |
+| `packages/iris-text` | 宿主与卡片帧**必须算出同一个答案**的纯文本函数(`stringHash` 是命名这条规则的那个),双语文案审计 `auditBilingualCopy` 也在这里 |
 | `packages/iris-rpc-host` / `-client` | HTTP + WebSocket 传输,带重连 |
 | `packages/iris-app-service` | 宿主应用层:用领域包实现协议方法 |
 | `packages/iris-client-fake` | 内存版 `IrisClient`,界面可脱离宿主开发 |
-| `docs/` | 契约文档:架构、沙箱、可观测、调试面、自动运行、设置(见 [§11](#11-设计文档)) |
+| `docs/` | 现状文档,入口是 [docs/README.md](docs/README.md)(见 [§11](#11-设计文档)) |
 | `notes/` | 工作笔记:调查记录、上游对照、偏离账本、验收单、方法论。保留原有层级(`notes/apps/iris-web/…`、`notes/packages/<pkg>/…`) |
 | `qa/` | 一次性验收仪器,要浏览器与跑着的宿主,不进 CI |
 | `scripts/` | 语料普查与差分脚本、`test:live`、`test:no-corpus` |
@@ -267,23 +256,21 @@ Iris 不会把你在这里玩出来的东西写回卡文件。脚本变量、脚
 ## 9. 运行与测试
 
 ```
-pnpm test                                 # node --test。离线,不依赖打包器
-pnpm typecheck                            # tsc --noEmit —— 宿主、各包、scripts/
-npm --prefix apps/iris-web run typecheck  # tsc --noEmit —— 界面(自己的 tsconfig)
-pnpm build:web                            # 构建界面产物
+pnpm test                                  # node --test。离线,不依赖打包器
+pnpm run test:no-corpus                    # 同一套套件,语料强制置为不存在(CI 跑的就是它)
+pnpm typecheck                             # tsc --noEmit —— 宿主、各包、scripts/
+npm --prefix apps/iris-web run typecheck   # tsc --noEmit —— 界面(自己的 tsconfig)
+pnpm build:web                             # 构建界面产物
+npm --prefix apps/iris-web run check:render # 服务端渲染一遍,断言真出了页面
 ```
 
-**两种 tsc,两个都要跑。** 根 `tsconfig.json` 只收 `packages/*`、`apps/iris`、`scripts/`;界面在 `apps/iris-web` 里有自己的 `tsconfig.json`,由 `npm run typecheck` 检查。而 `node --test` 用类型剥离运行,它**不做类型检查**——一个带真实类型错误的测试文件照样通过,只有 `tsc --noEmit` 看得见。
+**两种 tsc,两个都要跑。** 根 `tsconfig.json` 只收 `packages/*`、`apps/iris`、`scripts/`;界面在 `apps/iris-web` 里有自己的 `tsconfig.json`,由 `npm run typecheck` 检查。而 `node --test` 用类型剥离运行,它**不做类型检查**——一个带真实类型错误的测试文件照样通过,只有 `tsc --noEmit` 看得见。**宿主从源码跑,界面是构建产物**,所以改了 `apps/iris-web` 之后必须重跑 `pnpm build:web`,否则宿主服出去的还是上一份。
 
-`pnpm test` 是离线的:唯一需要网络的测试默认跳过。要对真实 provider 跑用 `pnpm test:live`,它需要环境变量 `DEEPSEEK_API_KEY`——**只**认环境变量,仓库里没有任何工具会去读一个放密钥的文件(`apps/iris/tests/key-file.test.ts` 钉住这一点)。加这个开关而不是「有密钥就跑」,是因为工作区里躺着一个密钥不该让 `pnpm test` 悄悄变成花钱且断网即失败的东西。
-
-**宿主从源码跑,界面是构建产物。** 所以改了 `apps/iris-web` 之后必须重跑 `pnpm build:web`,否则宿主服出去的还是上一份。
-
-想看整条链路在真模型上工作:`pnpm demo:mvu`。
+`pnpm test` 是离线的:唯一需要网络的测试默认跳过。要对真实 provider 跑用 `pnpm test:live`,它需要环境变量 `DEEPSEEK_API_KEY`——**只**认环境变量,仓库里没有任何工具会去读一个放密钥的文件(`apps/iris/tests/key-file.test.ts` 钉住这一点)。想看整条链路在真模型上工作:`pnpm demo:mvu`。要把三个契约包打成仓库外能装的 tarball:`npm run pack:contracts -- --version <版本号>`(见 [docs/PLUGIN-CONTRACT-PACKAGING.md](docs/PLUGIN-CONTRACT-PACKAGING.md))。
 
 ## 10. CI 是门
 
-`.github/workflows/ci.yml` 一个 job,按序:pnpm 安装 → npm 安装界面 → 两种 typecheck → 构建界面 → `pnpm run test:no-corpus` → 渲染检查。**它不引用任何 secret**,套件按构造就是离线的。
+`.github/workflows/ci.yml` 一个 job(`check`,`ubuntu-latest`,20 分钟上限),按序:pnpm 安装 → npm 安装界面 → 两种 typecheck → 构建界面 → `pnpm run test:no-corpus` → 渲染检查。**它不引用任何 secret**,套件按构造就是离线的。每一个第三方 action 都钉到 40 位 commit(旁边的 `# vX.Y.Z` 注释是必需的),由 `apps/iris/tests/workflow-pins.test.ts` 押着——一个 `@v4` 标签是可以被重新指向的名字。`main` 由一条仓库 ruleset 保护。
 
 `test:no-corpus` 不是 `pnpm test`:它把 SillyTavern 语料强制置为不存在,再检查结果的**形状**——一个用 `return` 代替 `skip` 的语料测试会报「通过」而什么都没断言,CI 恰恰是没有语料的那台机器。同族的守卫还有 `apps/iris/tests/architecture.test.ts`(依赖分层)与 `apps/iris/tests/md-references.test.ts`(文档里的链接、`路径:行号` 引用、源码注释里提到的 `.md`,都必须指向树上存在的文件)。
 
@@ -293,20 +280,21 @@ CI 红了不合并。分支命名、提交粒度、PR 里该写什么、我们�
 
 ## 11. 设计文档
 
+**入口是 [docs/README.md](docs/README.md)**:13 份现状文档一句话一份、读的顺序、六本偏离账本,以及 `docs/`(活文档,描述 `main`)与 `notes/`(有日期的记录)的区别。常用的几份:
+
 | 文档 | 内容 |
 | --- | --- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 依赖分层与由测试强制的架构不变量 |
-| [docs/SANDBOX.md](docs/SANDBOX.md) | 卡片脚本沙箱的策略、CSP、能力面 |
-| [docs/AUTORUN.md](docs/AUTORUN.md) | 卡片脚本的授权规则 |
+| [docs/SANDBOX.md](docs/SANDBOX.md) / [docs/AUTORUN.md](docs/AUTORUN.md) | 卡片脚本沙箱的策略、CSP、能力面;以及授权规则 |
+| [docs/INFRASTRUCTURE-INTERFACES.md](docs/INFRASTRUCTURE-INTERFACES.md) | 插件接口清单。**§8 是「今天有什么、缺什么」的权威表** |
+| [docs/SYSTEM-PLUGINS.md](docs/SYSTEM-PLUGINS.md) / [docs/PLUGIN-AUTHORING-RUNBOOK.md](docs/PLUGIN-AUTHORING-RUNBOOK.md) | 系统插件的架构裁决;以及做一个插件的手册 |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) / [docs/DEBUG-SURFACE.md](docs/DEBUG-SURFACE.md) | 宿主报告、通知中心、调试面 |
 | [docs/SETTINGS.md](docs/SETTINGS.md) / [notes/SETTINGS-IA.md](notes/SETTINGS-IA.md) | 设置面的组织 |
+| [notes/SECURITY-REMEDIATION.md](notes/SECURITY-REMEDIATION.md) | 两次外部审计逐条的处置:已落地 / 已接受 / 仍待办 |
 | [notes/ROADMAP.md](notes/ROADMAP.md) | 在做什么、排期、已收口的东西 |
 | [notes/METHODS.md](notes/METHODS.md) | 工作方法:语料是判官、计数课、静默失败纪律 |
-| [notes/apps/iris-web/DEVIATIONS.md](notes/apps/iris-web/DEVIATIONS.md) | 界面与沙箱侧的偏离账本 |
-| [notes/packages/iris-app-service/DEVIATIONS.md](notes/packages/iris-app-service/DEVIATIONS.md) | 宿主侧的偏离账本 |
-| [notes/packages/iris-compat-prompt-template/DEVIATIONS.md](notes/packages/iris-compat-prompt-template/DEVIATIONS.md) | EJS 兼容层的偏离账本 |
 
-**偏离账本分两类条目**,区别比清单本身重要:**兼容缺口**是我们不如上游、并打算补上的地方,带着「补上要做什么」;**有意改进**是我们故意不同的地方,带着代价——没写代价的改进通常只是没被审视过的偏好。
+**偏离账本有六本**(界面/沙箱、宿主应用层、传输层、EJS 兼容层、变量系统,加上预设那一本),逐本列在 [docs/README.md](docs/README.md)。**条目分两类**,区别比清单本身重要:**兼容缺口**是我们不如上游、并打算补上的地方,带着「补上要做什么」;**有意改进**是我们故意不同的地方,带着代价——没写代价的改进通常只是没被审视过的偏好。
 
 ## 12. 宿主参考
 
@@ -319,6 +307,10 @@ Iris **只绑 loopback**,默认 `127.0.0.1:8787`。这是有意的:这个 web �
 **但只绑 loopback 不是一道门。** `nip.io`、`sslip.io` 这类公共通配 DNS 会把 `127.0.0.1.nip.io` 这样的名字解析到 `127.0.0.1`,于是攻击者自己的页面就能在你的浏览器里变成和这台宿主**同源**——同源之后,JSON content-type 预检、没有 CORS 头这些跨站防线全都不在路径上了,一个 `new WebSocket` 就能读到每一轮对话的每一个 token。浏览器唯一伪造不了的是 `Host` 头,所以宿主按 `Host` 应答:loopback 三个名字(`127.0.0.1` / `localhost` / `[::1]`)配上**实际绑到的**端口,加上你自己列的 `IRIS_ALLOWED_HOSTS`,其余一律 403。放在反代后面时,**反代对外的那个 `host:port` 必须列进 `IRIS_ALLOWED_HOSTS`**;把绑定改成 `0.0.0.0` 而不列,宿主会直接拒绝启动并告诉你要设什么。细节与代价见 [notes/packages/iris-rpc-host/DEVIATIONS.md](notes/packages/iris-rpc-host/DEVIATIONS.md) §1。
 
 没有构建界面时宿主照样启动、照样应答协议,只是不服页面。新检出就是这个状态。
+
+### 安全姿态
+
+这台宿主不带 TLS、不带鉴权,它信任自己所在的机器——所以**边界都画在别处**,而且每一条都有测试押着:按 `Host` 应答的白名单(上面那一段,DNS rebind 就是它挡的)、shell 页面的 CSP 底线、`connections.json` 里**加密存放**的密钥(AES-256-GCM,Windows 上数据密钥由 DPAPI 绑当前账户,见 [§3](#3-连接模型))、一个数据目录一把 `host.lock`(见 [§2](#2-启动))、远程脚本只从两个来源取(`jsdelivr.net` 的子域与 `raw.githubusercontent.com`)、CI 里每个第三方 action 钉到 commit。2026-09 两次外部审计逐条的处置——**已落地 / 已接受(带代价与重开触发条件)/ 仍待办**——记在 [notes/SECURITY-REMEDIATION.md](notes/SECURITY-REMEDIATION.md);沙箱侧已接受的缺口另见 [docs/SANDBOX.md](docs/SANDBOX.md)。
 
 ### 环境变量
 
@@ -340,13 +332,18 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `IRIS_BACKUP_KEEP` | `50` | 每个聊天保留多少份快照。与上游默认相同 | `cordis.yml` app 行 |
 | `IRIS_DEV_ORIGIN` | 未设 | 逗号分隔的来源白名单,给跑在另一个源上的前端开发服务器用。**更推荐**反代 `/iris/rpc` 与 `/iris/events`,那样页面仍是同源 | `cordis.yml` rpc 行 |
 | `IRIS_ALLOWED_HOSTS` | 未设 | 逗号分隔的 `host:port` 白名单,精确匹配、不支持通配。loopback + 实际端口是自动推出来的,所以本机用不着设;它是给**反向代理**用的——浏览器写进 `Host` 的是反代对外的那个名字。绑 `0.0.0.0` 而这里为空,宿主拒绝启动 | `cordis.yml` rpc 行 |
+| `IRIS_TRIM_BLOCK` | 未设 | 溢出预算时一次让出多少层(按块取整,让缓存前缀站得住一会儿)。未设表示由 `@iris/pipeline` 的 `DEFAULT_TRIM_BLOCK_FLOORS` 决定;`0` 退回 SillyTavern 的逐层裁剪 | `cordis.yml` app 行 |
+| `IRIS_CACHE_TRACE` | 开 | `0` 关掉请求体留痕(留痕是为了事后归因一次缓存未命中) | `cordis.yml` app 行 |
+| `IRIS_CACHE_TRACE_KEEP` | `8` | 每个对话留几条请求体。`IRIS_CACHE_TRACE=0` 优先于它 | `cordis.yml` app 行 |
 | `IRIS_WEB_DIST` | 自动 | 界面产物的 `index.html`。**一般不要设**——有构建时 `bin.ts` 会自己填 | `apps/iris/bin.ts` |
 
 另有两个只服务于 live demo、与跑宿主无关:`DEEPSEEK_API_KEY` 与 `IRIS_LIVE_MODEL`(`apps/iris/demo/`)。
 
 ### 不是环境变量的那几项
 
-有些选项是 `cordis.yml` 里的行,没有对应的 `IRIS_*`,要改就在那里改。
+下面这些是插件 schema 上的选项,没有对应的 `IRIS_*`,也**不在 `cordis.yml` 里占一行**
+——要改就去那个文件里给对应的行**加**一条。`pruneVariables` 那一行没有,是刻意的:
+写上 `!!js process.env.… !== "false"` 曾经让 schema 的默认值变成够不着的死代码。
 
 | 选项 | 默认 | 作用 |
 | --- | --- | --- |
@@ -372,17 +369,23 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 | `connections.key` | 上一行那些密文用的数据密钥。Windows 上由 DPAPI 以当前账户封起;别的平台是 `0600` 的明文,启动会告警。**换机器/换账户就打不开了**,见 [§3](#3-连接模型) |
 | `personas.json` | `{{user}}` 是谁 |
 | `favorites.json` | 收藏的角色 |
+| `chat-order.json` | 你把对话排成的顺序(上游没有这个概念,是 Iris 自己的) |
 | `script-policy.json` | 你允许过哪些卡跑脚本 |
+| `script-library.json` | **你自己写的**脚本(全局仓 + 每张卡一个仓)。刻意不写回卡文件 |
 | `script-variables.json` | 每个脚本存的变量 |
 | `script-buttons.json` | 卡重排过的脚本面板按钮 |
-| `extension-settings.json` | 每个安装的扩展设置 |
+| `extension-settings.json` | 卡在 `extension_settings` 下存的东西 |
 | `worldbook-bindings.json` | 哪本书属于哪张卡 |
 | `card-storage.json` | 卡片之间共享的键值存储 |
 | `script-bundles/` | 缓存下来的远程卡片包体 |
+| `cache-trace/` | 最近几条请求的原始体,按对话分目录。用来事后归因缓存未命中 |
+| `st-extensions/` | 装下来的第三方 ST 扩展(安装器的 `staging/ claims/ installed/` 布局) |
+| `system-plugins/` | 装下来的 Node 系统插件**包体**,同一套布局。**与下一行不是一回事** |
+| `plugin-data/` | 每个系统插件自己的数据目录,一个 id 一个子目录。卸载**保留**它——那是用户数据 |
 
 聊天文件就是 SillyTavern 自己的格式,所以在这里开的一局可以拿回那边打开,再拿回来。
 
-`<IRIS_DATA_DIR>/` 本身(profile 之外)只有一个文件:`host.lock`,记着当前占着这个目录的宿主的 pid、绑定端口、启动时刻与机器名。正常退出会删掉它;崩溃留下的那一把是残留锁,下一个宿主接管并在日志里说一声。见 [§2 多实例](#多实例一个数据目录只能有一个宿主)。
+`<IRIS_DATA_DIR>/` 本身(profile 之外)有两样东西。一是 `host.lock`,记着当前占着这个目录的宿主的 pid、绑定端口、启动时刻与机器名:正常退出会删掉它;崩溃留下的那一把是残留锁,下一个宿主接管并在日志里说一声(见 [§2 多实例](#多实例一个数据目录只能有一个宿主))。二是 `system-plugins/`——**注意它与 profile 里那个同名目录不是一回事**:这一个是浏览器资产根,只放 `<id>/client/client.js` 这类下发给页面的文件;profile 里那个放整棵包树。两处的常量互相指着对方。
 
 ### 出问题时
 
@@ -390,11 +393,13 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 
 **`missing API key: set <名字>`。** `IRIS_API_KEY_ENV` 指的那个变量是空的或没设。这里选择**点名拒绝**而不是发一个不带鉴权的请求,因为端点对后者的回答是 401,而 401 的成因没人看得见。
 
-**连接面板里每个供应商都变成「没有密钥」,端点和模型却都在。** 数据密钥打不开了。最常见的原因是这个 profile 目录换了 Windows 账户或换了机器——DPAPI 封的那把密钥绑定当前登录账户(见 [§3](#3-连接模型))。日志里会有一条点名 `connections.key` 的 fault,说明是哪一种。**密文和那把密钥都没有被删**:重新在面板里填一次密钥即可,旧的 `connections.key` 会被改名留在旁边。宿主**不会**自作主张换成弱一点的存法——那是静默降级,这里宁可让你看见。
+**浏览器里每个请求都 403,页面却打得开。** `Host` 白名单拒了。页面静态那一段不过白名单(已知缺口),它发出的每一次调用过。放在反代后面时,把反代对外的那个 `host:port` 列进 `IRIS_ALLOWED_HOSTS`。
+
+**连接面板里每个供应商都变成「没有密钥」,端点和模型却都在。** 数据密钥打不开了——最常见的原因是这个 profile 换了 Windows 账户或换了机器(见 [§3](#3-连接模型))。日志里有一条点名 `connections.key` 的 fault。**密文和那把密钥都没有被删**:重新填一次密钥即可,旧的会被改名留在旁边。宿主**不会**自作主张换成弱一点的存法——那是静默降级,这里宁可让你看见。
 
 **宿主拒绝启动,说两个目录重叠。** `IRIS_ST_DIR` 指到了 `IRIS_DATA_DIR` 里面。两者必须是分开的树——那种重叠正是「Iris 从不写你的安装」不再成立的方式。
 
-**生成停在 `no first byte … after 120000 ms` 或 `no data … for 120000 ms`。** 端点收下了请求然后安静了。消息会点名是哪一段超时、等了多久。如果你的端点确实那么慢,去 `cordis.yml` 调大或关掉,不要干等;无论哪种情况聊天都会被释放。
+**生成停在 `no first byte … after 120000 ms` 或 `no data … for 120000 ms`。** 端点收下了请求然后安静了。消息会点名是哪一段超时、等了多久。如果你的端点确实那么慢,在 `cordis.yml` 的 `app` 行上加一条超时把它调大或关掉(见上一节),不要干等;无论哪种情况聊天都会被释放。
 
 **卡的模板不起作用。** `IRIS_TEMPLATES` 是关的。打开它就是在一个子进程里跑卡作者的 JavaScript——没有环境变量、不能写文件系统、够不到宿主对象,是受限的,但仍然是他们的代码,所以默认要你自己开。
 
@@ -402,9 +407,7 @@ Iris 自己不读任何配置文件。一切都是 `apps/iris/cordis.yml` 里的
 
 **早期楼层的变量读出来是空的。** SillyTavern 自己的变量清理是**默认开启**的,所以从一个安装里导入的长局,到手时就已经被裁过了。Iris 会报出哪一层被裁、哪一层更早的还完好,而不是回一张空表了事。
 
-**端口被占用。** 宿主会打印一句 `… is already in use, so the host did not start`,点名地址。设 `IRIS_PORT` 换一个。**不要按端口或进程名杀进程**——那可能是别人起的宿主。
-
-**宿主拒绝启动,说数据目录已被另一个宿主打开。** 这是数据目录锁,不是端口的事:`<IRIS_DATA_DIR>/host.lock` 里记着的那个 pid 还活着。停掉那个宿主,或给这一个另一个 `IRIS_DATA_DIR`(见 [§2 多实例](#多实例一个数据目录只能有一个宿主))。**没有绕过的开关。** 如果你确知那个 pid 已经不在了(比如整台机器刚重启、pid 被复用给了别的程序),删掉那个锁文件即可——宿主本来就会自动接管一把残留锁,需要手删只说明存活检查答的是「活着」。
+**宿主起不来:两种,别混。** `… is already in use, so the host did not start` 是**端口**被占,设 `IRIS_PORT` 换一个(**不要按端口或进程名杀进程**——那可能是别人起的宿主)。说**数据目录**已被另一个宿主打开,则是 `<IRIS_DATA_DIR>/host.lock` 里那个 pid 还活着:停掉它,或给这一个另一个 `IRIS_DATA_DIR`(见 [§2 多实例](#多实例一个数据目录只能有一个宿主))。**没有绕过的开关**;确知那个 pid 已经不在时删掉锁文件即可——宿主本来就会自动接管残留锁,需要手删只说明存活检查答的是「活着」。
 
 ---
 
@@ -420,13 +423,7 @@ Iris 站在这些项目的工作上。兼容它们不是顺带,是这个项目�
 
 ## 感谢每一位贡献者
 
-感谢每一位贡献者——提交过代码、补过账本、报过一张卡在哪一层坏掉的人。这个项目欢迎 PR。提交之前值得知道我们会怎么读它:
-
-- **一个修复要说清它服务的是哪一类情况**,不是哪一张卡。按卡名或卡片特征值写的分支不会被合。
-- **测量与决定分开写。** 决定可以写在散文里;被行为依赖的测量前提,要配一个会自己失败的东西——文档讲道理,测试押前提。
-- **改了行为就改注释。** 陈旧的注释比陈旧的文档更贵,因为读者更信它。
-
-细节见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+感谢每一位贡献者——提交过代码、补过账本、报过一张卡在哪一层坏掉的人。这个项目欢迎 PR。提交之前值得知道我们会怎么读它:**一个修复要说清它服务的是哪一类情况**(不是哪一张卡——按卡名写的分支不会被合);**测量与决定分开写**(文档讲道理,测试押前提);**改了行为就改注释**(陈旧的注释比陈旧的文档更贵,因为读者更信它)。分支流程、门禁与账本规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

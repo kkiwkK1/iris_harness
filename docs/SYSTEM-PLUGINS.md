@@ -1,18 +1,32 @@
 # System plugins
 
-Architecture decision, 2026-09-12; re-read against the code on 2026-09-15. What
-it describes is on `main` as `2eccf30` (PR #88, "Add the system plugin platform
-and ST extension pilot"), so the document is written in the present tense
-throughout and everything still open is gathered under "Not yet built" at the
-end — a sentence here that reads as a plan is a bug in this file.
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
+
+## 本文与其他文档的关系
+
+本文是系统插件的**架构裁决记录**，只拥有三件事：生命周期契约、所有权划分、信任模型。
+其余的事各有归属，本文引用而不复述：
+
+| 要找什么 | 去哪 |
+| --- | --- |
+| 可调用的接口目录，以及**唯一维护的缺口清单** | [INFRASTRUCTURE-INTERFACES](INFRASTRUCTURE-INTERFACES.md)（§8 是那份清单；本文不另立第二份） |
+| 插件包安装路径的设计与落地记录 | [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) |
+| 作者视角的制作与操作步骤 | [PLUGIN-AUTHORING-RUNBOOK](PLUGIN-AUTHORING-RUNBOOK.md) |
+| 契约包的发布形（tarball、版本策略） | [PLUGIN-CONTRACT-PACKAGING](PLUGIN-CONTRACT-PACKAGING.md) |
+| ST 扩展兼容面的设计与施工合同 | [ST-EXTENSION-DESIGN-AND-RUNBOOK](ST-EXTENSION-DESIGN-AND-RUNBOOK.md) |
+| 生成钩子（设计已裁决，实现未开始） | [GENERATION-HOOKS](GENERATION-HOOKS.md) |
+
+Architecture decision, first written 2026-09-12; re-read against the code at
+`e356771` on 2026-09-16. Everything below describes code that exists, so the
+document is written in the present tense throughout — a sentence here that reads
+as a plan is a bug in this file.
 
 Delivery ownership: `notes/SYSTEM-PLUGINS-ACCEPTANCE.md`. Results:
 `notes/PLUGIN-PLATFORM-ACCEPTANCE-2026-09-13.md` (host runtime, dynamic RPC,
-`/plugins` assets, member merge, stale-revision isolation) and
-`notes/st-compat/PILOT-REPORT.md` (the ST extension pilot). The live interface
-surface, and the authoritative list of what is missing, are
-`docs/INFRASTRUCTURE-INTERFACES.md` §8 — that table is maintained per change
-and this section is not, so where the two disagree it wins.
+`/plugins` assets, member merge, stale-revision isolation),
+`notes/st-compat/PILOT-REPORT.md` (the ST extension pilot) and
+`notes/PLUGIN-INSTALL-ACCEPTANCE-2026-09-15.md` (the package install path driven
+in a real browser).
 
 ## Purpose
 
@@ -29,7 +43,8 @@ plugin does not grant a card permission to execute scripts or access the network
 
 What a plugin is, and what a frame is born with, are published contracts, not
 host internals. They moved out of the transition sites named in
-`notes/SYSTEM-PLUGINS-HANDOFF.md` — the move is a move, so there is exactly one
+`notes/SYSTEM-PLUGINS-HANDOFF.md` (superseded by #88 and kept as a historical
+draft; its 「必须保持的行为合同」 section still stands) — the move is a move, so there is exactly one
 `SystemPluginDefinition` in the repository.
 
 - **`@iris/plugin-api`** — the host-side contract: `SystemPluginDefinition`
@@ -55,9 +70,12 @@ serialized transitions, persistence, Cordis fibers, drain — stays in
 
 This document and `@iris/plugin-api` describe *what a plugin is and how it
 activates* — one layer earlier in the paper stack than the runtime services a
-plugin may reach once it is active (a storage namespace under the profile, an
-event tap, generation-pipeline hooks, a contributed settings face). None of
-those four services exists on `main`; see "Not yet built".
+plugin may reach once it is active. Two of those services now exist on `main`
+(`scope.storage`, a private key–value store under the profile; and
+`scope.variables.registerWriter`, the settlement's writer registry); a settings
+face, generation-pipeline hooks and an open `ScriptContext` do not. Which is
+which is maintained in one place only — `docs/INFRASTRUCTURE-INTERFACES.md` §8 —
+and this file does not keep a second copy.
 
 The third-party extension design that named them, `docs/EXTENSIONS.md`, **is
 not on `main`.** It lives only on the unmerged `origin/dev/feat-extension-system`
@@ -79,7 +97,7 @@ This supersedes the static-only lifecycle proposed on the unmerged
 `dev/feat-extension-system` design branch. There is one plugin control plane;
 future extension hooks must attach to it, not create a second registry.
 
-A definition reaches the catalog by one of two routes, and the registry does
+A definition reaches the catalog by one of three routes, and the registry does
 not assume every row is one of the two builtins:
 
 1. **Shipped with Iris** — `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`
@@ -89,22 +107,28 @@ not assume every row is one of the two builtins:
    and remove no source file from the Iris installation, and uninstall retains
    chats, variable snapshots and preferences, so a builtin can be installed
    again from the catalog.
-2. **Adopted after start** — `SystemPluginRuntime.adoptDefinition`
+2. **Adopted after start, as an ST extension** — `SystemPluginRuntime.adoptDefinition`
    (`packages/iris-app-service/src/system-plugins.ts`), which admits a
-   definition the process was not constructed with. Every call site on `main`
-   is the ST extension compatibility face: `buildStExtensionDefinition` shapes
-   an installed SillyTavern extension into a `SystemPluginDefinition`, and from
-   there it uses the same catalog, dependency graph, enable/disable and
-   uninstall as a builtin — there is no second lifecycle. That route *does*
-   write to disk (an installed tree under the data directory) and can fetch
-   over the network, which is where the install-source question in "Trust
-   model" comes from. Uninstalling one retains the installed tree and its
-   settings file, because both are user data.
+   definition the process was not constructed with.
+   `buildStExtensionDefinition` shapes an installed SillyTavern extension into a
+   `SystemPluginDefinition`, and from there it uses the same catalog, dependency
+   graph, enable/disable and uninstall as a builtin — there is no second
+   lifecycle. That route *does* write to disk (an installed tree under the data
+   directory) and can fetch over the network. Uninstalling one retains the
+   installed tree and its settings file, because both are user data.
+3. **Installed as an out-of-repository package** — the install path landed in
+   PRs 1–3 of [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §10 and finished
+   by the second batch (U1's `plugin.update`, U5's copy bundles, U6's installer
+   hardening). A directory whose `package.json` carries an `iris.plugin` block
+   is staged from an https git remote pinned to a full commit, or loaded in
+   place from a local `dev` directory, previewed, consented to, and promoted
+   into `<profile>/system-plugins/installed/<id>/`. It then uses the same
+   catalog and lifecycle as the other two. Unlike route 2, uninstalling a `git`
+   row **deletes the tree** — a plugin tree is a reproducible read-only artifact,
+   not user data — while a `dev` row's directory is never touched.
 
-There is no third route: a Node system plugin is either in
-`BUILTIN_SYSTEM_PLUGIN_DEFINITIONS` or it arrives as an ST extension. Package
-discovery and distribution for host-side plugins — an npm name, a Git URL —
-are not built; see "Not yet built".
+There is no fourth route. An npm name and an arbitrary tarball URL are refused
+by design ([SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §11), not missing.
 
 The shell renders plugin metadata and management controls using its own
 components. Card-authored JavaScript continues to execute in the existing
@@ -126,8 +150,13 @@ on Tavern Helper for its card-facing integration; the dependency is visible.
 
 ## Lifecycle contract
 
-The public operations are list, install, enable, disable, reload and uninstall.
-Requests name a catalog id; they do not carry source code or a filesystem path.
+The six catalog operations are list, install, enable, disable, reload and
+uninstall. Their requests name a catalog id; they do not carry source code or a
+filesystem path. The four install-path methods (`previewInstall`,
+`confirmInstall`, `cancelInstall`, `update`) are the one place a request does
+carry a source, and they are a separate contract with its own consent step —
+see [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §5 and, for the wire
+shapes, `docs/INFRASTRUCTURE-INTERFACES.md` §3.
 
 1. Transitions are serialized. A status marked enabled means activation completed.
 2. Enabling resolves dependencies in order. Unknown ids, cycles, unsupported
@@ -138,8 +167,14 @@ Requests name a catalog id; they do not carry source code or a filesystem path.
    and disposes registrations. Cleanup is still permitted during teardown.
 5. Reload performs teardown and activation without restarting Iris. Repeated
    cycles must not accumulate listeners, injections or background work.
-6. Uninstall retains chats, variable snapshots and plugin preferences. A bundled
-   plugin can be installed again from the catalog.
+6. Uninstall retains chats, variable snapshots and the plugin's own private
+   storage under `<profile>/plugin-data/<id>/`. A bundled plugin keeps its
+   preference row and can be installed again from the catalog; an ST extension
+   keeps its installed tree and settings file. A row installed as a package is
+   the one exception the install path decided on deliberately: the whole row is
+   removed and, for a `git` source, its tree is deleted — the reasoning is in
+   [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §6, and the runtime tells
+   the two apart by `removable`.
 7. Failed activation must not retain half-registered capabilities. Failed
    transitions must not persist a successful state that did not occur.
 
@@ -171,12 +206,14 @@ the host's own claim — `Handlers` remains total — and a capability moving ou
 to a plugin takes its schemas to the registry, shrinking `RpcMethod` by the
 same keys.
 
-The mechanism has no production consumer on `main`: every method a shipped
-plugin answers is still a static schema in `@iris/protocol`, and `registerRpc`
-is exercised only by its own tests
-(`packages/iris-protocol/tests/rpc-registry.test.ts`,
-`packages/iris-app-service/tests/system-plugin-rpc.test.ts`). It is a built
-path, not a used one.
+The mechanism still has no production consumer at `e356771`: every method a
+shipped plugin answers is a static schema in `@iris/protocol`, and the only
+caller of `scope.registerRpc` anywhere in the tree is
+`packages/iris-app-service/tests/system-plugin-rpc.test.ts` (the protocol half,
+`registerRequestSchema`, is separately exercised by
+`packages/iris-protocol/tests/rpc-registry.test.ts`). It is a built path, not a
+used one.
+（口径：`grep -rn "\.registerRpc(" --include=*.ts packages/*/src apps/*/src` 为空。）
 
 ## Compatibility boundaries
 
@@ -231,35 +268,35 @@ for the host half of an ST extension: the *definition* wrapping it is
 same-privilege by the paragraph above, while the extension's own JavaScript is
 not — the sandbox is around the code, not around the catalog row.
 
-**Open question — what constrains the install source of same-privilege host
-code.** Undecided. Owner: the coordinator, to be settled together with the
-system-plugin install path (`docs/INFRASTRUCTURE-INTERFACES.md` §8, the row
-「系统插件的包外安装路径」 — an install route for a system plugin from outside
-this repository). The two answers already in the tree disagree, and neither was
-chosen as *the* rule for host code:
+**What constrains the install source of same-privilege host code — settled
+2026-09-15, landed.** The question this section used to leave open (owner: the
+coordinator) was answered by the five rulings in
+[SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §12 and is now code. The
+answer in one paragraph, with that document as the authority for every detail:
 
-- Card code is confined by an allowlist of two remote hosts —
-  `REMOTE_ALLOWLIST = ['*.jsdelivr.net', 'raw.githubusercontent.com']`
-  (`apps/iris-web/src/sandbox/policy.ts`) — re-checked on the host per hop by
-  `checkScriptFetch`, with the libraries a frame carries vendored into this
-  repository instead of fetched at all.
-- The ST installer takes an https URL and a full 40-hex commit
-  (`assertPinnedCommit`, `packages/iris-extension-installer/src/source.ts`),
-  fixed argv with no shell, hooks path emptied, no submodules.
+- **No host allowlist for `git` sources.** Card code is confined by an allowlist
+  of two remote hosts — `REMOTE_ALLOWLIST = ['*.jsdelivr.net',
+  'raw.githubusercontent.com']` (`apps/iris-web/src/sandbox/policy.ts`),
+  re-checked on the host per hop by `checkScriptFetch` — because a card is
+  *content*: opening one is not a decision to run somebody's code. Installing a
+  system plugin is that decision, so the compensating control is the consent
+  step, not a list.
+- **What replaces the list is the bytes.** An install takes an https remote and
+  a full 40-hex commit (`assertPinnedCommit`,
+  `packages/iris-extension-installer/src/source.ts`), fixed argv with no shell,
+  hooks path emptied, no submodules; the promoted tree is hashed (`hashTree`)
+  and that hash is re-computed at every boot, a mismatch parking the row as
+  `tampered` without importing anything.
+- **`dev` is the one exception and is marked as one**, in three places (the
+  preference file, the catalog row, the consent page), because it is the single
+  source whose bytes are never re-verified.
 
-`notes/PLUGIN-FEASIBILITY.md` §8 question 1 poses the choice as "same privilege
-means the install source must be as constrained as card code — two CDNs,
-hash-locked — rather than an arbitrary `git clone`". Read that as the proposal
-it is, not as a description: what is hashed on the card path today is the
-*URL*, as a cache file name (`cacheKey`,
-`packages/iris-app-service/src/script-cache.ts`), not the bytes, so
-"hash-locked" would be new work on either path. Deciding this is a prerequisite
-for any npm or Git install route for a Node plugin, which is why that row and
-this question move together.
-
-A concrete answer is drafted in [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md)
-— **提案，待裁决**, a proposal awaiting the owner's ruling, not a description of
-`main`. Until it is ruled on, the question above is what stands.
+This closes `notes/PLUGIN-FEASIBILITY.md` §8 question 1, which posed the choice
+as "two CDNs, hash-locked, rather than an arbitrary `git clone`". Note what was
+*not* adopted from it: "hash-locked" on the card path still is not true — what
+is hashed there is the *URL*, as a cache file name (`cacheKey`,
+`packages/iris-app-service/src/script-cache.ts`), not the bytes. The plugin path
+hashes bytes; the card path was deliberately left alone.
 
 ## Acceptance requirements
 
@@ -285,34 +322,20 @@ re-checked against, not as work outstanding.
 
 ## Not yet built (尚未实现)
 
-Read against `main` on 2026-09-15. Everything above this heading is a
-description of code that exists; everything here is a description of code that
-does not. `docs/INFRASTRUCTURE-INTERFACES.md` §8 is the maintained version of
-this list, with completion conditions and graduated rows — this is the short
-form for readers of the architecture decision.
+**This section is a pointer, on purpose.** It used to carry its own list, and
+the list went stale: between 2026-09-15 and 2026-09-16 four of its seven bullets
+landed while the bullets stayed. The maintained list — with per-row completion
+conditions, graduated rows and their landing evidence — is
+`docs/INFRASTRUCTURE-INTERFACES.md` §8, and it is the only one. If you are
+reading this file to find out what is missing, go there.
 
-- **Runtime services for an active plugin** — a storage namespace under the
-  profile (`scope.storage`), a settings face (`scope.settings`),
-  generation-pipeline hooks on `AppServiceOptions`, an open `ScriptContext`
-  (`contributeContext`). None of the four exists. Tavern Helper and MVU are
-  taken at fixed call sites through `capabilities.ts`, and ST settings go
-  through a purpose-built `StCompatOptions` closure rather than a general
-  interface.
-- **Plugin-writable variables as an API.** Arbitration is host-internal and the
-  settlement site names the two plugin ids in source, so a third writer cannot
-  be wired in without editing it.
-- **Publishable contract packages.** `@iris/plugin-api` and
-  `@iris/plugin-web-api` are shaped (zero `@iris` dependencies; type-only
-  Cordis and protocol) but are `private`, `0.0.0`, and export TypeScript
-  sources. Shaped is not publishable.
-- **An install path for a Node system plugin from outside the repository.** No
-  npm name, no Git URL: the two routes under "Authority and scope" are all
-  there is. Blocked on the trust-model open question above, not merely on
-  plumbing.
-- **A settings slot a plugin outside the shell can register.** The slot
-  mechanism and its occupancy check exist and have a consumer; only
-  shell-resident code can register one.
-- **i18n namespace merge.** Plugin-center copy is an inline table and the ST
-  panel carries its own projection; a plugin contributes no strings.
-- **Acceptance for MVU hot-unload against a card-bundled copy of MVU**, as
-  "Compatibility boundaries" states.
+Two consequences of that list belong to *this* document's own claims, so they
+are stated here rather than only implied:
+
+- **Full MVU hot-unload is not claimed**, for the reason in "Compatibility
+  boundaries": no acceptance case puts a card carrying its own MVU bundle
+  through a disable.
+- **A settings face and generation hooks do not exist on the activation scope**,
+  so the "Lifecycle contract" above is the whole of what a plugin can rely on
+  beyond `provide` / `getDependency` / `registerRpc` / `variables` / `storage`.
+  The hooks design is decided but unimplemented: [GENERATION-HOOKS](GENERATION-HOOKS.md).

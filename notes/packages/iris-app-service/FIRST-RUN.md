@@ -1,5 +1,7 @@
 # The first-run path
 
+> 状态：记录。测量于 2026-09-07，对象 Iris 的空 profile `apps/iris/data/empty`（只有导入的卡与书，别的都没有）。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 What a profile that has never been used does, measured against one built for the
 purpose: `apps/iris/data/empty`, holding five imported cards, their books, and
 **nothing else** — no `settings.json`, no `card-storage.json`, no

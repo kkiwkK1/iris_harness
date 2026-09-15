@@ -1,5 +1,7 @@
 # NOTES-handoff — 任务 B（渲染生命周期）留给任务 A 的交接
 
+> 状态：已归档（2026-09-16）。被两处后续裁定取代：§1 的 MVU bundle 不发布由 MVU 聊天级五件活关闭（`../ROADMAP.md` 队列第 3 项，复读结果记在那里），§2 的 zeoseven 字体由 2026-09-06 的「远程样式表走宿主代理」裁定关闭（`../apps/iris-web/DEVIATIONS.md` §41）。保留作历史。
+
 写给正在改 `frame.ts` document shim / fetch 面与 `srcdoc.ts` CSP 的开发。
 本文件只写**我测到、但按纪律没有动你那两段**的事实，每条都带可复现的观测方法。
 工作分支 `dev/fix-render`（worktree `wt-render`），以下发现全部在 8792 独立宿主 + 真卡上验证过。

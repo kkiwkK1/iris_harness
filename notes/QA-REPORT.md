@@ -1,5 +1,7 @@
 # QA-REPORT — 合并版六卡回归验收（dev/qa-6cards）
 
+> 状态：验收记录，验收于 2026-09-04（入库 2026-09-07），对象 Iris `dev/iris-exploration` @ `d5d0418`，六张真卡的合并版回归。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 - 基线：`dev/iris-exploration` @ `d5d0418`（含渲染/沙箱两项合并修复）
 - 日期：2026-09-04；执行：任务 D 验收代理
 - 宿主：worktree 内独立进程，`IRIS_PORT=8792`，数据目录 `wt-qa/apps/iris/data`（与主检出隔离）；

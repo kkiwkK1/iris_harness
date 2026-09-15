@@ -1,5 +1,7 @@
 # ST 兼容施工报告 —— P2 安装器运行时闭环（dev/st-extension-installer-runtime）
 
+> 状态：记录。测量于 2026-09-13（入库 2026-09-14），对象 Iris `dev/st-extension-installer-runtime`，基线 `413fbad979bee059e679ab2c4082fa004ca388d4`。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 日期：2026-09-13。任务：把只读扩展分析器补成完整但**默认不执行扩展代码**的安装系统（ST-Prompt-Template 兼容试点的前置）。
 
 ## 派工单回执

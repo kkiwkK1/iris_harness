@@ -1,5 +1,7 @@
 # Security remediation — the two 2026-09 audits, finding by finding
 
+> 状态：记录。测量于 2026-09-11，对象 两份外部审计（对象仓库 `624c4ce`，复核 `d970cb8`）逐条的处置状态。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 Dated 2026-09-11.
 
 Two audits were run against this repository at `624c4ce` and re-checked at

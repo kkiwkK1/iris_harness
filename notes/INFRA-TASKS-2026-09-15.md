@@ -1,5 +1,7 @@
 # 基建任务单 · 第二批（2026-09-15）
 
+> 状态：已完成（2026-09-16 记）。本单六项（U1–U6）全部落地，对应 PR #101–#106；`docs/INFRASTRUCTURE-INTERFACES.md` §8 已按落地结果重记（U1 更新事务、U2 `scope.variables.registerWriter`、U3 `scope.storage`、U5 插件自带文案、U6 加固清账各自闭合，U4 的产物是 `docs/GENERATION-HOOKS.md`）。**各项的施工文档留在分支 `dev/infra-task-docs-batch-2`，按决定未合入 `main`。** 本文件是任务单，不随代码更新；现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 基线 `main` `e03adbb`（PR-1/2/3 安装路径已全部落地）。本批六项，都是 `docs/INFRASTRUCTURE-INTERFACES.md` §8 里「未做」的行或 PR-2/3 记下的未闭合项。每项一个 `dev/<topic>` 分支、一个 PR 到 `main`，由协调人验收合入。行号只作 `e03adbb` 的证据，定位以符号名为准。
 
 ## 0. 共同施工流程

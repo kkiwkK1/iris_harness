@@ -1,14 +1,20 @@
 # `@iris/compat-prompt-template`
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+
 EJS prompt templates, compatible with the **ST-Prompt-Template** extension the
 user has installed and enabled.
 
 A different thing from `@iris/macro`'s `{{…}}`. Macros substitute text; this
 evaluates programs.
 
+**Off unless asked for.** The composition ships `templates: false`; `IRIS_TEMPLATES=1`
+turns it on. Containment is not a reason to opt someone in.
+
 ## Why it exists
 
-Measured over the 19 cards in the local library:
+Measured 2026-09-01 over the 19 cards in the local library. These are numbers
+from that corpus on that date, not properties of the format:
 
 | | |
 |---|---|
@@ -36,7 +42,7 @@ page, with the application in scope". This package's answer:
 host process                          child process (one at a time, per batch)
 ─────────────────────────────         ──────────────────────────────────────
 assembles the batch                   env: {}                 ← no credentials
-refuses an item over 1 MiB            --permission            ← no fs write, no spawn
+refuses an item over 2^20 chars       --permission            ← no fs write, no spawn
 pushes a JSON snapshot        ──►     --max-old-space-size=128
                                       fs read: this package + ejs + lodash
 receives streamed results     ◄──     ┌──────────────────────────────────┐
@@ -70,11 +76,17 @@ the network (there is no `--allow-net`), and deleting globals does not stop
 `await import("node:net")` because `import()` is syntax, not a global — the realm
 refuses that by design. Conversely, a realm escape is a known class of bug and
 never a boundary alone, so `--permission` and an empty environment decide what an
-escape is worth. The heap ceiling, the single child and the 1 MiB item cap decide
-what a template that merely misbehaves can cost.
+escape is worth. The heap ceiling, the single child and the item cap decide what
+a template that merely misbehaves can cost. Each of those four is an exported
+constant rather than a number in this file — `CHILD_MAX_OLD_SPACE_MB` (128),
+`CHILD_CONCURRENCY_LIMIT` (1, so batches serialise), `MAX_TEMPLATE_CHARS`
+(1,048,576 **characters**) and `DEFAULT_DEADLINE_MS` (2000) — and
+`childConcurrency()` reports the in-flight and peak counts, so "one at a time"
+is observable rather than asserted.
 
-`notes/packages/iris-compat-prompt-template/DEVIATIONS.md` lists every deliberate difference from upstream, what each was
-measured to cost, and the residual risk that is *not* zero.
+[`notes/packages/iris-compat-prompt-template/DEVIATIONS.md`](../../notes/packages/iris-compat-prompt-template/DEVIATIONS.md)
+lists every deliberate difference from upstream (§1–§12), what each was measured
+to cost, and the residual risk that is *not* zero.
 
 ## Using it
 
@@ -83,19 +95,34 @@ import { evaluateBatch } from '@iris/compat-prompt-template'
 
 const outcome = await evaluateBatch({
   items: [{ id: minted(), text: entry.content, origin: `worldinfo/${book}/${uid}`, locals: { world_info: entry } }],
-  snapshot: { variables, chatMetadata, worldInfo, scalars, traceId },
+  snapshot: { variables, chatMetadata, worldInfo, lorebooks, scalars, traceId },
 })
 
 for (const { id, result } of outcome.results) {
   // A failure is a value, not an exception: upstream keeps the original text and
-  // carries on, so one broken entry never costs a generation.
+  // carries on, so one broken entry never costs a generation. Keep the original
+  // text for `result.ok === false` and report `result.error` rather than raising.
   if (result.ok) use(id, result.text)
 }
-await applyChangeSet(outcome.ops)
 ```
+
+**`outcome.ops` is a description of writes, not writes.** This package performs
+none of them: the caller applies each op **through its own entry points**, which
+is what keeps a template from bypassing a check the host makes on the way in.
+`@iris/app-service` is the only caller today — `templates.ts` returns
+`outcome.ops` up to `service.ts`, which applies them with its own `applyOps`
+against the chat entry and turn. There is no `applyChangeSet` export, and there
+should not be one; a helper that wrote for you would put the writes back inside
+this boundary.
 
 Item order is the contract: a `setvar` in item 3 is visible to item 4, and
 `outcome.ops` is in the order the templates performed the writes.
+
+`snapshot.lorebooks` is not optional and not a convenience. Upstream resolves
+**exactly one** book through a fallback chain (`character` → `persona` → `chat`)
+and scans only that; without the field the evaluator would have to guess, and
+guessing "search everything" returns a same-titled entry from the wrong book
+with nothing raised anywhere.
 
 ## Two things that will bite
 

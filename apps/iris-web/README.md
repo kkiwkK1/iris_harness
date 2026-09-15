@@ -1,5 +1,7 @@
 # `@iris/web` — the browser half
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+
 The Iris interface: a reading surface for long AI-roleplay conversations, built on
 the DSH web shell.
 
@@ -7,8 +9,9 @@ the DSH web shell.
 npm run dev            # vite dev server
 npm run typecheck      # tsc --noEmit, same strictness as the repo root
 npm run check:render   # server-render the tree and assert it produced a page
-npm run build          # the app, then the sandbox bootstrap
-npm run build:sandbox  # the bootstrap alone (dist-sandbox/bootstrap.js)
+npm run build          # sandbox bundles, then the ST-extension bundle, then the app
+npm run build:sandbox  # the sandbox bundles alone, into public/sandbox/
+npm run build:st-ext   # the ST-extension facade bundle alone
 ```
 
 ## Which data you are looking at
@@ -28,13 +31,19 @@ false conclusion, and the seeded character names were on screen the whole time.
 That is why the disclosure is permanent and one-directional, and why
 `chooseTransport` is a pure function with tests rather than an inline ternary.
 
-**The build has two outputs and they are not interchangeable.** `dist/` is the
-app; `dist-sandbox/bootstrap.js` is the card-sandbox bootstrap, built by a second
-config as a *classic IIFE* because a card's frame has an opaque origin where a
-module script would be CORS-checked. The host reads that file's text and inlines
-it into each frame's `srcdoc`. A `dist/` without it looks complete and cannot run
-a single card, which is why the bootstrap has its own directory: the app build
-runs with `emptyOutDir` and would otherwise wipe it.
+**The build has two kinds of output and they are not interchangeable.** `dist/`
+is the app. The card-sandbox bundles are built *first*, by four configs of their
+own, into **`public/sandbox/`** — `bootstrap.js` (`vite.sandbox.config.ts`),
+`members.js`, `preset.js`, `message-preset.js` — plus `public/st-ext/` for the
+ST-extension facades. Each is a *classic IIFE* because a card's frame has an
+opaque origin where a module script would be CORS-checked; the host reads
+`bootstrap.js`'s text and inlines it into each frame's `srcdoc`. They live under
+`public/` rather than a sibling `dist-sandbox/` for two reasons: the app build
+runs with `emptyOutDir` and would wipe a sibling, and a `fetch` at a path inside
+the Vite project root comes back *transformed* in dev. Vite copies `public/`
+into `dist/sandbox/`, which is what the host serves; `tools/prune-sandbox-assets.mjs`
+then drops what the copy does not need. A `dist/` without them looks complete and
+cannot run a single card.
 
 `node --test "apps/iris-web/tests/**/*.test.ts"` from the repo root runs the unit
 tests (they are also picked up by the root `pnpm test`).
@@ -71,8 +80,38 @@ established by trial in phase 0 and are load-bearing:
 | `src/client/` | `IrisClient` → React. `store.ts` holds the streaming rules; `errors.ts` normalizes refusals into reader-facing copy |
 | `src/theme/` | `tokens.css` is the source of truth for colour and type; `bridge.css` maps those onto the `--dsw-*` names the borrowed primitives read; `theme.ts` owns the per-device preferences |
 | `src/slots/` | Iris's extension points, declared on `SlotCore` and rendered by our own `<Slot>` |
-| `src/app/` | the surface: shell, sidebar, reading column, message, variant rail, composer, settings |
-| `tools/render-check.tsx` | asserts the tree renders and that a disposed slot contribution leaves nothing behind |
+| `src/app/` | the surface: shell, sidebar, reading column, message, variant rail, composer, settings, plugin center |
+| `src/app/i18n/` | the two dictionaries (`strings.ts`), the language store, and the plugin copy overlay — see below |
+| `src/st-extensions/` | the facade entries an unmodified SillyTavern extension is loaded against, built by their own config into `public/st-ext/` |
+| `tools/render-check.mjs` | what `npm run check:render` runs; it drives `render-check.tsx`, which asserts the tree renders and that a disposed slot contribution leaves nothing behind |
+
+## The plugin plane, browser side
+
+A system plugin can reach the browser in three ways, and they are separate
+mechanisms rather than one feature:
+
+- **The plugin center** (`src/app/PluginCenter.tsx`) is the management surface
+  over the existing `plugin.*` RPCs — list, enable, disable, reload, uninstall,
+  and the two-step install/update handshake (`plugin.previewInstall` →
+  a consent page → `plugin.confirmInstall`).
+- **`client.js`** — one plugin's own bundle, served under `/plugins/<id>/…` and
+  loaded into a card's frame before the card body, contributing members that
+  `src/sandbox/plugin-members.ts` merges into what the card sees. The shell
+  reads the aggregate `/plugins/manifest.json` through
+  `src/app/use-plugin-manifest.ts`, **per snapshot revision rather than per
+  mount**; a manifest that does not answer is empty and named in the console,
+  never fatal — a card that needs no plugin keeps working.
+- **Bundled copy.** A plugin ships two flat tables (`i18n.en` / `i18n.zh`,
+  audited at install), and the shell merges them into a **namespace, not the
+  dictionary**: every key is addressed as `plugin:<id>:<key>` through
+  `tPlugin(pluginId, key, params)` (`src/app/i18n/use-language.ts`). The static
+  `StringKey` type stays closed, so a plugin declaring `send` — or even
+  `pluginCenterTitle` — can never shadow a shell key. The overlay is a
+  module-level external store with the same shape the language state has, its
+  lifetime follows the manifest (a disabled plugin has no row, so disabling
+  drops its copy), and fallback is **visible**: the requested language, then
+  English, then the runtime key itself on screen, because an empty string is a
+  failure nobody can find. `src/app/i18n/STRINGS.md` is the inventory.
 
 ## The design, in one paragraph
 
@@ -139,7 +178,7 @@ single place that string is assembled.
 | `sandbox/card-scripts.ts` | the set of frames one chat runs: card order, failure isolation, teardown, and the checks that a frame really entered the document and really became ready |
 | `sandbox/consent.ts` | the three-state run-scripts answer. Absent is not a decline, and the field beside it uses the opposite convention |
 | `sandbox/script-run-state.ts` | what a script is doing, in the probe's vocabulary — `dispatched` is not `running`, and `ran` is not `working` |
-| `sandbox/tavern-helper.ts` | the 36-member card API over a pushed snapshot: synchronous reads, asynchronous writes, and the operation rather than a merged tree on the wire |
+| `sandbox/tavern-helper.ts` | the Tavern Helper card API over a pushed snapshot: synchronous reads, asynchronous writes, and the operation rather than a merged tree on the wire. **The member list is the code, not a number here** — it is built into the frame's member table (`sandbox/members-entry.ts`, mirrored for tests by `tests/members-table.ts`), and `sandbox/upstream-surface.ts`'s `UPSTREAM_MEMBERS` is the upstream surface it is measured against |
 | `sandbox/host-events.ts` | which host events reach a card and under which upstream names — deliberately smaller than the table |
 
 **CSP does work here, just not the work it was ruled out for.** It cannot forbid
@@ -191,7 +230,7 @@ So three things report rather than assume:
 | signal | what it settles |
 | --- | --- |
 | `bootstrap-error` | the frame died before it could speak. Sent **without** a run token, because what it reports may be "the token never arrived"; accepted on `event.source` alone and believed only as a diagnostic — it can neither run code nor change state. Three tests pin that this bypass is exactly one message wide |
-| `globals` | which of the published names — `parent`, `top`, `SillyTavern`, `extension_settings`, and the 35 Tavern Helper members — the frame could actually define on its own window. Whether `parent` is redefinable is a browser fact this project cannot settle from outside a browser, so the frame attempts it and says what it achieved |
+| `globals` | which of the published names — `parent`, `top`, `SillyTavern`, `extension_settings`, and every Tavern Helper member in the table — the frame could actually define on its own window. Whether `parent` is redefinable is a browser fact this project cannot settle from outside a browser, so the frame attempts it and says what it achieved |
 | the 8-second silence timeout | "stuck at running" was the one state that could not explain itself. Readiness now splits it in two: stalled before `frame ready` means the frame never started; stalled after means the body never finished |
 
 ### What the instrumentation actually bought
@@ -271,23 +310,24 @@ destroys the observation.
 
 ## Contract notes for the host half
 
-Requests against `@iris/protocol`, in rough order of how much they cost to work
-around from here. All are additions; nothing existing needs to change shape.
+Requests against `@iris/protocol`. **The first three on this list have landed**
+and are kept because the shapes they describe are still the ones this half
+depends on:
 
-1. **`IrisClient` has no connection-change notification.** `connected` is
-   therefore re-read on every pushed frame, which means the offline banner waits
-   for unrelated traffic before it appears. Either a
-   `{ type: 'connection', connected: boolean }` event or an
-   `onConnectionChange(listener): () => void` on the interface would fix it.
-2. **`MessageView.id` is a positional index, so it is not a stable React key.**
-   After `chat.deleteMessage` every later id shifts, and React reuses component
-   instances across what are now different messages — an open inline editor can
-   end up attached to the wrong row. A `key: string` that is merely stable for
-   the lifetime of one open chat would be enough; it need not be durable.
-3. **Is `RpcError` an `Error`?** The contract says `call` rejects with an
-   `RpcError` *shape* and does not say whether that value is an `Error` instance.
-   `src/client/errors.ts` accepts both rather than guessing, but the two halves
-   should agree rather than each covering for the other.
+1. ~~`IrisClient` has no connection-change notification.~~ **Landed**:
+   `onConnectionChange(listener): () => void` is on the protocol interface
+   (`@iris/protocol`) and implemented in `@iris/rpc-client`. Use it rather than
+   re-reading `connected` on every pushed frame.
+2. ~~`MessageView.id` is not a stable React key.~~ **Landed**: `MessageView.key`
+   is minted by the host and carried across the log rebuild a delete performs,
+   and a streaming row keeps the key it settles into. `id` is still the
+   positional index the SillyTavern projection uses — the number
+   `chat.editMessage` and `chat.deleteMessage` address — so **render with
+   `key`, address with `id`**.
+3. ~~Is `RpcError` an `Error`?~~ **Landed**: `RpcCallError`
+   (`packages/iris-protocol/src/rpc.ts`) `extends Error implements RpcError`, so
+   it is both. `src/client/errors.ts` still accepts either shape, which costs
+   nothing and keeps the fake honest.
 4. **`settings.set` and the meaning of `null`.** This half sends `null` for "drop
    this optional field and use the host's default", because an omitted key
    already means "leave it alone" in a partial patch and so cannot express it.
@@ -372,7 +412,12 @@ reported, any refusal) is shown beside the frame.
   that block stops being syntax-highlighted page content, so the likeliest fix is
   a pipeline that is already planned. Worth re-checking rather than pre-emptively
   optimising.
-- The lorebook editor is not built; `notes/PLAN.md` schedules it after the core path.
+- ~~The lorebook editor is not built.~~ **Built**: `src/app/WorldbookPanel.tsx`
+  carries the entry editor — the four logics, three strategies, eight positions,
+  the timers, the inclusion groups and the per-entry overrides — plus the
+  unsaved-changes guard and a backup download. It landed after this line was
+  written; the line is struck rather than deleted so the order of events stays
+  readable.
 - **Card scripts start when a chat opens**, once the user has answered the
   run-scripts question for that card. The frame set's lifetime is "this chat is
   in the foreground"; leaving tears it down completely. Grants are re-resolved

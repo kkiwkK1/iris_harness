@@ -1,5 +1,7 @@
 # World books
 
+> 状态：记录。测量于 2026-09-02（入库 2026-09-10），对象 Iris 的 `src/worldbooks.ts` 与 `worldbook.*` 契约，对照上游的书来源择一。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 Where a character's world info comes from, which of the two possible sources
 wins, and what a card script can do to a book. The pieces live in
 `src/worldbooks.ts`, the contract's `worldbook.*` methods, and

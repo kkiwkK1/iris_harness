@@ -1,5 +1,7 @@
 # P0 试点锁定 —— ST 兼容施工的版本基线
 
+> 状态：记录。测量于 2026-09-13（入库 2026-09-14），对象 P0 锁定值：ST `51ad27fb8` / 酒馆助手 / MVU / ST-Prompt-Template `f9a07da` 的版本、sha256 与许可证。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 日期：2026-09-13。性质：`docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md` §9 批次 P0 的锁定记录。锁定即施工对象：P2 的安装分析、P3 的兼容试点、P4/P5 的 TH/MVU 验证都以下表的 commit/hash 为准；换版本等于换基线，必须重做本文件并同步派工单。
 
 ## 1. 基线总表

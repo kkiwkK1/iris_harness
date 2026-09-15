@@ -1,5 +1,7 @@
 # 上游语义：主题 CSS 变量，以及卡的前端能不能看见它们
 
+> 状态：记录。测量于 2026-09-06，对象 上游 SillyTavern 1.18.0 与 TavernHelper（JS-Slash-Runner）4.9.1，静态读；仓库 HEAD `61dae19`。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 **坐标**：SillyTavern **1.18.0**（`E:/sillyTavern/SillyTavern/package.json` `"version": "1.18.0"`）；
 TavernHelper（JS-Slash-Runner）**4.9.1**（`data/default-user/extensions/JS-Slash-Runner/manifest.json:12`、
 `package.json:3`）。§一–§五 与 §六–§八 读的是同一份拷贝，全部静态读，未启动 ST，未开浏览器。

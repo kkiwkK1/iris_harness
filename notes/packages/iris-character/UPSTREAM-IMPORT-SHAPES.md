@@ -1,5 +1,7 @@
 # 上游语义：角色卡导入端点对三种边缘形状的实际行为
 
+> 状态：记录。测量于 2026-09-07，对象 上游 SillyTavern 1.18.0 正读，加三个语料样本（两张无卡 chunk 的 PNG、一个 JPEG）的字节。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 **只给事实与位置，不裁。**对象是 `ACTION-PLAN.md` §二 第 5 项与任务 E 遗留的三种形状：
 ① webp 角色卡；② 只有 SD 生成参数、无 `ccv3`/`chara` chunk 的 PNG；③ JPEG 卡。
 

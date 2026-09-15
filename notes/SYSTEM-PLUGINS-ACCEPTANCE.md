@@ -1,5 +1,7 @@
 # System plugin extraction — implementation and acceptance
 
+> 状态：记录。测量于 2026-09-15，对象 Iris `main` `2eccf30`（PR #88）；本文是交付归属记录，逐项证据在两份验收记录里。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 Architecture: `docs/SYSTEM-PLUGINS.md`.
 
 Status (2026-09-15): landed on `main` as `2eccf30` (PR #88, "Add the system

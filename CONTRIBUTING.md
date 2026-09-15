@@ -1,5 +1,7 @@
 # Contributing to Iris
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+
 Iris is a SillyTavern-compatible roleplay host on the Cordis plugin
 architecture. **Compatibility is the floor, not the ceiling**: a card that
 works in SillyTavern must work here, and where Iris deliberately does something
@@ -20,12 +22,44 @@ out of your own fixtures says only that you were consistent.
   directly — not maintainers, not the person coordinating a batch of work, not
   the person who wrote the rule. A rule with exceptions decays, because the
   exceptions become the habit and nobody re-checks who qualifies as one; a rule
-  without them makes a violation visible.
+  without them makes a violation visible. `main` is protected by a repository
+  ruleset; the enforcement is not a convention you can talk your way past.
 - Work happens on **`dev/<topic>`** branches (`dev/post-merge-followups`,
   `dev/feat-character-mgmt`). One topic per branch.
 - Rebase onto `main` before opening the PR, so the diff is what you changed.
 - One PR is one change with one argument behind it. A refactor riding along
   with a behaviour change makes both unreviewable.
+- **Delete the branch — local and origin — once the PR is merged**, and read
+  the merge state rather than remembering it (`gh pr view <N> --json state`
+  must say `MERGED`). A red CI that became a closed PR has already cost this
+  repository a deleted remote branch that had to be recovered from a sha.
+
+### One worktree per branch
+
+Several people and agents share one checkout, so a branch gets its own
+directory rather than a `git checkout` in the shared one:
+
+```
+git worktree add ../iris-<topic> -b dev/<topic> origin/main
+cd ../iris-<topic>
+pnpm install --frozen-lockfile --offline
+npm install --offline && npm run build      # in apps/iris-web
+```
+
+`--offline` is the normal case: the store already has every package. It is
+**not** the case when your change moves a dependency edge — pnpm's
+supply-chain check wants metadata it cannot fetch offline and dies with
+`ERR_PNPM_NO_OFFLINE_META`. Run one networked `pnpm install` in that worktree
+first; the lockfile it writes is part of your diff.
+
+`npm run build` in `apps/iris-web` is not optional before running the suite:
+`apps/iris-web/public/sandbox/` is gitignored build output and at least one
+test reads an artifact out of it. On a machine where an earlier build left the
+directory behind, the dependency is invisible — in a fresh worktree it is the
+difference between green and red.
+
+Push the branch as soon as it exists, empty commit and all, so whoever is
+coordinating can see it.
 
 ## CI is the gate
 
@@ -34,10 +68,12 @@ pull request**. It is one job on `ubuntu-latest` with a 20-minute timeout, and
 it references **no secrets** — the suite is offline by construction, so a fork's
 PR can neither fail for lack of a key nor leak one. Its steps, in order:
 
-1. `actions/checkout@v4`, then `actions/setup-node@v4` with Node **24.x** —
-   the host packages have no build step and load `.ts` files through Node's
-   native type stripping, so an older Node cannot load a single source file.
-2. `pnpm/action-setup@v4` (pnpm 10), then `pnpm install --frozen-lockfile`.
+1. `actions/checkout`, then `actions/setup-node` with Node **24.x** — the host
+   packages have no build step and load `.ts` files through Node's native type
+   stripping, so an older Node cannot load a single source file.
+2. `pnpm/action-setup` (pnpm 10), then `pnpm install --frozen-lockfile`.
+   Each of these is written as a 40-hex commit with a `# vX.Y.Z` comment
+   beside it, not as a tag — see "Security constraints" below.
 3. `npm ci` in `apps/iris-web`. Two package managers on purpose:
    `pnpm-workspace.yaml` excludes `apps/iris-web` because pnpm cannot extract
    esbuild in this project's environment, so the browser app is npm-managed
@@ -61,15 +97,33 @@ is unrelated to my change" is a reason to fix the failure, not to merge past it.
 
 ### Run the gate locally before opening the PR
 
-```
-pnpm -s exec tsc -p . --noEmit          # root typecheck
-(cd apps/iris-web && npm run typecheck) # browser-app typecheck
-pnpm -s test                            # the suite, with your corpus
-pnpm run test:no-corpus                 # the suite as CI sees it
-```
+Six commands, and the output each one has to end with:
+
+| command | where | green looks like |
+| --- | --- | --- |
+| `pnpm run typecheck` | root | no output, exit 0 |
+| `npm run typecheck` | `apps/iris-web` | no output, exit 0 |
+| `npm run build` | `apps/iris-web` | the bootstrap and preset size checks pass |
+| `pnpm test` | root | `ℹ fail 0` |
+| `pnpm run test:no-corpus` | root | `check-corpus-skips: 40 skipped, 0 failed, as expected with no corpus present.` |
+| `npm run check:render` | `apps/iris-web` | exit 0 |
+
+`pnpm test` on your machine skips fewer than 40, because your machine has a
+SillyTavern corpus and the runner's does not — that difference is the whole
+point of running both (see "Testing"). The 40 is a **pinned** count
+(`EXPECTED_SKIPPED` in `scripts/check-corpus-skips.mjs`): a run that skips more
+means a gate started matching too much, and one that skips fewer means a corpus
+test stopped skipping — check that it still asserts something before you move
+the number.
+
+`npm run pack:contracts -- --version <v>` is not part of the gate; run it when
+you change `@iris/plugin-api`, `@iris/plugin-web-api` or `@iris/protocol`, and
+say so in the PR (`docs/PLUGIN-CONTRACT-PACKAGING.md`).
 
 Put the last lines of each in the PR description. If something failed, say so
-with the output; if you skipped a step, say that.
+with the output; if you skipped a step, say that. **Never run a check and a
+commit in one command** — a green tail is what gets quoted, and a red check
+usually has more failures behind the first one.
 
 **Why two typechecks.** The root `tsconfig.json` covers `packages/*`,
 `apps/iris` and `scripts/`; `apps/iris-web` has its own config (DOM libs,
@@ -108,6 +162,15 @@ opens settings; no aria-label, because its visible text is its name
 Not `fix bug`, not `update prompt.ts`. The subject should let someone scanning
 `git log` decide whether this commit is the one they are looking for. If a
 commit corrects an earlier decision, say which one and why it moved.
+
+**Attribution.** A commit written with an AI assistant ends with a
+`Co-Authored-By:` trailer naming it — that is this repository's existing habit
+rather than a gate, and `git log --format=%B -100 | grep Co-Authored-By` shows
+which form the recent history uses. A human-authored commit carries no trailer.
+
+**A commit message is a completion claim**, so never run the check and the
+commit in the same command: the thing you would quote is the tail of a run you
+have not read.
 
 ### What goes in a commit
 
@@ -163,6 +226,28 @@ that says so in its title.
   sweep deletes variable tables nothing restores, so it is an opt-out written
   into the composition, never a default; `apps/iris/tests/composition.test.ts`
   parses the real file and holds that line.
+- **Every request is checked against a `Host` allow-list before anything else
+  about it is read**, because a loopback bind is a bind and not a door —
+  `127.0.0.1.nip.io` resolves to loopback and would otherwise be same-origin
+  with the host. A non-loopback bind refuses to start until `allowedHosts`
+  names the proxy. `packages/iris-rpc-host/src/host-guard.ts`, with the known
+  gap (the carrier's static fallback) recorded in
+  `notes/packages/iris-rpc-host/DEVIATIONS.md` §1.
+- **Provider keys are encrypted at rest** in `connections.json` (AES-256-GCM,
+  the data key sealed by DPAPI on Windows), and the key is write-only over the
+  wire — a read answers "is there one" and a mask, never the value.
+- **One host per data directory**, enforced with `<dataDir>/host.lock` and with
+  no override flag. An acceptance host therefore runs on a *copy* of the data
+  directory; two hosts sharing one directory silently overwrite each other's
+  whole-file saves.
+- **Every third-party GitHub Action is pinned to a 40-hex commit** with a
+  `# vX.Y.Z` comment beside it; `apps/iris/tests/workflow-pins.test.ts` holds
+  both halves. A major-version tag is a name its owner can repoint.
+
+The standing record of what each 2026-09 audit finding cost and where it landed
+— **landed / accepted (with the price and the reopening trigger) / pending** —
+is `notes/SECURITY-REMEDIATION.md`. Read it before reporting one of these
+again; several of them are decisions, not bugs.
 
 ## Documentation
 
@@ -171,11 +256,11 @@ Where a `.md` lives says what it is:
 - **Repository root**: only files a contributor or user needs first —
   `README.md`, `CONTRIBUTING.md`, and, when present, `LICENSE`,
   `THIRD-PARTY-NOTICES`, a top-level `DEVIATIONS`. Nothing else.
-- **`docs/`**: contracts — documents code comments cite as the reason a rule
-  exists (`docs/ARCHITECTURE.md`, `docs/SANDBOX.md`, `docs/OBSERVABILITY.md`,
-  `docs/AUTORUN.md`, `docs/SETTINGS.md`, `docs/DEBUG-SURFACE.md`). A change to
-  behaviour that a contract describes changes the contract in the same PR.
-- **`notes/`**: working notes — investigations, upstream comparisons,
+- **`docs/`**: living documents that describe `main`, and the contracts code
+  comments cite as the reason a rule exists. Thirteen of them; one line each,
+  plus the reading order, in [`docs/README.md`](docs/README.md). A change to
+  behaviour that one of them describes changes it in the same PR.
+- **`notes/`**: dated records — investigations, upstream comparisons,
   deviation ledgers, acceptance sheets, plans. They mirror the tree
   (`notes/packages/iris-app-service/…`, `notes/apps/iris-web/…`). Notes are
   records of a moment; a number in one is true of the commit and date it
@@ -183,6 +268,21 @@ Where a `.md` lives says what it is:
   measured premise that behaviour depends on also gets a test that fails on
   its own** when the premise stops holding.
 - **A package's own `README.md`** stays with the package.
+
+### The ledger rule
+
+**A PR that changes behaviour does two things: it updates the document that
+owns that behaviour, and it appends a section to the relevant deviation
+ledger.** They serve different readers — the document answers "what is it now",
+the ledger answers "why is it not what SillyTavern does". There are six
+ledgers, listed in [`docs/README.md`](docs/README.md); a section is numbered,
+appended at the end, and **never rewritten afterwards**. Each one names the
+upstream behaviour it read, this side's choice, and what that choice costs — a
+deviation with no cost written down is usually a preference nobody examined.
+
+A record is never edited to agree with the code. If a section turns out to be
+wrong, strike it through and say how that surfaced; silently correcting it
+deletes the only evidence of what was believed at the time.
 
 Two habits that keep prose honest:
 

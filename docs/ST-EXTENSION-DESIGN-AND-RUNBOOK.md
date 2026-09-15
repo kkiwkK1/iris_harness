@@ -1,10 +1,40 @@
 # ST 扩展兼容：设计与施工手册
 
-日期：2026-09-13。性质：新增基础设施主线的设计和施工合同，**不是已实现 API 文档**。
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
 
-适用现场：main `2079dbe`；集成 worktree `dev/system-plugins` 保存点 `ae55920` 加未提交的契约与动态 RPC 工作。现场正在变化，施工前重新核对提交和文件所有者。不要从旧 `dev/feat-extension-system` 开工。
+## 本文与其他文档的关系
 
-配套：[基础设施接口清单](INFRASTRUCTURE-INTERFACES.md)、[插件制作与执行手册](PLUGIN-AUTHORING-RUNBOOK.md)、[系统插件架构](SYSTEM-PLUGINS.md)、[契约施工落点](../notes/PLUGIN-CONTRACT-LANDING-SITES.md)。本文件覆盖此前口头建议中“立即停止 TH/MVU 实现、直接换成上游”的部分：先做可行性试点，通过后才替换。
+本文是 **ST 扩展兼容面的设计与施工合同**：目标边界、数据合同草案、模块兼容的要求、
+浏览器执行环境、施工批次 P0–P6 与派工规则、测试矩阵。它是**合同**，不是 API 文档——
+「已经能调什么」永远以接口清单为准。
+
+| 要找什么 | 去哪 |
+| --- | --- |
+| ST 兼容面**已经实现**的接口与事实（17 条模块映射、资产路由、安装、启停） | [基础设施接口清单](INFRASTRUCTURE-INTERFACES.md) §7 |
+| 还有什么没做 | [基础设施接口清单](INFRASTRUCTURE-INTERFACES.md) §8（唯一的缺口清单） |
+| 生命周期、所有权、信任模型的裁决 | [系统插件架构](SYSTEM-PLUGINS.md) |
+| 系统插件**包**（不是 ST 扩展）的安装路径 | [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) |
+| 作者视角怎么装一个 ST 扩展 | [插件制作与执行手册](PLUGIN-AUTHORING-RUNBOOK.md)「安装一个 ST 扩展」 |
+| 契约施工落点（历史） | [PLUGIN-CONTRACT-LANDING-SITES](../notes/PLUGIN-CONTRACT-LANDING-SITES.md) |
+
+### 这份合同现在执行到哪一步（核对于 `e356771`）
+
+原稿写于 2026-09-13，基线 main `2079dbe`，当时 §3 建议的目录、§4 的数据合同、§6 的模块门面
+都还只是纸面。**P0–P3 已经完成并合入**：
+
+| 批次 | 状态 | 证据 |
+| --- | --- | --- |
+| P0 基线与试点清单 | 已完成 | `notes/st-compat/pilot-lock.md`、`notes/st-compat/survey/` |
+| P1 插件内核收口 | 已完成（#88） | 契约包、动态 RPC、`/plugins` 资产面、成员通用化、lease/dispose——见接口清单 §2/§3/§5 |
+| P2 安装与分析 | 已完成 | `@iris/extension-installer`（`archive`/`hash`/`installer`/`lock`/`recovery`/`source`/`staging`/`transaction` 八个模块，PR-1 后另加 `artifact-contract`）+ `@iris/compat-st-extension` 的 `analyze`/`manifest`/`report`；另见 §13 追记 |
+| P3 兼容试点 | 已完成（#88） | 17 条模块映射、隐藏 facade iframe、tokened 成员代理、`notes/st-compat/PILOT-REPORT.md` 与 `notes/st-compat/acceptance/` |
+| P4 TH 验证 / P5 MVU 验证 / P6 推广与清理 | **未开始** | 现有 TH/MVU 实现仍是基线，未做上游替换 |
+
+因此：**§1–§12 里凡是写「拟议」「建议新增」「第一版」的段落，P0–P3 覆盖到的部分已经落地**，
+落地形状以接口清单 §7 为准；P4–P6 的部分仍是合同。§9.1 的分支表与 §9.2 的派工模板是历史记录——
+`dev/system-plugins` 及其下游分支都已合入 `main`，新任务不从那些分支创建。
+
+本文件覆盖此前口头建议中“立即停止 TH/MVU 实现、直接换成上游”的部分：先做可行性试点，通过后才替换。这条仍然有效，且 P4/P5 尚未通过。
 
 ## 1. 产品目标与第一版边界
 
@@ -30,8 +60,8 @@
 | minimum_client_version | 对 ST 版本的要求，不可与 Iris 版本直接比较；由兼容档案声明支持的 ST 行为基线 |
 | ST 内部模块 | 真实扩展导入 script.js、extensions.js、world-info.js 等，并使用可变对象和事件 |
 | 页面依赖 | ST-Prompt-Template 源码直接访问 `.mes[mesid]`；导入成功不等于页面功能正确 |
-| Iris 动态 RPC | 工作区已有 rpc-registry.ts、scope.registerRpc 和相关测试文件；视为施工中，未凭文件存在宣布通过 |
-| Iris 浏览器契约 | 当前读到的 SandboxPluginRuntime 仍是 TH/MVU 双布尔，需要通用化 |
+| Iris 动态 RPC | ~~工作区已有 rpc-registry.ts、scope.registerRpc 和相关测试文件；视为施工中~~ **已落地（#88）**，但至今**没有生产使用者**：随包发布的插件方法全是静态 schema（接口清单 §1） |
+| Iris 浏览器契约 | ~~SandboxPluginRuntime 仍是 TH/MVU 双布尔，需要通用化~~ **已通用化（#88）**：快照多了 `plugins: Record<id, { rev, client }>`，两个布尔保留为「兼容面是否装配」，新记录是「这一帧里还有谁在场」（接口清单 §5） |
 | 热停用 | 上游不一定提供完整释放逻辑；兼容扩展可能需要重建整个兼容环境 |
 
 静态分析只能列出确定依赖和未知点，不能给出“完全兼容”证明。不得用伪造 ST 版本、空函数或吞异常通过插件的能力检查。
@@ -52,7 +82,12 @@ PluginCenter → 安装服务 → 原始发布物 + 锁定记录 + 分析报告
 
 一个插件目录、一个依赖图、一个状态来源。安装服务管理磁盘发布物；SystemPluginRuntime 管理激活，两者不是第二套并列启停系统。用户数据按 profile 隔离，下载的不可变文件可以共享，授权和状态不能共享。
 
-建议新增目录（均为设计名称，施工者可在首个 PR 中结合现有包结构调整并同步本稿）：
+建议新增目录（均为设计名称，施工者可在首个 PR 中结合现有包结构调整并同步本稿）。
+**落地对照（`e356771`）**：前三行与最后一行按原名落地；
+`packages/iris-app-service/src/plugins/st-extension-host.ts` **没有**出现——宿主侧的接线落在
+`packages/iris-compat-st-extension/src/host/definition.ts`（`buildStExtensionDefinition`）与
+`packages/iris-app-service/src/index.ts` 的组合处，因为 definition 的形状归兼容包、接线归组合根；
+`packages/iris-compat-st-extension/adapters/` 也没有出现，它属于尚未开始的 P4/P5。
 
 | 目录 | 职责与禁止的耦合 |
 | --- | --- |
@@ -66,6 +101,14 @@ PluginCenter → 安装服务 → 原始发布物 + 锁定记录 + 分析报告
 安装器、RPC 注册、client.js 资产面不得各自再造生命周期。Cordis child context 提供资源所有权，浏览器上下文销毁提供无法逐项撤销代码的回收边界。
 
 ## 4. 数据合同（拟议，不能直接当现有 SDK 调用）
+
+> **落地对照（`e356771`）**：本节的 `ExtensionLock` 落成了 `InstalledExtensionLock`
+> （`packages/iris-extension-installer/src/lock.ts:15`），字段更少也更严：
+> `extensionId`/`source`/`resolvedCommit`/`artifactSha256`/`installedAt`/`enabled`，且 `enabled`
+> **必须恰好是 `false`**（`lock.ts:71`）——安装器从不启用。`compatibilityAbi`、`dependencyLocks`、
+> `adapter`、`preparedSha256` 没有实现，因为 P4–P6 的适配档案还没开始。`CompatibilityFinding` /
+> `CompatibilityReport` 落在 `packages/iris-compat-st-extension/src/report.ts`，`result` 的三值
+> （`mapped`/`missing`/`unknown`）逐字保留。下面的接口体保留原样，作为当时的设计意图。
 
 ```ts
 type SourceKind = 'iris-native' | 'st-extension' | 'tavern-script';
@@ -109,6 +152,14 @@ interface CompatibilityReport {
 
 拟议磁盘布局：`<data>/extension-artifacts/<hash>/original`、`prepared`、`lock.json`；profile 下 `extensions/<id>/data` 和活动版本索引。最终位置由安装服务统一生成，插件不得自选路径。
 
+> **落地对照（`e356771`）**：布局**不是**按 hash 分目录的那一套。安装器用的是
+> `staging/ claims/ installed/<id>/`，ST 扩展落在 `<profile>/st-extensions/`
+> （`packages/iris-app-service/src/paths.ts:307`），系统插件包落在 `<profile>/system-plugins/`，
+> 两者**刻意分开**（artifact 契约不同、id 命名空间不同，理由见
+> [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §6）。「插件不得自选路径」这条被遵守。
+> 「更新以新 staging 重新分析、失败恢复旧锁和旧环境」这条也落地了，但只在系统插件包那条路上
+> （`plugin.update`，同上 §5.4）；**ST 扩展至今没有更新事务**，同目录再装是「重装 = 重新接纳」。
+
 顺序：解析来源 → 下载到 staging → 校验路径/大小 → 识别发布格式 → 分析入口图 → 生成兼容计划 → 用户选择安装 → 原子提升发布物 → 注册目录，保持停用 → 用户启用。
 
 下载安装不得执行仓库 lifecycle scripts、Git hooks、任意构建命令或服务端入口。若只有源码、没有可用发布物，报告需要受支持的构建配方；受控配方与适配器一起审查和锁定。
@@ -147,6 +198,11 @@ ST 兼容扩展默认在独立兼容页面/iframe 中运行。现有 `/plugins/<
 
 浏览器隔离必须验证 origin、sandbox/CSP 和消息通道；`allow-scripts` 与 `allow-same-origin` 的组合不能仅凭“使用了 iframe”就当作隔离。确定选用 opaque origin 或独立 origin 后，用实际浏览器测试模块加载、资源 CORS 与父页访问边界。
 
+> **落地对照（`e356771`）**：选的是 **opaque origin**——扩展帧是 `sandbox="allow-scripts allow-downloads"`
+> （`apps/iris-web/src/st-extensions/plane.tsx`），**没有** `allow-same-origin`。卡片侧到扩展侧的唯一通路
+> 是生成的成员代理（`packages/iris-compat-st-extension/src/host/member-bundle.ts`），一个成员
+> `EjsTemplate`，每次调用经 tokened 通道转发。实际浏览器证据在 `notes/st-compat/acceptance/`。
+
 MessagePort 与启动握手绑定真实 frame、pluginId、profile、activation；宿主从已绑定通道识别身份，不信任消息自报的 id。revision 是时效检查，不是授权令牌。资产 URL 使用不变内容 hash，停用后即使缓存中还有脚本也不能提交业务操作。
 
 默认单扩展环境；TH/MVU 若经实测要求共享 window、对象身份或同步事件，可建立显式依赖组环境。组成员共享信任边界，UI 和架构文档必须说明。停用/更新其中一项可能要重建整组，不能承诺所有 ST 扩展独立无刷新热卸载。
@@ -159,9 +215,16 @@ UI 分三档：插件自己根节点中的 HTML/CSS/jQuery；可映射的标准�
 
 ## 8. 插件中心和管理 API
 
-保留现有 plugin.list/install/enable/disable/reload/uninstall 的目录内语义；新增来源安装前需单独定义合同，不能把 `{id}` 偷换成任意 URL。
+保留现有 plugin.list/install/enable/disable/reload/uninstall 的目录内语义；新增来源安装前需单独定义合同，不能把 `{id}` 偷换成任意 URL。**这条被遵守了**：ST 扩展走自己的 `stExtension.install({ path })`，系统插件包走 `plugin.previewInstall` / `confirmInstall` / `cancelInstall` / `update`，六个目录方法的参数一个字没动。
 
-建议管理服务命令：`inspectSource`、`prepareInstall`、`commitInstall`、`checkUpdate`、`prepareUpdate`、`switchVersion`、`rollback`。这些是拟议命令名，RPC 命名由协议所有者最终确定。耗时操作返回 jobId；任务有 progress/result/error，可重连查询；commit 使用 planId 和幂等键，绑定 hash 与 profile，防止预览后来源漂移。
+> **落地对照（`e356771`）**：下面这串**拟议命令名一个都没有采用**。协议所有者最终定的是
+> 上一段那四个方法，形状见 [接口清单](INFRASTRUCTURE-INTERFACES.md) §3 与
+> [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §5。两处实质差异值得记下来：
+> **没有 jobId/progress 机制**——preview 是一次同步返回的 RPC，长耗时体现在这一次调用上；
+> 「防止预览后来源漂移」的手段不是幂等键，而是**事务记录 + 回带比对**：confirm 把 preview 的
+> 四个值原样带回，宿主逐条与自己的事务记录比，绝不重新拉取。
+
+建议管理服务命令（**未采用**，保留为当时的设计选项）：`inspectSource`、`prepareInstall`、`commitInstall`、`checkUpdate`、`prepareUpdate`、`switchVersion`、`rollback`。耗时操作返回 jobId；任务有 progress/result/error，可重连查询；commit 使用 planId 和幂等键，绑定 hash 与 profile，防止预览后来源漂移。
 
 列表主信息为名称、来源类型、已装版本、运行状态、兼容结论；详情包含原始来源、锁定 commit、适配器、测试范围和缺口。把缺少依赖、未验证、启动失败区分展示。维护者可打开原文件定位，普通用户先看可采取的动作。
 

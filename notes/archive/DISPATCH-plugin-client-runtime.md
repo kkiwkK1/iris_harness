@@ -1,5 +1,7 @@
 # 派工单：落点 3 —— 插件客户端运行环境（快照泛化 + 成员表合并 + 拒跑语义重定）
 
+> 状态：已归档（2026-09-16）。被落点 3 的落地取代：`dev/plugin-client-runtime` @ `4fab477` 已合入，记录见 `../st-compat/CONSTRUCTION-REPORT-2026-09-13.md` 的「追记二」，接口现状以 `docs/INFRASTRUCTURE-INTERFACES.md` §8 为准。保留作历史。
+
 按 `docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md`（`DOC-ST-COMPAT-PROGRAM`，2026-09-13 修订版）§9.2 模板原样补全：
 
 ```text

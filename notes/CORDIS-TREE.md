@@ -1,5 +1,7 @@
 # CORDIS-TREE — Cordis 组合树导览（详细版）
 
+> 状态：记录。测量于 2026-09-11，对象 Iris 当时的 Cordis 组合树（`apps/iris/cordis.yml` 与各插件包）。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 > 阅读对象：第一次接触 Cordis 的人。先讲清楚"这是什么"，再给完整的树。
 > 术语表在最底部，看不懂的词随时翻它。
 

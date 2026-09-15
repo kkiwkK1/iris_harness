@@ -1,5 +1,7 @@
 # 前缀缓存全语料归因普查：哪些原因、各损失多少 token、按量排序
 
+> 状态：记录。测量于 2026-09-08（入库 2026-09-09），对象 全语料经 Iris 宿主的前缀缓存归因普查（`scripts/cache-cause-census.mjs`）。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 > 2026-09-08。B（归因普查）。
 > 仪器：`scripts/cache-cause-census.mjs` + `scripts/lib/cache-host.mjs`（新），
 > 沿用 `scripts/cache-prefix-probe.mjs` 的设计：profile **只读拷贝**后跑，

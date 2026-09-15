@@ -1,5 +1,7 @@
 # 楼层变量 —— 设计输入
 
+> 状态：记录。测量于 2026-09-02（入库 2026-09-07），对象 上游 SillyTavern 1.18.0 / JS-Slash-Runner 的楼层变量通路，与 Iris 的缺口。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 卡在沙箱里拿每条消息的变量，两条路都不通：`getVariables({type:'message', message_id})`
 被具名拒绝，`getChatMessages()[i].data` 字段缺失。这份文档是那个缺口的设计输入，
 派生 72 的宿主活与 f7 的门面活。

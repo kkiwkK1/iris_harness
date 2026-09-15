@@ -1,9 +1,22 @@
 # 界面字符串盘点 —— 任务 I
 
-日期 2026-09-04，分支 `dev/feat-i18n`，基线 `dev/iris-exploration` @ `c48e910`。
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+
+起于 2026-09-04，分支 `dev/feat-i18n`，基线 `dev/iris-exploration` @ `c48e910`；此后每个动了
+文案的任务在文末**追加一节**。所以这份文件是**按任务排的追加记录**，不是一张当下的键表——
+当下的键表是 `strings.ts` 自己，下面每一节标的分支与日期就是它的有效范围。
 
 词典在 `strings.ts`（`en` 为键源，`zh` 必须逐键覆盖，类型系统强制）；语言状态在
 `language.ts`；React 侧 `use-language.ts`。这份文档回答**数了什么、在哪、什么没翻译**。
+
+**插件自带的文案不在这份词典里，也不该在。** 一个系统插件带两张扁平表（`i18n.en` /
+`i18n.zh`，安装时审计），壳把它们并成一个**命名空间**而不是并进词典：每个键按
+`plugin:<id>:<key>` 寻址，读取口是 `tPlugin(pluginId, key, params)`（`use-language.ts`），
+覆盖层是 `plugin-copy.ts` 里一个模块级 external store。所以静态的 `StringKey` 类型**保持
+封闭**——一个插件声明 `send`、甚至声明 `pluginCenterTitle`，都遮不住壳的键。回退是**看得见
+的**：先要的语言，再英文，最后把运行期键本身印在屏幕上（`plugin:demo:panelTitle`）——空串是
+一个没人找得到的故障，一个键至少能被举报。覆盖层的寿命跟着聚合清单走：清单不再带某个 id，
+它的文案就被丢掉，所以停用一个插件不需要第二条失效路径。
 
 ## 一、已翻译（进词典）
 
@@ -65,7 +78,9 @@
 | `WorldbookPanel.tsx` 排序下拉 | 上游 `#world_info_sort_order` 的 15 个选项逐项（14 可见 + 搜索相关度） | `wiSort_priority wiSort_custom wiSort_title_* wiSort_tokens_* wiSort_depth_* wiSort_order_* wiSort_uid_* wiSort_probability_* wiSort_search` |
 | `store.ts` 通知 | 保存完成、备份导出两句 | `wiSaved wiBackupExported` |
 
-规模：词典 `en` 约 **320 条**（含复数/变体拆分），`zh` 与其逐键对应。
+规模：任务 I 收口时词典 `en` 约 **320 条**（含复数/变体拆分）。这个数只描述那一刻——下面每一节
+都在往上加，2026-09-16 读到的是 **`en` 1195 条、`zh` 1195 条**（`Object.keys(en).length`）。
+**不要把这个数抄进任何断言**：`i18n.test.ts` 钉的是两栏逐键对应这条性质，不是条数。
 
 ## 二、刻意不翻译（及理由）
 
@@ -246,6 +261,12 @@ provider counted」是另一件事（上游 ST 每条消息显示的 `token_coun
 三个键**不含中文**，按 `i18n.test.ts` 的 `neutral` 名单放行：`contextCardFigures`
 （`2,048 / 7,168 · 28%`）、`compactedFigures`（`4.1K → 780`）、`commandRow`
 （`/compact —— …`）。三个都只是数字与名字的排版，两栏都没有自己的词。
+
+> **这份名单后来长了。** 2026-09-16 读到的 `NEUTRAL` 是 13 个：上面三个，加参数名
+> （`topP` `topK` `minP`）、语言选项自身（`langEn`）、以及数字**格式**与单位那一批
+> （`tokensThousand` `tokensMillion` `thousandsSeparator` `usageCount` `usageSeconds`
+> `usageRate`）。判据没变——两栏读起来是同一串东西，就不该被「zh 必须是中文」这条钝规则
+> 拦下；名单以 `i18n.test.ts` 里的 `NEUTRAL` 为准，这里只记它的形状。
 
 ## 四、持久化决策（同 `language.ts` 文档）
 
@@ -521,3 +542,16 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 **没删任何键。** `showConversations`（☰ 的 aria）留着并且换了含义的一半：它现在是一枚
 *开合*钮而不是只会打开的钮，所以加了 `aria-expanded`；文案仍然只说打开那一半，因为在窄屏上
 读者能看到它的那一刻，侧栏正是关着的。
+
+## 双语规则的实现搬到了 `@iris/text`
+
+以上各节反复引用的那三条双语规则——**两栏键集逐键对应**（zh 多一个键要红）、**每条 zh 真的
+是中文而每条 en 不是**（`NEUTRAL` 名单放行）、**两栏的 `{槽位}` 名字一致**——今天只有一份
+实现：`@iris/text` 的 `auditBilingualCopy(en, zh, { neutralKeys, field })`。
+
+原因不是整洁，是**它同时是宿主的安装闸门**：一个插件自带的两张文案表在安装预览时被同一套检查
+审一遍。两处各写一份的话，插件那边通过、壳这边不通过（或者反过来）就会变成一件谁都说不清的事。
+
+于是 `i18n.test.ts` 如今是这条规则的**消费者**，留在它自己文件里的只有消费者自己的事实：
+`NEUTRAL` 名单（哪些行是数字格式与单位）与 `dictionary` 这个失败前缀。每条测试还各自带一对
+**故意做坏的**输入，所以哪天规则从 `@iris/text` 脱钩，即使真词典是干净的，这里也会红。
