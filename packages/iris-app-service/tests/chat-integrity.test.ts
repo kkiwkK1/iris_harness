@@ -71,7 +71,7 @@ async function fixture(t: TestContext, count = 2): Promise<Fixture> {
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const chats = new ChatStore(join(dir, 'chats'), library)
-  let ends = 0
+  let announced = 0
   let reply = 0
   const stream: StreamFn = async function* () {
     const text = `A${String(reply)}`
@@ -88,16 +88,31 @@ async function fixture(t: TestContext, count = 2): Promise<Fixture> {
   const handlers = new IrisAppService({
     stream, library, chats, diagnostics,
     settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
-    broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
+    // The barrier counts `chats.updated`, not `stream.end`. `#settle` orders
+    // those two lines apart: the `stream.end` broadcast, and then — its next
+    // statement — the awaited `#announceChats()`, whose directory read is the
+    // one a later test's wrecked file must not fall into. Waiting for
+    // `stream.end` releases the test while that read is still in flight, which
+    // is where the load-shaped double report came from; `chats.updated` is
+    // broadcast only after the read has returned, so this barrier is strictly
+    // stricter, and one announce reaches it per settled turn.
+    broadcast: (event: IrisEvent) => { if (event.type === 'chats.updated') announced += 1 },
     userName: 'U',
   }).handlers()
 
   const created = await handlers['chat.create']({ characterId: 'aria' })
   const chatId = created.view.chatId
+  // `chat.create` announces once before the loop; the barrier is relative to
+  // that baseline, one announce per settled turn.
+  const announcedAtStart = announced
   for (let turn = 0; turn < count; turn += 1) {
     await handlers['chat.send']({ chatId, text: `U${String(turn)}` })
-    while (ends < turn + 1) await new Promise(resolve => setTimeout(resolve, 1))
+    while (announced < announcedAtStart + turn + 1) await new Promise(resolve => setTimeout(resolve, 1))
   }
+  assert.ok(
+    announced - announcedAtStart >= count,
+    'the barrier exited without every turn\'s `chats.updated` announce having landed — the fixture is no longer waiting for the directory read',
+  )
 
   return {
     handlers, chats, dir, chatId,
