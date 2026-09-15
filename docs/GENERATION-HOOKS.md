@@ -318,6 +318,16 @@ computeActivationOrder(enabled: readonly SystemPluginDefinition[]): readonly Sys
 4. **`hook-failed` 的清除时机第三条（§5.1：同一钩子下一次完整成功即清除）**。前两条（committed transition 清除、重启即清）是既有行为，引用即可；第三条是新增语义，且 `hook-failed` 名字归 U2——清除规则应与 U2 一并裁定。不裁决的后果：失败标记挂到下次 enable/disable 或重启，行上可能长期展示一个已恢复的失败。
 5. **`beforePrompt` 在 `prompt.itemize` 预览路径也跑（§4.2）**。不裁决的后果：按本稿实现，预览触发插件副作用（宿主管不了的那类，§5.5）；协调人若选「预览不跑」，接受「预览与实发不一致」并要求实现侧把差异写进预览面板。
 
+### 裁决记录（2026-09-16，协调人）
+
+1. **`onSettle` 在 aborted 结算仍跑。** 约束 5「abort 后不再调用后续钩子」只约束提案型钩子（`beforePrompt`、`afterReplyText`）；通知型的 `onSettle` 与 `stream.end` 同步——aborted 轮照发。
+2. **`afterReplyText` 先于变量提案。** 文本先定形、变量后解析；变量写者（U2）看到的是钩子改后的文本。PR-B 按此落点。
+3. **钩子不加声明式权限名。** 注册钩子不给插件任何它本来没有的触达；「此插件挂了生成钩子」的披露作为同意页的产品问题延后，第一阶段不做。
+4. **`hook-failed` 的第三条清除规则成立：同一钩子下一次完整成功即清除。** 与 U2 已落地的 `clearHookFailure`（写者下一次成功提案清除）同一语义、同一名字；实现时复用 U2 的 `noteHookFailure`/`clearHookFailure`，不另起一套。
+5. **`beforePrompt` 在 `prompt.itemize` 预览路径也跑。** 预览就是「将要发出的」；预览可能触发插件副作用属 §5.5 第三类（只能约定），写进预览面板的说明即可。
+
+设计据此定稿；实现阶段按 §8 分 PR-A/B/C，每步单独立项、单独验收。
+
 ## 11. 本文件与 §8 的关系
 
 `docs/INFRASTRUCTURE-INTERFACES.md:340` 的「生成钩子（`AppServiceOptions`）」行，本设计合入后应改为：**「设计已定（`docs/GENERATION-HOOKS.md`），实现未开始」**，并把括号里的 `AppServiceOptions` 更正为 `scope.hooks`——`AppServiceOptions` 是组合根的依赖注入口（§9.5），注册口在 `SystemPluginActivationScope` 的新只读成员 `hooks` 上。该行由协调人改，本设计不触碰那个文件；`docs/INFRASTRUCTURE-INTERFACES.md:342`（插件可写变量）与 `:341`（storage）两行的闭合分别归 U2/U3。
