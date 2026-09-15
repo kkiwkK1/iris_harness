@@ -202,36 +202,6 @@ interface PendingPreview {
   preview: SystemPluginInstallPreview
 }
 
-/**
- * Credentials embedded in a remote URL, refused before git ever sees them.
- *
- * `validateExtensionSource` does not refuse them today
- * (`packages/iris-extension-installer/src/source.ts:60` checks the scheme and
- * whitespace/quotes, nothing about userinfo), and it is not tightened here
- * because that would change the ST install path's behaviour in a round that is
- * not about ST. On this path it is a refusal: a `https://user:token@host/repo`
- * would be copied verbatim into the lock record, into `system-plugins.json`,
- * into the consent page and into every `plugin.list` broadcast — a secret
- * pasted once and then persisted in four places, three of which the user never
- * looks at.
- */
-function refuseEmbeddedCredentials(remote: string): void {
-  let url: URL
-  try {
-    url = new URL(remote)
-  } catch {
-    // Not a parseable URL: the installer's own scheme check refuses it, with a
-    // better message than this function could write.
-    return
-  }
-  if (url.username !== '' || url.password !== '') {
-    throw installFailed(
-      'the remote URL carries credentials in its userinfo — refused before the fetch, because the URL is recorded'
-      + ' in the lock, in the catalog and on the consent page, and a secret written there is a secret in four files',
-    )
-  }
-}
-
 /** Walk a staged tree for a `node_modules` directory at any depth. */
 async function findNodeModules(root: string, rel = ''): Promise<string | undefined> {
   const entries = await fsp.readdir(path.join(root, rel), { withFileTypes: true }).catch(() => [])
@@ -794,7 +764,12 @@ export class SystemPluginInstallService {
 
   #toExtensionSource(source: PluginInstallSource): ExtensionSource {
     if (source.kind === 'git') {
-      refuseEmbeddedCredentials(source.remote)
+      // Userinfo in the remote is refused by the installer's own source
+      // validation (`refuseCredentialedRemote`, which both install paths now
+      // share) and reaches this page as `install-failed` through
+      // `#stageFailure`, which carries the installer's error code as the git
+      // step. This path used to duplicate that check before it existed in the
+      // installer; the copy is gone, not kept beside the original.
       return { kind: 'git', repository: source.remote, commit: source.commit }
     }
     return { kind: 'local-directory', directoryPath: path.resolve(source.path) }
