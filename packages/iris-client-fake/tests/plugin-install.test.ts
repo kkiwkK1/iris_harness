@@ -6,9 +6,10 @@
  * `packages/iris-client-fake/src/plugins.ts` says in its own docblock that it
  * exists not to tell. What it does model is the **handshake** — a token it
  * minted, a preview it will hold a confirm to, ruling 5's refusal of a taken
- * id, and ruling 2's refusal of `plugin.update` with the same wire code the
- * host uses. Those are the parts a page is written against, and every one of
- * them can be got wrong in a way that only shows up against a real host.
+ * id on a fresh install, and the update handshake's `updateOf` preview whose
+ * confirm replaces a row in place and keeps its `enabled`. Those are the parts
+ * a page is written against, and every one of them can be got wrong in a way
+ * that only shows up against a real host.
  */
 
 import assert from 'node:assert/strict'
@@ -119,14 +120,62 @@ test('ruling 5 on the fake: an id already in the catalog is refused at confirm, 
   client.dispose()
 })
 
-test('ruling 2 on the fake: plugin.update refuses with the host’s code and the host’s reason', async () => {
+test('the fake mirrors the update handshake: a git row previews with updateOf, and confirming keeps enabled', async () => {
+  const client = testClient()
+  const remote = 'https://example.invalid/acme/updatable.git'
+  const first = await client.call('plugin.previewInstall', { source: { kind: 'git', remote, commit: 'a'.repeat(40) } })
+  await client.call('plugin.confirmInstall', {
+    previewToken: first.previewToken, id: first.id, commit: first.commit ?? null, treeHash: first.treeHash,
+  })
+  await client.call('plugin.enable', { id: first.id })
+
+  const preview = await client.call('plugin.update', { id: first.id, commit: 'b'.repeat(40) })
+  assert.equal(preview.id, first.id, 'the preview names the row, not a derived package id')
+  assert.equal(preview.commit, 'b'.repeat(40))
+  assert.deepEqual(preview.updateOf, {
+    id: first.id,
+    fromCommit: 'a'.repeat(40),
+    fromTreeHash: first.treeHash,
+  })
+
+  const snapshot = await client.call('plugin.confirmInstall', {
+    previewToken: preview.previewToken, id: preview.id, commit: preview.commit ?? null, treeHash: preview.treeHash,
+  })
+  const row = snapshot.plugins.find(plugin => plugin.id === first.id)
+  assert.equal(row?.enabled, true, 'the update preserved the enabled preference')
+  assert.equal(row?.status, 'enabled')
+  assert.equal(row?.installed, true)
+  assert.equal(row?.provenance?.commit, 'b'.repeat(40))
+  assert.equal(row?.provenance?.treeHash, preview.treeHash)
+  client.dispose()
+})
+
+test('the fake refuses updates the way the host does: dev rows, builtin rows, unknown ids', async () => {
   const client = testClient()
   await assert.rejects(
-    () => client.call('plugin.update', { id: 'demo', commit: 'e'.repeat(40) }),
+    () => client.call('plugin.update', { id: 'tavern-helper', commit: 'e'.repeat(40) }),
     (error: unknown) => {
       assert.equal((error as { code?: string }).code, 'unsupported')
-      assert.match((error as Error).message, /reserved and not implemented/u)
-      assert.match((error as Error).message, /ruling 2/u)
+      assert.match((error as Error).message, /builtin/u)
+      return true
+    },
+  )
+  await assert.rejects(
+    () => client.call('plugin.update', { id: 'no-such-plugin', commit: 'e'.repeat(40) }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'not-found')
+      return true
+    },
+  )
+  const devPreview = await client.call('plugin.previewInstall', { source: { kind: 'dev', path: '/tmp/dev-row' } })
+  await client.call('plugin.confirmInstall', {
+    previewToken: devPreview.previewToken, id: devPreview.id, commit: null, treeHash: devPreview.treeHash,
+  })
+  await assert.rejects(
+    () => client.call('plugin.update', { id: devPreview.id, commit: 'e'.repeat(40) }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'unsupported')
+      assert.match((error as Error).message, /loaded in place/u)
       return true
     },
   )

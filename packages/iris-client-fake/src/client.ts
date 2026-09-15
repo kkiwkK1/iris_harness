@@ -462,7 +462,7 @@ class InMemoryClient implements FakeClient {
         return { ok: true }
 
       case 'plugin.update':
-        return this.#systemPlugins.update((params as RpcRequest<'plugin.update'>).id)
+        return this.#systemPlugins.update((params as RpcRequest<'plugin.update'>).id, (params as RpcRequest<'plugin.update'>).commit)
 
       // The ST-compat plane's face. The fake runs no extension frame, so the
       // bridge arms are recorded and forgotten, submits are refused (nothing
