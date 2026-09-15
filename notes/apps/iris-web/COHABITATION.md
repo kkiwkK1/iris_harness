@@ -1,5 +1,7 @@
 # Card-script cohabitation — design
 
+> 状态：记录。测量于 2026-09-07，对象 上游共居 realm 的 `initializeGlobal` / `waitGlobalInitialized`（OVERLORD 卡 + MagVarUpdate bundle）。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 For `initializeGlobal` / `waitGlobalInitialized`. Written before the code, per the
 same discipline as `AUTORUN.md`.
 

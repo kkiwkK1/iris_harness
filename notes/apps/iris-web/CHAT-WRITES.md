@@ -1,5 +1,7 @@
 # Cards that write to `getContext().chat` — design
 
+> 状态：记录。测量于 2026-09-07，对象 语料中两张卡对 `getContext().chat` 的 8 处写，以及 Iris 的宿主 arm 设计。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 Status: **for review.** One host arm is missing and one behavioural question is
 unmeasured; both are named at the end.
 

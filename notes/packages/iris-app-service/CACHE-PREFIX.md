@@ -1,5 +1,7 @@
 # 前缀缓存：一次测量，以及能做与不能做的事
 
+> 状态：记录。测量于 2026-09-08，对象 Iris 装配路径的一次前缀缓存测量；§3 的提案已实现（账本 `DEVIATIONS.md` §38），见文首自述。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 > **2026-09-08 起，§3 的提案不再是待裁决状态。** 「缓存友好装配」已经实现
 > （默认开，`IRIS_CACHE_FRIENDLY=0` 全局可关），账本在
 > `DEVIATIONS.md` §38，开/关对照数字在 `scripts/cache-friendly-probe.mjs`。

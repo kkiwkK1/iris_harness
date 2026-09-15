@@ -1,5 +1,7 @@
 # AUDIT-CORDIS — 最近合入功能的 Cordis 插件逻辑审计
 
+> 状态：记录。测量于 2026-09-07，对象 Iris `dev/iris-exploration` @ `c9dfa37`（审计口径见正文）。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 - **审计基准**：`dev/iris-exploration` @ `c9dfa37`（代码与审计时读到的 `fbcddde` 完全一致，两者之间只有 CORDIS-TREE.md 的改动）。
 - **审计问题**：所有功能必须遵循 Cordis 插件开发逻辑、作为插件注册——本文件逐功能判定最近合入的 A–J 十项。
 - **判定口径**（与仓库既有架构语言对齐，见 `ARCHITECTURE.md`、`PLAN.md` §目标架构）：

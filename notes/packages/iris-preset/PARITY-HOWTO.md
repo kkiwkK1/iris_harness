@@ -1,5 +1,7 @@
 # 怎么证明「预设在 Iris 里不如在 ST 里有效」
 
+> 状态：记录。测量于 2026-09-09，对象 排查方法：把 ST 与 Iris 两侧的同一次请求抓下来逐字节对齐（`scripts/capture-endpoint.mjs`）。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 「不那么有效」如果是真的，只可能有一个原因：**Iris 发给模型的请求和 ST 发的不
 一样**。同一张卡、同一份预设、同一段对话，两边发出的字节应当相同（除了记在
 `notes/packages/iris-app-service/DEVIATIONS.md` 里的分叉）。所以排查不是猜，而是

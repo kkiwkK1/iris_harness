@@ -1,5 +1,13 @@
 # 失败可观测性
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
+>
+> **本文档有两个时态，刻意不合并。** 第一到第四节是 2026-09-02 对**上游**
+> （SillyTavern 1.18.0 / JS-Slash-Runner 4.9.1）的一次读数：它是那天那份检出的
+> 事实，不随 Iris 漂移，本次核对一字未改。第五节是**我们的**功能清单，而它已经
+> 部分交付——上一版把十二条全写成待办。本次在第五节后新增「§五之二」记每一条在
+> `e356771` 上的落点，清单本身留原样，因为它是需求而不是进度。
+
 卡片坏掉的时候，谁看得见？
 
 这份文档是「卡作者调试页」项目的宪章。它先量上游，再定位我们的领先点，最后给出功能
@@ -117,7 +125,7 @@ $(window).on('pagehide', () => { _th_impl._clearLog(iframe_name); });
 const clear = (iframe_id) => { iframe_logs.value.delete(iframe_id); };
 ```
 
-结合本仓库已经量清的 frame 生死表（见 `RENDER.md`）：
+结合本仓库已经量清的 frame 生死表（见 [RENDER.md](../notes/apps/iris-web/RENDER.md)）：
 
 - **取消编辑 → 非流式管线重建 frame → 编辑前的日志全部消失**
 - **加载期就失败的卡随后被重建 → 它自己的失败记录自灭**
@@ -161,7 +169,7 @@ const clear = (iframe_id) => { iframe_logs.value.delete(iframe_id); };
 ## 三之二、增补：又一批具名失败候选（2026-09-02）
 
 这个窗口里，几份设计文档各自撞出了新的失败形态。它们散在
-`PRESET-WEIGHT.md` / `SCRIPT-BUTTONS.md` / `CHAT-WRITES.md` / `RENDER.md` 里，
+[PRESET-WEIGHT.md](../notes/apps/iris-web/PRESET-WEIGHT.md) / [SCRIPT-BUTTONS.md](../notes/apps/iris-web/SCRIPT-BUTTONS.md) / [CHAT-WRITES.md](../notes/apps/iris-web/CHAT-WRITES.md) / [RENDER.md](../notes/apps/iris-web/RENDER.md) 里，
 本节把它们收编进章程。
 
 ### 先说分类的依据：这批和原来那六条不是同一族
@@ -188,7 +196,7 @@ const clear = (iframe_id) => { iframe_logs.value.delete(iframe_id); };
 这一条说的是那一刻 API 静默失效。**卸载窗口是上游可观测性最薄的地方**，
 §三·2 已经这么写过，这是它的第二个症状而不是第二个缺口。
 
-出处：`SCRIPT-BUTTONS.md` §五。
+出处：[SCRIPT-BUTTONS.md](../notes/apps/iris-web/SCRIPT-BUTTONS.md) §五。
 
 ### B 组：五个新缺口
 
@@ -197,7 +205,7 @@ const clear = (iframe_id) => { iframe_logs.value.delete(iframe_id); };
 失败的不是代码，是**资产**。缺一个字形，浏览器渲染成空方框或豆腐块——
 **不抛异常、不进任何日志、不产生任何事件**。
 
-这是否决 FontAwesome 字体子集化的全部理由（`PRESET-WEIGHT.md` §四 C）：
+这是否决 FontAwesome 字体子集化的全部理由（[PRESET-WEIGHT.md](../notes/apps/iris-web/PRESET-WEIGHT.md) §四 C）：
 子集化能省约 350 KB，但**失败形态是最坏的那种**，而修一个空方框需要先知道它是空方框。
 
 **先有报告机制才有资格做子集化**——而那个机制比省下的 350 KB 贵。这条裁决本身
@@ -212,7 +220,7 @@ const clear = (iframe_id) => { iframe_logs.value.delete(iframe_id); };
 所以这里该做的不是「捕获错误」，是**留一个具名存根**，被调用时说
 「这张卡用了 jQuery UI，Iris 的楼层预设默认不含它」。
 
-**把一个「卡坏了」变成一个可上报的事实。**出处：`PRESET-WEIGHT.md` §四 B。
+**把一个「卡坏了」变成一个可上报的事实。**出处：[PRESET-WEIGHT.md](../notes/apps/iris-web/PRESET-WEIGHT.md) §四 B。
 
 **9 · 连接失效——没有失败，只是不再相连**
 
@@ -220,7 +228,7 @@ const clear = (iframe_id) => { iframe_logs.value.delete(iframe_id); };
 **改名 = 换事件**：旧 id 上的监听器永远收不到事件了。
 
 **没有任何东西失败**：替换成功、渲染成功、点击成功地发出了一个没人听的事件。
-上游不清理、不报告（`SCRIPT-BUTTONS.md` §三、§七）。
+上游不清理、不报告（[SCRIPT-BUTTONS.md](../notes/apps/iris-web/SCRIPT-BUTTONS.md) §三、§七）。
 
 该做的是在 `replaceScriptButtons` 时**数一数有多少监听器停在了已消失的按钮 id 上**。
 **零是常态，非零几乎总是 bug**，而它现在完全不可见。
@@ -235,12 +243,12 @@ fallback 生效了，结果是好的，**但没有人知道走的是降级路径
 实例：`DataCloneError` 的回落（f7 刚加）。结构化克隆失败 → 退回另一条路 → 成功。
 如果不说，读者与开发者都会以为走的是主路径。
 
-`METHODS.md` 早记过同族：**凡是「替换失败退回原文」的机制，退回那一步都需要自己的
+[METHODS.md](../notes/METHODS.md) 早记过同族：**凡是「替换失败退回原文」的机制，退回那一步都需要自己的
 声音**（宏未展开那次，症状出现在三层之外的「模型不合规」上）。
 
 **11 · 部分成功**
 
-一批操作做了一半。`CHAT-WRITES.md` 的批次中断需要报 **applied / total**——
+一批操作做了一半。[CHAT-WRITES.md](../notes/apps/iris-web/CHAT-WRITES.md) 的批次中断需要报 **applied / total**——
 既不是成功也不是失败，而**只报其中一端都是错的**：
 报成功隐瞒了没做的那些，报失败隐瞒了已经落盘的那些。
 
@@ -370,6 +378,29 @@ export function isFrontend(content: string): boolean {
 12. **渲染判定的可解释性**：判定成功或失败时说出**命中的是哪条判据** → 对应 (c)。
     上游一行都没有，而它是两个最常见问题的共同答案
 
+## 五之二、这十二条今天各在哪（核对于 `e356771`）
+
+清单本身是需求，上面一字未动。这张表是进度，按符号核的，不按记忆。
+
+| # | 状态 | 落在哪 |
+| --- | --- | --- |
+| 1 · 分 frame 的日志视图 | **未做** | 沙箱里没有任何 `console.*` 接管（`grep -rn "console\[" apps/iris-web/src/sandbox` 为空）。这是十二条里唯一一条「上游有而我们没有」的 |
+| 2 · 错误点名来源 | **已做** | `DebugReport` 带 `chatId` / `characterId` / `scriptId` 三个结构化字段（`packages/iris-app-service/src/diagnostics.ts`），页面是 `apps/iris-web/src/app/HostReports.tsx` |
+| 3 · 具名拒绝进面板 | **已做** | `ScriptRunPhase` 的 `refused` 带 `member`；被拒子资源经 `apps/iris-web/src/app/blocked-line.ts` 统一措辞——它单独存在的理由本身就是这条：同一条规则写两遍，会自相矛盾，而错的那半没人看 |
+| 4 · 常驻分代报告 | **部分** | `ScriptPanel` 有常驻报告列表（带 `channel`、`withdrawn`），但它挂在卡上而不是挂在「这一代加载」上 |
+| 5 · 判决可撤回且留痕 | **已做** | `withdrawn` 标记 + `ScriptRunState.lateMs`——晚到的成功改写行，但那段死寂留在记录里 |
+| 6 · 遗言通道 | **未做** | 全树无对应实现 |
+| 7 · 开销画像 | **部分** | `ScriptView.bytes`（UTF-8 字节，不是字符数，因为同意提示要按它措辞）已在契约上；library cost / 存储探针未收敛成一张画像 |
+| 8 · 捕获未处理异常与 Promise 拒绝 | **已做** | `apps/iris-web/src/sandbox/frame-entry.ts` 同时挂 `unhandledrejection` 与 `error`，并记下 `onerror` 被跨域改写成 `Script error.` 时细节会缺席 |
+| 9 · 保留堆栈 | **已做，且诚实地可缺席** | `DebugReport.stack?` 只在报告点确实握有原始 `cause` 时出现；自造一条宿主调用栈比没有堆栈更坏 |
+| 10 · 诊断默认开、代价可控 | **已做** | `DiagnosticBuffer` 进程内环形缓冲，常开；`DEFAULT_LIMITS = { maxRecords: 2000, maxBytes: 1_048_576 }`，字节上限的数字仍**标着无测量支撑**（见 DEBUG-SURFACE §3.3） |
+| 11 · 跨刷新持久化 + 一键导出诊断包 | **未做** | 缓冲**刻意不跨进程持久化**，重启即空并由 `oldest` 体现；导出诊断包是另一件事 |
+| 12 · 渲染判定的可解释性 | **已做** | `apps/iris-web/src/sandbox/frontend-blocks.ts` 的 `matched: string`——注释原话是「Which marker matched, so a report can say why this block was claimed」 |
+
+**给读者的一句**：层三里投入最小、收益最大的第 8 条已经做了；而「产品主张」那段
+押注的三条（8、11、12）今天是**两条做了一条没做**——没做的 11 恰好是把前两条交回
+作者手里的那一条，所以那段主张至今只兑现了一半。
+
 ## 产品主张
 
 上游的调试模型是**用户当仪器**：作者部署后失明，靠玩家转述。
@@ -411,7 +442,7 @@ export function isFrontend(content: string): boolean {
 **它回答的是别处回答不了的一个问题：卡真正跑的是哪一份代码。**
 
 签出、git tag、`package.json` 的版本号，回答的都是「仓库里有什么」。
-而卡通过一个**无版本号的 CDN 地址**加载远程 bundle（`UPSTREAM-ESM-DEPS.md` §三），
+而卡通过一个**无版本号的 CDN 地址**加载远程 bundle（[UPSTREAM-ESM-DEPS.md](../notes/apps/iris-web/UPSTREAM-ESM-DEPS.md) §三），
 所以「仓库里有什么」和「运行时跑的是什么」之间**没有任何约束关系**。
 
 **实测过一次这条缝的宽度**（2026-09-03）：

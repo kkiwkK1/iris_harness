@@ -1,5 +1,7 @@
 # Message-frame rendering — design
 
+> 状态：记录。测量于 2026-09-07，对象 上游 JS-Slash-Runner 实装的逐行测量，加 Iris 消息帧渲染的设计。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 For the card interfaces that live inside a message: a code block whose contents
 look like a front end becomes a live, sandboxed frame. Written before the code,
 per the same discipline as `AUTORUN.md` and `COHABITATION.md`.

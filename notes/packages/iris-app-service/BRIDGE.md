@@ -1,5 +1,7 @@
 # Bridging a card's own generation calls back to the host
 
+> 状态：记录。测量于 2026-09-07，对象 已装 SillyTavern（`E:/sillyTavern`）与一张真卡；本文是归档规格，正文明说尚未实现。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 A card script can ask for model output two ways. This is the archived
 specification for both, measured from the installed SillyTavern and from a real
 card, so that whoever implements it — probably not the person who wrote this —

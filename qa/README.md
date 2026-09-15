@@ -1,5 +1,7 @@
 # qa/ — 一次性验收仪器
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+
 这些脚本**不是回归网**(METHODS §二十七):它们驱动一个活宿主、按需重跑,不进 CI,也不该
 进。所以它们**失败要硬失败**——一个 `console.error` 之后继续跑,在报告里和「这一格没问题」
 完全同形。
@@ -82,11 +84,12 @@ render 就这么挂了 exit 1,换端口重跑即正常)。偏移让"再跑一趟
 外壳定位集中在 **`qa/locators.mjs`**,三个:切页签、开抽屉、答同意门。**每个都返回它做了什么,
 并把落到的那段可见文本作为_证据_记下来** —— 文本是读数,不是判据。
 
-> **今天没有属性可以键。** `Sidebar.tsx` 的两个页签是同样的 `role="tab"` + 同样的 class、没有 id,
-> 只差 `aria-selected`(**状态,不是身份**)与被翻译的标签;`Masthead.tsx` 的设置按钮没有
-> `aria-label` 也没有 id。所以这三个定位器用的是**次序 + 点击后按结构确认生效**
-> (`aria-selected` 变 true / 出现 `.iris-drawer--open`)。等 `data-tab="chats|characters"` 落地,
-> **只改 `locators.mjs` 一处**,五个脚本一起跟上 —— 这就是它是一个模块而不是五份复制的理由。
+> **身份属性已经落地了。** 早先这一节写的是「今天没有属性可以键」,于是三个定位器用**次序 +
+> 点击后按结构确认生效**。现在 `Sidebar.tsx` 的两个页签各带 `data-tab="chats"` / `"characters"`
+> (`sidebar-tabs.test.ts` 把每个值钉在对应的 `setTab('…')` 上),`Masthead.tsx` 的设置按钮带
+> `data-control="settings"`,`locators.mjs` 已经改成按这两个属性找。`aria-selected` 仍然只当
+> **生效确认**用 —— 它是状态,不是身份。改一处、五个脚本一起跟上,这就是它是一个模块而不是
+> 五份复制的理由。
 
 ---
 
@@ -112,6 +115,27 @@ render 就这么挂了 exit 1,换端口重跑即正常)。偏移让"再跑一趟
 | `verify-click-shift.mjs` | 在问候楼**之后**追加楼层,在卡自己的帧里点它自己的按钮,验楼 0 切到 swipe 1;外加抽屉纯覆盖 | **持久投影**(轮询 `chat.export`)+ 屏幕几何 | 切楼 40 × 500 ms;滚动停在离底 ≥128 px,把 64 px 吸底排除在外 | `IRIS_BASE` **8825** | 9338 | 会自己导入 `v0.5NSFW.png` |
 | `verify-widescreen.mjs` | 三视口 sheet 几何;抽屉开合前后 scrollTop 与 sheet 矩形不动;窄屏零回归 | 屏幕几何 | 开合各 20 × 100 ms;中线按**记录基线**判增量(`BASELINE_MIDLINE_DEV = 23`) | `IRIS_BASE` **8825** | 9335 | 没有卡时自己导入一张 |
 | `list-my-chromes.ps1` | 列 Chrome 可执行路径 | — | — | — | — | — |
+
+### 表外的脚本(一次性,只留档)
+
+下面这些是某个任务做完之后留下的仪器,判据层与观察窗口写在各自文件头,这里只记它量什么,
+免得一个新读者以为 `qa/` 就是上面那张表:
+
+| 脚本 | 量什么 |
+|---|---|
+| `z1-e2e.mjs` | Z1:政经博弈卡的建国链路走真 UI(RPC 授权建聊天 → CDP 进卡自己的界面帧填两个字段点「确认建国」)。CDP 默认 **9343** |
+| `z1-regression.mjs` | Z1:状态栏 MVU 卡上跑一轮真对话,盯 user→reply 窗口里 STATE 面板的变量。CDP 默认 **9353** |
+| `z1-repro.mjs` | Z1:同一条建国链路按卡的原始调用顺序走线,不开浏览器 |
+| `measure-z2-scroll.mjs` | Z2:在 `measure-frame-fit` 的几何之外,量**帧内部**能不能滚到底 |
+| `measure-z3-occlusion.mjs` | Z3:三张重卡的帧几何 + 帧内滚动 + 边注遮挡。`IRIS_BASE` 默认 `8823` |
+| `z3-rpc-probe.mjs` | Z3 前置:任何操作之前先给重卡的聊天各拍一次 C17 快照。`IRIS_BASE` 默认 `8823` |
+| `z3-scroll-proof.mjs` | Z3 视觉佐证:把 1847px 的界面在 546px 带里滚到底并截图 |
+| `plugin-platform/browser-fixture.mjs` | 系统插件客户端面的真浏览器夹具:服生产沙箱包体 + 一个合成插件的 `client.js` + 两个 Iris 自己拼的 srcdoc 帧。端口取 `IRIS_ACCEPTANCE_PORT`,默认 **8792** |
+
+> **`z1-e2e.mjs` 的 CDP 默认值 9343 与 `notice-center-baseline.mjs` 撞了**,而且它**不加**
+> `pid % 100` 偏移(上表那批都加)。两个同时跑、或者连着跑两趟 `z1-e2e`,就是上面「CDP 默认端口
+> 还会加上 `pid % 100`」那一段讲的那种「`chrome never came up`,长得像环境故障」。显式传
+> `CDP_PORT` 绕开。
 
 ---
 

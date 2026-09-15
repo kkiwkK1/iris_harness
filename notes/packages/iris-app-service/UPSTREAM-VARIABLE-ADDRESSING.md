@@ -1,5 +1,7 @@
 # 上游语义：楼层变量的寻址（`message_id` 的取值域）
 
+> 状态：记录。测量于 2026-09-03（入库 2026-09-07），对象 上游酒馆助手 4.9.1 的 `getVariables` 族对 `message_id` 的取值域。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 **短文档。**回答一件事：`getVariables` / `replaceVariables` / `insertOrAssignVariables` 这一族的
 `message_id` 接受什么、映射到哪一楼、越界怎样。
 

@@ -1,5 +1,7 @@
 # notes/st-compat —— ST 兼容施工的 P0 基线与试点清单
 
+> 状态：有效（目录索引）。写于 2026-09-14，是 `notes/st-compat/` 的 P0 派工单与文件索引；下表各文件都是那一轮施工的记录。记录不随代码更新；ST 兼容面的现状以 `docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md` 与 `docs/INFRASTRUCTURE-INTERFACES.md` §7–§8 为准（索引见 `notes/README.md`）。
+
 派工单（`docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md` §9.2 模板，原样补全）：
 
 ```text

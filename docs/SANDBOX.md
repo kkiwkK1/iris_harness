@@ -1,9 +1,19 @@
 # Card script sandbox — frozen policy
 
-The last thing blocking real cards. 14 of 19 cards in the local corpus carry
-script code — 47 scripts, 2.98 MB — and none of it can run yet.
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
+>
+> 上一版最后一次成体系的修订在 2026-09-11（F10 那批），它的开场白还写着卡脚本
+> 「none of it can run yet」。本版改了四处：开场白、`framePolicy` 今天真正发出的
+> 指令集（多了 `frame-src`），preset 的 vue-router 版本（写的是 5.3.0，装的是
+> 4.6.4），以及**网络授权的实际可达性**——它在策略上存在、在契约上不存在。另外
+> 补了三节短的：插件成员合并、`/plugins` 资产面、shell 自己的 CSP 地板。
 
-This document is the contract three work streams build against. It is frozen the
+The last thing that was blocking real cards. 14 of 19 cards in the local corpus
+carry script code — 47 scripts, 2.98 MB — and it runs: the consent gate, the
+frame lifecycle and the run-state panel are on `main` (see
+[AUTORUN.md](AUTORUN.md) for that half).
+
+This document is the contract three work streams built against. It is frozen the
 way `@iris/protocol` was frozen: additions are cheap, edits are expensive.
 
 ## What is actually out there
@@ -94,7 +104,36 @@ own fetches, and the two are not equivalent.
 > anyway — so this closes a door nothing currently walks through, which is the
 > cheapest kind of door to close. It costs the frames nothing: the same
 > directive arrives from the shell's policy as well, since a `srcdoc` document
-> inherits its embedder's (see `notes/apps/iris-web/DEVIATIONS.md` §93).
+> inherits its embedder's (see [notes/apps/iris-web/DEVIATIONS.md](../notes/apps/iris-web/DEVIATIONS.md) §93).
+
+### The whole frame policy, as `framePolicy` emits it
+
+The snippet above is one directive of nine. Read from `framePolicy`
+(`apps/iris-web/src/sandbox/srcdoc.ts`) rather than assembled from the sections
+below, because the sections each argue about one directive and nobody was
+printing the list:
+
+```
+default-src 'none'
+script-src  'unsafe-inline' 'unsafe-eval' blob: <selfOrigin> https://*.jsdelivr.net https://raw.githubusercontent.com
+connect-src 'none'                      | https:                      (network grant)
+style-src   'unsafe-inline' https://fonts.googleapis.com data: <selfOrigin>
+            | 'unsafe-inline' https: data: <selfOrigin>                (network grant)
+font-src    data: https://fonts.gstatic.com <selfOrigin>
+img-src     data: blob:                 | https: data: blob:           (network grant)
+frame-src   'none'
+form-action 'none'
+base-uri    'none'
+```
+
+`frame-src 'none'` is the one this document never named: **no nested browsing
+contexts**, which would otherwise be a route out of a frame whose whole point is
+not having one. Note the asymmetry with the shell's own policy, which omits
+`frame-src` deliberately — here it is enforced because these frames create no
+child frames of their own; there it would be either a no-op or the line that
+kills every card interface at once (see "The shell's CSP floor" below).
+
+`http:` appears in no branch, granted or not.
 
 ## `parent.*` — what cards actually reach for
 
@@ -291,6 +330,25 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   card load its author's images and letting it execute its author's code are
   two different decisions, and the grant exists only for the first — pinned by
   test, granted and ungranted `script-src` identical byte for byte.
+
+  > **The policy exists; the switch does not (checked 2026-09-16).** The grant
+  > is a parameter of `framePolicy`, and both branches are built and tested —
+  > but `networkGranted` **is not in the contract**. Both real run paths pass a
+  > literal `false` (`apps/iris-web/src/app/useCardScripts.tsx`,
+  > `apps/iris-web/src/app/MessageInterfaces.tsx`), and the only thing that can
+  > set it true is the dev probe panel, whose own comment says so: *"Dev-only
+  > until `networkGranted` reaches the contract."* The `false` is deliberate and
+  > commented at both sites — *"a grant nobody has been asked for is not a
+  > grant"* — so a card's outbound fetches are refused by CSP and named, which
+  > is the intended behaviour rather than a gap.
+  >
+  > Written down because a policy document describing a grant in the present
+  > tense reads as a feature the user can reach, and a reader debugging a card
+  > that cannot load its author's images would go looking for the toggle. The
+  > argument below about what the grant does and does not promise is unaffected
+  > — it is about what the grant *would* widen — but "no grant, no way out" and
+  > "no grant available at all" are different sentences and only the second is
+  > true today.
 - **Refusals must out-shout the card's fallback.** Live finding: a blocked card
   showed its author's own "your Tavern is broken, check the console" message
   while Iris said nothing visible — the policy said "refused with a message
@@ -302,7 +360,7 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
 
 ### Upstream has no policy here at all — and its own frames load remote stylesheets
 
-(Added 2026-09-06, for `ACTION-PLAN.md` §二 item 3, the zeoseven font domain.
+(Added 2026-09-06, for `notes/archive/ACTION-PLAN.md` §二 item 3, the zeoseven font domain.
 **Facts and locations only.** Read directly from the operator's install:
 SillyTavern `1.18.0`, TavernHelper `4.9.1`
 (`data/default-user/extensions/JS-Slash-Runner`). Static reading, nothing run.
@@ -456,15 +514,15 @@ family gets a host-side proxy at the mechanism layer, not a per-host allow-list.
 See the deviations ledger.)* Four separate gates sit on those two lines:
 
 - the preload is fetched with destination *style*, so **`style-src`** governs it
-  — that is the refusal `NOTES-handoff.md` observed;
+  — that is the refusal `notes/archive/NOTES-handoff.md` observed;
 - the `@font-face` `src` inside that CSS resolves against the CSS's own URL and
   is governed by **`font-src`**, and it may name a **different host**. This is
   the same shape already encoded for Google in
-  `apps/iris-web/src/sandbox/srcdoc.ts:88-91` — *"`fonts.googleapis.com` serves
+  `apps/iris-web/src/sandbox/srcdoc.ts:107-109` — *"`fonts.googleapis.com` serves
   the CSS, `fonts.gstatic.com` the faces — both are needed or neither works"*;
 - the `onload` rel-swap is an inline handler, governed by **`script-src`**.
   Checked rather than assumed: our `script-src` carries `'unsafe-inline'`
-  (`srcdoc.ts:153`), **so this gate is already open** and the swap would fire
+  (`srcdoc.ts:184`), **so this gate is already open** and the swap would fire
   once the stylesheet arrives. The `<noscript>` twin is inert in a scripted
   frame, so it is not a second path — it is the no-JS fallback only;
 - the preload carries **`crossorigin`**, so it is a CORS-mode fetch. Our frames
@@ -589,8 +647,10 @@ stating:
   proxy — but nothing the *frame itself* needs comes off a wire it does not
   control.
 - **Versions are pinned exactly**, to what upstream's unversioned tags resolve to
-  at the time of pinning: `vue@3.5.42`, `vue-router@5.3.0`. Pinned rather than
-  tracking latest for the reason the struck text got backwards — an unpinned
+  at the time of pinning: `vue@3.5.42`, `vue-router@4.6.4` (this document said
+  `5.3.0`; `apps/iris-web/package.json` says `4.6.4`, and the manifest is the
+  pin). Pinned rather than tracking latest for the reason the struck text got
+  backwards — an unpinned
   dependency whose failure mode is silent absence is not a supply-chain
   trade-off, it is an unmonitored runtime dependency. Same treatment, and the
   same reasoning, as `jquery@3.5.1` being pinned to what SillyTavern serves.
@@ -826,6 +886,92 @@ bug, in the card's own error, three layers from the deployment that caused it.
   correct" depends on the name/bytes coupling, and an unhashed name with a long
   TTL is the failure that coupling exists to prevent.
 
+## A third tag: a plugin's members
+
+Since the system-plugin platform (#88) the tag order in a frame is **members →
+bootstrap → plugins → cards**, so a plugin may put its own members on the
+surface a card sees. The authoritative description is
+[SYSTEM-PLUGINS.md](SYSTEM-PLUGINS.md) and
+[INFRASTRUCTURE-INTERFACES.md](INFRASTRUCTURE-INTERFACES.md) §1; what belongs
+*here* is only the part that is a sandbox policy, and it is two sentences:
+
+- **The refusal is per plugin, not per frame.** The core table's absence refuses
+  the whole run — that is the rule the previous section argues for. One plugin
+  failing its ready marker (its script was blocked, would not parse, or threw
+  before its last statement) rejects **only that plugin's members**, and the
+  report names the plugin and the cause. Cards using other plugins' members, or
+  none, still run.
+- **A card probing a refused namespace gets the named report, not a bare
+  `undefined`.** Same attribution rule the core table's marker bought, for the
+  same reason: `undefined` from a lookup is indistinguishable from "not there",
+  and a card would take a policy decision for a missing feature.
+
+Mechanically it is a **lazy** collection — the tag order makes an eager read
+impossible, since no eager read could see a registration — so the rules live in
+a pure module over a host-like lookup (`apps/iris-web/src/sandbox/plugin-members.ts`)
+and the frame entry wires the globals around them. Only ids the frame's
+capability snapshot admits are collected; anything else on the host was never
+admitted and is invisible to the merge.
+
+### `/plugins` is an asset face, not a hole in the frame
+
+A plugin's client bundle reaches the browser over `/plugins/<id>/client.js`,
+with the aggregate manifest at `/plugins/manifest.json`
+(`packages/iris-app-service/src/plugin-assets.ts`). For this document the point
+is what it does **not** change: those are files on **Iris's own origin**, which
+`script-src` already admits for the preset bundle, the bootstrap and the member
+table. No directive widens, and the argument in "The bootstrap split does not
+add a trust boundary" covers this file the same way it covers the other two —
+same origin, same write boundary, same manifest-gated naming.
+
+## The shell's CSP floor
+
+The frame's policy is not the only one that reaches a frame, and the reason is a
+fact about the platform rather than a choice: a card interface is an
+`<iframe srcdoc>`, `about:srcdoc` is a **local scheme**, and a local-scheme
+document **inherits its embedder's CSP**, enforced *in addition to* its own
+`<meta>`. So every directive the shell sets lands on every card.
+
+Measured in headless Chrome on 2026-09-11 with one card-shaped `srcdoc` frame
+carrying Iris's real frame policy, under four different parent documents:
+
+| the shell's policy | the frame's first inline script | `new Function` |
+| --- | --- | --- |
+| none | **runs** | works |
+| `default-src 'self'; script-src 'self' 'nonce-…'` | **never runs** | — |
+| the same plus `frame-src 'none'` | **never runs** (the frame is still created) | — |
+| `default-src 'self'; script-src 'self' 'unsafe-inline'` | runs | **blocked**, and the refusal quotes the *shell's* directive |
+
+The consequence for this document: **the shell ships three directives and no
+more** (`SHELL_CSP_DIRECTIVES`, `packages/iris-app-service/src/shell-csp.ts`):
+
+```
+object-src 'none'; base-uri 'none'; form-action 'none'
+```
+
+No `script-src`, `default-src`, `style-src`, `img-src`, `font-src` or
+`connect-src`, because each of them narrows every card frame, and the one shape
+wide enough for the frames would be `'unsafe-inline' 'unsafe-eval'` plus two
+CDNs — which is no protection at all. And **`frame-src` is omitted entirely**:
+the measurement shows Chrome does not apply it to a `srcdoc` navigation, so
+every value is either a no-op today or, if a browser started enforcing it, the
+one line that kills every card interface at once. An omitted directive says that
+honestly.
+
+The three that remain are exactly the ones a card frame already enforces on
+itself (`object-src` and `form-action` fall out of its `default-src 'none'`;
+`base-uri` is the F10 line above), so the floor costs the frames nothing.
+
+**What this floor cannot close**, recorded so it is not rediscovered as a
+finding: `nosniff`, `frame-ancestors`/`X-Frame-Options` and
+`Cache-Control: no-store` are **headers**, and the static seat that writes those
+responses has no header hook — `frame-ancestors` is additionally ignored in a
+`<meta>` by definition, so the click-jacking answer is the shell's own first
+inline script refusing to render framed. The strict policy becomes possible the
+day a card frame stops being `srcdoc` and is served from a real same-origin URL
+with its policy in its own response header; that is the change that would
+overturn this whole section.
+
 ## Accepted gaps — 已接受的缺口 (2026-09-11)
 
 Four findings from the 2026-09 security audits (`审计报告-网络安全工程.md`,
@@ -840,7 +986,7 @@ acceptance record, with the audit's own wording, is
 ### F8 — the code allow-list is itself a narrow exfiltration channel, and a network grant does not close it
 
 **What is open.** The frame's `script-src` carries the two CDNs
-(`apps/iris-web/src/sandbox/srcdoc.ts:165`, `apps/iris-web/src/sandbox/policy.ts:77`)
+(`apps/iris-web/src/sandbox/srcdoc.ts:184`, `apps/iris-web/src/sandbox/policy.ts:77`)
 **unconditionally** — a card needs no network grant to load code, because
 without code it is not a card. A dynamic `import()` is a script fetch, and a
 script fetch's *URL* can carry data:
@@ -875,7 +1021,7 @@ which costs the ecosystem nothing.
 
 ### L-5 — `showdown` 2.1.0 has a ReDoS and two XSS advisories, and there is no fixed release
 
-**What is open.** `apps/iris-web/package.json:37` pins `showdown` at `2.1.0`,
+**What is open.** `apps/iris-web/package.json:40` pins `showdown` at `2.1.0`,
 which `npm audit` flags for a regular-expression denial of service and two
 cross-site scripting paths (metadata title, table header id). Upstream has
 published no fixed version.
@@ -902,7 +1048,7 @@ this host fetch an allow-listed URL and write the body into the cache
 directory.
 
 **Why it stays.** It was priced before the audit arrived, in the module's own
-comment (`packages/iris-app-service/src/script-cache.ts:64-88`), and the audit
+comment (`packages/iris-app-service/src/script-cache.ts:85-110`), and the audit
 agreed with the price: the reachable damage is bounded disk fill. The URL must
 pass `checkScriptFetch` on every request — https only, the two CDNs by suffix
 and exact match, re-checked on each of at most five redirect hops — so the
@@ -920,7 +1066,7 @@ refuse-to-write to evict, which turns bounded fill into cache poisoning.
 ### F17 — the stylesheet-link rewrite truncates on a `>` inside an attribute value
 
 **What is open.** `rewriteStylesheetLinks` matches tags with `/<link\b[^>]*>/gi`
-(`apps/iris-web/src/sandbox/srcdoc.ts:232-242`), and `[^>]*` stops at the first
+(`apps/iris-web/src/sandbox/srcdoc.ts:263-264`), and `[^>]*` stops at the first
 `>` — including one inside a quoted attribute value. Such a tag is not
 rewritten.
 
@@ -939,7 +1085,11 @@ for something other than convenience. If a future policy admitted remote styles
 and used the rewrite to *route* them, a missed rewrite would become a bypass
 instead of a refusal, and the scanner becomes worth its cost.
 
-## Work split
+## Work split (delivered; kept as the record of who owned which half)
+
+All four streams landed. The table stays because it records **which half came
+from where**, and the defects on a seam are exactly the ones that appear while
+both halves are independently green.
 
 | Stream | Owner |
 |---|---|

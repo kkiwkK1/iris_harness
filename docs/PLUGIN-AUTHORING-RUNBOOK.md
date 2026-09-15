@@ -1,21 +1,35 @@
 # Iris 插件制作与执行手册
 
-2026-09-15，针对 `main` 的 `2eccf30`（PR #88「Add the system plugin platform and ST extension pilot」）。配套 [基础设施接口清单](INFRASTRUCTURE-INTERFACES.md)。
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
 
-上一版写于 2026-09-12，基线是尚未合入的 `dev/system-plugins`，因此把「外部 client.js 扫描」「成员合并」列为未完成。这些已随 #88 落地：帧侧成员贡献、`/plugins` 下发、设置面贡献与 ST 扩展安装都有可执行路径，本版把它们写进制作步骤。仍未实现的接口（通用存储/设置、生成钩子、系统插件的 npm/Git 安装）照旧不可照草案调用，完整清单见接口清单 §8。
+## 本文与其他文档的关系
+
+本文是**插件作者的操作手册**：怎么写一个插件、怎么打包、怎么装、怎么验收、出错了先看哪里。
+它不定义接口，也不维护缺口清单——那两件事有各自的主人：
+
+| 要找什么 | 去哪 |
+| --- | --- |
+| 接口的权威形状，以及**唯一维护的缺口清单**（§8） | [基础设施接口清单](INFRASTRUCTURE-INTERFACES.md) |
+| 生命周期、所有权、信任模型的裁决 | [系统插件架构](SYSTEM-PLUGINS.md) |
+| 安装路径为什么长这样（裁决与落地记录） | [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) |
+| 契约包的发布形与版本策略 | [PLUGIN-CONTRACT-PACKAGING](PLUGIN-CONTRACT-PACKAGING.md) |
+| ST 扩展兼容面的设计与施工合同 | [ST 扩展设计与执行手册](ST-EXTENSION-DESIGN-AND-RUNBOOK.md) |
+| 生成钩子（设计已裁决，实现未开始——**别照它写代码**） | [GENERATION-HOOKS](GENERATION-HOOKS.md) |
+
+**本版相对 2026-09-15 那版变了什么**：`scope.storage`（U3）与 `scope.variables.registerWriter`（U2）已经可以调用，插件可以自带 en/zh 界面文案（U5），已装的 `git` 行可以原位更新（U1）。「没有 npm 名/Git URL 装系统插件」这句话**已经不成立**：git 与 dev 两条源是真的，npm 名与任意 tarball 是被否决的。仍不能照草案调用的是 `scope.settings`、生成钩子与 `contributeContext`——完整清单只在接口清单 §8。
 
 ## 1. 先决定插件运行在哪里
 
 | 需求 | 位置 | 今天的接入方式 |
 | --- | --- | --- |
-| 宿主算法、共享业务能力、自动处理 | Node 系统插件 | 实现 `SystemPluginDefinition`，加入内置目录，宿主通过 capability 使用 |
+| 宿主算法、共享业务能力、自动处理 | Node 系统插件 | 实现 `SystemPluginDefinition`；随仓库发行就进内置目录（§2），仓库外就打成一个带 `iris.plugin` 的包从 git/dev 源装进来（「安装一个系统插件包」一节） |
 | 卡片脚本能调用的新成员 | 插件自带 `client.js`，跑在卡片 iframe | 写一个经典脚本 bundle，放进安装目录，帧按快照装载并做成员合并（§4「帧侧成员贡献」） |
 | 未经修改的 SillyTavern 扩展 | shell 内的隐藏 facade iframe | 从目录或钉死 commit 的 Git 安装；ST 扩展**就是**一个系统插件，走同一套启停（§「安装一个 ST 扩展」） |
 | 插件中心的管理操作 | shell UI | 使用现有 `plugin.*`，以返回快照和事件更新 |
 | 页面按钮/面板 | shell UI 插槽 | 仓库内 UI 接线；设置区块可经 `iris.settings.sections` 贡献，但今天只有 shell 内代码能注册 |
 | 卡片自带交互/脚本 | 卡片 iframe 沙盒 | 既有卡片脚本授权和 TH 兼容面；不能提升为 Node 插件 |
 
-一个 Node 系统插件要么出现在 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`（`packages/iris-app-service/src/plugins/builtins.ts`）里，要么以 ST 扩展身份经 `adoptDefinition` 被接纳。**没有**「输入 npm 名称/Git URL 就装一个系统插件」的能力，也没有通用热更新源码加载器。ST 扩展那条路是给 ST 扩展的，不是给任意 Node 代码的后门。
+一个 Node 系统插件有**三条**进目录的路：出现在 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`（`packages/iris-app-service/src/plugins/builtins.ts`）里；以 ST 扩展身份经 `adoptDefinition` 被接纳；或者作为一个仓库外的包，从 https git 远端（钉完整 commit）或本地 `dev` 目录经同意步骤装进某个 profile。**没有**的是：npm 名、任意 tarball URL、自动更新、通用热更新源码加载器——前两条是 [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §11 明确否决的，不是还没做。ST 扩展那条路仍然是给 ST 扩展的，不是给任意 Node 代码的后门。
 
 `reload` 会释放并重新激活当前**已载入**的 definition；编辑磁盘 TypeScript 后通常需要重启开发宿主。
 
@@ -163,13 +177,13 @@ activate(scope) {
 })();
 ```
 
-**字面量 id 与字面量键名是承重的**：插件中心的 `scanPluginMemberNames`（`apps/iris-web/src/app/use-plugin-manifest.ts:208`）读源文本来报告这个 bundle 注册了哪些成员，拼接出来的 id 或计算出来的键名会让它对你失明——插件照跑，诊断列变瞎。
+**字面量 id 与字面量键名是承重的**：插件中心的 `scanPluginMemberNames`（`apps/iris-web/src/app/use-plugin-manifest.ts:217`）读源文本来报告这个 bundle 注册了哪些成员，拼接出来的 id 或计算出来的键名会让它对你失明——插件照跑，诊断列变瞎。
 
 **怎么被送到帧里。** 宿主 `/plugins` 路由（[plugin-assets.ts](../packages/iris-app-service/src/plugin-assets.ts)）：
 
-- `/plugins/manifest.json` 是聚合清单 `{ revision, plugins: { <id>: { rev, client } } }`，**只收已启用且磁盘上确有 bundle 的插件**，键排序，永远 `no-cache`。
+- `/plugins/manifest.json` 是聚合清单 `{ revision, plugins: { <id>: { rev, client?, i18n? } } }`，**只收已启用、且磁盘上确有 bundle 或成对文案的插件**（U5 起纯文案插件也有行，所以 `client` 是可选的），键排序，永远 `no-cache`。
 - `/plugins/<id>/client.js?rev=<12 位十六进制>` 是 bundle。rev 是字节的 sha1 前 12 位。**`?rev=` 与当前内容 rev 相等才发 `immutable`**，其余情况一律 `no-cache`；插件一停用，清单里没有行，这个 URL 也 404。
-- 路由挂在 `irisRpc.guard` 之后，与其他 Iris 路由同一道防护。**刻意没有**走 `@deepseek-ai/dsh-client-modules`，理由在模块头（`packages/iris-app-service/src/plugin-assets.ts:16`）。
+- 路由挂在 `irisRpc.guard` 之后，与其他 Iris 路由同一道防护。**刻意没有**走 `@deepseek-ai/dsh-client-modules`，理由在模块头（`packages/iris-app-service/src/plugin-assets.ts` 的模块头）。
 
 **帧怎么接纳它。** shell 把清单行并进帧快照（`sandboxPluginRuntime(snapshot, manifest)`），srcdoc 按行写 `<script src="…" crossorigin="anonymous" data-iris-plugin="<id>">`。标签顺序是**成员表 → bootstrap → 插件 → 卡片**：bootstrap 先把「本帧准入了哪些插件」公布到 `__iris_plugins_admitted__`，插件脚本才跑。
 
@@ -227,11 +241,11 @@ export function activate(scope) {
 
 ### 持久化
 
-插件开关由 runtime 写 `system-plugins.json`（profile 根，`packages/iris-app-service/src/index.ts:779`），不要在插件中手改。**先落盘再改内存**：写失败会把持久化行回滚并抛 `internal`，所以不会出现「界面已启用、重启后消失」。偏好文件读不动时全部插件置 `error` 且**保留原文件**——不要写「修复」逻辑去覆盖它。
+插件开关由 runtime 写 `system-plugins.json`（profile 根，`packages/iris-app-service/src/index.ts:788`），不要在插件中手改。**先落盘再改内存**：写失败会把持久化行回滚并抛 `internal`，所以不会出现「界面已启用、重启后消失」。偏好文件读不动时全部插件置 `error` 且**保留原文件**——不要写「修复」逻辑去覆盖它。
 
 聊天/变量继续由既有 store 写，算法返回结果即可。卸载默认保留业务数据；删除数据应是另一个明确动作。
 
-插件自己的持久化走下一节的 `scope.storage`（`dev/plugin-scope-storage` 轮落地）。settings namespace 仍未实现（ST 扩展的设置走的是专门的闭包，不是通用接口）。密钥不得进入普通插件 JSON、日志或快照。
+插件自己的持久化走下一节的 `scope.storage`（U3 落地）。settings namespace 仍未实现（ST 扩展的设置走的是专门的闭包，不是通用接口），见接口清单 §8。密钥不得进入普通插件 JSON、日志或快照。
 
 ### 插件私有存储
 
@@ -296,9 +310,13 @@ profile，走的是同一套目录、依赖、启停、卸载——不是第二�
 - `host.js` 是普通 ESM，**默认导出一个 definition 对象，不是工厂**。启用时宿主
   `import(pathToFileURL(host.js))`，然后逐条核对：`id` 必须等于清单的 `id`，`apiVersion` 必须等于
   清单的 major，`activate` 必须是函数。任何一条不符是 `load-failed` 并点名字段。
-- `permissions` 的四个合法值是 `provide-capability`、`get-dependency`、`register-rpc`、`host-context`，
-  一一对应 `SystemPluginActivationScope` 上四个交出触达能力的成员。写错一个名字是
-  `manifest-invalid`，字段为 `permissions[i]`。
+- `permissions` 是一张**闭合词表**，当前**六个**合法值（`PLUGIN_PERMISSIONS`，
+  `packages/iris-app-service/src/plugins/manifest.ts:103`，按字母序）：`get-dependency`、
+  `host-context`、`plugin-storage`、`provide-capability`、`register-rpc`、`write-variables`，
+  一一对应 `SystemPluginActivationScope` 上六个交出触达能力的成员（`pluginId` 与 `revision`
+  是这次激活自己的身份，不是触达，所以没有权限名）。写错一个名字是 `manifest-invalid`，字段为
+  `permissions[i]`。**除 `plugin-storage` 外都只是声明，不是闸门**——理由见下文与
+  [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §12 裁决 4。
 - `client.js` 的要求就是帧侧扫描器的要求：`registerPluginMembers('<字符串字面量 id>', { 字面量键: … })`。
   计算出来的 id 或成员键**扫不出来**，那不是报错，是「这个插件不声明成员」；真正的拒绝发生在重名
   （`conflict`）与帧内没跑完，且都是**按插件拒，不是按帧**。
@@ -427,7 +445,7 @@ remote + commit 或 path、`treeHash`（旁注「确认即是同意这一份字�
 （摘要是短 commit / 短 treeHash / 安装时间，展开是全值）。`git` 行的卸载注记写着「卸载会从这个
 profile 里删掉安装树」，`dev` 行写着「你的开发目录绝不会被碰」。
 
-### 六个失败状态，对作者分别意味着什么
+### 七个失败状态，对作者分别意味着什么
 
 它们都落在 `plugin.list` 的行上（`failure.state`），不是日志，也不是崩溃。**在界面上**，每个状态在行上
 都是同一个形状的红块：一句「这是什么」、点名的字段或 git 步骤、**宿主自己那句 `reason` 原样照抄**、
@@ -441,16 +459,18 @@ profile 里删掉安装树」，`dev` 行写着「你的开发目录绝不会被
 | `tampered` | 开机复核 | 磁盘上的字节与安装时记录的 `treeHash` 不符——手改过安装树就会这样。行上因此多一个「按记录的 remote + commit 重新安装」按钮，它**先卸载再 preview**（裁决 5 在 id 还占着时会拒绝 confirm），然后走同一张同意页；没有「接受当前字节」这个按钮，那会让整个哈希锁定被一键绕过 |
 | `load-failed` | `import(host.js)` | 模块顶层抛错，或默认导出不是一个 definition / id 对不上 / apiVersion 对不上 / 没有 `activate`。行上带字段名 |
 | `activate-failed` | `activate()` 抛错 | 你的 `activate` 抛了。走既有的失败回滚，不会留下半注册的能力 |
+| `hook-failed` | 一轮回复结算 | **唯一骑在健康行上的状态**（`enabled: true, status: 'enabled'`）：你注册的变量 writer 这一轮抛错或超了 5 s。回复照常落盘，插件不被停用，**你下一次成功提案就自动清除它**。要改的是 `propose` 的耗时或它抛的那个错 |
 
-前四个状态下 `plugin.enable` 是**拒绝**（`unsupported`，消息点名状态）：一次重新 import 树的重试，
-就是一次可能在被篡改的字节上成功的启用。`load-failed` 与 `activate-failed` 是仅有的两个可重试状态——
-改完文件再点一次启用即可。
+前四个状态（`install-failed`/`manifest-invalid`/`incompatible`/`tampered`）下 `plugin.enable` 是**拒绝**
+（`unsupported`，消息点名状态）：一次重新 import 树的重试，就是一次可能在被篡改的字节上成功的启用。
+`load-failed` 与 `activate-failed` 是仅有的两个可重试状态——改完文件再点一次启用即可。`hook-failed`
+不参与这件事：它的行本来就是启用着的。
 
 ## 安装一个 ST 扩展
 
 一个未经修改的 SillyTavern 扩展可以装进 Iris，在 shell 的隐藏 facade iframe 里运行。**它就是一个系统插件**：安装后被 `adoptDefinition` 接纳，之后的启停/卸载走的是同一套 `plugin.*`。
 
-**安装。** RPC `stExtension.install({ path })`，`path` 指向一个含 `manifest.json` 的本地目录。宿主读 `display_name`、slugify 成 id、校验合法，**安装树仍在则直接重新接纳**（这是「重装」，不是静默覆盖），否则真正安装，再 `normalizeManifest` → `adoptDefinition`（`packages/iris-app-service/src/index.ts:846`）。
+**安装。** RPC `stExtension.install({ path })`，`path` 指向一个含 `manifest.json` 的本地目录。宿主读 `display_name`、slugify 成 id、校验合法，**安装树仍在则直接重新接纳**（这是「重装」，不是静默覆盖），否则真正安装，再 `normalizeManifest` → `adoptDefinition`（`packages/iris-app-service/src/index.ts:875`）。
 
 **安装器接受什么。** 三种源（[source.ts](../packages/iris-extension-installer/src/source.ts)）：`local-archive`、`local-directory`、`git`。git 的约束是硬的：
 
@@ -462,7 +482,7 @@ profile 里删掉安装树」，`dev` 行写着「你的开发目录绝不会被
 
 **启停与卸载。** 就是 `plugin.enable` / `plugin.disable` / `plugin.uninstall`，没有第二套生命周期。停用后 `/iris-st-ext/<id>/…` 的每条路径都 404（manifest 也不例外），plane iframe 消失，模板原文直通。**卸载保留安装树与设置文件**——artifact 和设置是用户数据；同一目录再装就是重装。
 
-**试点只服务一个扩展**：快照里第一个非内置的已安装行（`packages/iris-app-service/src/index.ts:838`）。
+**试点只服务一个扩展**：快照里第一个非内置的已安装行（理由写在 `packages/iris-app-service/src/index.ts:819` 的注释里）。
 
 **证据与复跑。** 浏览器验收脚本与逐轮证据在 `notes/st-compat/acceptance/`（`seed.mjs`、`run-uc1.mjs` / `run-uc2.mjs` / `run-uc3.mjs`、`run-revision.mjs`、`run-fault.mjs`、`run-uninstall.mjs`、`run-st-compare.mjs`，夹具 `lib.mjs` / `cdp.mjs` / `mock-provider.mjs` / `pilot-host.mjs`，证据目录 `evidence/`）。复跑用隔离端口：
 
@@ -574,18 +594,20 @@ ST 试点另有 `packages/iris-compat-st-extension/tests/*.test.ts`、`packages/
 
 ## 8. 独立插件仓库与交付
 
-当前两个契约包 `@iris/plugin-api` 与 `@iris/plugin-web-api` 都是 `private: true`、版本 `0.0.0`、`exports` 指向 `./src/*.ts`（TS 源码）。它们是工作区契约，不是可以对外发布并承诺兼容的 npm SDK。同样地，**一个 Node 系统插件今天必须在仓库内**：要么进 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`，要么以 ST 扩展身份被 `adoptDefinition` 接纳，没有第三条路。
+**一个 Node 系统插件不再必须在仓库内。** 除了内置目录与 ST 扩展身份，第三条路是把它打成一个带
+`iris.plugin` 的包，从 git 或 dev 源装进某个 profile——上面「安装一个系统插件包」一节就是那条路的操作说明。
 
-独立发布前需要完成的具体项：
+**契约包的工作区形没有变，也不需要变。** `@iris/plugin-api` 与 `@iris/plugin-web-api` 在树里仍是
+`private: true`、版本 `0.0.0`、`exports` 指向 `./src/index.ts`。这不是遗留缺口：发布是一次**显式的、
+独立的动作**，`npm run pack:contracts -- --version <semver>` 只读工作区、只往 `dist-pack/` 写三个
+tarball，工作区清单一个字都不动，所以也就没有「半发布态」。逐字的发布形 `package.json`、版本策略
+（`apiVersion: 1` ↔ major `1`，预发布 `1.0.0-alpha.N`）、cordis 作 peer 的理由，以及实测记录与已知缺口
+（`.d.ts` 里的 `./x.ts` specifier、`.d.ts.map` 指向 tarball 外），全部在
+[PLUGIN-CONTRACT-PACKAGING](PLUGIN-CONTRACT-PACKAGING.md)——本文不复述，那边是主人。
 
-- 构建 JS 产物与 `.d.ts` 声明入口，`exports` 不再指向 `.ts` 源码；
-- 去掉 `private: true` 之前先定版本与 `apiVersion` 兼容承诺（破坏性变更出新版本，不原地改）；
-- peer 依赖策略：Cordis 必须是 peer，避免装进第二份不兼容的 Cordis 实例；
-- 验证安装后的真实 exports（从包外消费，不是从 workspace alias）；
-- 包外消费者测试，跑在一个不含本仓库 alias 的目录里；
-- 之后才是插件发现、资产下发注册、贡献注册与版本撤回机制。
-
-把 `private` 改成 `false` 不能代替上面任何一步。
+对插件作者的实际含义只有两句：你的插件仓库把三个包写进 `dependencies`（版本号一致），把
+`@deepseek-ai/cordis` 也写进自己的 `dependencies`（因为它是 `@iris/plugin-api` 的 peer，必须由使用方
+提供唯一一份，版本与宿主一致）；tsconfig 侧不需要任何 `paths` 或别名。
 
 每份交付至少包含：插件 id 与职责、运行位置、契约/实现版本、声明依赖、贡献接口（capability / 运行期 RPC / 帧侧成员 / 设置区块，逐项说明）、数据归属、失败和释放路径、测试结果、浏览器复现步骤、提交号与基线。PR 描述区分「代码实现」「测试通过」「浏览器验收」「已合并」。
 

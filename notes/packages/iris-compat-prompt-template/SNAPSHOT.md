@@ -1,5 +1,7 @@
 # Filling a `Snapshot` — the host-side seam
 
+> 状态：记录。测量于 2026-09-07，对象 `@iris/compat-prompt-template` 的 `Snapshot` 契约与宿主侧接缝。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 Everything the evaluator can read arrives in one object, pushed once per batch.
 This document is the contract for building it. The type is in `src/types.ts`; this
 says what each field must *contain*, and — more importantly — what must already

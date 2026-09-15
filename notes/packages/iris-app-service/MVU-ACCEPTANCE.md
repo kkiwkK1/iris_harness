@@ -1,5 +1,7 @@
 # Accepting the chat-level MVU path with one real generation
 
+> 状态：验收记录，验收于 2026-09-07，对象 Iris 的 chat 级 MVU 通路，一次真实生成（爱衣卡），判据预先写死。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 One generation costs a real API call, so the run has to be able to *fail*. That
 means choosing a message whose correct outcome is predictable in advance — not
 merely one that makes something change, because "something changed" is also what

@@ -1,15 +1,22 @@
 # Settings, reorganised by intent
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
+>
+> 本文档的**测量部分**是对 SillyTavern 1.18.0 一份用户档案的一次性读数，日期属于
+> 它自己，不随 Iris 漂移；本次核对只改了两处：引用路径（`SETTINGS-IA.md` 等已
+> 迁入 `notes/`），以及末尾新增一节记「那十条意图今天落成了什么」——十条设计草案
+> 与已交付的 15 个设置页不是同一个对象，而上一版只写了前者。
+
 SillyTavern's most common complaint is that its settings are overwhelming.
-`ROADMAP.md` lists "设置项铺天盖地" first among the things Iris will not copy.
-This file is the measurement behind that decision, and the information
-architecture it produces.
+[notes/ROADMAP.md](../notes/ROADMAP.md) lists "设置项铺天盖地" first among the
+things Iris will not copy. This file is the measurement behind that decision,
+and the information architecture it produces.
 
 The finding that matters is sharper than "too many settings": some of them are
 **used at a negative rate** — the user changes them and they silently do
-nothing. That is the same product claim d7's charter makes about card failures,
-one layer up. A card that breaks should say so; a setting that cannot apply
-should say so too.
+nothing. That is the same product claim
+[OBSERVABILITY.md](OBSERVABILITY.md) makes about card failures, one layer up. A
+card that breaks should say so; a setting that cannot apply should say so too.
 
 ## The trap: `default/content/settings.json` is not the defaults
 
@@ -38,8 +45,8 @@ sentinel; anything that resolves to a sentinel is reported as **unadjudicable**
 
 ## Scope of the measurement
 
-Stated because a negative conclusion carries its search scope (`METHODS.md`,
-sixth lesson).
+Stated because a negative conclusion carries its search scope
+([notes/METHODS.md](../notes/METHODS.md), sixth lesson).
 
 **Excluded, and why.** `textgenerationwebui_settings`, `nai_settings`,
 `kai_settings`, `horde_settings`: this profile's `main_api` is `openai`, so every
@@ -187,5 +194,49 @@ intent removes more confusion than any other entry in the table.
 
 This document stops at what was measured and what the measurements decide. The
 screen-by-screen information architecture built on top of it lives in
-`SETTINGS-IA.md`, so that a change to the layout does not edit the evidence and
-a re-measurement does not edit the layout.
+[notes/SETTINGS-IA.md](../notes/SETTINGS-IA.md), so that a change to the layout
+does not edit the evidence and a re-measurement does not edit the layout.
+
+## What shipped, and where the ten entries went
+
+The table above is a draft of an information architecture. What `main` actually
+serves is **15 destinations in 6 groups**, declared once in
+`SETTINGS_DESTINATIONS` (`apps/iris-web/src/app/SettingsNavigation.tsx`) and
+rendered by `SettingsDrawer`. Counted from that array, not from the screen.
+
+| group | destinations |
+| --- | --- |
+| general | 连接 · 预设 · 人格 |
+| conversation | 记忆与上下文 · 回复行为 · 生成 |
+| content | 正则脚本 · 世界书 · 脚本 |
+| appearance | 外观与阅读 |
+| data | 备份 · 用量 |
+| advanced | **系统插件** · 诊断 · 关于 |
+
+Three things the draft did not predict, recorded because a table that is only
+ever compared with itself stops being a measurement:
+
+- **#2's merge happened and then some.** "How much it remembers" is one
+  destination (`memory/context`), which was the entry the draft called most in
+  need of merging.
+- **Two destinations exist that no ST setting motivated.** 系统插件 and 诊断 are
+  Iris-side capabilities rather than reorganised upstream controls, so they
+  could not appear in a measurement of upstream's surface. Neither is described
+  here: the plugin page is [SYSTEM-PLUGINS.md](SYSTEM-PLUGINS.md) and
+  [SYSTEM-PLUGIN-INSTALL.md](SYSTEM-PLUGIN-INSTALL.md), with the live per-change
+  inventory in [INFRASTRUCTURE-INTERFACES.md](INFRASTRUCTURE-INTERFACES.md) §1;
+  the diagnostics page is [DEBUG-SURFACE.md](DEBUG-SURFACE.md). One source of
+  truth per fact.
+- **"Sampling collapsed by default" shipped as a weaker thing than the decision
+  asked for.** The 生成 page shows temperature, top-p and repetition penalty
+  outright, with top-k, min-p and the rest behind a "更多参数" expander
+  (`GenerationPanel.tsx`, the `expanded` state). The measurement said *zero*
+  samplers were ever touched and the decision said one control; what is built is
+  three controls and one expander. Written down as a divergence rather than
+  quietly restated, because the decision above is still the one with evidence
+  behind it.
+
+The tenth entry — text-completion formatting — is honoured as absence: there is
+no instruct, context or sysprompt panel anywhere in `apps/iris-web/src`
+(`grep -rn "instruct\|sysprompt" --include=*.tsx apps/iris-web/src/app` is
+empty). "Not shown at all. Not collapsed — absent" is what the tree does.

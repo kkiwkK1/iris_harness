@@ -1,5 +1,7 @@
 # 插件平台联合验收（2026-09-13）
 
+> 状态：验收记录，验收于 2026-09-13，对象 Iris `dev/system-plugins` @ `4ade2b21d82b0c1ad7a5c6fae6223d58f31d0626`。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 ## 验收身份
 
 - **集成基线**：`dev/system-plugins` 的

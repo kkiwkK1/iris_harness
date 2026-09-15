@@ -1,5 +1,7 @@
 # 任务 C-final 验收报告 —— ST 扩展兼容试点联合验收
 
+> 状态：验收记录，验收于 2026-09-14，对象 Iris `dev/st-compat-pilot` @ `065cc027e9d81c3a7b0df53415e6bb61fddb7c12`，试点对象 ST-Prompt-Template `f9a07da`。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 日期：2026-09-14。验收分支 `dev/st-compat-pilot-acceptance`（worktree `D:/workspace/小项目/iris-st-compat-pilot-acceptance`），基线 `dev/st-compat-pilot@065cc027e9d81c3a7b0df53415e6bb61fddb7c12`。试点对象：ST-Prompt-Template @ `f9a07da`（manifest 1.17.4.1），上游字节零修改（安装树 `dist/index.js` sha256 `61a87e9295dbcb2dc8335f90e95dbb67517457958d855bfb8f31798a042f71fd`，与锁定值一致）。验收环境：真实 Chrome（CDP 驱动）+ mock provider（脚本化回复，逐请求落盘取证），宿主与对照实例跑在**隔离端口**上（8811）。
 
 ## 结论

@@ -1,5 +1,7 @@
 # ST 兼容施工报告 —— 2026-09-13 追记（收口记录对照 + 首次全量门证据 + 新 profile boot 修复）
 
+> 状态：记录。测量于 2026-09-13（入库 2026-09-14），对象 Iris `dev/system-plugins`（含落点 3 的 `dev/plugin-client-runtime` @ `4fab477`）；含首次全量门证据。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 对 `iris-plugin-doc-task-boundaries` 下修订版任务书（`DOC-ST-COMPAT-PROGRAM`）的对照结论与本轮后续工作记录。
 
 ## 对照检查（修订版任务书 vs 已做工作）
@@ -32,7 +34,7 @@
 
 ## 追记二：落点 3 落地（dev/plugin-client-runtime @ 4fab477，已合入）
 
-按修订版任务书 §9.2 派工单（`notes/DISPATCH-plugin-client-runtime.md`，基线 `1e63711`）施工，三个切片一次交付：
+按修订版任务书 §9.2 派工单（`notes/archive/DISPATCH-plugin-client-runtime.md`，2026-09-16 归档；基线 `1e63711`）施工，三个切片一次交付：
 
 - **切片 A（契约）**：`SandboxPluginRuntime` 增 `plugins` 记录（复用落点 2 的 `PluginAssetEntry`）；内建布尔保留为兼容面字段，`plugins` 表达存在性——两者不互相泛化。权威划分：快照决定**是否**收录，清单只回答**字节在哪**；`parsePluginAssetManifest` 对 fetch 响应施加与快照行相同的行规则。
 - **切片 B（合并协议）**：核心表 `registerPluginMembers`——准入（bootstrap 在任一插件标签前发布的 `__iris_plugins_admitted__` 记录）、形状、同名冲突（核心名不可遮蔽；跨插件同名点名拒绝，镜像 `IrisRpcHost.register`）；存储按插件命名空间且冻结。收集器为纯模块 `plugin-members.ts`（标签顺序迫使惰性收集）；拒跑语义重定为**每插件**而非整帧：核心表缺席仍全拒，单插件 ready 标记缺席只拒该插件成员并点名原因。

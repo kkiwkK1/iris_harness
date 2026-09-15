@@ -1,5 +1,7 @@
 # message-preset 瘦身 —— 设计输入
 
+> 状态：记录。测量于 2026-09-02（入库 2026-09-07），对象 `message-preset.js`（2.29 MB）与上游 JS-Slash-Runner 的对应产物。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 一个会话里第一个楼层 frame 要下载 **2.29 MB**（`message-preset.js`）。它有内容哈希、
 走我们自己的源、强缓存，所以只付一次——但那一次是「打开一个带界面的聊天有多慢」的
 主要项。

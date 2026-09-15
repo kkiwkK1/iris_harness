@@ -1,5 +1,7 @@
 # @iris/rpc-host
 
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+
 The host end of the Iris wire, as a Cordis plugin over `ctx.webServer`. The
 browser end is [`@iris/rpc-client`](../iris-rpc-client); the shapes both sides
 agree on are frozen in [`@iris/protocol`](../iris-protocol). This file documents
@@ -12,9 +14,16 @@ its own.
 | --- | --- |
 | `POST /iris/rpc` | one request frame in, one response frame out |
 | `WS /iris/events` | `IrisEvent` frames, host → browser |
-| `GET /iris/avatar/<characterId>` | card pictures, registered by `@iris/app-service` |
 
-All three are configurable; the defaults are what the composition ships.
+Both are configurable; the defaults are what the composition ships.
+
+`@iris/app-service` registers further GET routes on the *same* carrier and runs
+every one of them through `ctx.irisRpc.guard` — card pictures
+(`/iris/avatar/<characterId>`), the version answer, the sandbox assets
+(`/sandbox`), fetched card bundles, the plugin asset face (`/plugins/…`, which
+serves the aggregate manifest, each plugin's `client.js` and its bundled copy
+tables) and the ST-extension assets. **They belong to that package, not this
+one**; what this package owns is the guard they pass through.
 
 **Generation is not a response.** `chat.send` resolves as soon as the turn is
 open and returns `{ turn }`; the reply arrives as `stream.text` /
@@ -106,8 +115,8 @@ const { view } = await client.call('chat.open', { chatId })
 
 - `subscribe()` returns a disposer. Iris is plugin-based; every registration is
   reversible.
-- `call()` rejects with `IrisRpcError`, which is an `Error` *and* structurally an
-  `RpcError`, so `catch (error) { error.code }` works.
+- `call()` rejects with `RpcCallError` (`@iris/protocol`), which is an `Error`
+  *and* structurally an `RpcError`, so `catch (error) { error.code }` works.
 - `connected` reflects the socket, not the intent to connect. It is a plain
   readonly boolean in the protocol, so the concrete client also offers
   `onConnectionChange(listener) => disposer` — use it rather than polling.
@@ -165,8 +174,12 @@ origin check and, with it, the `Host` the dev server arrives under.
   for every user and carry no profile data, but the page does still load under a
   rebound name — with every call it makes refused.
 - `character.import` carries the card as base64 inside the JSON frame, so a 4 MB
-  PNG becomes roughly 5.5 MB of body against a 1 MB `maxBodyBytes` default.
-  Raise the cap in the composition, or add a dedicated upload route.
+  PNG becomes roughly 5.5 MB of body. `maxBodyBytes` therefore defaults to
+  **33,554,432 (32 MiB)**, sized against the real cards on the development
+  machine — 46 KB to 8 MB, 2.2 MB median, and base64 adds a third on top; a
+  1 MB ceiling refused 17 of the 19. It is still a bound rather than a licence
+  (upstream's own limit is 500 MB, which is not a limit), and a body past it is
+  refused with `413`.
 - A page that falls more than 8 MB behind on the event stream is dropped rather
   than buffered for. It reconnects and re-opens the chat, which resyncs from
   host truth.

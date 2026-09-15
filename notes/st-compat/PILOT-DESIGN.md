@@ -1,5 +1,7 @@
 # P3 兼容试点设计 —— ST-Prompt-Template @ f9a07da 原版产物在 Iris 中的运行
 
+> 状态：有效（施工契约）。写于 2026-09-13，对象 C_BASE = `f8830f71a1b4f12b78e5630403e3ab0375f1b8ba` 与 ST-Prompt-Template `f9a07da`。产品源码（`packages/iris-compat-st-extension/src/runtime/`）至今按 §2 / §4 引用本文件作映射面的规格，验收对账见 `PILOT-REPORT.md`。契约不随代码更新；现状以 `docs/ST-EXTENSION-DESIGN-AND-RUNBOOK.md` 为准（索引见 `notes/README.md`）。
+
 日期：2026-09-13。基线：C_BASE = `f8830f71a1b4f12b78e5630403e3ab0375f1b8ba`（A 最终交付 `f5b7250` 与 B 最终交付 `1463557` 汇入权威 `dev/system-plugins`，并通过联合类型、构建、渲染、全仓及无语料门；包含两笔仅修复联合类型门的集成提交）。本文是施工契约；验收报告（PILOT-REPORT.md）逐项对账。
 
 ## 0. 上游机制事实（普查来源：源码成员级普查 + 本文件 §4 表）

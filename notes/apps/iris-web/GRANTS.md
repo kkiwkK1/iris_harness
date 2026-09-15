@@ -1,5 +1,7 @@
 # Permission traps on the road to auto-run
 
+> 状态：记录。测量于 2026-09-07，对象 本仓库已经付过代价的权限陷阱，作自动运行策略的输入。记录不随代码更新；Iris 侧的现状以 `docs/` 为准（索引见 `notes/README.md`）。
+
 Input for the auto-run policy. Every trap below was paid for in this repository,
 not imagined: each one shipped, and each was found by something other than the
 judgment that wrote it.

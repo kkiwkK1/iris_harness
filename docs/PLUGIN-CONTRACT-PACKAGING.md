@@ -1,12 +1,19 @@
 # 契约包的发布形（Plugin contract packaging）
 
-本文讲的是一件很窄的事：把三个契约包 `@iris/plugin-api`、`@iris/plugin-web-api`、
-`@iris/protocol` 变成**仓库外面**的一个插件仓库能安装、能类型解析、能 `import()`
-的 npm 包。它不讲插件怎么被宿主接纳、不讲插件市场、也不讲安装 UI——那些是后面的
-步骤，本文最后一节明确写了哪些**刻意没做**。
+> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
 
-契约本身的定义在 [SYSTEM-PLUGINS.md](./SYSTEM-PLUGINS.md)「The contract packages」，
-交付清单在 [PLUGIN-AUTHORING-RUNBOOK.md](./PLUGIN-AUTHORING-RUNBOOK.md) §8。
+## 本文与其他文档的关系
+
+本文讲的是一件很窄的事，并且**只有本文讲**：把三个契约包 `@iris/plugin-api`、
+`@iris/plugin-web-api`、`@iris/protocol` 变成**仓库外面**的一个插件仓库能安装、能类型解析、
+能 `import()` 的 npm 包——命令、产物、发布形 `package.json`、版本策略、实测记录。
+
+| 要找什么 | 去哪 |
+| --- | --- |
+| 契约本身的定义（什么是插件、怎么激活） | [SYSTEM-PLUGINS](./SYSTEM-PLUGINS.md)「The contract packages」 |
+| 插件包怎么被宿主装进来（安装 UI、同意页、失败状态） | [SYSTEM-PLUGIN-INSTALL](./SYSTEM-PLUGIN-INSTALL.md) |
+| 作者视角的操作步骤与交付清单 | [PLUGIN-AUTHORING-RUNBOOK](./PLUGIN-AUTHORING-RUNBOOK.md) |
+| 接口目录与唯一维护的缺口清单 | [INFRASTRUCTURE-INTERFACES](./INFRASTRUCTURE-INTERFACES.md) §8 |
 
 ## 1. 工作区不变，发布是另一件事
 
@@ -161,8 +168,12 @@ dist-pack/
 规则只有两条：
 
 - **破坏性变更是新版本，绝不是就地修改。** 这与 `SystemPluginDefinition.apiVersion`
-  的规矩、以及 `docs/SYSTEM-PLUGINS.md` 给第三方扩展清单 `iris.apiVersion` 的规矩，
-  是同一条；三个包同时升 major，因为它们是一份契约的三个面。
+  的规矩、以及插件包清单里 `iris.plugin.apiVersion` 的规矩，是同一条；三个包同时升
+  major，因为它们是一份契约的三个面。**这条交叉引用曾经指错地方**：上一版写的是
+  「`docs/SYSTEM-PLUGINS.md` 给第三方扩展清单 `iris.apiVersion` 的规矩」，而那条规矩
+  当时并不存在于任何文件里——它后来由 [SYSTEM-PLUGIN-INSTALL](./SYSTEM-PLUGIN-INSTALL.md)
+  §3 以 `iris.plugin.apiVersion` 的名字第一次真正定义（宿主声明支持区间，当前
+  `1.0–1.0`；不在区间内是命名状态 `incompatible`，不是崩溃）。
 - **三个包共用一个版本号。** 不是因为它们变化频率相同（不相同），而是因为一个插件
   仓库同时装三个，而「哪三个版本互相配套」这个问题不应该由插件作者去查表。
 
@@ -194,18 +205,26 @@ tsconfig 侧不需要任何 `paths` 或别名：解析全部走已发布 `export
 临时 `node_modules`（上面没有任何工作区），在里面跑 `tsc --noEmit`，再 `import()`
 真正的 `lib/index.js`。
 
-## 7. 「类型能解析」不等于「接线已存在」
+## 7. 「类型能解析」与「装得进去」现在是两件都成立的事
 
-这是本阶段最容易被读成好消息的一句话，所以写在这里。
+**这一节的结论在 2026-09-15 之后变了，原文保留在下面第二段，因为它记着当时为什么要写这句警告。**
 
-上面所有内容证明的是：一个仓库外的插件可以**写出来并通过类型检查**——
-`SystemPluginDefinition` 的形状、`SandboxPluginRuntime` 的形状、`RpcMethod` 的取值
-都对得上。它**没有**证明这个插件能跑起来。一个 system plugin 仍然必须被宿主接纳：
-目前宿主的插件目录是编译期的一张表，安装、发现、资产装配、贡献注册都还是封闭的
-（`notes/PLUGIN-FEASIBILITY.md` 记着这些口子各自在哪）。
+`contract-pack.test.ts` 证明的仍然只是：一个仓库外的插件可以**写出来并通过类型检查**——
+`SystemPluginDefinition` 的形状、`SandboxPluginRuntime` 的形状、`RpcMethod` 的取值都对得上。
+它本身不证明这个插件能跑起来。**但「能不能装进去」这个问题现在有答案了**：一个带
+`iris.plugin` 块的包可以从 https git 远端（钉完整 commit）或本地 `dev` 目录，经预览与同意步骤
+装进某个 profile，走目录、依赖、启停、卸载的同一套生命周期——设计与落地记录在
+[SYSTEM-PLUGIN-INSTALL](./SYSTEM-PLUGIN-INSTALL.md)，操作说明在
+[PLUGIN-AUTHORING-RUNBOOK](./PLUGIN-AUTHORING-RUNBOOK.md)「安装一个系统插件包」。
 
-换句话说：现在可以拿这三个包**开始写**一个插件，但把它装进 Iris 是后面一个独立的
-步骤，本次没有做，也没有任何测试假装做了。
+> **原文（写于契约打包那一轮，当时为真）**：「它**没有**证明这个插件能跑起来。一个 system
+> plugin 仍然必须被宿主接纳：目前宿主的插件目录是编译期的一张表，安装、发现、资产装配、
+> 贡献注册都还是封闭的。」——编译期那张表如今只是三条路里的一条；资产装配（`/plugins` 与
+> `client.js`）与文案贡献也都通了。仍然封闭的是插件**发现**（没有市场、没有 registry）与
+> 设置区块贡献，见 [INFRASTRUCTURE-INTERFACES](./INFRASTRUCTURE-INTERFACES.md) §8。
+
+**本文自己的边界没变**：这里产出的是三个 tarball，不是一次发布，也不是一条安装路径。
+两件事互不代替。
 
 ## 8. 刻意没做的
 

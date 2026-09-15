@@ -1,5 +1,7 @@
 # ACTION-PLAN — dev/iris-exploration 分支的修改计划
 
+> 状态：已归档（2026-09-16）。被 `dev/iris-exploration` 的合入（2026-09-06，`b50c354`）及其逐项收口记录取代——D 路见 `../QA-REPORT.md`，E 路见 `../packages/iris-character/UPSTREAM-IMPORT-SHAPES.md`，C/F 两路的结论进了 `../apps/iris-web/DEVIATIONS.md`；§二 的五项已在正文里就地裁定或被上述记录关闭。保留作历史。
+
 6 张真卡（`测试用卡/`，9 个文件）在 8790 宿主上的实测驱动的执行计划。基线：主线
 `dev/iris-exploration` @ `d5d0418`（同源 fetch 桥 + `document.head` shim + 高度回声
 修复 + 接口帧 Mvu 表面 + 帧开销 45 KiB），1939 测试 0 失败。四路代理并行，worktree

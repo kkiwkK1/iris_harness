@@ -1,5 +1,7 @@
 # Iris — 基于 Cordis 架构的 SillyTavern 替代品
 
+> 状态：立项记录（2026-09-07 入库，内容写于建仓初期）。立项理由、Cordis 选型与已确定的决策仍是原始依据；文末「未完成」一节已被 2026-09-15 重新基线的 `ST-COMPARE.md` 与 `IMPLEMENTATION-CHECKLIST.md` 取代，架构现状以 `docs/ARCHITECTURE.md` 为准。因源码注释（`scripts/pack-contracts.mjs`）引用本文件路径，留在原地。记录不随代码更新；索引见 `notes/README.md`。
+
 ## Context
 
 SillyTavern 是 AI 角色扮演前端事实上的标准，但它的地基是 Express + jQuery 的单体应用。这不是外部揣测——维护者自己在 issue #2633 里写道："技术债非常高，封装几乎完全瓦解"、"UI 与功能在整个项目中纠缠不清"；核心的 `Generate()` 是"一个巨大的单体函数，塞满了依赖所选 `main_api` 的临时变通"，本该由接口抽象的各家 LLM API 变成了满地的类型判断。同一 issue 里反对重构的理由也很实在：改造"耗时、易错，且会让大量待合并的 PR 无法合并"。
