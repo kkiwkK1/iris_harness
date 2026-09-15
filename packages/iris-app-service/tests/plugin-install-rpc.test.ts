@@ -26,7 +26,7 @@ import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SystemPluginInstallService } from '../src/plugins/install.ts'
 import { MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from '../src/plugins/builtins.ts'
 import { SystemPluginRuntime, type SystemPluginDefinition } from '../src/system-plugins.ts'
-import { writeTree } from '../../iris-extension-installer/tests/fixtures/helpers.ts'
+import { buildGitFixture, writeTree } from '../../iris-extension-installer/tests/fixtures/helpers.ts'
 
 const INSTALL_METHODS = [
   'plugin.previewInstall',
@@ -123,15 +123,103 @@ test('the wire schemas refuse what the install path must never be handed', () =>
   )
 })
 
-test('plugin.update is reserved and refuses, naming the ruling and the path that does work', async (t) => {
+test('plugin.update answers a preview for a git row and refuses a dev row, through the handler pair', async (t) => {
   const value = await fixture(t)
+  const request = <T,>(method: keyof Handlers, params: unknown): Promise<T> => {
+    const parsed = parseRequest(method, params)
+    assert.equal(parsed.ok, true, `${method} did not parse`)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (value.handlers as any)[method]((parsed as { params: unknown }).params) as Promise<T>
+  }
+
+  const base = join(value.dir, 'rpc-git-src')
+  await mkdir(base, { recursive: true })
+  const gitRepo = await buildGitFixture(base, new Map([
+    ['package.json', `${JSON.stringify({
+      name: 'iris-plugin-wire-update',
+      version: '1.0.0',
+      type: 'module',
+      iris: {
+        plugin: {
+          id: 'wire-update',
+          apiVersion: 1,
+          host: 'host.js',
+          displayName: 'Wire Update',
+          description: 'Driven through the RPC pair, updated through it too.',
+          capabilities: ['wire.state'],
+          permissions: ['provide-capability'],
+        },
+      },
+    }, null, 2)}\n`],
+    ['host.js', 'export default {\n'
+      + "  id: 'wire-update', name: 'Wire Update', description: 'd', version: '1.0.0', apiVersion: 1, dependencies: [],\n"
+      + "  activate(scope) { return scope.provide('wire.state', { ok: true }) },\n"
+      + '}\n'],
+    // buildGitFixture's second commit rewrites dist/index.js, so the tree
+    // carries the dist/ directory it lands in.
+    ['dist/index.js', 'export const demo = 0\n'],
+  ]))
+  const staged = await request<{ previewToken: string, id: string, commit: string, treeHash: string }>(
+    'plugin.previewInstall',
+    { source: { kind: 'git', remote: gitRepo.repoUrl, commit: gitRepo.olderCommit } },
+  )
+  await request('plugin.confirmInstall', {
+    previewToken: staged.previewToken, id: staged.id, commit: staged.commit, treeHash: staged.treeHash,
+  })
+  const listed = await request<{ plugins: { id: string, provenance?: { treeHash?: string } }[] }>('plugin.list', {})
+  const fromTreeHash = listed.plugins.find(plugin => plugin.id === 'wire-update')?.provenance?.treeHash
+
+  // The implemented method: the row's own remote at the requested commit,
+  // answering a preview whose updateOf names what the user is replacing.
+  const updatePreview = await request<{
+    id: string, commit?: string, updateOf?: { id: string, fromCommit: string, fromTreeHash?: string }
+  }>('plugin.update', { id: 'wire-update', commit: gitRepo.head })
+  assert.equal(updatePreview.id, 'wire-update')
+  assert.equal(updatePreview.commit, gitRepo.head)
+  assert.deepEqual(updatePreview.updateOf, { id: 'wire-update', fromCommit: gitRepo.olderCommit, fromTreeHash })
+
+  const devTree = join(value.dir, 'rpc-dev-pkg')
+  await writeTree(devTree, new Map([
+    ['package.json', `${JSON.stringify({
+      name: 'iris-plugin-wire-dev',
+      version: '1.0.0',
+      type: 'module',
+      iris: {
+        plugin: {
+          id: 'wire-dev',
+          apiVersion: 1,
+          host: 'host.js',
+          displayName: 'Wire Dev',
+          description: 'A dev row has no update transaction.',
+          capabilities: ['wire.state'],
+          permissions: ['provide-capability'],
+        },
+      },
+    }, null, 2)}\n`],
+    ['host.js', 'export default {\n'
+      + "  id: 'wire-dev', name: 'Wire Dev', description: 'd', version: '1.0.0', apiVersion: 1, dependencies: [],\n"
+      + '  activate() {},\n'
+      + '}\n'],
+  ]))
+  const devPreview = await request<{ previewToken: string, id: string, treeHash: string }>(
+    'plugin.previewInstall', { source: { kind: 'dev', path: devTree } },
+  )
+  await request('plugin.confirmInstall', {
+    previewToken: devPreview.previewToken, id: devPreview.id, commit: null, treeHash: devPreview.treeHash,
+  })
+
   await assert.rejects(
-    () => value.handlers['plugin.update']({ id: 'demo-plugin', commit: 'a'.repeat(40) }),
+    () => request('plugin.update', { id: 'wire-dev', commit: 'a'.repeat(40) }),
     (error: unknown) => {
       assert.equal((error as { code?: string }).code, 'unsupported')
-      assert.match(String((error as Error).message), /reserved and not implemented/u)
-      assert.match(String((error as Error).message), /ruling 2/u)
-      assert.match(String((error as Error).message), /uninstall it and install the new commit/u)
+      assert.match(String((error as Error).message), /loaded in place|就地/u)
+      return true
+    },
+  )
+  await assert.rejects(
+    () => request('plugin.update', { id: 'no-such-plugin', commit: 'a'.repeat(40) }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'not-found')
       return true
     },
   )
