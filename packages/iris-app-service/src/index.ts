@@ -1278,6 +1278,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       void cardStorage.flush().catch((error: unknown) => {
         ctx.logger.warn(error instanceof Error ? error.message : String(error))
       })
+      // Same drain for the script variables, whose queue has no debounce to
+      // blame (`notes/AUDIT-CORDIS.md` §3, gap 4: both stores serialise writes
+      // through a chain, and only one of them had a recovery point here). This
+      // one also closes the store, so a frame the reload retires cannot land a
+      // late write under the next generation's load; its failures report
+      // through the store's own `onError`, and the catch is the same belt
+      // card storage's is.
+      void scriptVariables.flush().catch((error: unknown) => {
+        ctx.logger.warn(error instanceof Error ? error.message : String(error))
+      })
     }
   }, 'irisApp.handlers')
 

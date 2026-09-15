@@ -7252,3 +7252,37 @@ of the host/fake line. What would reopen this: a need to switch exhaustively
 over builtin ids or to give one builtin id its own protocol surface — at
 which point the constant pair in `builtins.ts` is the place a closed list
 would grow back, visibly, in one file.
+
+---
+
+## 78. The script variables store drains on unload, and a write that arrives after the drain is refused
+
+**Audit gap 4** (`notes/AUDIT-CORDIS.md` §3) was an asymmetry, not a
+corruption: `ScriptVariableStore` serialises its writes through one promise
+chain exactly as `CardStorageStore` does, and the plugin's dispose called
+`flush` on exactly one of them. The practical loss was small for the reason
+the audit itself gives — an unload does not kill the process, so the queued
+writes still ran eventually — but "eventually" is the wrong word for what a
+hot reload does to that guarantee: the reloading plugin constructs a new store
+over the same file, and the old generation's write landing after the new
+generation's load is a second writer to a file whose contract is one store,
+one writer. The drain hands the file over with the old generation's last
+write already in it instead of in flight.
+
+This store has no debounce — every write is queued the moment it happens — so
+unlike card storage there is nothing to *force*; `flush` drains the existing
+chain and then closes the store. **The post-dispose ruling is refusal, chosen
+over the other live option of taking late writes into memory and letting them
+die there.** A write that is accepted and never persisted is a script that
+reads back its own write and loses it at the next restart anyway — the
+silence this store's error paths exist to prevent, and the reason the queue
+reports its failures through `onError` rather than swallowing them. Refusal
+names what happened (`invalid-request`, the code every other refusal in the
+store uses), and it can only reach a frame the reload was supposed to have
+retired: dispose revokes the handlers before the drain runs.
+
+**Held by** `packages/iris-app-service/tests/script-variables-flush.test.ts`:
+the abandoned write on disk after `flush` returns, the idle store that minted
+no file, the refused late write with file and memory both unchanged, and the
+structural check on `index.ts`'s disposer — verified to have teeth by
+removing the call, which turns it red.
