@@ -311,15 +311,20 @@ export const requestSchemas = {
    */
   'plugin.cancelInstall': z.object({ previewToken: z.string().min(1).max(200) }),
   /**
-   * **Reserved, not implemented** (§12 ruling 2, 2026-09-15).
+   * Ask the host to update one installed `git` row to a new commit.
    *
-   * The owner ruled that the method name and its request shape exist now —
-   * so a client can be written against the shape the update transaction will
-   * have, and so the shape is decided once rather than under deadline — while
-   * this round's update path stays "uninstall, then install again through the
-   * full consent step". The handler and the fake both refuse with
-   * `unsupported`, naming the ruling; there is no half-built promotion behind
-   * it.
+   * Implemented as of the 2026-09-15 second batch, U1 (`docs/SYSTEM-PLUGIN-INSTALL.md`
+   * §5.4): the request shape is the one ruled on when the method was still
+   * reserved — a catalog id and a full 40-hex commit, nothing else. The remote
+   * is not a parameter; it is read from the row's own provenance, so the user
+   * can only ever pull from the source the row was installed from. The method
+   * walks the **same preview path as a fresh install** — stage, contract,
+   * hash, manifest — and answers a `SystemPluginInstallPreview` carrying
+   * `updateOf`; the consent step is the existing `plugin.confirmInstall`. It
+   * refuses `dev` and `builtin` rows with `unsupported` (a dev tree is loaded
+   * in place; editing its files **is** the update) and an unknown id with
+   * `not-found`. The preview alone replaces nothing: until the user confirms,
+   * the installed tree and its catalog row are untouched.
    */
   'plugin.update': z.object({ id: PLUGIN_PACKAGE_ID, commit: PLUGIN_GIT_COMMIT }),
   /** The ST-compat plane reports an extension frame is live at this revision. */
@@ -2401,14 +2406,16 @@ export interface RpcResponseMap {
   'plugin.confirmInstall': SystemPluginSnapshot
   'plugin.cancelInstall': { ok: true }
   /**
-   * The shape the reserved update transaction will answer with when it is
-   * built — the same snapshot every other lifecycle method returns, because
-   * an update changes one catalog row and nothing else. Today the handler
-   * always refuses, so nothing ever produces this value; it is typed anyway,
-   * because a reserved slot whose response type was `never` would be a slot
-   * no client could be written against, which is the opposite of reserving it.
+   * Why this answers a preview and not the snapshot the other lifecycle
+   * methods return: an update **must not** change the tree by itself. A
+   * snapshot would mean the method had already promoted the new bytes, which
+   * would make it a consent path that bypasses the consent page (`§12`
+   * ruling 3: no accepting current bytes in one click). The staged preview —
+   * carrying `updateOf` so the page can show "from this commit to that one" —
+   * is the offer; `plugin.confirmInstall` under the already-installed id is
+   * the consent, and only it moves the tree.
    */
-  'plugin.update': SystemPluginSnapshot
+  'plugin.update': SystemPluginInstallPreview
   'stCompat.plane.attach': { ok: true }
   'stCompat.plane.detach': { ok: true }
   'stCompat.submit': { accepted: boolean, why?: string }

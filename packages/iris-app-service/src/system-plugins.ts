@@ -516,6 +516,70 @@ export class SystemPluginRuntime {
   }
 
   /**
+   * Swap an installed `removable` row's definition and provenance for the next
+   * generation's — the update transaction's catalog half
+   * (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4).
+   *
+   * The differences from `adoptInstalled` are exactly three: the id must
+   * already be in the catalog (and be `removable` — a builtin row's definition
+   * is this build's own bytes and cannot be swapped out from under it); the
+   * lifecycle fields `installed` / `enabled` / `status` / `incarnation` are
+   * untouched, which is where "an update preserves `enabled`" actually
+   * happens; and the persisted row is updated through `#remember`, which
+   * patches the provenance keys without erasing the lifecycle booleans. The
+   * caller must already have disabled the row — replacing a definition under a
+   * live activation would leave the old fiber running bytes the record no
+   * longer names — and that is asserted here, not trusted.
+   *
+   * A typed failure on the row is cleared with the definition: every one of
+   * the six states is a verdict about specific bytes, re-derived at boot from
+   * the tree and the record, and the tree this replaces was just re-fetched
+   * and re-hashed by the caller. Keeping the verdict would make `enable`
+   * refuse the new generation with the old generation's `tampered` — the
+   * blocking check reads `#failures` before its own clearing, and there is no
+   * other place to retire a verdict whose bytes are gone.
+   */
+  replaceInstalled(raw: SystemPluginDefinition, record: InstalledPluginRecord): Promise<SystemPluginSnapshot> {
+    return this.#serialize(async () => {
+      this.#assertWritable()
+      if (raw.apiVersion !== 1) throw new TypeError(`system plugin "${String(raw.id)}" uses unsupported API version`)
+      const dependencies = [...new Set(raw.dependencies ?? [])]
+      if (dependencies.includes(raw.id)) throw new TypeError(`system plugin "${raw.id}" depends on itself`)
+      const plugin = this.#plugins.get(raw.id)
+      if (plugin === undefined) {
+        throw new AppError('invalid-request', `system plugin "${raw.id}" is not in this profile's catalog`)
+      }
+      if (!plugin.removable) {
+        throw new AppError(
+          'invalid-request',
+          `system plugin "${raw.id}" is not a removable row; a builtin definition cannot be replaced`,
+        )
+      }
+      if (this.isEnabled(raw.id)) {
+        throw new AppError('busy', `system plugin "${raw.id}" must be disabled before its definition is replaced`)
+      }
+      const before = this.#persisted.get(raw.id)
+      this.#remember(raw.id, record)
+      const revision = this.#revision + 1
+      try {
+        await this.#write(revision)
+      } catch (error: unknown) {
+        if (before === undefined) this.#persisted.delete(raw.id)
+        else this.#persisted.set(raw.id, before)
+        throw new AppError(
+          'internal',
+          `system plugin "${raw.id}" could not be recorded: ${messageOf(error)}`,
+        )
+      }
+      this.#revision = revision
+      plugin.definition = { ...raw, dependencies }
+      this.#failures.delete(raw.id)
+      this.#notify()
+      return this.snapshot()
+    })
+  }
+
+  /**
    * Put a named failure on a row and stop it running.
    *
    * Six of the seven states are the whole vocabulary here (§1 goal 4): a
