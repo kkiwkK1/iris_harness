@@ -95,7 +95,18 @@ export function sandboxPluginRuntime(
     for (const plugin of snapshot.plugins) {
       if (!running(plugin)) continue
       const entry = assets.plugins[plugin.id]
-      if (entry !== undefined) plugins[plugin.id] = entry
+      if (entry !== undefined) {
+        // The frame meta carries only the loadable face: `rev` and `client`.
+        // The copy tables are the shell's (the runtime overlay reads them; no
+        // card reads the shell's dictionary), and the meta is load-bearing —
+        // projecting here keeps the frame contract unchanged as the row
+        // grows, instead of teaching every frame to ignore a field it must
+        // never act on.
+        plugins[plugin.id] = {
+          rev: entry.rev,
+          ...(entry.client !== undefined ? { client: entry.client } : {}),
+        }
+      }
     }
   }
   return { revision: snapshot.revision, tavernHelper, mvu, plugins }
@@ -163,10 +174,14 @@ function parsePluginRows(value: unknown): Record<string, PluginAssetEntry> {
     if (typeof rev !== 'string' || !/^[0-9a-f]{12}$/.test(rev)) {
       throw new Error(`iris sandbox: the snapshot row for plugin "${id}" has an invalid rev`)
     }
-    if (typeof client !== 'string' || !client.startsWith(`${PLUGIN_ASSET_PREFIX}/`)) {
+    // A row without a client is a copy-only plugin (U5): it admits no script
+    // tag, and the frame is none the wiser. An unknown extra key — the copy
+    // tables, should a shell ever write them — is dropped by the rebuild,
+    // which is the projection the frame contract states.
+    if (client !== undefined && (typeof client !== 'string' || !client.startsWith(`${PLUGIN_ASSET_PREFIX}/`))) {
       throw new Error(`iris sandbox: the snapshot row for plugin "${id}" has a client URL outside ${PLUGIN_ASSET_PREFIX}`)
     }
-    rows[id] = { rev, client }
+    rows[id] = { rev, ...(client !== undefined ? { client } : {}) }
   }
   return rows
 }
@@ -196,11 +211,22 @@ export interface PluginAssetEntry {
   /**
    * Content rev of the client bundle: sha1 of its bytes, first 12 hex
    * characters — the shape dsh's own client-module routes use, so bundles
-   * and manifests composed by either half interoperate.
+   * and manifests composed by either half interoperate. When the row carries
+   * no `client`, this is the rev of what the row *does* carry: the copy.
    */
   rev: string
-  /** The bundle's URL, rev included as its cache-busting query. */
-  client: string
+  /**
+   * The bundle's URL, rev included as its cache-busting query. Optional since
+   * U5: a plugin can ship interface copy and no browser code, and such a row
+   * is real — the frame writes no script tag for it.
+   */
+  client?: string
+  /**
+   * The plugin's bundled interface copy, both languages, when the package
+   * ships any. The shell's runtime overlay reads these; a card frame never
+   * sees the field — the frame meta projects rows down to `{ rev, client }`.
+   */
+  i18n?: Record<'en' | 'zh', string>
 }
 
 /**
@@ -262,14 +288,34 @@ export function parsePluginAssetManifest(text: string): PluginAssetManifest | st
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
       return `the row for plugin "${id}" is not an object`
     }
-    const { rev, client } = entry as Record<string, unknown>
+    const { rev, client, i18n } = entry as Record<string, unknown>
     if (typeof rev !== 'string' || !/^[0-9a-f]{12}$/.test(rev)) {
       return `the row for plugin "${id}" has an invalid rev`
     }
-    if (typeof client !== 'string' || !client.startsWith(`${PLUGIN_ASSET_PREFIX}/`)) {
+    // A row without a client is a copy-only plugin (U5) and is accepted; the
+    // copy tables, when present, are held to the same prefix rule as the
+    // bundle URL and must carry both languages — the host writes the row
+    // all-or-nothing, and a parser that tolerated a one-language row would
+    // make English readers fall back to key names on a half-published copy.
+    if (client !== undefined && (typeof client !== 'string' || !client.startsWith(`${PLUGIN_ASSET_PREFIX}/`))) {
       return `the row for plugin "${id}" has a client URL outside ${PLUGIN_ASSET_PREFIX}`
     }
-    plugins[id] = { rev, client }
+    let copy: Record<'en' | 'zh', string> | undefined
+    if (i18n !== undefined) {
+      if (typeof i18n !== 'object' || i18n === null || Array.isArray(i18n)) {
+        return `the row for plugin "${id}" has an invalid i18n record`
+      }
+      const tables = i18n as Record<string, unknown>
+      copy = {} as Record<'en' | 'zh', string>
+      for (const lang of ['en', 'zh'] as const) {
+        const url: unknown = tables[lang]
+        if (typeof url !== 'string' || !url.startsWith(`${PLUGIN_ASSET_PREFIX}/`)) {
+          return `the row for plugin "${id}" has an i18n.${lang} URL outside ${PLUGIN_ASSET_PREFIX}`
+        }
+        copy[lang] = url
+      }
+    }
+    plugins[id] = { rev, ...(client !== undefined ? { client } : {}), ...(copy !== undefined ? { i18n: copy } : {}) }
   }
   return { revision: bag['revision'], plugins }
 }

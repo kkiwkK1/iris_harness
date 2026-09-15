@@ -785,10 +785,13 @@ export function buildSrcdoc(
      * same way it does for the member table and the preset above; the URL is
      * the row's own rev-keyed client URL, immutable per content, so a frame's
      * tags and its snapshot can never disagree about which bytes a plugin's
-     * name answers for.
+     * name answers for. A row without a `client` is a copy-only plugin
+     * (U5): it admits no tag at all.
      */
-    ...Object.entries(systemPlugins.plugins ?? {}).map(([pluginId, entry]) =>
-      `<script src="${attribute(entry.client)}" crossorigin="anonymous" data-iris-plugin="${attribute(pluginId)}"></script>`,
+    ...Object.entries(systemPlugins.plugins ?? {}).flatMap(([pluginId, entry]) =>
+      entry.client === undefined ? [] : [
+        `<script src="${attribute(entry.client)}" crossorigin="anonymous" data-iris-plugin="${attribute(pluginId)}"></script>`,
+      ],
     ),
     /*
      * `crossorigin="anonymous"`, and it only works as **one half of a pair**.

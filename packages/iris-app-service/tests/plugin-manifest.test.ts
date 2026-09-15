@@ -6,8 +6,10 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { Installer } from '@iris/extension-installer'
+import { PLUGIN_COPY_LIMITS } from '@iris/text'
 
 import {
+  auditPluginCopy,
   checkPluginApiVersion,
   parsePluginManifest,
   parsePluginManifestValue,
@@ -103,6 +105,11 @@ test('every manifest-invalid result names the field, one case per field spelling
     { field: 'host', value: validPackage({}, { host: undefined }), note: 'required' },
     { field: 'host', value: validPackage({}, { host: '' }), note: 'empty' },
     { field: 'client', value: validPackage({}, { client: 12 }), note: 'optional, but typed when present' },
+    { field: 'i18n', value: validPackage({}, { i18n: 'copy' }), note: 'the copy block is an object of two tables' },
+    { field: 'i18n.en', value: validPackage({}, { i18n: { zh: 'i18n/zh.json' } }), note: 'U5 ruling 1: once present, both languages, the missing one named' },
+    { field: 'i18n.zh', value: validPackage({}, { i18n: { en: 'i18n/en.json' } }), note: 'U5 ruling 1, the other column' },
+    { field: 'i18n.en', value: validPackage({}, { i18n: { en: '../escape.json', zh: 'zh.json' } }), note: 'copy paths follow the host/client grammar' },
+    { field: 'i18n.zh', value: validPackage({}, { i18n: { en: 'en.json', zh: 'C:/abs/zh.json' } }), note: 'absolute copy paths refused' },
     { field: 'displayName', value: validPackage({}, { displayName: undefined }), note: 'the consent page needs a name' },
     { field: 'description', value: validPackage({}, { description: '   ' }), note: 'whitespace is not a description' },
     { field: 'capabilities', value: validPackage({}, { capabilities: 'demo.state' }), note: 'a list, not a string' },
@@ -136,6 +143,7 @@ test('every manifest-invalid result names the field, one case per field spelling
     [
       'apiVersion', 'capabilities', 'capabilities[0]', 'capabilities[1]', 'client',
       'dependencies', 'dependencies[0]', 'description', 'displayName', 'host',
+      'i18n', 'i18n.en', 'i18n.zh',
       'id', 'iris', 'iris.plugin', 'package.json', 'permissions', 'permissions[0]',
       'permissions[1]', 'version',
     ],
@@ -399,4 +407,191 @@ test('the system-plugin contract installs a plugin tree and refuses an ST one', 
     (err: unknown) => err instanceof PluginManifestError && err.state === 'manifest-invalid' && err.field === PLUGIN_MANIFEST_FILE,
   )
   assert.deepEqual(await fsp.readdir(path.join(root, 'plugin-store', 'installed')), [])
+})
+
+// --- bundled copy: the manifest half and the content audit ------------------
+
+/** A package whose copy block names the conventional table paths. */
+function withCopy(i18nOverrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return validPackage({}, {
+    i18n: { en: 'i18n/en.json', zh: 'i18n/zh.json', ...i18nOverrides },
+  })
+}
+
+async function writeCopyPackage(root: string, en: unknown, zh: unknown): Promise<string> {
+  const extra = new Map<string, string>()
+  if (en !== undefined) extra.set('i18n/en.json', typeof en === 'string' ? en : JSON.stringify(en))
+  if (zh !== undefined) extra.set('i18n/zh.json', typeof zh === 'string' ? zh : JSON.stringify(zh))
+  return await writePackage(path.join(root, 'pkg'), withCopy(), extra)
+}
+
+test('the i18n entries go through the same filesystem half as host and client', async () => {
+  const root = await tempRoot()
+  const missingEn = await writePackage(
+    path.join(root, 'missing-en'),
+    withCopy(),
+    new Map([['i18n/zh.json', JSON.stringify({ greeting: '你好' })]]),
+  )
+  assert.equal(field(await parsePluginManifest(missingEn)), 'i18n.en')
+
+  const missingZh = await writePackage(
+    path.join(root, 'missing-zh'),
+    withCopy(),
+    new Map([['i18n/en.json', JSON.stringify({ greeting: 'hello' })]]),
+  )
+  assert.equal(field(await parsePluginManifest(missingZh)), 'i18n.zh')
+
+  const dirEntry = await writePackage(
+    path.join(root, 'dir'),
+    withCopy(),
+    new Map([
+      ['i18n/en.json', JSON.stringify({ greeting: 'hello' })],
+      ['i18n/zh.json/nested.js', 'x'],
+    ]),
+  )
+  const asDir = await parsePluginManifest(dirEntry)
+  assert.equal(field(asDir), 'i18n.zh')
+  assert.match(asDir.ok ? '' : asDir.reason, /not a regular file/u)
+})
+
+test('clean two-column copy audits to the total string count', async () => {
+  const dir = await writeCopyPackage(
+    path.join(await tempRoot(), 'clean'),
+    { greeting: 'hello {name}', send: 'Send' },
+    { greeting: '你好，{name}', send: '发送' },
+  )
+  const parsed = await parsePluginManifest(dir)
+  assert.equal(parsed.ok, true, parsed.ok ? '' : `${parsed.field}: ${parsed.reason}`)
+  if (!parsed.ok) return
+  const audit = await auditPluginCopy(dir, parsed.manifest)
+  assert.deepEqual(audit, { ok: true, keys: 4 })
+})
+
+test('the content audit refuses placeholder drift, naming the key (U5 T2)', async () => {
+  const dir = await writeCopyPackage(
+    path.join(await tempRoot(), 'drift'),
+    { greeting: 'hello {name}' },
+    { greeting: '你好' },
+  )
+  const parsed = await parsePluginManifest(dir)
+  assert.ok(parsed.ok)
+  if (!parsed.ok) return
+  const audit = await auditPluginCopy(dir, parsed.manifest)
+  assert.equal(audit.ok, false)
+  if (audit.ok) return
+  assert.equal(audit.field, 'i18n.zh.greeting', 'the refusal points at the key, not just the column')
+  assert.match(audit.reason, /placeholder drift on "greeting"/u)
+})
+
+test('the content audit refuses an all-English zh column (U5 T3)', async () => {
+  const dir = await writeCopyPackage(
+    path.join(await tempRoot(), 'english'),
+    { greeting: 'hello' },
+    { greeting: 'hello' },
+  )
+  const parsed = await parsePluginManifest(dir)
+  assert.ok(parsed.ok)
+  if (!parsed.ok) return
+  const audit = await auditPluginCopy(dir, parsed.manifest)
+  assert.equal(audit.ok, false)
+  if (audit.ok) return
+  assert.equal(audit.field, 'i18n.zh.greeting')
+  assert.match(audit.reason, /has no Chinese/u)
+})
+
+test('the content audit refuses a broken table: bad JSON, wrong type, bad key', async () => {
+  const root = await tempRoot()
+  const brokenJson = await writePackage(
+    path.join(root, 'json'),
+    withCopy(),
+    new Map([['i18n/en.json', '{"greeting": '], ['i18n/zh.json', JSON.stringify({ greeting: '你好' })]]),
+  )
+  const jsonParsed = await parsePluginManifest(brokenJson)
+  assert.ok(jsonParsed.ok)
+  if (!jsonParsed.ok) return
+  const jsonAudit = await auditPluginCopy(brokenJson, jsonParsed.manifest)
+  assert.equal(jsonAudit.ok, false)
+  if (!jsonAudit.ok) {
+    assert.equal(jsonAudit.field, 'i18n.en')
+    assert.match(jsonAudit.reason, /not valid JSON/u)
+  }
+
+  const arrayTable = await writeCopyPackage(
+    path.join(root, 'array'),
+    { greeting: 'hello' },
+    JSON.stringify(['你好']),
+  )
+  const arrayParsed = await parsePluginManifest(arrayTable)
+  assert.ok(arrayParsed.ok)
+  if (!arrayParsed.ok) return
+  const arrayAudit = await auditPluginCopy(arrayTable, arrayParsed.manifest)
+  assert.equal(arrayAudit.ok, false)
+  if (!arrayAudit.ok) {
+    assert.equal(arrayAudit.field, 'i18n.zh')
+    assert.match(arrayAudit.reason, /expected a JSON object/u)
+  }
+
+  const badKey = await writeCopyPackage(
+    path.join(root, 'key'),
+    { '1bad': 'one bad' },
+    { greeting: '你好' },
+  )
+  const keyParsed = await parsePluginManifest(badKey)
+  assert.ok(keyParsed.ok)
+  if (!keyParsed.ok) return
+  const keyAudit = await auditPluginCopy(badKey, keyParsed.manifest)
+  assert.equal(keyAudit.ok, false)
+  if (!keyAudit.ok) {
+    assert.equal(keyAudit.field, 'i18n.en.1bad')
+    assert.match(keyAudit.reason, /does not match/u)
+  }
+})
+
+test('the copy ceilings are overridable so the refusals are reachable (U5 T12)', async () => {
+  const dir = await writeCopyPackage(
+    path.join(await tempRoot(), 'limits'),
+    { greeting: 'hello', send: 'send' },
+    { greeting: '你好', send: '发送' },
+  )
+  const parsed = await parsePluginManifest(dir)
+  assert.ok(parsed.ok)
+  if (!parsed.ok) return
+
+  const byKeys = await auditPluginCopy(dir, parsed.manifest, { ...PLUGIN_COPY_LIMITS, maxKeys: 1 })
+  assert.equal(byKeys.ok, false)
+  if (!byKeys.ok) {
+    assert.equal(byKeys.field, 'i18n.en', 'the ceiling names the column')
+    assert.match(byKeys.reason, /over the 1-string limit/u)
+  }
+
+  const byBytes = await auditPluginCopy(dir, parsed.manifest, { ...PLUGIN_COPY_LIMITS, maxBytes: 10 })
+  assert.equal(byBytes.ok, false)
+  if (!byBytes.ok) {
+    assert.equal(byBytes.field, 'i18n.en')
+    assert.match(byBytes.reason, /-byte limit/u)
+  }
+})
+
+test('the artifact contract refuses drifting copy before anything is hashed', async () => {
+  const root = await tempRoot()
+  const pkg = await writeCopyPackage(
+    path.join(root, 'pkg'),
+    { greeting: 'hello {name}' },
+    { greeting: '你好' },
+  )
+  const installer = await Installer.create(path.join(root, 'store'))
+  await assert.rejects(
+    installer.installAs('demo', { kind: 'local-directory', directoryPath: pkg }, { artifactContract: SYSTEM_PLUGIN_ARTIFACT_CONTRACT }),
+    (err: unknown) => err instanceof PluginManifestError && err.state === 'manifest-invalid' && err.field === 'i18n.zh.greeting',
+  )
+  assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'installed')), [], 'a refused tree is never promoted')
+})
+
+test('a manifest without i18n audits clean with zero keys', async () => {
+  const dir = await writePackage(path.join(await tempRoot(), 'plain'), validPackage())
+  const parsed = await parsePluginManifest(dir)
+  assert.ok(parsed.ok)
+  if (!parsed.ok) return
+  assert.equal('i18n' in parsed.manifest, false, 'an absent copy block is absent, not undefined')
+  assert.deepEqual(await auditPluginCopy(dir, parsed.manifest), { ok: true, keys: 0 })
 })

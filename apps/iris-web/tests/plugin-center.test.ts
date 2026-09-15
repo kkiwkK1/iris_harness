@@ -292,10 +292,11 @@ test('every failure state, every source badge and the consent page read in both 
     permissions: ['provide-capability', 'register-rpc'],
     dependencies: ['tavern-helper'],
     hasClient: true,
+    i18n: { keys: 4, languages: ['en', 'zh'] },
     warnings: ['a declared dependency is not in this profile'],
   }
   const consent = harness.renderConsent(preview)
-  const shown = new Set([...consent.matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]!))
+  const shown = new Set([...consent.matchAll(/data-consent-field="([a-zA-Z0-9]+)"/g)].map(match => match[1]!))
   const expected = Object.keys(preview).filter(key => key !== 'previewToken')
   assert.ok(expected.length >= 18, `a git preview carries at least 18 displayable fields, saw ${String(expected.length)}`)
   assert.deepEqual(expected.filter(key => !shown.has(key)), [], 'preview fields the consent page never renders')
@@ -325,7 +326,7 @@ test('every failure state, every source badge and the consent page read in both 
   assert.match(devConsent, /这是宿主代码/, 'the Chinese consent page does not say this is same-privilege code')
   assert.match(devConsent, /不是 Iris 强制的边界/, 'the Chinese permissions note is missing')
   assert.doesNotMatch(devConsent, /data-consent-confirm[^>]*disabled=""/, 'a compatible package cannot be confirmed')
-  const devShown = new Set([...devConsent.matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]!))
+  const devShown = new Set([...devConsent.matchAll(/data-consent-field="([a-zA-Z0-9]+)"/g)].map(match => match[1]!))
   assert.ok(devShown.has('path'), 'the dev consent page hides the directory it would load from')
   assert.ok(!devShown.has('remote') && !devShown.has('commit'), 'a dev package rendered a remote it does not have')
 })

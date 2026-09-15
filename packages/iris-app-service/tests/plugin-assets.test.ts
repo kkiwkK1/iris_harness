@@ -247,3 +247,132 @@ test('a HEAD asks the same question and gets no body', async (t) => {
   assert.equal(headers()['content-length'], 19)
   assert.equal(body(), undefined)
 })
+
+// --- bundled copy: the third asset shape (U5) --------------------------------
+
+/** An install directory that also carries one plugin's copy tables. */
+async function copyInstallDir(t: TestContext): Promise<string> {
+  const dir = await installDir(t)
+  await mkdir(join(dir, 'demo', 'i18n'), { recursive: true })
+  await writeFile(join(dir, 'demo', 'i18n', 'en.json'), '{"panelTitle":"Panel {name}","send":"Send"}', 'utf8')
+  await writeFile(join(dir, 'demo', 'i18n', 'zh.json'), '{"panelTitle":"面板 {name}","send":"发送"}', 'utf8')
+  return dir
+}
+
+test('a copy-only plugin gets a manifest row without a client URL', async (t) => {
+  const dir = await installDir(t)
+  // "other" loses its bundle but keeps a copy: the row survives, client-less.
+  await mkdir(join(dir, 'other', 'i18n'), { recursive: true })
+  await writeFile(join(dir, 'other', 'i18n', 'en.json'), '{"name":"Other"}', 'utf8')
+  await writeFile(join(dir, 'other', 'i18n', 'zh.json'), '{"name":"另一个"}', 'utf8')
+  await rm(join(dir, 'other', 'client', 'client.js'))
+
+  const store = new PluginAssetStore(dir)
+  const manifest = await store.manifest(state(7, 'other'))
+  const entry = manifest.plugins['other']
+  assert.ok(entry !== undefined, 'a copy-only plugin must still get a row')
+  assert.equal(entry.client, undefined)
+  assert.match(entry.i18n?.['en'] ?? '', /^\/plugins\/other\/i18n\/en\.json\?rev=[0-9a-f]{12}$/)
+  assert.match(entry.i18n?.['zh'] ?? '', /^\/plugins\/other\/i18n\/zh\.json\?rev=[0-9a-f]{12}$/)
+})
+
+test('a half-published copy is no copy: the row falls back, all-or-nothing', async (t) => {
+  const dir = await copyInstallDir(t)
+  await rm(join(dir, 'demo', 'i18n', 'zh.json'))
+
+  const store = new PluginAssetStore(dir)
+  const manifest = await store.manifest(state(7, 'demo'))
+  const entry = manifest.plugins['demo']
+  // The bundle keeps the row alive; the copy tables are withheld whole, so no
+  // reader lands on the overlay's key-name fallback from a half-published copy.
+  assert.ok(entry !== undefined)
+  assert.ok(entry.client !== undefined)
+  assert.equal(entry.i18n, undefined)
+})
+
+test('a copy file serves under the bundle gates, with its own rev (U5 T4 inside)', async (t) => {
+  const dir = await copyInstallDir(t)
+  const store = new PluginAssetStore(dir)
+  const zhBytes = '{"panelTitle":"面板 {name}","send":"发送"}'
+  const zhRev = revOf(zhBytes)
+  const view = flipper(state(7, 'demo'))
+
+  const revved = capture()
+  await store.serve(request(`/plugins/demo/i18n/zh.json?rev=${zhRev}`), revved.res, view)
+  assert.equal(revved.status(), 200)
+  assert.equal(revved.headers()['content-type'], 'application/json; charset=utf-8')
+  assert.equal(revved.headers()['cache-control'], 'public, max-age=31536000, immutable')
+
+  const unrevved = capture()
+  await store.serve(request('/plugins/demo/i18n/zh.json'), unrevved.res, view)
+  assert.equal(unrevved.status(), 200)
+  assert.equal(unrevved.headers()['cache-control'], 'no-cache', 'a copy URL without its own rev revalidates')
+
+  // Language names are matched verbatim against PLUGIN_COPY_LANGUAGES: an
+  // unknown language, a non-language name, or a climb is a 404, not a read.
+  for (const url of [
+    '/plugins/demo/i18n/fr.json',
+    '/plugins/demo/i18n/json',
+    '/plugins/demo/i18n/..%2Fsecret.txt',
+    '/plugins/secret.txt/i18n/en.json',
+  ]) {
+    const refused = capture()
+    await store.serve(request(url), refused.res, view)
+    assert.equal(refused.status(), 404, url)
+    assert.deepEqual(refused.body(), undefined)
+  }
+
+  // A disabled plugin's copy stops answering, the same transition the bundle
+  // answers to — one gate, both asset shapes.
+  view.set(state(8))
+  const disabled = capture()
+  await store.serve(request(`/plugins/demo/i18n/zh.json?rev=${zhRev}`), disabled.res, view)
+  assert.equal(disabled.status(), 404, 'a disabled plugin serves no copy')
+
+  // And the manifest's row is gone with the same state change.
+  const manifest = await store.manifest(state(8))
+  assert.equal(manifest.plugins['demo'], undefined)
+})
+
+test('one file, one rev: rewriting zh leaves the en address alone', async (t) => {
+  const dir = await copyInstallDir(t)
+  const store = new PluginAssetStore(dir)
+
+  const before = await store.manifest(state(1, 'demo'))
+  const beforeEn = before.plugins['demo']!.i18n!['en']
+
+  await writeFile(join(dir, 'demo', 'i18n', 'zh.json'), '{"panelTitle":"面板（新）","send":"发送"}', 'utf8')
+  const after = await store.manifest(state(1, 'demo'))
+  const afterEn = after.plugins['demo']!.i18n!['en']
+  const afterZh = after.plugins['demo']!.i18n!['zh']
+
+  assert.equal(afterEn, beforeEn, 'unchanged bytes keep their address — the cache holds')
+  assert.notEqual(afterZh, before.plugins['demo']!.i18n!['zh'], 'changed bytes change address')
+})
+
+test('the host manifest survives the wire parser with its copy intact (U5 T10)', async (t) => {
+  // The seam the task sheet warns about: the host writes JSON, the shell
+  // parses JSON, and both parsers rebuild rows field by field — so only an
+  // end-to-end assertion over the actual bytes catches a field dropped in
+  // between. Each side green alone proves nothing about the pair.
+  const dir = await copyInstallDir(t)
+  const store = new PluginAssetStore(dir)
+  const body = JSON.stringify(await store.manifest(state(9, 'demo')))
+
+  const { parsePluginAssetManifest } = await import('@iris/plugin-web-api')
+  const parsed = parsePluginAssetManifest(body)
+  assert.ok(typeof parsed !== 'string', 'the host manifest must parse')
+  if (typeof parsed === 'string') return
+  const entry = parsed.plugins['demo']
+  assert.ok(entry !== undefined)
+  assert.ok(entry.client !== undefined)
+  assert.match(entry.i18n?.['zh'] ?? '', /^\/plugins\/demo\/i18n\/zh\.json\?rev=[0-9a-f]{12}$/)
+
+  // And the copy-only shape round-trips too: client absent is client absent.
+  const copyOnly = { revision: 1, plugins: { solo: { rev: 'a'.repeat(12), i18n: { en: '/plugins/solo/i18n/en.json?rev=' + 'b'.repeat(12), zh: '/plugins/solo/i18n/zh.json?rev=' + 'c'.repeat(12) } } } }
+  const soloParsed = parsePluginAssetManifest(JSON.stringify(copyOnly))
+  assert.ok(typeof soloParsed !== 'string', 'the copy-only manifest must parse')
+  if (typeof soloParsed === 'string') return
+  assert.equal(soloParsed.plugins['solo']!.client, undefined)
+  assert.ok(soloParsed.plugins['solo']!.i18n !== undefined)
+})

@@ -486,6 +486,10 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
       if (!(plugin.installed && plugin.enabled && plugin.status === 'enabled')) continue
       const entry = manifest.plugins[plugin.id]
       if (entry === undefined) continue
+      // A copy-only row has no browser bundle and no probe: the copy it
+      // carries is read by the shell's overlay, not by a frame.
+      const clientUrl = entry.client
+      if (clientUrl === undefined) continue
       const cached = probes[plugin.id]
       const selectedForRetry = retryRequest.pluginId === undefined || retryRequest.pluginId === plugin.id
       const shouldProbe = shouldProbeClient({
@@ -502,7 +506,7 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
       }
       void (async (): Promise<void> => {
         try {
-          const response = await fetch(entry.client)
+          const response = await fetch(clientUrl)
           const text = response.ok ? await response.text() : undefined
           const probe = classifyClientResponse(response.status, text, entry.rev)
           if (!stale) setProbes(current => ({ ...current, [plugin.id]: probe }))
@@ -552,6 +556,14 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
         } else {
           statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
         }
+        continue
+      }
+      if (manifest.plugins[plugin.id]?.client === undefined) {
+        // A copy-only row (U5): the plugin ships no browser bundle, so there
+        // is nothing for a frame to load and nothing to probe. The row is
+        // real — its rev is the copy's — and its copy feeds the shell's
+        // overlay, not this column.
+        statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, actualRevision: manifest.plugins[plugin.id]?.rev, error: undefined, loadedAt: undefined }
         continue
       }
       const probe = probes[plugin.id]

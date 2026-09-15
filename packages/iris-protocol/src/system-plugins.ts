@@ -153,6 +153,13 @@ export interface SystemPluginInstallPreview {
   permissions: string[]
   dependencies: string[]
   hasClient: boolean
+  /**
+   * The package's bundled interface copy, present only when the manifest
+   * declares it: how many strings, in which languages. The languages are
+   * fixed at two today; the audit of the copy happens before this page, so
+   * the field states what the package carries and promises nothing else.
+   */
+  i18n?: { keys: number, languages: string[] }
   /** Things the user should see before consenting that are not refusals — a dependency this profile does not have, an id already taken. */
   warnings: string[]
 }

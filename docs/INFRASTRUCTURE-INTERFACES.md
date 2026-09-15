@@ -213,14 +213,14 @@ plugin 域从 6 涨到 10 是 PR-2 的四个安装方法（`previewInstall` / `c
 | 名称 | 参数/返回 | 语义 |
 | --- | --- | --- |
 | `SandboxPluginRuntime` | `{ revision, tavernHelper, mvu, plugins }` | 一次 iframe 生命周期固定的能力快照。`plugins` 是第三方的一半：`Record<id, { rev, client }>`，空记录是常态；两个布尔仍单列，它们是兼容**面**（TH 表面是否装配），`plugins` 是**在场**（这一帧里还有谁） |
-| `sandboxPluginRuntime(snapshot, assets?)` | 快照或 undefined | 仅 installed/enabled/status 三者一致才开放；MVU 要求 TH 启用；快照决定**是否**在场，清单只提供**字节在哪**——快照不跑的行被丢弃，跑着但清单无行的插件照样在场但不带 URL |
+| `sandboxPluginRuntime(snapshot, assets?)` | 快照或 undefined | 仅 installed/enabled/status 三者一致才开放；MVU 要求 TH 启用；快照决定**是否**在场，清单只提供**字节在哪**——快照不跑的行被丢弃，跑着但清单无行的插件照样在场但不带 URL。帧 meta 只**投影** `{ rev, client }` 两个键：i18n 是壳侧覆盖层的东西，不进帧 |
 | `SYSTEM_PLUGIN_RUNTIME_META` | `iris-system-plugins` | srcdoc writer 与 bootstrap reader 共用的 meta 名 |
 | `encodeSandboxPluginRuntime(runtime)` | JSON 字符串 | 调用方放入 HTML 属性前仍须做属性转义 |
-| `parseSandboxPluginRuntime(text)` | runtime 或抛错 | 拒绝缺失、坏 JSON、非法 revision、MVU 单独启用；`plugins` **缺失**按空记录容忍（旧 shell），**存在**则逐行严格校验（rev 须 12 位十六进制，client 须在 `/plugins/` 前缀下） |
+| `parseSandboxPluginRuntime(text)` | runtime 或抛错 | 拒绝缺失、坏 JSON、非法 revision、MVU 单独启用；`plugins` **缺失**按空记录容忍（旧 shell），**存在**则逐行严格校验（rev 须 12 位十六进制，client **可缺**——纯文案插件没有 script 标签——存在则须在 `/plugins/` 前缀下；行重建时只保留 `{ rev, client }`，i18n 不进帧） |
 | `fenceFrameParams(params, revision)` | payload | 为对象参数附加/覆盖 pluginRevision；非对象原样返回 |
 | `DEFAULT_SANDBOX_PLUGIN_RUNTIME` | revision 0、两内置启用、`plugins` 为空 | 仅旧直接构造路径兼容默认；实时 UI 不得用它代替加载失败的权威快照 |
 | `PLUGIN_ASSET_PREFIX` / `PLUGIN_ASSET_MANIFEST_PATH` | `/plugins`、`/plugins/manifest.json` | 固定不可配置：两侧必须拼一样的字面量 |
-| `PluginAssetEntry` / `PluginAssetManifest` | `{ rev, client }` / `{ revision, plugins }` | 聚合清单的形状 |
+| `PluginAssetEntry` / `PluginAssetManifest` | `{ rev, client?, i18n? }` / `{ revision, plugins }` | 聚合清单的形状。`client` 可缺（U5 起：只带文案、不带浏览器代码的插件也有行）；`i18n` 是 `Record<'en'\|'zh', string>` 的 rev 化文案 URL，两列要么全在要么全无 |
 | `parsePluginAssetManifest(text)` | 清单或**原因字符串** | 不抛错，返回可直接写进错误句子的原因 |
 
 ### `/plugins` 资产面
@@ -228,12 +228,12 @@ plugin 域从 6 涨到 10 是 PR-2 的四个安装方法（`previewInstall` / `c
 | 项 | 事实 |
 | --- | --- |
 | 路由 | 前缀路由挂在 `irisRpc.guard` 之后，**无条件注册**（`packages/iris-app-service/src/index.ts:1429`），每次请求现读控制面状态 |
-| 安装目录 | `<dataDir>/system-plugins/<id>/client/client.js`（`.map` 同目录） |
-| 内容 rev | bundle 字节的 sha1 前 12 位十六进制（`packages/iris-app-service/src/plugin-assets.ts:153`），按 `(mtimeMs, size)` 记忆 |
-| 清单 | `{ revision, plugins: { <id>: { rev, client } } }`；**只收已启用且磁盘上确有 bundle 的插件**，键排序输出，同一状态序列化成同样的字节（`plugin-assets.ts:168`） |
+| 安装目录 | `<dataDir>/system-plugins/<id>/client/client.js`（`.map` 同目录）；文案在 `<id>/i18n/<lang>.json`（U5，`install.ts` 的 `#publishCopyBundles` 发布，卸载随整目录删除） |
+| 内容 rev | 文件字节的 sha1 前 12 位十六进制，按 `(mtimeMs, size)` 记忆；记忆键是**相对资产路径**（一文件一 rev，U5/D2：en 变了不失效 zh 的地址），`.map` 仍骑 bundle 的 rev（`packages/iris-app-service/src/plugin-assets.ts:165`） |
+| 清单 | `{ revision, plugins: { <id>: { rev, client?, i18n? } } }`；**只收已启用、且磁盘上确有 bundle 或成对文案的插件**（U5 放宽：纯文案插件也有行），键排序输出，同一状态序列化成同样的字节（`plugin-assets.ts:208`）。文案行两列**全有或全无**：缺一份语言的表就整行不给文案，免得单语读者落到键名回退上 |
 | 清单缓存 | 永远 `no-cache`（`plugin-assets.ts:227`）——它是唯一路径固定而字节随启停变化的资源 |
-| bundle 缓存 | `?rev=` 与当前内容 rev **相等**才发 `immutable`，否则 `no-cache`（`plugin-assets.ts:299`）；失败方向恒为「证据可能过期就不许长缓存」 |
-| 停用即 404 | 停用的插件在清单里没有行，它的 bundle URL 也随之 404（`plugin-assets.ts:255`），这是资产面自己那一半的过期帧拒绝，另一半是 RPC 的 `assertCurrent` |
+| 资产缓存 | `?rev=` 与当前内容 rev **相等**才发 `immutable`，否则 `no-cache`（`plugin-assets.ts:358`；文案 JSON 同一规则，content-type `application/json`）；失败方向恒为「证据可能过期就不许长缓存」 |
+| 停用即 404 | 停用的插件在清单里没有行，它的 bundle 与文案 URL 都随之 404（`plugin-assets.ts:313`），这是资产面自己那一半的过期帧拒绝，另一半是 RPC 的 `assertCurrent`。文案的语言名逐字匹配 `PLUGIN_COPY_LANGUAGES`，URL 里拼别的名字是 404 不是读文件 |
 | 不走 dsh | `@deepseek-ai/dsh-client-modules` 刻意不挂载（`plugin-assets.ts:16`）：它自注册路由、不过 `irisRpc.guard`，且扫描组合层装载项而不是安装目录。rev 形状（sha1 前 12 位 + `?rev=`）是唯一照抄它的东西，使两边合成的 bundle/清单可互通 |
 
 浏览器侧由 `usePluginAssetManifest` 拉清单、`usePluginBrowserAssets` 做探测与分类（`apps/iris-web/src/app/use-plugin-manifest.ts`，10 秒轮询，区分 stale/degraded/undeclared），结果进插件中心的资产状态列。
@@ -341,7 +341,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | `scope.storage` / `scope.settings` | 未做：ST 设置走的是专门的 `StCompatOptions` 闭包，不是通用接口 | 路径包含性、原子写、损坏保留、profile lock 全部约束成立后再开放 |
 | 插件可写变量 | 未做为 API：仲裁模块是宿主内部的，结算处写死两个 pluginId（`service.ts:5119`、`:5142`） | 带 scope 的读写 + `baselineFor` 提供者 + 提案注册，而不是继续加分支 |
 | `contributeContext` / 开放 `ScriptContext` | 未做：`context.ts` 仍是单体 | —— |
-| i18n 命名空间合并 | 未做，但**原因已经不是那张内联表了**：插件中心的 `COPY` 表在 #95 已并进 `apps/iris-web/src/app/i18n/strings.ts` 的 `pluginCenter*` 键族（ledger §98），安装路径的 85 个新键也在那里。缺的是**插件自己带文案**的那条路——ST 面板仍有独立的 `projection-i18n.ts`，宿主侧插件没有任何登记翻译的接口 | 平面记录改命名空间合并 |
+| i18n 命名空间合并 | **已落地（U5）——插件自带文案的那条路通了**：清单 `iris.plugin.i18n: { en, zh }`（两份都必须在），安装期在 artifact contract 里按 `@iris/text` 的 `auditBilingualCopy` 做与壳 `i18n.test.ts` 同源的三条审计（键集合相等、zh 含中文、槽位集合一致；单份文件另限 256 KiB / 2,000 条）；文件经资产面 `/plugins/<id>/i18n/<lang>.json?rev=` 下发，聚合清单行多一个 `i18n?` 且纯文案插件也有行（`client` 转可选）；壳侧按 `plugin:<id>:<key>` 前缀并进运行期覆盖层（`plugin-copy.ts`），`translate` 只对 `plugin:` 前缀查覆盖层，静态 `StringKey` 类型不动，回退 zh → en → 键名本身；同意页多一行「文案：N 条 · en/zh」，目录行的 `displayName`/`description` 若文案里有同名键则按当前语言显示。**仍没做的**：只有 en/zh 两种语言；插件不能覆盖壳的键（前缀就是边界，这是设计）；没有插件侧的复数/语法机制；ST 面板的 `projection-i18n.ts` 仍是另一回事，未合并 | —— |
 | `expandHelperMacros` 走 `registerMacroLike` | 未做：`packages/iris-app-service/src/entry.ts` 里仍是第二遍宏扫描（[PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §7 阶段 0 的遗留项） | 接线即可，等 `entry.ts` 不再被重写 |
 | 普查脚本改口径 | 未做 | 给普查一个不依赖文件位置的输入 |
 | 可发布契约包 | **已闭合（#91）**：`npm run pack:contracts -- --version <semver>` 把 `@iris/plugin-api`、`@iris/plugin-web-api`、`@iris/protocol` 打成 tarball（`scripts/pack-contracts.mjs`，`docs/PLUGIN-CONTRACT-PACKAGING.md`），仓库外消费者测试 `apps/iris/tests/contract-pack.test.ts`；版本策略 `1.0.0-alpha.N`，cordis 作 peer | —— |

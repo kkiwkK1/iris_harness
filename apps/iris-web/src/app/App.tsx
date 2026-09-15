@@ -37,6 +37,8 @@ import { StatePanel } from './StatePanel.tsx'
 import { toBase64 } from './format.ts'
 import { loadSidebarCollapsed, saveSidebarCollapsed } from './sidebar-state.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+import { usePluginCopyLoader } from './i18n/use-plugin-copy.ts'
+import { usePluginAssetManifest } from './use-plugin-manifest.ts'
 
 import '../theme/tokens.css'
 import '../theme/bridge.css'
@@ -56,6 +58,11 @@ export function App(): ReactElement {
   // language itself lives in the i18n module, like the theme lives in its own:
   // per-device, not store state.
   useLanguage()
+  // The plugins' bundled copy overlay loads at this level — once per manifest
+  // snapshot, for the whole shell — because its lifetime must follow the
+  // manifest, not any one page's visibility.
+  const pluginRevision = useIris(state => state.systemPlugins?.revision)
+  usePluginCopyLoader(usePluginAssetManifest(pluginRevision))
 
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
   const [settingsOpen, setSettingsOpen] = useState(false)

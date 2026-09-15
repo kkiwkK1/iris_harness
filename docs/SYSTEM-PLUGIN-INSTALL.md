@@ -88,6 +88,7 @@
       "apiVersion": 1,                     // 必填，整数
       "host": "host.js",                   // 必填，相对树内路径
       "client": "client.js",               // 可选
+      "i18n": { "en": "i18n/en.json", "zh": "i18n/zh.json" },  // 可选，两份都必须在
       "displayName": "Demo",               // 必填
       "description": "…",                  // 必填
       "capabilities": ["demo.state"],       // 可选，仅声明（插件提供什么）
@@ -102,6 +103,7 @@
 - **`apiVersion`** 与 `SystemPluginDefinition.apiVersion` 是同一个数字，也与契约包的 npm major 对齐（[PLUGIN-CONTRACT-PACKAGING](PLUGIN-CONTRACT-PACKAGING.md) §5：`apiVersion: 1` ↔ major `1`，预发布用 `1.0.0-alpha.N`）。宿主声明自己支持的区间（当前只有 `[1, 1]`）；不在区间内**不是崩溃**，是命名状态 `incompatible`，行留在目录里、不激活、PluginCenter 说明「此插件需要 apiVersion N，本机支持 1」。
 - **`host`** 是一个普通 ESM 模块，**默认导出一个 `SystemPluginDefinition` 对象**，不是工厂。理由：目录里另外两条入口拿的都是 definition——`BUILTIN_SYSTEM_PLUGIN_DEFINITIONS` 是 definition 数组，`adoptDefinition(raw, …)` 收 definition。选工厂就要定义「工厂在哪个上下文里跑、能不能异步、抛错算 `load-failed` 还是 `activate-failed`」，凭空多出一个生命周期阶段，而它能做的事 `activate` 都能做，且 `activate` 已经有 lease、fiber 和失败回滚。用 `import(pathToFileURL(...))` 加载；模块顶层抛错是 `load-failed`，默认导出形状不对是 `manifest-invalid`（字段 `host`）。
 - **`client`** 走已有的资产面：激活时把它复制/链接到 `<dataDir>/system-plugins/<id>/client/client.js`（ST 那条路现在就是往这个位置写代理 bundle，`packages/iris-app-service/src/index.ts:826`），于是聚合清单自动长出一行。对它的要求就是 `scanPluginMemberNames` 的要求：`registerPluginMembers('<字面量 id>', { 字面量键: … })`——**id 必须是字符串字面量、成员键必须是字面量**，计算键和间接注册一律扫不出来（`apps/iris-web/src/app/use-plugin-manifest.ts:208`）。扫不出来不是报错，是「这个插件不声明成员」；真正的拒绝发生在重名（`conflict`）与帧内没跑完，且**都是按插件拒的，不是按帧**（`apps/iris-web/src/sandbox/plugin-members.ts:13`）。
+- **`i18n`** 是插件**自带的界面文案**：两个相对树内路径（en、zh 各一份平坦的 `键 → 字符串` 表）。一旦出现，两个键都**必须**在，缺哪个拒绝的 `field` 就点哪个（`i18n.en` / `i18n.zh`）。路径走与 `host`/`client` 同一条文法与 `resolveTreePath`；**内容**在 artifact contract 里审计（`auditPluginCopy`）——可读、单份 ≤ 256 KiB / 2,000 条（`PLUGIN_COPY_LIMITS`）、JSON 对象、键语法 `[a-zA-Z][a-zA-Z0-9]*`，然后是与壳的 `i18n.test.ts` 同源的三条双语规则（键集合相等、zh 含中文、`{槽位}` 集合一致，规则实现只有一份，在 `@iris/text`）。文件随 `client.js` 一起发布到 `<dataDir>/system-plugins/<id>/i18n/<lang>.json`，走同一条资产面；开机重发布时若 `JSON.parse` 失败则只点名该语言并继续发布其余部分——文案坏不该让能跑的插件下线。
 - **`capabilities`** 本轮**只用于同意步骤的展示**，不做运行时校验——宿主没有能力注册表可以校验它（`scope.provide` 的名字是运行时字符串）。这一点必须写在 UI 上，否则它读起来像一个权限系统。
 - **`dependencies`** 直接喂给 definition 的 `dependencies`，由已有的 DFS 拓扑序、成环拒绝、被依赖拒删接管。
 
@@ -194,11 +196,12 @@ interface SystemPluginInstallPreview {
   permissions: string[]            // 闭合词表，见 §12 裁决 4：展示与拼写校验，不是边界
   dependencies: string[]
   hasClient: boolean               // 是否带 client.js
+  i18n?: { keys: number, languages: string[] }  // 自带文案：两列合计条数与语言（缺省 = 没带）
   warnings: string[]               // 「声明的 dependency 不在本机目录里」「id 已被占用」
 }
 ```
 
-宿主侧顺序，全部复用既有阶段：`materializeSource` → （git）删 `.git` → 读 `package.json` 与 `iris.plugin`（形状不对即 `manifest-invalid`，带字段名）→ `auditContainment` → 尺寸与文件数上限 → `hashTree` → 事务停在 `hashed`。**preview 不加载 `host.js`，不执行任何 artifact 内代码。**
+宿主侧顺序，全部复用既有阶段：`materializeSource` → （git）删 `.git` → 读 `package.json` 与 `iris.plugin`（形状不对即 `manifest-invalid`，带字段名）→ **自带文案的内容审计也在 artifact contract 里跑**（`auditPluginCopy`，发生 在 `hashTree` 之前——contract 是 `hashed` 之前唯一的内容检查点）→ `auditContainment` → 尺寸与文件数上限 → `hashTree` → 事务停在 `hashed`。**preview 不加载 `host.js`，不执行任何 artifact 内代码。**
 
 ### 5.2 `plugin.confirmInstall`
 

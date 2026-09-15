@@ -43,6 +43,7 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
+import { auditBilingualCopy, auditCopyTable, PLUGIN_COPY_LANGUAGES, PLUGIN_COPY_LIMITS, type CopyLanguage } from '@iris/text'
 import { isValidExtensionId, type ArtifactContract } from '@iris/extension-installer'
 
 /** The file the `iris.plugin` block lives in, at the root of the tree. */
@@ -141,6 +142,13 @@ export interface SystemPluginManifest {
   readonly host: string
   /** Relative, forward-slash, in-tree path to the browser bundle, when the package ships one. */
   readonly client?: string
+  /**
+   * The package's bundled interface copy: one flat JSON table per language,
+   * both required once the field appears (U5 ruling 1). The paths follow the
+   * same grammar as `host`/`client`; the contents are audited by
+   * `auditPluginCopy`, not parsed here.
+   */
+  readonly i18n?: { readonly en: string, readonly zh: string }
   readonly displayName: string
   readonly description: string
   /** The package's own `version` field, which §5.1's preview shows beside the commit. */
@@ -267,6 +275,31 @@ export function parsePluginManifestValue(raw: unknown): PluginManifestOk | Plugi
     client = checked
   }
 
+  let i18n: { readonly en: string, readonly zh: string } | undefined
+  if (plugin.i18n !== undefined) {
+    const block = plugin.i18n
+    if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+      return invalid('i18n', `expected an object with an "en" and a "zh" entry, got ${describe(block)}`)
+    }
+    const given = block as Record<string, unknown>
+    // U5 ruling 1: once the field appears, both languages are required, and
+    // the refusal names the missing one (`i18n.en` / `i18n.zh`). A package
+    // whose copy half-exists is a broken sentence waiting, not a plugin in
+    // one language. Keys beyond the two are ignored, the same way unknown
+    // keys elsewhere in the block are — a third language is a new ruling.
+    if (given['en'] === undefined) {
+      return invalid('i18n.en', 'the copy block names no en table — both languages are required once i18n appears')
+    }
+    if (given['zh'] === undefined) {
+      return invalid('i18n.zh', 'the copy block names no zh table — both languages are required once i18n appears')
+    }
+    const checkedEn = checkTreePathShape(given['en'], 'i18n.en')
+    if (isInvalid(checkedEn)) return checkedEn
+    const checkedZh = checkTreePathShape(given['zh'], 'i18n.zh')
+    if (isInvalid(checkedZh)) return checkedZh
+    i18n = { en: checkedEn, zh: checkedZh }
+  }
+
   const displayName = nonEmptyString(plugin.displayName, 'displayName')
   if (isInvalid(displayName)) return displayName
   const description = nonEmptyString(plugin.description, 'description')
@@ -297,6 +330,7 @@ export function parsePluginManifestValue(raw: unknown): PluginManifestOk | Plugi
       apiVersionParts: { major: apiVersion.major, minor: apiVersion.minor },
       host,
       ...(client !== undefined ? { client } : {}),
+      ...(i18n !== undefined ? { i18n } : {}),
       displayName,
       description,
       version,
@@ -504,8 +538,82 @@ export async function parsePluginManifest(contentDir: string): Promise<PluginMan
     const clientPath = await resolveTreePath(contentDir, parsed.manifest.client, 'client')
     if (isInvalid(clientPath)) return clientPath
   }
+  if (parsed.manifest.i18n !== undefined) {
+    const enPath = await resolveTreePath(contentDir, parsed.manifest.i18n.en, 'i18n.en')
+    if (isInvalid(enPath)) return enPath
+    const zhPath = await resolveTreePath(contentDir, parsed.manifest.i18n.zh, 'i18n.zh')
+    if (isInvalid(zhPath)) return zhPath
+  }
 
   return checkPluginApiVersion(parsed.manifest) ?? parsed
+}
+
+/** The byte and key ceilings for one copy file, overridable by tests. */
+export type PluginCopyLimits = Readonly<{ maxBytes: number, maxKeys: number }>
+
+/** The copy audit's verdict: the total string count, or the named refusal. */
+export type PluginCopyAudit = PluginManifestInvalid | { readonly ok: true, readonly keys: number }
+
+/**
+ * Read and audit a package's bundled copy, both columns.
+ *
+ * Per file: it must be readable, within `PLUGIN_COPY_LIMITS.maxBytes` (the
+ * overlay is resident memory, so one copy file is held to a ceiling of its
+ * own, not just the tree's), valid JSON, and pass `auditCopyTable`. Across
+ * the two: `auditBilingualCopy` — the same three rules
+ * `apps/iris-web/tests/i18n.test.ts` holds the shell's own dictionaries to,
+ * one implementation because a drift would make the install gate and the
+ * dictionary gate two opinions again.
+ *
+ * @param contentDir - the package tree's root.
+ * @param manifest - the already-parsed manifest naming the two files.
+ * @param limits - test-only override of the ceilings, so the refusal branches
+ *   are reachable without building a 256 KiB fixture.
+ * @returns the total number of strings across both columns, or the refusal.
+ */
+export async function auditPluginCopy(
+  contentDir: string,
+  manifest: SystemPluginManifest,
+  limits: PluginCopyLimits = PLUGIN_COPY_LIMITS,
+): Promise<PluginCopyAudit> {
+  if (manifest.i18n === undefined) return { ok: true, keys: 0 }
+  const tables: { readonly lang: CopyLanguage, readonly table: Record<string, unknown> }[] = []
+  for (const lang of PLUGIN_COPY_LANGUAGES) {
+    const rel = manifest.i18n[lang]
+    const file = path.join(contentDir, ...rel.split('/'))
+    let bytes: Buffer
+    try {
+      bytes = await fsp.readFile(file)
+    } catch (error: unknown) {
+      return invalid(`i18n.${lang}`, `could not be read: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (bytes.byteLength > limits.maxBytes) {
+      return invalid(`i18n.${lang}`, `is ${String(bytes.byteLength)} bytes, over the ${String(limits.maxBytes)}-byte limit for one copy file`)
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(bytes.toString('utf8'))
+    } catch (error: unknown) {
+      return invalid(`i18n.${lang}`, `is not valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return invalid(`i18n.${lang}`, `expected a JSON object mapping keys to strings, got ${describe(parsed)}`)
+    }
+    tables.push({ lang, table: parsed as Record<string, unknown> })
+  }
+  for (const { lang, table } of tables) {
+    const column = auditCopyTable(table, `i18n.${lang}`, limits)
+    if (column !== null) return invalid(column.field, column.reason)
+  }
+  // auditCopyTable has just proved every value a string, so the columns are
+  // in the shape auditBilingualCopy reads.
+  const cross = auditBilingualCopy(
+    tables[0]!.table as Record<string, string>,
+    tables[1]!.table as Record<string, string>,
+    { field: 'i18n' },
+  )
+  if (cross !== null) return invalid(cross.field, cross.reason)
+  return { ok: true, keys: Object.keys(tables[0]!.table).length + Object.keys(tables[1]!.table).length }
 }
 
 /**
@@ -524,5 +632,13 @@ export const SYSTEM_PLUGIN_ARTIFACT_CONTRACT: ArtifactContract = {
   async validate(contentDir: string): Promise<void> {
     const result = await parsePluginManifest(contentDir)
     if (!result.ok) throw new PluginManifestError(result)
+    // The copy audit lives here rather than in `preview` because this is the
+    // only point on the install path that runs *before* `hashTree` — the
+    // installer stages, validates, audits containment, and only then hashes
+    // and transitions to `hashed`, and a refusal here never lets audited-bad
+    // bytes be promoted. It also runs on every transport, which is what keeps
+    // a dev package held to the same rules as a fetched one.
+    const copy = await auditPluginCopy(contentDir, result.manifest)
+    if (!copy.ok) throw new PluginManifestError(copy)
   },
 }

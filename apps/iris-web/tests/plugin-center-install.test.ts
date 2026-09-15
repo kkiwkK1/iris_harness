@@ -161,7 +161,7 @@ test('the install form, the consent page and the tampered reinstall, driven by c
    * forgotten in the component fails here without anyone remembering to extend
    * a sample.
    */
-  const shown = new Set([...page.html().matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]!))
+  const shown = new Set([...page.html().matchAll(/data-consent-field="([a-zA-Z0-9]+)"/g)].map(match => match[1]!))
   const expected = Object.keys(preview).filter(key => key !== 'previewToken')
   assert.ok(expected.length >= 17, `a git preview should carry at least 17 displayable fields, saw ${String(expected.length)}`)
   assert.deepEqual(expected.filter(key => !shown.has(key)), [], 'preview fields the consent page never renders')
@@ -195,7 +195,7 @@ test('the install form, the consent page and the tampered reinstall, driven by c
   const devPreview = lastCall('plugin.previewInstall').result as SystemPluginInstallPreview
   assert.ok(page.find('[data-plugin-consent="dev"]') !== null, 'a dev preview did not open the consent page')
   assert.match(page.html(), /never re-verified against a recorded hash/, 'the dev consent page does not disclose the missing check')
-  const devShown = new Set([...page.html().matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]!))
+  const devShown = new Set([...page.html().matchAll(/data-consent-field="([a-zA-Z0-9]+)"/g)].map(match => match[1]!))
   assert.deepEqual(
     Object.keys(devPreview).filter(key => key !== 'previewToken').filter(key => !devShown.has(key)),
     [], 'preview fields the dev consent page never renders',

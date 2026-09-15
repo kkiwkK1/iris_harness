@@ -82,7 +82,9 @@ import type {
 import { AppError } from '../errors.ts'
 import type { SystemPluginDefinition } from '../system-plugins.ts'
 import type { InstalledPluginRecord, SystemPluginRuntime } from '../system-plugins.ts'
+import { PLUGIN_COPY_LANGUAGES } from '@iris/text'
 import {
+  auditPluginCopy,
   checkPluginApiVersion,
   parsePluginManifest,
   SUPPORTED_PLUGIN_API_RANGE,
@@ -321,6 +323,20 @@ export class SystemPluginInstallService {
       }
       const manifest = parsed.manifest
 
+      // The content audit ran in the contract during `stage` — before the tree
+      // was hashed — and that is the refusal that guards the install path. It
+      // runs again here only to count the strings the consent page shows; the
+      // small files are read twice rather than widening `StagedInstall` to
+      // carry the audit past the installer boundary (see ledger §84).
+      const copyAudit = await auditPluginCopy(staged.contentPath, manifest)
+      if (!copyAudit.ok) {
+        throw new SystemPluginInstallError({
+          state: 'manifest-invalid',
+          field: copyAudit.field,
+          reason: copyAudit.reason,
+        })
+      }
+
       const warnings: string[] = []
       // Ruling 5 refuses a taken id at *confirm*, not here — but a consent page
       // that only learns at the last click has wasted the user's download, so
@@ -354,6 +370,9 @@ export class SystemPluginInstallService {
         permissions: [...manifest.permissions],
         dependencies: [...manifest.dependencies],
         hasClient: manifest.client !== undefined,
+        ...(manifest.i18n !== undefined
+          ? { i18n: { keys: copyAudit.keys, languages: [...PLUGIN_COPY_LANGUAGES] } }
+          : {}),
         warnings,
       }
       this.#pending.set(preview.previewToken, { staged, manifest, source, preview })
@@ -428,6 +447,7 @@ export class SystemPluginInstallService {
       let record: InstalledPluginRecord
       let hostPath: string
       let clientSourcePath: string | undefined
+      let contentDir: string
       if (pending.source.kind === 'git') {
         const result = await installer.promote(pending.staged, params.id)
         record = {
@@ -437,6 +457,7 @@ export class SystemPluginInstallService {
           treeHash: result.artifactSha256,
           installedAt,
         }
+        contentDir = result.targetPath
         hostPath = path.join(result.targetPath, ...pending.manifest.host.split('/'))
         clientSourcePath = pending.manifest.client === undefined
           ? undefined
@@ -452,6 +473,7 @@ export class SystemPluginInstallService {
           treeHash: pending.staged.tree.sha256,
           installedAt,
         }
+        contentDir = root
         hostPath = path.join(root, ...pending.manifest.host.split('/'))
         clientSourcePath = pending.manifest.client === undefined
           ? undefined
@@ -459,6 +481,7 @@ export class SystemPluginInstallService {
       }
 
       if (clientSourcePath !== undefined) await this.#publishClientBundle(params.id, clientSourcePath)
+      await this.#publishCopyBundles(params.id, contentDir, pending.manifest)
       return await this.#runtime.adoptInstalled(
         this.#lazyDefinition(pending.manifest, hostPath),
         record,
@@ -633,6 +656,7 @@ export class SystemPluginInstallService {
     if (manifest.client !== undefined) {
       await this.#publishClientBundle(id, path.join(root, ...manifest.client.split('/')))
     }
+    await this.#publishCopyBundles(id, root, manifest)
     this.#runtime.adoptDefinition(
       this.#lazyDefinition(manifest, path.join(root, ...manifest.host.split('/'))),
       { installed: true, removable: true },
@@ -728,6 +752,39 @@ export class SystemPluginInstallService {
     const dir = path.join(this.#clientAssetRoot, id, 'client')
     await fsp.mkdir(dir, { recursive: true })
     await fsp.copyFile(sourcePath, path.join(dir, CLIENT_BUNDLE))
+  }
+
+  /**
+   * Copy a package's bundled copy to the one place the asset face serves from.
+   *
+   * The install path has already audited these files — the contract does it
+   * at `stage`, before the tree is hashed — but the boot scan re-publishes
+   * from the tree *as it stands now*, and a dev tree may have been edited
+   * since. A copy file broken after installation must not take the plugin
+   * down: the row stays usable, the broken language is simply not published,
+   * and the log names it. A manifest that no longer declares copy removes the
+   * published directory, so the asset root stays a projection of the record
+   * rather than a museum of earlier versions.
+   */
+  async #publishCopyBundles(id: string, contentDir: string, manifest: SystemPluginManifest): Promise<void> {
+    const dir = path.join(this.#clientAssetRoot, id, 'i18n')
+    if (manifest.i18n === undefined) {
+      await fsp.rm(dir, { recursive: true, force: true }).catch(() => {})
+      return
+    }
+    await fsp.mkdir(dir, { recursive: true })
+    for (const lang of PLUGIN_COPY_LANGUAGES) {
+      const source = path.join(contentDir, ...manifest.i18n[lang].split('/'))
+      let bytes: Buffer
+      try {
+        bytes = await fsp.readFile(source)
+        JSON.parse(bytes.toString('utf8'))
+      } catch (error: unknown) {
+        this.#log(`system plugin "${id}" ships an unreadable i18n.${lang} table (${error instanceof Error ? error.message : String(error)}); the copy is not published and the row stays usable`)
+        continue
+      }
+      await fsp.writeFile(path.join(dir, `${lang}.json`), bytes)
+    }
   }
 
   #toExtensionSource(source: PluginInstallSource): ExtensionSource {

@@ -241,6 +241,10 @@ profile，走的是同一套目录、依赖、启停、卸载——不是第二�
       "apiVersion": 1,                  // 整数，或 "1.0" 这样的 major.minor 字符串
       "host": "host.js",                // 必填，相对树内路径，默认导出一个 SystemPluginDefinition
       "client": "client.js",            // 可选，帧侧成员 bundle
+      "i18n": {                         // 可选，插件自带的界面文案（见下节）
+        "en": "i18n/en.json",
+        "zh": "i18n/zh.json"
+      },
       "displayName": "Demo",            // 必填
       "description": "…",               // 必填
       "capabilities": ["demo.state"],   // 可选，自由文本：我**提供**什么
@@ -263,6 +267,44 @@ profile，走的是同一套目录、依赖、启停、卸载——不是第二�
 - 包里**不允许**有 `node_modules/`：`@iris/*` 是 `import type`、构建期擦除，而带进第二份 cordis
   的失败**没有任何症状**——你的服务会落进宿主永远不读的注册表。带了就是 `install-failed`。
 - 上限：**256 MiB / 20,000 文件**（`PLUGIN_TREE_LIMITS`）。树里不能有符号链接或 junction。
+
+### 插件自带文案
+
+插件可以带自己的界面文案（两种语言，en 与 zh）。清单里写**两个**相对树内路径，一旦出现 `i18n`，
+两个键都**必须**在——缺哪个，拒绝消息的 `field` 就点哪个（`i18n.en` / `i18n.zh`）：
+
+```jsonc
+"iris": { "plugin": {
+  "id": "demo",
+  // …
+  "i18n": { "en": "i18n/en.json", "zh": "i18n/zh.json" }
+} }
+```
+
+每份文件是一个**平坦**的 `键 → 字符串` 表：
+
+```json
+{ "displayName": "Demo Panel", "description": "A {name} panel", "panelTitle": "Panel" }
+```
+
+键的语法是 `[a-zA-Z][a-zA-Z0-9]*`（会拼进运行期键 `plugin:<id>:<key>`，所以不许带标点）；值必须是
+字符串。**单份文件**的上限是 256 KiB / 2,000 条（`PLUGIN_COPY_LIMITS`），超出在安装前就被拒。
+
+**预览期审计**（与宿主跑的是同一份规则实现，`@iris/text`）拒三种：
+
+1. 两列键集合不一致——多一个少一个键都拒；
+2. zh 列里混了没有中文的值（纯数字/单位的行可由壳白名单豁免，插件侧没有白名单）；
+3. 两列的 `{槽位}` 集合不一致——zh 有 `{name}` 而 en 没有就是断句。真实的拒绝消息长这样：
+   `manifest-invalid: i18n.zh.greeting — placeholder drift on "greeting"`，`field` 永远点到具体键。
+
+**两个约定键**：如果文案里有 `displayName` 和 `description`，插件中心的目录行会用它们替换清单里
+的静态名字/描述（按界面当前语言取，zh 缺了回退 en）。同名的壳句子不会被插件夺走。
+
+**前端取词**：壳里任何要读插件文案的地方用运行期键 `plugin:<id>:<key>` 查覆盖层
+（`translate(lang, 'plugin:<id>:<key>')`，或订阅式的 `tPlugin(id, key, params)`）。回退链是
+当前语言 → en → **键名本身**——查不到会在屏幕上显示 `plugin:demo:panelTitle`，这是故意的可见失败，
+不是空白。停用插件即 404，下一次清单到达后它的文案从界面上消失。文件走资产面
+`/plugins/<id>/i18n/<lang>.json?rev=<12 位 hex>`，与 client bundle 同一套缓存与停用规则。
 
 ### 开发时用 `dev` 源
 

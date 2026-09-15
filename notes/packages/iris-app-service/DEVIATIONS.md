@@ -7691,3 +7691,115 @@ an exception rather than an uninstall. (d) A capability registry, which is when
 check this" has to come off the consent page. (e) A second host implementation
 reading `system-plugins.json`, which is when the closed version set stops being
 a local decision.
+
+## 84. 插件自带文案：清单、契约里的审计、以及资产面长出的第三种资产
+
+Dated 2026-09-16 (task sheet U5, branch `dev/plugin-i18n-bundles` against
+`269a97e`). A system plugin can now ship its own interface copy: two flat
+JSON tables declared as `iris.plugin.i18n: { en, zh }`, audited at install,
+published beside the client bundle, and served through the same asset face.
+The shell-side half of this round is ledger §101 on `apps/iris-web`. Four
+corrections from the task sheet's premises, all resolved "the code wins":
+
+1. **「`parsePluginManifest` 之后、`hashed` 之前」的窗口在 preview 里不存在。**
+   `SystemPluginInstallService.preview` calls `installer.stage`, and `stage`
+   runs materialize → delete `.git` → **artifact contract** →
+   `auditContainment` → `hashTree` → transition to `hashed`
+   (`packages/iris-extension-installer/src/installer.ts:199`–`:206`). By the
+   time `stage` returns, the tree is hashed; `preview`'s second
+   `parsePluginManifest` (`install.ts`) runs after that. So "before `hashed`"
+   has exactly one landing point: the contract. `SYSTEM_PLUGIN_ARTIFACT_
+   CONTRACT.validate` now runs `auditPluginCopy` after the manifest parse, so
+   the audit sits on every transport, before any byte is hashed or promoted —
+   and `#stageFailure` already unwraps `PluginManifestError` into a typed
+   `manifest-invalid`, so no new error mapping was needed.
+2. **The aggregate-manifest types live in `@iris/plugin-web-api`, not
+   `@iris/protocol`.** `PluginAssetEntry`/`PluginAssetManifest` are
+   `plugin-web-api/src/index.ts` types; the protocol gained only the preview
+   field `i18n?: { keys, languages }`.
+3. **A copy-only plugin had no manifest row at all.** `PluginAssetStore.
+   manifest` skipped any enabled id whose bundle rev came back `undefined`.
+   The row condition is relaxed to "has a bundle **or** a published copy",
+   and `PluginAssetEntry.client` became optional; the frame writes no script
+   tag for a client-less row (`srcdoc.ts` filters), and the browser-asset
+   column reports `undeclared` for it — there is no browser bundle to probe.
+   Two parsers in `@iris/plugin-web-api` rebuild rows field by field, so both
+   were updated in the same commit (see 4).
+4. **Both manifest parsers silently drop fields they do not know.**
+   `parsePluginAssetManifest` and `parsePluginRows` reconstruct rows
+   explicitly; writing `i18n` into the JSON without touching them would have
+   left host tests green, web tests green, and the field gone in between —
+   the seam the task sheet warned about. The end-to-end tooth is T10 below:
+   the host's manifest bytes, fed through the real parser, must come back
+   with `i18n` intact.
+
+### Decisions
+
+- **The audit lives in the contract, and the small files are read twice.**
+  `preview` runs `auditPluginCopy` again after `stage` only to *count the
+  strings* for the consent page (`i18n.keys`). Passing the first audit's
+  result across the `stage` boundary would widen `StagedInstall` — one of the
+  seven artifact-blind modules' shared shape — for a count. Two reads of two
+  small files lose to that.
+- **`client` optional; the frame meta projects `{ rev, client }` only** (the
+  task sheet's second choice for D3). `sandboxPluginRuntime` copies rows into
+  the srcdoc meta verbatim today; it now projects, because the meta is
+  load-bearing and the frame never reads the shell's copy. `parsePluginRows`
+  still accepts client-less rows — it parses the same JSON — and drops
+  unknown keys by rebuilding, which *is* the projection.
+- **One rev per file** (D2): the memo key moved from plugin id to the file's
+  path relative to the install root (`<id>/client/client.js`,
+  `<id>/i18n/zh.json`). A merged per-plugin rev would couple "en changed" to
+  "zh's URL is invalidated" and force stat-ing every file to answer a hit;
+  per-file revs keep each URL content-addressed on its own bytes. The row's
+  top-level `rev` is the bundle's when there is one, else the copy's. The one
+  continuity break: `client.js.map` still rides the *bundle's* rev (its
+  address is the bundle's address + `.map`), which is what the previous test
+  pinned and this round preserves.
+- **Copy rows are all-or-nothing across languages.** `#copyRow` returns
+  `undefined` unless both `<lang>.json` exist, and the boot republish skips a
+  language whose JSON no longer parses (log names it, row stays usable). The
+  overlay falls back zh → en → the key itself, so a one-language row would
+  quietly turn the other language's readers onto raw key names; the host
+  publishes both or neither and the manifest mirrors that.
+- **Boot does not re-run the content audit.** `#adoptRecorded` goes through
+  `parsePluginManifest`, not the contract; the task sheet asked for no boot
+  re-audit (git trees are hash-re-verified; dev trees are ruled exempt), and
+  the boot path's only copy duty is publish-or-name-it: a file that no longer
+  parses is logged and skipped, not fatal. A manifest that *stopped*
+  declaring `i18n` removes the published `i18n/` directory, so the asset root
+  stays a projection of the record rather than a museum of earlier versions.
+- **Limits** (D1) are `PLUGIN_COPY_LIMITS = { maxBytes: 256 KiB, maxKeys:
+  2_000 }` per file, exported from `@iris/text` beside the rules; byte
+  checking happens in the host (`auditPluginCopy`) because only it holds the
+  file, key counting in `auditCopyTable`. Both are test-overridable
+  (`auditPluginCopy(contentDir, manifest, limits)`), which is how T12's
+  refusal branch is reached without a 2,000-key fixture. One sharp edge found
+  while wiring: `auditCopyTable` returns `{ field, reason }` — wrapping it
+  into a typed `PluginManifestInvalid` needs the host's `invalid()`, which is
+  why `auditPluginCopy` translates rather than forwards.
+
+### Teeth (host half)
+
+Each row: the assertion, then the mutation that was applied to make it red,
+then the observed result. Every mutation was reverted and the same file
+re-run green afterwards.
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| T1 缺 zh 列 → `manifest-invalid`，`field === 'i18n.zh'`（plugin-manifest.test.ts 字段表 + 文件半） | 把 zh 分支整段改成可选（缺省检查与 `checkTreePathShape` 都跳过） | 红（fail 1）→ 复原绿。第一次只删缺名检查仍绿——`checkTreePathShape(undefined)` 这道二道网以同样的 `field` 拒绝，记录在案 |
+| T2 占位符漂移的 `field` 点名键（plugin-manifest + copy.test） | `auditBilingualCopy` 的漂移 `field` 退成 `${prefix}`（丢掉键名） | 红（fail 3）→ 绿 |
+| T3 zh 全英文被拒（plugin-manifest + copy.test + i18n.test 的负例） | CJK 循环短路（`if (false)`，正则换成 `/./` 的等价破坏） | 红（fail 3）→ 绿 |
+| T4 停用后文案 URL 404（plugin-assets.test.ts） | serve 的启用闸门对 copy 请求短路 | 红（fail 1）→ 绿 |
+| T10 宿主清单字节喂 `parsePluginAssetManifest` 后 `i18n` 还在（plugin-assets.test.ts 末） | 解析器重建行时丢掉 `i18n` | 红（fail 1）→ 绿 |
+| T11 `preview.i18n.keys` 等于夹具真实条数（plugin-install.test.ts U5 端到端） | preview 里填写死的 999 | 红（fail 1）→ 绿 |
+| T12 超 `maxKeys` 被拒（plugin-manifest.test.ts，limits override） | `auditCopyTable` 的条数上限短路 | 红（fail 2）→ 绿 |
+
+### What would reopen this
+
+A third language (the manifest shape, the parsers' `['en','zh']` pairs, and
+`PLUGIN_COPY_LANGUAGES` all change together, by design); a `plugin.update`
+path (the republish-then-cleanup story assumes install/uninstall, not
+in-place generation swaps); or a second consumer of `StagedInstall` that
+would make carrying the audit result across `stage` cheaper than re-reading
+two small files.
