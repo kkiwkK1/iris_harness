@@ -25,8 +25,8 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { Context } from '@deepseek-ai/cordis'
-import { hashTree, LOCK_FILE_NAME } from '@iris/extension-installer'
-import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
+import { Installer, hashTree, LOCK_FILE_NAME } from '@iris/extension-installer'
+import type { SystemPluginInstallPreview, SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
 
 import { buildGitFixture, writeTree } from '../../iris-extension-installer/tests/fixtures/helpers.ts'
 import { PLUGIN_TREE_LIMITS, SystemPluginInstallService, type PluginInstallSource } from '../src/plugins/install.ts'
@@ -934,4 +934,413 @@ test('a git fixture repository is real: the fixture builder makes two commits', 
   const log = spawnSync('git', ['-C', join(base, 'fixture-repo.git'), 'rev-list', '--count', 'HEAD'])
   assert.equal(String(log.stdout).trim(), '2')
   assert.match(fixture.repoUrl, /^file:\/\//u)
+})
+
+// ---------------------------------------------------------------------------
+// The update transaction (U1, docs/SYSTEM-PLUGIN-INSTALL.md §5.4)
+// ---------------------------------------------------------------------------
+
+interface TwoCommitFixture {
+  repoUrl: string
+  first: string
+  second: string
+}
+
+/**
+ * A real two-commit repository whose commits differ in **behavior**, not just
+ * in bytes: the first commit's `host.js` provides `gen: 'first'`, the second
+ * `gen: 'second'` (or explodes on activate). `buildGitFixture`'s second commit
+ * only rewrites `dist/index.js`, which no enable ever imports — a T7 built on
+ * it would pass with the ESM cache serving stale bytes, which is exactly the
+ * silence this test exists to refuse (R4).
+ */
+async function twoCommitFixture(
+  base: string,
+  packageOverrides: PackageOverrides,
+  secondHost: string,
+  secondOverrides: { client?: string | null, renameTo?: string } = {},
+): Promise<TwoCommitFixture> {
+  const repo = join(base, 'fixture-repo-two.git')
+  fs.mkdirSync(repo, { recursive: true })
+  const run = (args: string[]): void => {
+    const r = spawnSync('git', ['-C', repo, ...args], {
+      env: { ...process.env, GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+    })
+    if (r.status !== 0) throw new Error(`git fixture ${args[0]} failed: ${String(r.stderr)}`)
+  }
+  const firstFiles = pluginPackage(packageOverrides)
+  run(['init', '-q', '-b', 'main', '.'])
+  await writeTree(repo, firstFiles)
+  run(['add', '-A'])
+  run(['commit', '-q', '-m', 'first'])
+  const first = String(spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD']).stdout).trim()
+  const hostRel = packageOverrides.host ?? 'host.js'
+  await writeFile(join(repo, ...hostRel.split('/')), secondHost)
+  if (secondOverrides.client !== undefined || secondOverrides.renameTo !== undefined) {
+    const manifestPath = join(repo, 'package.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { iris?: { plugin?: Record<string, unknown> } }
+    if (secondOverrides.renameTo !== undefined) manifest.iris!.plugin!['id'] = secondOverrides.renameTo
+    if (secondOverrides.client === null) delete manifest.iris?.plugin?.['client']
+    else if (secondOverrides.client !== undefined) manifest.iris!.plugin!['client'] = secondOverrides.client
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    if (secondOverrides.client !== undefined) {
+      if (secondOverrides.client !== null) await writeFile(join(repo, ...secondOverrides.client.split('/')), CLIENT_SOURCE)
+      else await rm(join(repo, 'client.js'), { force: true })
+    }
+  }
+  run(['add', '-A'])
+  run(['commit', '-q', '-m', 'second'])
+  const second = String(spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD']).stdout).trim()
+  return { repoUrl: `file://${repo.replace(/\\/gu, '/')}`, first, second }
+}
+
+/** A `host.js` whose activation provides an observable generation marker. */
+function genHostSource(gen: string, options: { throwOnActivate?: boolean, id?: string } = {}): string {
+  return [
+    `export default {`,
+    `  id: ${JSON.stringify(options.id ?? PLUGIN_ID)},`,
+    `  name: 'Demo Plugin',`,
+    `  description: 'A generation-marked fixture host.',`,
+    `  version: '1.0.0',`,
+    `  apiVersion: 1,`,
+    `  dependencies: [],`,
+    `  activate(scope) {`,
+    options.throwOnActivate === true ? `    throw new Error('activate refused on purpose')` : '',
+    `    return scope.provide('demo.state', { gen: ${JSON.stringify(gen)} })`,
+    `  },`,
+    `}`,
+    '',
+  ].filter(line => line !== '').join('\n')
+}
+
+function genPackage(hostBody: string, overrides: PackageOverrides = {}): PackageOverrides {
+  return { ...overrides, hostSource: hostBody }
+}
+
+/** gitSource, plus the fixture's moved head so a test can update to it. */
+async function gitFixture(value: Harness, overrides: PackageOverrides = {}, name = 'git-src'): Promise<{
+  source: PluginInstallSource & { kind: 'git' }
+  head: string
+  olderCommit: string
+}> {
+  const base = join(value.dir, name)
+  await mkdir(base, { recursive: true })
+  const fixture = await buildGitFixture(base, pluginPackage(overrides))
+  return { source: { kind: 'git', remote: fixture.repoUrl, commit: fixture.olderCommit }, head: fixture.head, olderCommit: fixture.olderCommit }
+}
+
+async function confirmPreview(value: Harness, preview: SystemPluginInstallPreview): Promise<SystemPluginSnapshot> {
+  return await value.installer.confirm({
+    previewToken: preview.previewToken,
+    id: preview.id,
+    commit: preview.commit ?? null,
+    treeHash: preview.treeHash,
+  })
+}
+
+/** The installed tree's lock record, as the next boot would read it. */
+async function installedLock(value: Harness, id: string): Promise<{ resolvedCommit?: string, artifactSha256: string }> {
+  return JSON.parse(await readFile(join(value.installRoot, 'installed', id, LOCK_FILE_NAME), 'utf8'))
+}
+
+async function supersededEntries(value: Harness): Promise<string[]> {
+  const dir = join(value.installRoot, 'superseded')
+  if (!await exists(dir)) return []
+  return await readdir(dir)
+}
+
+test('update refuses a dev row, a builtin row and an unknown id, each by name', async (t) => {
+  const value = await harness(t)
+  const dev = await devSource(value)
+  await install(value, dev)
+
+  await assert.rejects(
+    () => value.installer.update({ id: PLUGIN_ID, commit: 'a'.repeat(40) }),
+    (error: unknown) => error instanceof Error && /dev plugin.*loaded in place/isu.test(error.message),
+    'a dev row is loaded in place; editing its files is the update',
+  )
+  await assert.rejects(
+    () => value.installer.update({ id: TAVERN_HELPER_PLUGIN_ID, commit: 'a'.repeat(40) }),
+    (error: unknown) => error instanceof Error && /builtin/isu.test(error.message),
+  )
+  await assert.rejects(
+    () => value.installer.update({ id: 'no-such-plugin', commit: 'a'.repeat(40) }),
+    (error: unknown) => error instanceof Error && (error as { code?: string }).code === 'not-found',
+  )
+})
+
+test('update answers a preview carrying updateOf, without the taken-id warning', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.head })
+  assert.equal(preview.id, PLUGIN_ID)
+  assert.equal(preview.commit, fixture.head)
+  assert.equal(preview.source, 'git')
+  assert.deepEqual(preview.updateOf, {
+    id: PLUGIN_ID,
+    fromCommit: fixture.olderCommit,
+    fromTreeHash: before.provenance?.treeHash,
+  })
+  assert.ok(
+    !preview.warnings.some(warning => /已被占用|already in this profile's catalog/u.test(warning)),
+    'the taken-id warning is update noise — updateOf is the honest statement of the same fact',
+  )
+  // The preview alone replaced nothing.
+  assert.equal(row(value.runtime.snapshot(), PLUGIN_ID).provenance?.commit, fixture.olderCommit)
+})
+
+test('update to a commit that renamed the package is refused and the staging is discarded', async (t) => {
+  const value = await harness(t)
+  const base = join(value.dir, 'rename-src')
+  await mkdir(base, { recursive: true })
+  const fixture = await twoCommitFixture(
+    base,
+    genPackage(genHostSource('first')),
+    genHostSource('second', { id: 'renamed-plugin' }),
+    { renameTo: 'renamed-plugin' },
+  )
+  await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  await assert.rejects(
+    () => value.installer.update({ id: PLUGIN_ID, commit: fixture.second }),
+    (error: unknown) => error instanceof Error
+      && /declares id "renamed-plugin".*update was asked for "demo-plugin"/isu.test(error.message),
+    'an update replaces a row; it does not rename it',
+  )
+  // The unusable staging was discarded, nothing moved, and the row is intact.
+  assert.equal(row(value.runtime.snapshot(), PLUGIN_ID).provenance?.commit, before.provenance?.commit)
+  assert.deepEqual(await supersededEntries(value), [])
+})
+
+test('an installed, enabled row: update keeps it enabled, moves the commit and the bytes', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+  await value.runtime.enable(PLUGIN_ID)
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.head })
+  const snapshot = await confirmPreview(value, preview)
+  const after = row(snapshot, PLUGIN_ID)
+  assert.equal(after.enabled, true, 'enabled is the user\'s choice, not the install\'s')
+  assert.equal(after.installed, true)
+  assert.equal(after.provenance?.commit, fixture.head)
+  assert.notEqual(after.provenance?.treeHash, before.provenance?.treeHash)
+  assert.equal(after.provenance?.remote, fixture.source.remote)
+  assert.equal(after.failure, undefined)
+
+  // T5: the old tree is really gone — no superseded residue, and the lock in
+  // `installed/<id>/` records the new commit.
+  assert.deepEqual(await supersededEntries(value), [])
+  const lock = await installedLock(value, PLUGIN_ID)
+  assert.equal(lock.resolvedCommit, fixture.head)
+  assert.equal(lock.artifactSha256, after.provenance?.treeHash)
+})
+
+test('a disabled row stays disabled across an update', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.head })
+  const snapshot = await confirmPreview(value, preview)
+  const after = row(snapshot, PLUGIN_ID)
+  assert.equal(after.enabled, false)
+  assert.equal(after.provenance?.commit, fixture.head)
+})
+
+test('the same commit as installed is allowed, with a warning naming the repair semantics', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.olderCommit })
+  assert.ok(preview.warnings.some(warning => /同一个 commit|equals the one installed/u.test(warning)))
+  const snapshot = await confirmPreview(value, preview)
+  assert.equal(row(snapshot, PLUGIN_ID).provenance?.commit, fixture.olderCommit)
+})
+
+test('a promote failure leaves the old tree in place and the row untouched', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+  await value.runtime.enable(PLUGIN_ID)
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  const original = Installer.prototype.promote
+  Installer.prototype.promote = async function blockedPromote(): Promise<never> {
+    throw new Error('promote blocked on purpose')
+  }
+  try {
+    const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.head })
+    await assert.rejects(
+      () => confirmPreview(value, preview),
+      (error: unknown) => error instanceof Error && /promote blocked on purpose/u.test(error.message)
+        && /已回到旧代|rolled back to the installed generation/u.test(error.message),
+    )
+  } finally {
+    Installer.prototype.promote = original
+  }
+  const after = row(value.runtime.snapshot(), PLUGIN_ID)
+  assert.equal(after.enabled, true, 'the old generation was re-enabled')
+  assert.equal(after.provenance?.commit, before.provenance?.commit)
+  assert.equal(after.provenance?.treeHash, before.provenance?.treeHash)
+  assert.deepEqual(await supersededEntries(value), [])
+  const lock = await installedLock(value, PLUGIN_ID)
+  assert.equal(lock.artifactSha256, before.provenance?.treeHash, 'the lock in place is still the old generation\'s')
+})
+
+test('the new generation runs the new bytes: the second commit\'s host provides a different value', async (t) => {
+  const value = await harness(t)
+  const base = join(value.dir, 'gen-src')
+  await mkdir(base, { recursive: true })
+  const fixture = await twoCommitFixture(base, genPackage(genHostSource('first')), genHostSource('second'))
+  await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
+  await value.runtime.enable(PLUGIN_ID)
+  const oldState = value.runtime.capability<{ gen: string }>(PLUGIN_ID, 'demo.state')
+  assert.equal(oldState?.gen, 'first')
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.second })
+  await confirmPreview(value, preview)
+  const newState = value.runtime.capability<{ gen: string }>(PLUGIN_ID, 'demo.state')
+  assert.equal(
+    newState?.gen,
+    'second',
+    'the enable after an update must execute the new generation\'s bytes, not a cached module for the same path',
+  )
+})
+
+test('a new generation that cannot activate rolls back to the enabled old generation, and the error says so', async (t) => {
+  const value = await harness(t)
+  const base = join(value.dir, 'rollback-src')
+  await mkdir(base, { recursive: true })
+  const fixture = await twoCommitFixture(base, genPackage(genHostSource('first')), genHostSource('second', { throwOnActivate: true }))
+  await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
+  await value.runtime.enable(PLUGIN_ID)
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.second })
+  const error: SystemPluginInstallErrorShape = await value.installer.confirm({
+    previewToken: preview.previewToken,
+    id: preview.id,
+    commit: preview.commit ?? null,
+    treeHash: preview.treeHash,
+  }).then(() => { throw new Error('confirm should have failed') }, (caught: unknown) => caught as SystemPluginInstallErrorShape)
+  assert.match(error.message, /已回到旧代|rolled back to the installed generation/u)
+  assert.match(error.message, new RegExp(fixture.first.slice(0, 12), 'u'), 'the error names the generation the row went back to')
+
+  const after = row(value.runtime.snapshot(), PLUGIN_ID)
+  assert.equal(after.enabled, true)
+  assert.equal(after.provenance?.commit, before.provenance?.commit)
+  assert.equal(after.provenance?.treeHash, before.provenance?.treeHash)
+  assert.equal(after.failure, undefined, 'a successful rollback leaves no failure on the row — the error carried the name')
+  assert.deepEqual(await supersededEntries(value), [])
+  const lock = await installedLock(value, PLUGIN_ID)
+  assert.equal(lock.artifactSha256, before.provenance?.treeHash)
+})
+
+interface SystemPluginInstallErrorShape extends Error {
+  failure?: { state: string }
+}
+
+test('a new generation whose manifest dropped client.js takes the old bundle off the asset face', async (t) => {
+  const value = await harness(t)
+  const base = join(value.dir, 'client-src')
+  await mkdir(base, { recursive: true })
+  const fixture = await twoCommitFixture(
+    base,
+    genPackage(genHostSource('first')),
+    genHostSource('second'),
+    { client: null },
+  )
+  await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
+  const bundle = join(value.assetRoot, PLUGIN_ID, 'client', 'client.js')
+  assert.equal(await exists(bundle), true, 'the first generation published its bundle')
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.second })
+  const snapshot = await confirmPreview(value, preview)
+  assert.equal(row(snapshot, PLUGIN_ID).provenance?.commit, fixture.second)
+  assert.equal(
+    await exists(bundle),
+    false,
+    'the rev is a hash of the file\'s bytes — a surviving file would still be listed, served and loaded',
+  )
+})
+
+test('a stale echo is refused before anything moves', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.head })
+  const wrongHash = preview.treeHash.slice(0, 63) + (preview.treeHash.endsWith('0') ? '1' : '0')
+  await assert.rejects(
+    () => value.installer.confirm({
+      previewToken: preview.previewToken,
+      id: preview.id,
+      commit: preview.commit ?? null,
+      treeHash: wrongHash,
+    }),
+    (error: unknown) => error instanceof Error && /treeHash/u.test(error.message),
+  )
+  assert.equal(row(value.runtime.snapshot(), PLUGIN_ID).provenance?.commit, before.provenance?.commit)
+  assert.deepEqual(await supersededEntries(value), [])
+  const lock = await installedLock(value, PLUGIN_ID)
+  assert.equal(lock.resolvedCommit, fixture.olderCommit, 'the installed tree is still the old generation')
+})
+
+test('a row uninstalled between preview and confirm makes the confirm refuse', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.head })
+  await value.installer.uninstall(PLUGIN_ID)
+  await assert.rejects(
+    () => confirmPreview(value, preview),
+    (error: unknown) => error instanceof Error && /更新的目标行已经不在目录里|no longer an installed git row/u.test(error.message),
+  )
+  assert.deepEqual(await supersededEntries(value), [], 'the refusal happened before any tree moved')
+})
+
+test('a row swapped after the preview makes the confirm refuse', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+
+  const stale = await value.installer.update({ id: PLUGIN_ID, commit: fixture.head })
+  // Move the row behind the preview's back: it now records the *new* commit,
+  // while the stale preview's updateOf still names the older generation as
+  // what the user consented to replace.
+  await value.installer.uninstall(PLUGIN_ID)
+  await install(value, { kind: 'git', remote: fixture.source.remote, commit: fixture.head })
+  await assert.rejects(
+    () => confirmPreview(value, stale),
+    (error: unknown) => error instanceof Error && /被换过了|changed after the preview/u.test(error.message),
+  )
+  assert.equal(row(value.runtime.snapshot(), PLUGIN_ID).provenance?.commit, fixture.head)
+  assert.deepEqual(await supersededEntries(value), [])
+})
+
+test('ruling 5 is not weakened: a fresh-install confirm onto an occupied id is still refused', async (t) => {
+  const value = await harness(t)
+  const fixture = await gitFixture(value)
+  await install(value, fixture.source)
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  // A plain previewInstall of the same package: its preview carries a warning
+  // about the taken id and no updateOf — so the confirm must hit ruling 5
+  // even though the id in the request is "already in the catalog".
+  const preview = await value.installer.preview(fixture.source)
+  assert.equal(preview.updateOf, undefined)
+  await assert.rejects(
+    () => confirmPreview(value, preview),
+    (error: unknown) => error instanceof Error && /已被占用|already taken/u.test(error.message),
+  )
+  assert.equal(row(value.runtime.snapshot(), PLUGIN_ID).provenance?.commit, before.provenance?.commit)
 })
