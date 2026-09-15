@@ -1,6 +1,6 @@
-# 系统插件安装路径（提案，待裁决）
+# 系统插件安装路径（裁决已下，分阶段落地中）
 
-状态：**提案**。本文不描述 `main` 上存在的代码，除了第 2 节——那一节的每一条都按 `8552c4b` 重新读过源码，行号只作为该提交的证据，事实以符号名定位。其余各节是**待裁决的设计**，落地前不得被引用为现状。
+状态：**设计已裁决**（2026-09-15，见 §12 裁决记录），§10 的 PR-1（安装器泛化 + 清单解析）已落地，PR-2/PR-3 未开工；本文其余各节仍是设计而非现状描述，代码以 `docs/INFRASTRUCTURE-INTERFACES.md` 为准。原状态说明保留如下——状态：**提案**。本文不描述 `main` 上存在的代码，除了第 2 节——那一节的每一条都按 `8552c4b` 重新读过源码，行号只作为该提交的证据，事实以符号名定位。其余各节是**待裁决的设计**，落地前不得被引用为现状。
 
 它回答的是 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md)「Trust model (信任模型)」留下的那个公开问题——**同权宿主代码的安装源受什么约束**——以及 [INFRASTRUCTURE-INTERFACES](INFRASTRUCTURE-INTERFACES.md) §8 里「系统插件的包外安装路径」那一行。两者在文档里就是同一件事的两面。
 
@@ -90,7 +90,8 @@
       "client": "client.js",               // 可选
       "displayName": "Demo",               // 必填
       "description": "…",                  // 必填
-      "capabilities": ["demo.state"],       // 可选，仅声明
+      "capabilities": ["demo.state"],       // 可选，仅声明（插件提供什么）
+      "permissions": ["provide-capability", "register-rpc"],  // 可选，闭合词表（插件声明用什么）
       "dependencies": ["tavern-helper"]     // 可选，其他插件 id
     }
   }
@@ -165,6 +166,7 @@ interface SystemPluginInstallPreview {
   files: number
   bytes: number
   capabilities: string[]
+  permissions: string[]            // 闭合词表，见 §12 裁决 4：展示与拼写校验，不是边界
   dependencies: string[]
   hasClient: boolean               // 是否带 client.js
   clientMembers: string[]          // scanPluginMemberNames 扫出的成员名，供重名预警
@@ -388,6 +390,35 @@ interface SystemPluginView {
 ---
 
 ## 12. 待裁决问题
+
+### 裁决记录（2026-09-15）
+
+owner 已就下面五问裁决。五个问题按原样保留在后面，作为每条裁决所回答的东西——裁决只在
+读得到它回答了什么的时候才是裁决。
+
+1. **`dev` 源永远可用、永远标 `dev`。** 即问题 1 的选项 (a)：发行版里保留这条路。代价
+   （发行版内存在一条无字节校验的同权装载路径）由「永远显式标 `dev`」承担——
+   `system-plugins.json` 里标、PluginCenter 行上标、同意页上标，三处都标。
+2. **预留 `plugin.update({ id, commit })` 的 RPC 位子，本轮不实现。** 位子按问题 2 里写
+   的那条语义留（preview 复用、confirm 把新树促进到同一 id 并保留偏好行），但本轮的更新
+   路径仍然是「卸载后重装」，走完整同意。
+3. **`tampered` 给「按记录的 remote + commit 重新安装」按钮，走完整同意步骤。** 即问题 3
+   的选项 (b)。不做选项 (c) 的「接受当前字节」：把新 `treeHash` 一键写进记录会让整个哈希
+   锁定机制可被一键绕过，而 (b) 对「手动打过补丁的插件」给的出路是重新拉一次可复现的
+   (remote, commit)，这正是 §6 说插件树没有用户数据的那条理由的推论。
+4. **清单加 `permissions` 权限列表。** 闭合词表，宿主校验**拼写**并在同意页**展示**。它是
+   **声明，不是宿主强制的边界**——系统插件是同权代码（§4 裁决 1），宿主不靠这张表挡任何
+   东西；这句话必须同时出现在实现的文档注释里和同意页上，否则它读起来就是一个权限系统，
+   而那正是问题 4 指出的风险。`capabilities`（插件**提供**什么）仍是另一张自由文本表，两
+   者不合并：一个说「我会用到什么」，一个说「我会给出什么」。
+5. **安装 id 与内置 id 撞车，在 confirm 阶段以 `install-failed`（id 已被占用）拒绝。** 暂
+   不做 `shadowed` 状态：一个装得进去、占着磁盘、却永远不会被激活的行，是 §1 目标 4「失败
+   状态全部有名字、能被看见并被处置」的反面。
+
+**PR-1 的落地情况**：裁决 4 已实现——`PLUGIN_PERMISSIONS` 与 `parsePluginManifest`
+（`packages/iris-app-service/src/plugins/manifest.ts`）是闭合词表与清单契约，未知权限名以
+`manifest-invalid` 拒绝且字段为 `permissions[i]`。裁决 1、2、3、5 都落在 PR-2/PR-3 的面
+上，本轮没有写对应代码。
 
 1. **`dev` 源是否进发行版？** 它是唯一一个跳过 `treeHash` 复核的源。选项：(a) 永远可用并永远标 `dev`；(b) 只在开发构建里编译进去，发行版根本没有这条路。本文按 (a) 写，因为 (b) 会让「按发行版调试插件」变成不可能，但 (a) 的代价是发行版里存在一条无字节校验的同权装载路径。
 2. **更新事务现在留不留位？** 本轮的更新路径是「卸载后重装」，而卸载删树、重装要重新走完同意。这对一个常更新的插件是明显的摩擦。是否现在就把 `plugin.update({ id, commit })` 的位子留出来（preview 复用、confirm 时把新树促进到同一 id 并保留偏好行），还是等有真实使用者再说？

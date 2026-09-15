@@ -7286,3 +7286,199 @@ the abandoned write on disk after `flush` returns, the idle store that minted
 no file, the refused late write with file and memory both unchanged, and the
 structural check on `index.ts`'s disposer — verified to have teeth by
 removing the call, which turns it red.
+
+---
+
+## 79. The installer's artifact gate is injected, and the system-plugin manifest is the second format that passes it
+
+**What changed.** `packages/iris-extension-installer` had exactly one piece of
+knowledge about *what it was installing*: a private `requireManifest` inside
+`installer.ts`, which read `manifest.json` and checked its `js` entry. That is
+the SillyTavern extension package format and nothing else's, and it was the
+whole of what made an artifact-neutral installer an *ST extension* installer —
+`source` knows transports, `archive` knows hostile names, `hash` knows bytes,
+`lock` knows the record, `staging`/`transaction`/`recovery` know the state
+machine, and none of the seven has ever read a field out of a tree. That
+function is now a value: `InstallOptions.artifactContract`, an
+`ArtifactContract` (`{ name, validate(contentDir) }`) declared in the new
+`src/artifact-contract.ts` beside the ST implementation it was moved out of
+`installer.ts` into, byte-for-byte — same checks, same order, same
+`ArchiveSecurityError` codes, same messages. `installer.ts`'s only remaining
+edit is the call site (`options.artifactContract ?? ST_EXTENSION_ARTIFACT_CONTRACT`)
+and the option's declaration; the seven artifact-blind modules are untouched.
+
+**Why an injection point and not a fork.** `docs/SYSTEM-PLUGIN-INSTALL.md` §11
+already rejected the fork and gave the reason; implementing it confirmed the
+arithmetic. Seven of the eight modules carry the security invariants — no
+shell, https only, a pinned 40-hex commit, hooks disabled, containment, no
+symlinks, the sorted tree hash, the claim, the single rename, the lock whose
+`enabled` must be exactly `false`. A fork duplicates all of them so that a
+second artifact format can differ in one file, and a duplicated invariant rots
+one copy at a time and silently: the second copy stays green against its own
+tests while the first one gains a check. One contract value is the entire
+difference between the two formats.
+
+**Why the default is still ST.** The gate defaults to
+`ST_EXTENSION_ARTIFACT_CONTRACT`, and that is a compatibility statement rather
+than a coupling: every caller that existed before this change passed the ST
+contract implicitly, and a generalization that silently *removes* a gate from
+callers who did not ask for that is not a generalization. The real ST caller
+(`packages/iris-app-service/src/index.ts`, `installFromDirectory`) now names
+the value explicitly, so the default is what keeps old tests honest, not what
+keeps the ST path working.
+
+**The manifest contract, and where it lives.**
+`packages/iris-app-service/src/plugins/manifest.ts` parses `package.json` →
+`iris.plugin` per §3. Three candidate homes, and two of them were wrong for
+reasons the code states and the design document does not:
+
+- `@iris/plugin-api` is what §10 proposed. **The code refuses it.** That
+  package's own `tests/contract.test.ts` reads its sources and forbids any
+  runtime import — a manifest parser imports `node:fs` and `node:path`, so
+  placing it there means either deleting a rule with teeth or writing a parser
+  that cannot read a file. The proposal was made against a document; the test
+  is the fact.
+- `@iris/extension-installer` is the mirror-image error: after this change the
+  package is artifact-blind by construction, and teaching it what a system
+  plugin is would restore the coupling this round removed. The installer's own
+  new test therefore uses a *synthetic* contract (`plugin.json`) rather than
+  the real one, because the seam means that package cannot import its consumer.
+- `@iris/app-service` owns the plugin control plane (`plugins/builtins.ts`
+  already anchors the bundled ids here, §77), so the `iris.plugin` shape lives
+  beside the runtime that consumes it and is handed *to* the installer.
+
+**The rules, and the two the code had to settle against the document.**
+
+- **`id`** is the installer's grammar, reached through the exported
+  `isValidExtensionId` (`packages/iris-extension-installer/src/lock.ts:28`),
+  not a second regex. §2 of the design document counted four disagreeing id
+  grammars in the tree; adding a fifth to a file whose whole subject is which
+  one wins would have been the joke.
+- **`host` / `client`** are relative forward-slash in-tree paths (§9 #7).
+  Refused: a backslash anywhere, an absolute path, a drive letter, an empty or
+  `.` or `..` **segment** (a segment rather than a substring, so `a..b.js` is a
+  legal filename while `a/../../x` is not), and a control character. Then the
+  filesystem half: the resolved path must be inside the root, the entry must
+  exist and be a regular file, and **every component of the way there** is
+  `lstat`ed — `lstat` declines to follow only the *last* component, so a single
+  `lstat` of the full path would traverse a junction planted as an intermediate
+  directory. "Symlink" means what `hashTree` means by it
+  (`packages/iris-extension-installer/src/hash.ts:38` —
+  `lstat().isSymbolicLink()`, which is what reports a Windows junction through
+  libuv), so a tree this parser accepts is a tree `hashTree` can hash and
+  `auditContainment` can clear, rather than three opinions of one word (§9 #10).
+- **`apiVersion`** accepts `major.minor`, optionally `.patch`, optionally a
+  `-prerelease` tail, with no leading zeros — **and the integer `n`, which
+  normalizes to `n.0`**. The integer is not a concession to sloppiness: it is
+  the spelling the contract uses (`SystemPluginDefinition.apiVersion` is the
+  numeric literal type `1`, `packages/iris-plugin-api/src/index.ts:60`) and the
+  spelling §3's own manifest sketch writes, so refusing it would have made the
+  design document's example invalid. A bare major (`"1"`) is refused: the range
+  is compared at `major.minor`, and naming half the compared value asks the
+  host to guess the other half.
+- **The supported range is `SUPPORTED_PLUGIN_API_RANGE`, declared in this
+  module, because no document declares it.**
+  `docs/PLUGIN-CONTRACT-PACKAGING.md` §5 fixes the *alignment* — contract
+  `apiVersion: 1` travels with npm major `1` — and explicitly declines to name
+  a number; `docs/SYSTEM-PLUGINS.md` has no `iris.apiVersion` rule at all (the
+  citation of one in PLUGIN-CONTRACT-PACKAGING §5 is a forward announcement,
+  which SYSTEM-PLUGIN-INSTALL §2 item 2 already records). So the number lives
+  beside the check that reads it. Out of range is the named state
+  `incompatible`, never `manifest-invalid`: a manifest that is well-formed but
+  declares an API this host does not implement is a *correct manifest for a
+  different host*. The range check therefore runs **last**, after the shape and
+  the path checks, and the incompatible result carries the parsed manifest —
+  the consent page still has to name the plugin it is refusing to run.
+- **Every failure is a typed result**, never a thrown generic `Error`:
+  `{ ok: true, manifest } | { ok: false, state: 'manifest-invalid', field, reason }
+  | { ok: false, state: 'incompatible', field: 'apiVersion', declared, supported, manifest }`.
+  Three consumers need three different things from a refusal — a preview page
+  that must render *why*, a boot scan that must mark a row and continue, an
+  install gate that must refuse a promotion — and a thrown `Error` gives all
+  three a string. `field` is what lets a consent page point at a line of
+  someone's `package.json`. The single throw is
+  `SYSTEM_PLUGIN_ARTIFACT_CONTRACT.validate`, which is the installer's
+  exception-shaped boundary and converts at it (`PluginManifestError` carries
+  `state` and `field` through).
+
+**The permission vocabulary, and the ruling it implements.** Owner ruling 4 of
+2026-09-15 (`docs/SYSTEM-PLUGIN-INSTALL.md` §12) added a `permissions` list to
+the manifest. `PLUGIN_PERMISSIONS` is closed and derived from what
+`SystemPluginActivationScope` actually hands over
+(`packages/iris-plugin-api/src/index.ts:95`), one name per member:
+`provide-capability` → `provide`, `get-dependency` → `getDependency`,
+`register-rpc` → `registerRpc`, `host-context` → `context` (a property rather
+than a method, and the largest thing the scope hands over — the host's Cordis
+`Context`). `pluginId` and `revision` are the activation's own identity, not
+something it reaches *with*, so they have no permission name.
+
+**It is a declaration, not a boundary, and the code says so in its own
+docblock** because the ruling requires that sentence to exist in two places.
+A system plugin is Node code in the host's process with the host's privileges
+(§4, ruling 1); it can read the filesystem and open sockets whether or not it
+declared anything, and nothing downstream of this parser revokes an undeclared
+scope member. What the list buys is exactly two things: the consent page can
+show what the author says the plugin will do, and the host can check the
+**spelling**, so `registerRPC` or `network-access` is refused as
+`manifest-invalid` with field `permissions[i]` instead of quietly declaring
+nothing. `capabilities` — what a plugin *provides* — stays a separate free-form
+list, per §3; one says "what I will use", the other "what I will give", and
+merging them would have produced exactly the thing §12 question 4 warned about,
+something that reads like a permission system and is not one.
+
+**Held by** `packages/iris-app-service/tests/plugin-manifest.test.ts` (12 tests)
+and `packages/iris-extension-installer/tests/artifact-contract.test.ts`
+(3 tests). The installer test proves the *swap*, not a widening: the same
+staged bytes are accepted under one contract and refused under the other, in
+both directions — a test that only showed "a custom contract can refuse" would
+pass against an implementation that ran the ST gate as well. The manifest test
+asserts refusals by **field**, not by message (the field is what a consent page
+renders and what an author acts on), and pins the scope-to-permission mapping
+by reading `@iris/plugin-api`'s source, so a scope member gained without a
+permission name goes red.
+
+**Teeth.** Eight named mutations, each reverted:
+
+| mutation | reddened |
+| --- | --- |
+| drop the `.`/`..` segment check | `host and client must be relative in-tree paths (§9 #7)` — `host "./host.js" must be refused` |
+| drop the symlink check in the component walk | `an entry reached through a symlink or junction is refused (§9 #10)` |
+| replace `isValidExtensionId` with a length check | the field table and `a malformed field beats an out-of-range version` (2 tests) |
+| drop the `apiVersion` range check | `apiVersion outside the host range is incompatible, not manifest-invalid` |
+| accept unknown permission names | the field table and `the vocabulary is accepted in full, and only in full` (2 tests) |
+| blank the `field` on every refusal | 7 of 12 manifest tests |
+| ignore `options.artifactContract` (always ST) | all three artifact-contract tests and the app-service end-to-end one |
+| drop the resolved-prefix containment check | **nothing** — see below |
+
+That last row is recorded rather than fixed. The prefix check is unreachable
+from the grammar above it, by construction: `path.resolve` can only leave the
+root through a `..` segment or an absolute component, and both are already
+refused — which is the same shape `auditContainment` has
+(`packages/iris-extension-installer/src/archive.ts:303`, whose comment says the
+escape branch "fires only if reality diverged from the guards' assumptions").
+It is not dead code under a single-fault assumption, and that is measurable:
+dropping the segment check alone reddens on `./host.js` while `../outside.js`
+is still refused — by the prefix check — and dropping **both** reddens on
+`../outside.js` instead. Two nets, and the second one catches when the first is
+gone.
+
+**What would reopen this.** (a) A third artifact format, at which point
+`ArtifactContract` should probably gain the describer half it does not have
+yet — `validate` returns `void`, and a caller that wants to *show* what a tree
+declared calls the format's own parser. (b) `SystemPluginActivationScope`
+gaining a member: `PLUGIN_PERMISSIONS` must gain a name in the same commit, and
+the mapping test is what says so. (c) The contract packages becoming
+publishable, which is when `SUPPORTED_PLUGIN_API_RANGE` stops being a single
+constant in one host module and becomes something a published package has an
+opinion about. (d) A ruling that an `incompatible` plugin should be
+*installable* — the install gate currently refuses it, on the ground that
+installing a tree this host has no way to run leaves the user a directory and a
+catalog row in exchange for a download, while §7's boot-scan leniency is about
+a plugin that *was* runnable when it was installed. Those are two different
+questions and only the second one has been ruled on.
+
+**A ledger note.** The installer package has no `notes/packages/` ledger of its
+own, and the root `notes/DEVIATIONS.md` is task M's preset ledger (its title
+and its first line say so) — not a general one. This entry covers both sides of
+the seam because the new module lands here and because §77 already put the
+plugin-id question in this file.

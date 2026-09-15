@@ -42,7 +42,7 @@ import {
   StCompatBridge,
   StExtensionSettingsStore,
 } from '@iris/compat-st-extension'
-import { Installer, isValidExtensionId } from '@iris/extension-installer'
+import { Installer, isValidExtensionId, ST_EXTENSION_ARTIFACT_CONTRACT } from '@iris/extension-installer'
 import { StExtensionAssetStore, ST_EXT_PREFIX } from './st-ext-assets.ts'
 import { installedTreePresent } from './st-reinstall.ts'
 import { AppError } from './errors.ts'
@@ -863,7 +863,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const readopt = installedTreePresent(paths.extensions, id)
       if (!readopt) {
         const installer = await Installer.create(paths.extensions)
-        await installer.installAs(id, { kind: 'local-directory', directoryPath })
+        // The artifact contract is named rather than defaulted: this caller
+        // installs an ST extension, and after the gate became injectable the
+        // default is a compatibility statement, not a description of who is
+        // calling. The value is the same one the default resolves to, so the
+        // behaviour here is unchanged by saying it out loud.
+        await installer.installAs(id, { kind: 'local-directory', directoryPath }, { artifactContract: ST_EXTENSION_ARTIFACT_CONTRACT })
       }
       const installed = JSON.parse(await readFile(join(paths.extensions, 'installed', id, 'manifest.json'), 'utf8')) as unknown
       const parsed = normalizeManifest(installed)
