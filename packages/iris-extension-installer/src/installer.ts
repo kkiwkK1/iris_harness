@@ -17,7 +17,8 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
-import { ArchiveSecurityError, auditContainment, extractZipSafely } from './archive.ts'
+import { auditContainment, extractZipSafely } from './archive.ts'
+import { ST_EXTENSION_ARTIFACT_CONTRACT, type ArtifactContract } from './artifact-contract.ts'
 import { hashTree } from './hash.ts'
 import { buildLock, isValidExtensionId, LOCK_FILE_NAME, parseLock, writeLock } from './lock.ts'
 import { recoverInstallations, type RecoveryAction } from './recovery.ts'
@@ -33,6 +34,13 @@ export interface InstallOptions {
   allowLocalGit?: boolean
   signal?: AbortSignal
   onPhase?: (phase: string, info: { transactionId: string; artifactSha256?: string }) => void
+  /**
+   * What the staged tree must contain to be promotable. Defaults to the
+   * SillyTavern extension format, which is what every caller of this method
+   * meant before the gate became injectable — see `artifact-contract.ts` for
+   * why the default is a compatibility statement rather than a coupling.
+   */
+  artifactContract?: ArtifactContract
 }
 
 export interface InstallResult {
@@ -107,10 +115,11 @@ export class Installer {
       notify()
 
       // Phase: staged -> validated — unpack, guards, git metadata removal,
-      // manifest. The manifest/entry gate is source-blind: a git checkout is
-      // held to exactly the same contract as an unpacked archive or a copied
-      // directory, because the analyzer's contract is with the artifact, not
-      // the transport.
+      // artifact contract. The contract gate is source-blind: a git checkout
+      // is held to exactly the same contract as an unpacked archive or a
+      // copied directory, because the contract is with the artifact, not the
+      // transport. Which contract is the caller's to choose; that it runs
+      // here, on every transport, is not.
       if (outcome.stagedArchive !== undefined) {
         await extractZipSafely(outcome.stagedArchive, content)
         await fsp.rm(outcome.stagedArchive, { force: true })
@@ -124,7 +133,7 @@ export class Installer {
         // must never be promoted into the installed tree.
         await fsp.rm(path.join(content, '.git'), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
-      await requireManifest(content)
+      await (options.artifactContract ?? ST_EXTENSION_ARTIFACT_CONTRACT).validate(content)
       await auditContainment(content)
       await store.transition(txn, 'validated')
       notify()
@@ -202,40 +211,6 @@ export class Installer {
         reason: 'lock-write-failed-after-rename',
       })
     }
-  }
-}
-
-/**
- * The manifest/entry gate every source passes, whatever the transport: an
- * install must contain a manifest.json whose `js` entry names a relative
- * in-tree file that exists. A git checkout is held to exactly the same
- * contract as an unpacked archive or a copied directory — the analyzer's
- * contract is with the artifact, not the transport, so there is no git
- * exemption. Full normalization and module analysis are the analyzer
- * package's job; the installer only refuses to promote something that could
- * not even be described to the analyzer.
- */
-async function requireManifest(content: string): Promise<void> {
-  const raw = await fsp.readFile(path.join(content, 'manifest.json'), 'utf8').catch(() => {
-    throw new ArchiveSecurityError('artifact has no manifest.json — nothing to analyze, refusing to promote', 'missing-manifest')
-  })
-  let manifest: unknown
-  try {
-    manifest = JSON.parse(raw)
-  } catch {
-    throw new ArchiveSecurityError('manifest.json is not valid JSON', 'bad-manifest')
-  }
-  const js = (manifest as { js?: unknown }).js
-  if (typeof js !== 'string' || js.length === 0) {
-    throw new ArchiveSecurityError('manifest.json declares no js entry', 'bad-manifest')
-  }
-  if (js.includes('\\') || js.includes('..') || path.isAbsolute(js) || /^[a-zA-Z]:/u.test(js)) {
-    throw new ArchiveSecurityError(`manifest js entry ${JSON.stringify(js)} is not a relative in-tree path`, 'bad-manifest')
-  }
-  const entry = path.join(content, ...js.split('/'))
-  const st = await fsp.lstat(entry).catch(() => null)
-  if (!st?.isFile()) {
-    throw new ArchiveSecurityError(`manifest js entry ${js} does not exist in the artifact`, 'bad-manifest')
   }
 }
 

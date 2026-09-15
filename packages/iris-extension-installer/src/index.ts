@@ -13,6 +13,7 @@ export {
   guardEntryName,
   type ExtractLimits,
 } from './archive.ts'
+export { ST_EXTENSION_ARTIFACT_CONTRACT, type ArtifactContract } from './artifact-contract.ts'
 export { hashTree, sha256File, type TreeHash } from './hash.ts'
 export { buildLock, parseLock, writeLock, isValidExtensionId, LOCK_FILE_NAME, type InstalledExtensionLock } from './lock.ts'
 export { Installer, type InstallOptions, type InstallResult } from './installer.ts'
