@@ -228,6 +228,48 @@ test('the install form, the consent page and the tampered reinstall, driven by c
   await page.click('[data-consent-cancel]')
   await page.settle()
 
+  // ----------------- U1: a git row's update entry, through the same consent
+
+  // The package installed at the top is an installed `git` row now, so it
+  // carries the update entry — matched on the button's own attribute, the one
+  // the row test pins to git rows only.
+  const updateButton = `[data-plugin-update="${preview.id}"]`
+  assert.ok(page.find(updateButton) !== null, 'an installed git row offers no update entry')
+  await page.click(updateButton)
+  assert.ok(page.find(`[data-plugin-update-form="${preview.id}"]`) !== null, 'the update entry did not open its form')
+
+  // The same shape rule as the install form: a branch name never reaches the
+  // host, from either form.
+  await page.type(`[data-plugin-update-form="${preview.id}"] input`, 'main')
+  await page.click(`[data-plugin-update-form="${preview.id}"] button[type="submit"]`)
+  assert.match(page.html(), /exactly 40 lowercase hexadecimal characters/, 'the update form accepted a branch name')
+  assert.equal(pluginCalls('plugin.update').length, 0, 'a branch name reached the host from the update form')
+
+  await page.type(`[data-plugin-update-form="${preview.id}"] input`, '89abcdef0123456789abcdef0123456789abcdef')
+  await page.click(`[data-plugin-update-form="${preview.id}"] button[type="submit"]`)
+  await page.settle()
+  assert.deepEqual(lastCall('plugin.update').params, { id: preview.id, commit: '89abcdef0123456789abcdef0123456789abcdef' })
+  const updatePreview = lastCall('plugin.update').result as SystemPluginInstallPreview
+  assert.ok(page.find('[data-plugin-consent="git"]') !== null, 'a staged update did not open the consent page')
+  assert.match(page.html(), /Replaces/, 'the update consent page does not say what it replaces')
+  const updateShown = new Set([...page.html().matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]!))
+  assert.deepEqual(
+    Object.keys(updatePreview).filter(key => key !== 'previewToken').filter(key => !updateShown.has(key)),
+    [], 'preview fields the update consent page never renders',
+  )
+
+  // The echo is the update preview's own tree hash — not the one updateOf
+  // names (that is the generation being replaced, and a page that wired it
+  // would ask the host to approve bytes nobody was shown).
+  await page.click('[data-consent-confirm]')
+  await page.settle()
+  assert.deepEqual(lastCall('plugin.confirmInstall').params, {
+    previewToken: updatePreview.previewToken,
+    id: updatePreview.id,
+    commit: updatePreview.commit ?? null,
+    treeHash: updatePreview.treeHash,
+  }, 'the update confirmation is not the preview the user was shown')
+
   // ------------------------- §12 ruling 3: uninstall, then the same consent
 
   const current = wired.store.getState().systemPlugins

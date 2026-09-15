@@ -322,6 +322,11 @@ async function main(): Promise<void> {
   assert.match(installPath, /data-plugin-failure="tampered"/, 'a tampered row renders no failure block')
   assert.match(installPath, /data-plugin-reinstall="acme-demo"/, 'a tampered row offers no reinstall from the recorded commit')
   assert.doesNotMatch(installPath, /accept (the )?current bytes/i, 'there is an accept-current-bytes affordance')
+  // U1: the update entry rides on installed git rows — beside ruling 3's
+  // reinstall, never instead of it — and never on a dev or builtin row.
+  assert.match(installPath, /data-plugin-update="acme-demo"/, 'an installed git row offers no update entry')
+  assert.doesNotMatch(installPath, /data-plugin-update="acme-dev"/, 'a dev row offers an update entry')
+  assert.match(installPath, /data-plugin-dev-note/, 'a dev row does not say why it needs no update')
   // The badge's own class, not `data-plugin-source`: the row's `<article>`
   // carries that attribute as well, so the looser pattern would stay green with
   // the badge deleted.
@@ -387,6 +392,19 @@ async function main(): Promise<void> {
   assert.match(devConsent, /永远不会与记录下来的哈希复核/, 'the Chinese dev consent page omits the missing-check disclosure')
   assert.match(devConsent, /data-consent-field="path"/, 'the dev consent page hides the directory it would load from')
   assert.match(devConsent, /<dt>文案<\/dt><dd>4 条 · en\/zh<\/dd>/, 'the Chinese consent page does not state the bundled copy')
+
+  // U1: an update preview carries `updateOf`, and the consent page says what it
+  // replaces — both commits and both tree hashes — plus what an update keeps.
+  // A fresh-install preview renders no such row.
+  const updateConsent = renderToString(<PluginConsent preview={{
+    ...stagedPreview, compatible: true,
+    updateOf: { id: 'acme-demo', fromCommit: 'a'.repeat(40), fromTreeHash: 'd'.repeat(64) },
+  }} lang="en" {...consentProps} />)
+  assert.match(updateConsent, /data-consent-field="updateOf"/, 'an update preview rendered no updateOf row')
+  assert.match(updateConsent, /Commit a{12}…, updating to b{12}…/, 'the updateOf row does not name both commits')
+  assert.match(updateConsent, /Tree hash d{12}… becomes c{12}…/, 'the updateOf row does not name both tree hashes')
+  assert.match(updateConsent, /enabled preference is kept/, 'the updateOf note does not say what an update preserves')
+  assert.doesNotMatch(gitConsent, /data-consent-field="updateOf"/, 'a fresh-install preview rendered an updateOf row')
 
   pluginWired.dispose()
   pluginClient.dispose()

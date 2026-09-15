@@ -409,6 +409,72 @@
   overflow-wrap: anywhere;
 }
 
+/* --------------------------------------------------------------- update entry
+   One row's inline update form (a git row's 「更新到…」) and the dev row's
+   standing note that it has none. The form reuses the install form's field and
+   problem styles; only its container is its own. */
+
+.iris-plugin__update {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-left: 3px solid var(--iris-accent);
+  background: var(--iris-bg-sunken);
+}
+
+.iris-plugin__update h5 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.iris-plugin__update-field {
+  margin-top: 12px;
+}
+
+.iris-plugin__update-field label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--iris-ink-faint);
+  font-size: var(--iris-label-size);
+}
+
+.iris-plugin__update-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 9px;
+  border: var(--iris-hairline) solid var(--iris-rule-strong);
+  border-radius: var(--iris-radius-field, var(--iris-radius));
+  background: var(--iris-bg-raised);
+  color: var(--iris-ink);
+  font-family: var(--iris-font-mono, monospace);
+  font-size: 12px;
+}
+
+.iris-plugin__update-field input:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 1px;
+}
+
+.iris-plugin__update-field p {
+  margin: 5px 0 0;
+  color: var(--iris-ink-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.iris-plugin__update .iris-plugin__actions {
+  margin-top: 12px;
+}
+
+.iris-plugin__update-note {
+  margin: 8px 0 0;
+  color: var(--iris-ink-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 /* §12 ruling 1: `dev` is marked wherever a row appears, and this badge is the
    mark. Quiet for `builtin`, loudest for `dev` — the one source whose bytes are
    never re-verified against a recorded hash. */
