@@ -23,7 +23,7 @@ import { App } from '../src/app/App.tsx'
 import { CharacterPage } from '../src/app/CharacterPage.tsx'
 import { Sidebar } from '../src/app/Sidebar.tsx'
 import { ConnectionPanel } from '../src/app/ConnectionPanel.tsx'
-import { PluginCenter } from '../src/app/PluginCenter.tsx'
+import { PluginCenter, PluginConsent } from '../src/app/PluginCenter.tsx'
 import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
@@ -35,7 +35,7 @@ import { RAIL_MAX_TICKS, railMode } from '../src/app/rail.ts'
 import { bookFigures } from '../src/app/character-facts.ts'
 import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
-import type { MessageView } from '@iris/protocol'
+import type { MessageView, SystemPluginInstallPreview } from '@iris/protocol'
 import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
 import { pressureLevel } from '../src/app/context-occupancy.ts'
 import { ringDash } from '../src/app/composer-bar.ts'
@@ -240,6 +240,107 @@ async function main(): Promise<void> {
   assert.match(chinesePlugins, /浏览器资产/, 'the browser-asset status half has no Chinese label')
   assert.match(chinesePlugins, /data-plugin-asset-phase="undeclared"/, 'a plugin the host does not run shows its browser asset as undeclared')
   setLanguage('en')
+
+  // ------------------------------------------- the install path's four states
+  // `tampered` and `dev` are rows; the consent page is its own component, which
+  // is how an `incompatible` preview gets rendered at all — the fake client
+  // always previews as compatible, and a seam that let it lie would buy a worse
+  // model of the host with a worse test.
+  const installedPlugins = pluginWired.store.getState().systemPlugins
+  assert.ok(installedPlugins !== undefined, 'plugin state did not load for install-path rendering')
+  pluginWired.store.setState({
+    systemPlugins: {
+      revision: installedPlugins.revision + 1,
+      plugins: [
+        ...installedPlugins.plugins,
+        {
+          id: 'acme-demo', name: 'Acme Demo', description: 'a package fetched from a git remote',
+          version: '1.0.0', apiVersion: 1, dependencies: [], installed: true, enabled: false,
+          status: 'error' as const,
+          source: 'git' as const,
+          provenance: {
+            remote: 'https://example.invalid/acme/demo.git',
+            commit: 'b'.repeat(40),
+            treeHash: 'c'.repeat(64),
+            installedAt: '2026-09-15T02:11:04.912Z',
+          },
+          failure: { state: 'tampered' as const, reason: 'the tree hash on disk is not the one recorded at install' },
+        },
+        {
+          id: 'acme-dev', name: 'Acme Dev', description: 'a package loaded in place', version: '0.1.0',
+          apiVersion: 1 as const, dependencies: [], installed: true, enabled: false,
+          status: 'disabled' as const,
+          source: 'dev' as const, provenance: { path: 'D:/packages/iris-plugin-demo' },
+        },
+      ],
+    },
+  })
+  const installPath = render(pluginWired.store, slots.core, <PluginCenter />)
+  assert.match(installPath, /data-plugin-install="closed"/, 'the catalog head has no install entry')
+  assert.match(installPath, /data-plugin-failure="tampered"/, 'a tampered row renders no failure block')
+  assert.match(installPath, /data-plugin-reinstall="acme-demo"/, 'a tampered row offers no reinstall from the recorded commit')
+  assert.doesNotMatch(installPath, /accept (the )?current bytes/i, 'there is an accept-current-bytes affordance')
+  // The badge's own class, not `data-plugin-source`: the row's `<article>`
+  // carries that attribute as well, so the looser pattern would stay green with
+  // the badge deleted.
+  assert.match(installPath, /class="iris-plugin__source iris-plugin__source--dev"/, 'a dev row carries no source badge')
+  assert.match(installPath, /data-uninstall-copy="git"/, 'a git row does not fork the uninstall copy')
+  assert.match(installPath, /data-uninstall-copy="dev"/, 'a dev row does not fork the uninstall copy')
+  assert.match(installPath, /data-plugin-provenance/, 'an installed row records no provenance')
+
+  const stagedPreview = {
+    previewToken: 'preview-render-check',
+    id: 'acme-demo',
+    displayName: 'Acme Demo',
+    description: 'a staged package the render check describes',
+    version: '2.1.0',
+    apiVersion: '2.0',
+    compatible: false,
+    supportedApiVersions: '1.0–1.0',
+    source: 'git' as const,
+    remote: 'https://example.invalid/acme/demo.git',
+    commit: 'b'.repeat(40),
+    treeHash: 'c'.repeat(64),
+    fileCount: 42,
+    sizeBytes: 2_097_152,
+    capabilities: ['demo.state'],
+    permissions: ['provide-capability', 'register-rpc'],
+    dependencies: ['tavern-helper'],
+    hasClient: true,
+    warnings: ['a declared dependency is not in this profile'],
+  }
+  const consentProps = { busy: false, error: undefined, onConfirm: () => {}, onCancel: () => {} }
+  const incompatible = renderToString(<PluginConsent preview={stagedPreview} lang="en" {...consentProps} />)
+  assert.match(incompatible, /data-consent-confirm[^>]*disabled=""/, 'an incompatible package can still be confirmed')
+  assert.match(incompatible, /This build cannot run this package/, 'an incompatible preview does not say why')
+  assert.match(incompatible, /This is host code/, 'the consent page does not disclose same-privilege code')
+  assert.match(incompatible, /not a boundary Iris enforces/, 'the permissions list is presented as a boundary')
+
+  const gitConsent = renderToString(<PluginConsent preview={{ ...stagedPreview, compatible: true }} lang="en" {...consentProps} />)
+  assert.doesNotMatch(gitConsent, /data-consent-confirm[^>]*disabled=""/, 'a compatible package cannot be confirmed')
+  // Compared as a SET against the preview's own keys, not as a count: a count
+  // stays green when a field is renamed, which is exactly how a renamed wire
+  // key would silently stop being shown (mutation 8 in the ledger).
+  const shownFields = new Set([...gitConsent.matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]))
+  assert.deepEqual(
+    Object.keys(stagedPreview).filter(key => key !== 'previewToken').filter(key => !shownFields.has(key)),
+    [],
+    'the consent page does not render every preview field but the token',
+  )
+
+  // `delete` rather than `remote: undefined`: the wire's optional fields are
+  // absent for a dev source, and `exactOptionalPropertyTypes` is right to say
+  // those are two different shapes.
+  const devPreview: SystemPluginInstallPreview = {
+    ...stagedPreview, compatible: true, source: 'dev', path: 'D:/packages/iris-plugin-demo',
+  }
+  delete devPreview.remote
+  delete devPreview.commit
+  const devConsent = renderToString(<PluginConsent preview={devPreview} lang="zh" {...consentProps} />)
+  assert.match(devConsent, /data-plugin-consent="dev"/, 'the dev consent page is not marked dev')
+  assert.match(devConsent, /永远不会与记录下来的哈希复核/, 'the Chinese dev consent page omits the missing-check disclosure')
+  assert.match(devConsent, /data-consent-field="path"/, 'the dev consent page hides the directory it would load from')
+
   pluginWired.dispose()
   pluginClient.dispose()
   // Only the last reply offers a retry; more than one would mean discarding

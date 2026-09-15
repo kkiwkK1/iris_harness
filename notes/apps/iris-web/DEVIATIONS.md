@@ -6858,3 +6858,113 @@ task-I round, not a living registry, and no test holds it to the dictionary.
 What would overturn this note: a third language, which would make any per-
 component table untenable anyway — the dictionaries are already the shape that
 survives one.
+
+## 99. 插件中心长出安装路径：一张同意页、六个失败状态、以及三处「代码赢」
+
+Dated 2026-09-15. PR-3 of `docs/SYSTEM-PLUGIN-INSTALL.md` §10。PR-2 已经把整条安装
+路径做完了——三个 RPC、`system-plugins.json` v2、开机复核、六个命名失败状态、
+`SystemPluginView` 的三个可选字段——但**没有 UI**：这些状态只能被测试看见。本节记的是
+把它们搬到读者面前时，设计被代码推翻的地方、文案上的判断，以及哪些断言真的会变红。
+
+### 设计说的和代码做的
+
+§8 是本轮之前唯一一段还是「设计」的正文，落地时被推翻五处，都已就地记进该节：
+
+1. **`failure.detail` 实际叫 `reason`。** §8 的 `interface` 草稿写 `detail: string`，PR-2 落地的
+   `SystemPluginFailure` 是 `{ state, field?, step?, reason }`（`packages/iris-protocol/src/system-plugins.ts`）。
+2. **同意页不显示成员名、不做重名预警。** 草稿要求「扫出的成员名（与已启用插件重名时预警）」，
+   而 `clientMembers` 在 PR-2 就被删掉了（扫描器是浏览器侧模块，宿主 import 不了它）。页面显示
+   `hasClient` 一句话；重名仍由帧侧按插件拒绝，并继续显示在行上已有的浏览器资产列里。
+3. **「同意页必须说明这是同权代码」不再引 `COPY` 表。** 那张表在 §98 已并进 `strings.ts`；本轮的
+   85 个新键也在那里，两列都受 `i18n.test.ts` 的三项审计管。
+4. **卸载文案是加一句，不是改那句 `retained`。** `pluginCenterRetained` 对内置行仍然成立，
+   所以它留在页脚的 `<aside>` 里一字未动；`git` 与 `dev` 的行各自多一句 `data-uninstall-copy` 注记。
+   一个 `builtin` 行**没有**这句注记——三岔的第三条就是「没有第三句话，页脚那句就是它」。
+5. **「离开页面即取消」需要一个新入参。** 这是本轮最贵的一条：§5.3 写着「用户取消 ⇒
+   `plugin.cancelInstall`」，而**设置页从不卸载**——`SettingsPage`
+   （`apps/iris-web/src/app/SettingsNavigation.tsx:122`）把每条路由都渲染出来、只用 `hidden` 藏掉——
+   所以路由切换不触发任何 cleanup，组件内部也没有任何东西能把「读者正在看这一页」与「这一页被盖住了」
+   分开。`PluginCenter` 因此收一个 `active` 属性（`SettingsDrawer` 传 `open && route === 'plugins'`），
+   默认 `true` 好让直接挂载的调用方（`check:render`、harness）仍是「可见的那一页」。
+
+还有一处不在 §8、但在 `store.ts` 里：**`describeError` 会吃掉宿主在这条路上说的每一句话**。
+`client/errors.ts` 的 `COPY` 表把 `invalid-request` 翻成「Iris 不会发送这个请求。」，这对六个生命周期
+方法是对的（那里的详情是一个标识符），对安装路径是错的——那里的详情**就是信息本身**
+（`install-failed: [fetch] …`、`manifest-invalid: iris.plugin.host — …`、`install-failed: id 已被占用 …`，
+形状见 `packages/iris-app-service/src/plugins/install.ts` 的 `SystemPluginInstallError`）。所以
+`store.ts` 多了一个 `pluginInstallFailure`，它走 `asRpcError().message`，只在**我们自己**出错时才套
+`irisOwnFault`。没有改 `describeError`，也没有动那张表：这是一条路的读法，不是全局策略。
+
+### 文案上的判断
+
+- **同意页替换列表，而不是并排。** 它问的是关于一个包的问题，背后摊着一整个目录是在邀请人点过去。
+- **`apiVersion` 拆成三行**（需要 / 本机支持 / 是否兼容），而不是一句带两个槽的话。一开始写的是
+  「需要 {declared}，本机支持 {supported}」，但它和上面两行的数字重复；拆开之后判决那一行不带槽，
+  于是它在两列里都只是一句判决：「兼容——本次构建实现了它。」/「不兼容——本次构建没有实现它。」
+- **`incompatible` 的预览照样显示整页**，只把确认按钮置灰并多一句为什么。一个作者需要看见自己的包
+  被拒在哪一行；一页空白只会让他再试一次。
+- **`permissions` 旁边那句话是裁决 4 的原文**：「这是作者写下的声明，Iris 只做拼写校验并展示。它不是
+  Iris 强制的边界：系统插件是宿主代码，这张表上的事它能做，不在这张表上的事它也能做。」它必须出现在
+  列表旁边而不是页脚，否则那张列表读起来就是一个权限系统——那正是裁决 4 自己点名的风险。
+- **`dev` 徽标用 danger 色**。它不是一个中性的来源标签：它是那条「这一行的字节永远不会被复核」
+  的披露（裁决 1），色值就是这句话的音量。
+
+### 变红的断言（10 次变异，逐条施加后还原）
+
+| # | 变异 | 变红的断言 |
+| --- | --- | --- |
+| 1 | confirm 回带一个写死的 id 而不是 `preview.id` | `plugin-center-install.test.ts`「the confirmation is not the preview the user was shown」 |
+| 2 | `discard()` 只记账、不发 `plugin.cancelInstall` | 同文件「no plugin.cancelInstall call was made」 |
+| 3 | `dev` 行不渲染 `SourceBadge` | `plugin-center.test.ts`「a dev row carries no source badge」与 `check:render` 同名断言——**但两条在收紧之前都是绿的**，见下 |
+| 4 | `tampered` 的重装跳过 `plugin.uninstall` | `plugin-center-install.test.ts`「the reinstall did not run uninstall before staging」 |
+| 5 | `incompatible` 的确认按钮不置灰 | `plugin-center.test.ts`「an incompatible package can be confirmed」+ `check:render`「an incompatible package can still be confirmed」 |
+| 6 | `zh.pluginCenterFailureTampered` 换成英文 | `i18n.test.ts`「zh["pluginCenterFailureTampered"] has no Chinese」（外加 `plugin-center.test.ts` 的中文断言） |
+| 7 | 客户端 commit 形状检查放宽成 `/^[0-9a-zA-Z]+$/` | 两条：「a branch name passed the client-side check」与形状检查自己的那条单元测试 |
+| 8 | 同意页的 `permissions` 行改名（等价于漏渲染一个字段） | 两处「preview fields the consent page never renders」——**`check:render` 原本是绿的**，见下 |
+| 9 | 卸载文案对 `git` 与 `dev` 用同一句 | `plugin-center.test.ts`「a git row does not say the tree is deleted」 |
+| 10 | `pluginInstallFailure` 改回 `describeError` | `plugin-center-install.test.ts`「the host's own refusal is not on the page」 |
+
+**变异 3 与变异 8 各抓出一条本来不会变红的断言，两条都当场收紧了**，这比它们验证的东西更值钱：
+
+- **3：一个选择器同时命中了两处。** 行的 `<article>` 上有 `data-plugin-source="dev"`（给行级样式用），
+  徽标 `<span>` 上也有。原来的断言写的是 `/data-plugin-source="dev"/`，于是**把徽标整个删掉，断言照样绿**。
+  改成匹配徽标自己的类名加文字（`class="iris-plugin__source iris-plugin__source--dev"[^>]*>dev<`）之后
+  才变红。这正是「选择器跨了两张表」那一类，只不过这次两张表是同一行上的两层。
+- **8：数量不是集合。** `check:render` 原来数的是「不同 `data-consent-field` 的个数 == preview 的键数 - 1」。
+  把 `permissions` 改名成 `permissionsDropped`，个数纹丝不动。改成和两个测试一样的**集合对账**
+  （preview 自己的键集减去 `previewToken`，逐个要求出现）之后才变红。计数在字段被**重命名**时永远
+  沉默，而重命名正是一个协议键悄悄不再被显示的那条路。
+
+### 为什么 `PluginConsent` 是导出的纯组件
+
+`FakeSystemPlugins.previewInstall`（`packages/iris-client-fake/src/plugins.ts`）永远答
+`compatible: true`、`hasClient: false`，它的 `id` 由源摘要推导。于是「`incompatible` 的同意页」这个状态
+**在 fake 里造不出来**。两条路：给 fake 加一个能让它撒谎的注入点，或者把同意页做成一个纯组件、由测试
+直接喂一个 preview。选后者——前者买来的是一个更差的宿主模型加一个更差的测试。本轮因此**没有给 fake
+加任何 seam**，`bundled` 仍是它唯一的注入点，而 `incompatible`、`hasClient: true`、带 `warnings` 的三种
+同意页由 `renderConsent`（harness）与 `check:render` 直接渲染。
+
+其余的路全部走真 fake：preview → 同意页 → confirm 的回带、cancel 的 token、以及**宿主拒绝原样显示**
+——最后这条是用 fake 自己的拒绝走通的（在同意页开着时把那张票据从外部 `cancelInstall` 掉，再点确认，
+得到 `install-failed: no staged install for token "…"`），所以断言比对的是 fake 抛出来的 `.message`
+字符串本身，不是一段写死的文案。
+
+### 两个测试文件，因为它们用的是两种仪器
+
+`plugin-center.test.ts` 用 `react-dom/server`：它测的是**投影**——宿主这样描述一行，页面就这样说，
+中英各一遍。它测不了任何需要点击的东西，因为服务端渲染不会点击。`plugin-center-install.test.ts`
+在 jsdom 里挂载同一个组件、在 `act` 里真点，并且**断言落在记录下来的 RPC 参数上而不是 DOM 上**：
+一个把 id 接到错误变量上的页面渲染出来一模一样。harness 是同一个（`plugin-center-harness.tsx`，
+多了 `mountPluginCenter` 与 `renderConsent`），没有 fork。
+
+### 什么会推翻这一节
+
+- **裁决 2 被改口**（`plugin.update` 真的实现了）：那时行上会多一个更新按钮，而
+  `plugin-center.test.ts` 里那条 `doesNotMatch(/plugin\.update|check for updates/i)`
+  （它钉的是「裁决 2 把这个方法预留了，页面不得提供它」，不在上面那张变异表里——它是一条
+  否定断言，没有对应的变异，因为要让它变红只需要加一个按钮）会成为一条必须删掉的断言，
+  删它的人应当在这里读到它当初为什么在。
+- **设置页改成按路由卸载**：`active` 这个入参当场多余，应当删掉而不是留着。
+- **第三种语言**：三行 `apiVersion` 的拆法是为「判决那一行不带槽」服务的，多一列时要重新看。
+- **fake 长出一个真实的 preview 造型能力**（例如它开始读一个夹具包）：那时 `renderConsent` 那条路
+  可以退回成 fake 驱动，而本节「没有加 seam」的理由也随之作废。

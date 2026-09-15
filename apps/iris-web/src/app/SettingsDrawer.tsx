@@ -146,7 +146,11 @@ export function SettingsDrawer({ open, onClose, control }: {
         <SettingsPage route="appearance" active={route === 'appearance'}><AppearanceCard /><ReadingPanel control={control} /></SettingsPage>
         <SettingsPage route="backups" active={route === 'backups'}><BackupPanel /></SettingsPage>
         <SettingsPage route="usage" active={route === 'usage'}><UsagePanel embedded open={route === 'usage'} onClose={() => navigate('home')} onOpenChat={id => { close(); void actions.openChat(id) }} /></SettingsPage>
-        <SettingsPage route="plugins" active={route === 'plugins'}><PluginCenter /><PluginSettings lang={lang} /></SettingsPage>
+        {/* `active` is the plugin page's own copy of the route, because a
+            settings page is never unmounted — `SettingsPage` only hides it —
+            and a pending install consent has to be cancelled when the reader
+            leaves it (SYSTEM-PLUGIN-INSTALL §5.3). */}
+        <SettingsPage route="plugins" active={route === 'plugins'}><PluginCenter active={open && route === 'plugins'} /><PluginSettings lang={lang} /></SettingsPage>
         <SettingsPage route="diagnostics" active={route === 'diagnostics'}>
           <HostReports /><NoticeLog /><DemoActionsSection />
           {import.meta.env.DEV ? <SandboxProbe /> : null}{import.meta.env.DEV ? <RailPreview /> : null}

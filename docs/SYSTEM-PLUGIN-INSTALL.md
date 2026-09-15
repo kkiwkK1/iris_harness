@@ -1,6 +1,6 @@
-# 系统插件安装路径（裁决已下，分阶段落地中）
+# 系统插件安装路径（已全部落地）
 
-状态：**设计已裁决**（2026-09-15，见 §12 裁决记录）。§10 的 **PR-1（安装器泛化 + 清单解析）与 PR-2（安装路径与持久化）已落地，PR-3（PluginCenter）未开工**——§3 / §5 / §6 / §7 / §9 现在描述的是代码，落地时被代码推翻的地方在各节里就地标了「**PR-2 落地更正**」；§8（PluginCenter 变更）仍然是设计，不得被引用为现状。代码以 `docs/INFRASTRUCTURE-INTERFACES.md` 为准。原状态说明保留如下——状态：**提案**。本文不描述 `main` 上存在的代码，除了第 2 节——那一节的每一条都按 `8552c4b` 重新读过源码，行号只作为该提交的证据，事实以符号名定位。其余各节是**待裁决的设计**，落地前不得被引用为现状。
+状态：**设计已裁决**（2026-09-15，见 §12 裁决记录），**§10 的三个 PR 全部落地**——PR-1（安装器泛化 + 清单解析）、PR-2（安装路径与持久化）、PR-3（PluginCenter）。于是 §3 / §5 / §6 / §7 / §8 / §9 描述的都是代码，落地时被代码推翻的地方在各节里就地标了「**PR-2 落地更正**」或「**PR-3 落地更正**」。代码以 `docs/INFRASTRUCTURE-INTERFACES.md` 为准。原状态说明保留如下——状态：**提案**。本文不描述 `main` 上存在的代码，除了第 2 节——那一节的每一条都按 `8552c4b` 重新读过源码，行号只作为该提交的证据，事实以符号名定位。其余各节是**待裁决的设计**，落地前不得被引用为现状。
 
 它回答的是 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md)「Trust model (信任模型)」留下的那个公开问题——**同权宿主代码的安装源受什么约束**——以及 [INFRASTRUCTURE-INTERFACES](INFRASTRUCTURE-INTERFACES.md) §8 里「系统插件的包外安装路径」那一行。两者在文档里就是同一件事的两面。
 
@@ -375,6 +375,29 @@ id / name / description / version / dependencies 全部来自清单（读清单�
 
 ## 8. PluginCenter 变更
 
+**PR-3 落地更正（五处，代码赢）**。本节原本是设计，现在描述的是
+`apps/iris-web/src/app/PluginCenter.tsx` 上的代码。被代码推翻的五条逐条记在这里，
+理由见 `notes/apps/iris-web/DEVIATIONS.md` §99：
+
+1. **`failure.detail` 实际叫 `reason`。** 下面那段 `interface` 草稿写的是 `detail: string`；
+   PR-2 落地的 `SystemPluginFailure`（`packages/iris-protocol/src/system-plugins.ts`）是
+   `{ state, field?, step?, reason }`。UI 读的是 `reason`。
+2. **同意页不显示扫出的成员名，也不做重名预警。** 草稿里的「及扫出的成员名（与已启用插件重名时预警）」
+   靠的是 `clientMembers`，而 PR-2 已经把它从 preview 里删掉了（理由见 §5.1 的落地更正：扫描器是浏览器
+   侧模块，宿主 import 不了）。同意页显示的是 `hasClient` 一句话；重名仍然由帧侧 `findMemberConflicts`
+   **按插件**拒绝，并落在行上的浏览器资产列里。
+3. **「同意页必须说明这是与宿主同权的代码」不再引 `COPY` 表。** 那张内联表在 #95 已经并进
+   `apps/iris-web/src/app/i18n/strings.ts` 的 `pluginCenter*` 键族（见本仓 ledger §98），
+   本轮新增的 85 个键也在那里，两列都受 `i18n.test.ts` 的三项审计管。
+4. **卸载文案按 `source` 分叉是在行上加一句，不是改那句 `retained`。** `pluginCenterRetained`
+   （「卸载会保留卡片与聊天数据…」）对内置行仍然是对的，所以它留在页脚的 `<aside>` 里没动；
+   `git` 与 `dev` 的行各自多一句 `data-uninstall-copy` 的注记。
+5. **「离开页面即取消」需要一个新的入参。** 设置页**从不卸载**——`SettingsPage`
+   （`apps/iris-web/src/app/SettingsNavigation.tsx:122`）把每条路由都渲染出来、只用 `hidden`
+   藏起来——所以路由切换不会触发任何 cleanup。`PluginCenter` 因此收一个 `active` 属性
+   （`SettingsDrawer.tsx` 传 `open && route === 'plugins'`），组件内部没有别的东西能把
+   「用户正在看这一页」和「这一页被另一页盖住了」分开。
+
 **行形状的最小增量**（`SystemPluginView`，`packages/iris-protocol/src/system-plugins.ts:5`）。现有字段一个不动，`status` 的六值闭合集不动，`error?: string` 不动：
 
 ```ts
@@ -402,6 +425,20 @@ interface SystemPluginView {
 - `failure.state` 六个值各有专属文案与处置建议：`tampered` → 「磁盘上的文件与安装时记录的不符」；`incompatible` → 「需要 apiVersion N，本机支持 1」；`load-failed`/`activate-failed` → 沿用现有的「修好后重试启用或卸载」。
 - 卸载确认文案要**改**：系统插件的卸载删树，而现有的 `retained` 文案说的是「保留」（那句话对内置和 ST 是对的）。按 `source` 分文案。
 
+**PR-3 落地形状**（`apps/iris-web/src/app/PluginCenter.tsx`，测试
+[plugin-center.test.ts](../apps/iris-web/tests/plugin-center.test.ts) 与
+[plugin-center-install.test.ts](../apps/iris-web/tests/plugin-center-install.test.ts)）：
+
+| 面 | 落地 |
+| --- | --- |
+| 安装入口 | 目录头下的 `data-plugin-install` 表单，两个单选源（`git` 远端 + 40 位 commit / `dev` 目录）。客户端先做形状检查——commit 必须匹配 `/^[0-9a-f]{40}$/`，与协议的 `PLUGIN_GIT_COMMIT`（`packages/iris-protocol/src/rpc.ts:261`）**是一份手抄**，抄它是为了让打错一个字符只花一次按键而不是一次 clone；宿主的拒绝仍然原样显示 |
+| 同意页 | `PluginConsent`，**导出的纯组件**。`SystemPluginInstallPreview` 除 `previewToken` 外的每个字段各占一行，行上带 `data-consent-field="<协议键名>"`，所以协议加了字段而页面忘了显示是一条变红的断言而不是一页安静变短的清单。`permissions` 渲染成列表，旁边就是裁决 4 那句话；`sizeBytes` 过 `describeBytes`；`incompatible` 的预览**照样显示整页**，只是确认按钮 `disabled` 并多一句为什么 |
+| 回带 | 确认按钮回带的四个值全部读自 `preview` 对象，**不读表单**；`commit ?? null` 是 §5.2 的那条区分。断言落在 fake 记下的调用参数上，不落在 DOM 上——一个把 id 接到错误变量上的页面看起来一模一样 |
+| 取消 | 取消按钮、路由切走、组件卸载三条路都走同一个 `discard(token)`，已确认或已取消的 token 记在一个 `Set` 里不会被重复取消 |
+| 行 | `source` 徽标（`builtin`/`git`/**`dev`**，`dev` 最醒目并带 title 披露）；`provenance` 是一个 `<details>`，摘要给短 commit、短 treeHash 与安装时间，展开给全值；`failure` 六个状态各有「这是什么」与「你能做什么」两句，`manifest-invalid`/`load-failed` 点名字段，`install-failed` 点名 git 步骤 |
+| 裁决 3 | `tampered` 行多一个按钮，它**先卸载再 preview**（裁决 5 在 id 还占着时会拒绝 confirm），然后走同一张同意页。整棵树里没有「接受当前字节」，也没有任何 `plugin.update` 的入口（裁决 2） |
+| 裁决 1 | `dev` 在三处都标：`system-plugins.json`（PR-2）、行上的徽标、同意页上的徽标与那段披露 |
+
 ---
 
 ## 9. 安全不变量与测试清单
@@ -428,7 +465,17 @@ interface SystemPluginView {
 | 16 | 不新增任何能读密钥的 API | 断言 `SystemPluginActivationScope` 的键集合未变（`packages/iris-plugin-api/src/index.ts:95` 的六个成员）。`key.txt` 与连接密钥本来就不在 scope 上，本提案也不放上去——**唯一的保证是「没有新接口」，不是「插件够不到」**：同权代码本来就能读文件系统，这一点必须在同意页上说清楚，不能假装 scope 是边界 |
 | 17 | `client.js` 不合格只拒该插件 | 一个成员重名的 client 与一个正常 client 同时启用，断言正常那个的成员在帧内可用、重名那个报 `conflict`，且帧仍然跑（`apps/iris-web/tests/plugin-member-merge.test.ts`） |
 
-**PR-2 落地：#1–#14 各自落在哪个测试上**（#15–#17 属于 PR-3 与既有帧侧测试，本轮未动）：
+**PR-3 落地：#15–#17。** #15（不新增路由、不改 `LOOPBACK_HOSTNAMES`）在 PR-3 里是**空集**：本轮
+只动了 `apps/iris-web/`，三个安装 RPC 走的仍是 PR-2 注册的既有 POST 面，浏览器侧没有新增任何 fetch
+目标。#16（不新增能读密钥的 API）同样是空集，而它要求的另一半——**同权这件事必须在同意页上说清楚，
+不能假装 scope 是边界**——落成了 `pluginCenterConsentPrivilege`（「这是宿主代码……Iris 不给系统插件
+沙箱，本页上的任何一项都不是对它能做什么的限制」）与 `pluginCenterConsentPermissionsNote`（裁决 4），
+两条都由 `plugin-center.test.ts`、`plugin-center-install.test.ts` 与 `check:render` 三处断言，中英各一。
+#17（`client.js` 不合格只拒该插件）**本轮一行未动**：它由既有的
+[plugin-member-merge.test.ts](../apps/iris-web/tests/plugin-member-merge.test.ts) 覆盖，PR-3 只是把它的
+结论——`conflict`——继续显示在行上的浏览器资产列里。
+
+**PR-2 落地：#1–#14 各自落在哪个测试上**：
 
 | # | 落地测试 |
 | --- | --- |
@@ -468,9 +515,23 @@ interface SystemPluginView {
 `packages/iris-client-fake/tests/plugin-install.test.ts`（6）、
 `packages/iris-extension-installer/tests/staged-install.test.ts`（6）。
 
-**PR-3：PluginCenter**
+**PR-3：PluginCenter**（**已落地**）
 安装入口、同意页、`source` 徽标、六个失败状态的中英文案、按 `source` 分叉的卸载文案。
 验收：同意页显示 §5.1 返回的每一个字段；英中双语齐全、键盘可达（沿用现有 PluginCenter 的验收条目）；`dev` 徽标在行上和同意页上都出现；浏览器验收脚本与证据落进 `notes/`。
+落地代码：`apps/iris-web/src/app/PluginCenter.tsx`（`PluginInstallForm` / `PluginConsent` /
+`Provenance` / `SourceBadge` 与行上的失败块）、`apps/iris-web/src/app/plugin-center.css`、
+`apps/iris-web/src/app/i18n/strings.ts`（85 个 `pluginCenter*` 新键，两列）、
+`apps/iris-web/src/client/store.ts`（三个 action，以及**为什么它们不走 `describeError`**）、
+`apps/iris-web/src/app/SettingsDrawer.tsx`（`active` 入参）。
+落地测试：[plugin-center-install.test.ts](../apps/iris-web/tests/plugin-center-install.test.ts)（jsdom
+里真点，断言落在 fake 记下的调用参数上）、[plugin-center.test.ts](../apps/iris-web/tests/plugin-center.test.ts)
+新增的一条（六个失败状态 × 两种语言、三种 `source`、provenance、卸载文案分叉、同意页字段下限）、
+`npm run check:render` 新增的四个用例。
+**浏览器验收**：施工时记为未做（理由：`check:render` 与 jsdom 点击测试是可重跑的门，一次手工会话不是），
+合入前由协调人补上——脚本是 `apps/iris-web/tools/live-plugin-install-check.mjs`（headless Chrome 经 CDP 对着真宿主、真包走完
+安装 → 同意 → 确认 → 启用 → 卸载），证据在 [PLUGIN-INSTALL-ACCEPTANCE-2026-09-15](../notes/PLUGIN-INSTALL-ACCEPTANCE-2026-09-15.md)：
+17 个同意页字段、dev 徽标、权限句、行状态与卸载后目录原样，全部为真；截图因验收宿主画着真实对话正文而不入库。
+git 源在页面上的同一条路径未在浏览器里走，那份记录里说明了为什么。
 
 ---
 
@@ -535,6 +596,25 @@ owner 已就下面五问裁决。五个问题按原样保留在后面，作为�
 - **裁决 5** 已实现：confirm 阶段比对目录里全部 id（内置与已装都算），撞车即
   `install-failed`，消息含「id 已被占用」。preview 额外把这件事放进 `warnings`，这样同意页
   不必等到用户点下去才告诉他——但**拒绝仍然在 confirm**，位置没挪。没有 `shadowed` 状态。
+
+**PR-3 的落地情况**（UI，全部在 `apps/iris-web/src/app/PluginCenter.tsx`）：
+
+- **裁决 1** 的第二、三处标记落地：行上的 `source` 徽标（`dev` 用 danger 色，并在 `title` 里写明
+  「从本机的一个目录就地加载，它的字节永远不会被复核」）与同意页上的徽标加一整段披露。第一处
+  （`system-plugins.json`）是 PR-2 的。
+- **裁决 2** 落地为**没有按钮**：整个 UI 里没有任何 `plugin.update` 的入口，`plugin-center.test.ts`
+  用一条 `doesNotMatch(/plugin\.update|check for updates/i)` 把它钉住。
+- **裁决 3** 落地：`tampered` 行上的「按记录的 remote + commit 重新安装」，它先 `plugin.uninstall`
+  再 `plugin.previewInstall(recorded)`，然后走**同一张**同意页。顺序是被断言的，不是被注释的
+  （`plugin-center-install.test.ts` 比较那两次调用的方法名序列与参数）。没有「接受当前字节」。
+- **裁决 4** 落地：`permissions` 在同意页上是一张列表，旁边就是那句「这是作者写下的声明，Iris 只做
+  拼写校验并展示。它不是 Iris 强制的边界：系统插件是宿主代码，这张表上的事它能做，不在这张表上的事
+  它也能做」，中英各一份、两处测试断言。
+- **裁决 5** 在 UI 上是**不做什么**：撞车的拒绝仍然只在 confirm，页面把宿主的那句
+  「install-failed: id 已被占用 …」**原样**显示。这句话能到达读者，靠的是 store 里的
+  `pluginInstallFailure` 用 `asRpcError().message` 而不是 `describeError()`——后者会把
+  `invalid-request` 的详情换成「Iris 不会发送这个请求。」，那对六个生命周期方法是对的、对这条路是错的
+  （理由写在该函数的注释里，并由一条变红的断言钉住）。
 
 1. **`dev` 源是否进发行版？** 它是唯一一个跳过 `treeHash` 复核的源。选项：(a) 永远可用并永远标 `dev`；(b) 只在开发构建里编译进去，发行版根本没有这条路。本文按 (a) 写，因为 (b) 会让「按发行版调试插件」变成不可能，但 (a) 的代价是发行版里存在一条无字节校验的同权装载路径。
 2. **更新事务现在留不留位？** 本轮的更新路径是「卸载后重装」，而卸载删树、重装要重新走完同意。这对一个常更新的插件是明显的摩擦。是否现在就把 `plugin.update({ id, commit })` 的位子留出来（preview 复用、confirm 时把新树促进到同一 id 并保留偏好行），还是等有真实使用者再说？

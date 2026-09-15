@@ -40,6 +40,7 @@ import type {
   ScopedRegexView,
   ScriptContext,
   ScriptView,
+  SystemPluginInstallPreview,
   SystemPluginSnapshot,
   UsageGranularity,
   UserScript,
@@ -817,6 +818,17 @@ export interface IrisActions {
   stCompatSettings(extensionId: string, pluginRevision: number, settings: unknown): Promise<void>
   disableSystemPlugin(id: string): Promise<SystemPluginOperationResult>
   reloadSystemPlugin(id: string): Promise<SystemPluginOperationResult>
+  /**
+   * Stage a package and stop, so the consent page can show what it is.
+   *
+   * Nothing is imported and nothing is promoted; the answer is the preview the
+   * user reads, or the host's own refusal sentence, verbatim.
+   */
+  previewSystemPluginInstall(source: SystemPluginInstallSource): Promise<SystemPluginPreviewResult>
+  /** Promote a staged package, echoing the preview's own fields back. */
+  confirmSystemPluginInstall(params: SystemPluginConfirmParams): Promise<SystemPluginOperationResult>
+  /** Discard a staged preview. Best-effort: an unknown token is not an error. */
+  cancelSystemPluginInstall(previewToken: string): Promise<void>
   openChat(chatId: string): Promise<void>
   closeChat(): void
   createChat(characterId: string): Promise<void>
@@ -1359,6 +1371,24 @@ export type SystemPluginOperationResult =
   | { ok: true }
   | { ok: false, error: string }
 
+/** What `plugin.previewInstall` is asked to stage. Mirrors the wire union. */
+export type SystemPluginInstallSource =
+  | { kind: 'git', remote: string, commit: string }
+  | { kind: 'dev', path: string }
+
+/** The echo `plugin.confirmInstall` compares against its transaction record. */
+export interface SystemPluginConfirmParams {
+  previewToken: string
+  id: string
+  commit: string | null
+  treeHash: string
+}
+
+/** A staged preview, or the host's own refusal sentence. */
+export type SystemPluginPreviewResult =
+  | { ok: true, preview: SystemPluginInstallPreview }
+  | { ok: false, error: string }
+
 /** The store the whole interface reads. */
 export type IrisStore = StoreApi<IrisState & IrisActions>
 
@@ -1592,6 +1622,24 @@ export function createIrisStore(
       ? describeError(error, getLanguage())
       : translate(getLanguage(), 'irisOwnFault', { detail: describeError(error, getLanguage()) })
 
+    /**
+     * The install path's failures, kept verbatim.
+     *
+     * `describeError` deliberately **replaces** the host's detail for
+     * `invalid-request` with the general sentence "Iris would not send that."
+     * (`client/errors.ts`'s `COPY` table), which is right for the six
+     * lifecycle methods — there the detail is an identifier — and wrong here:
+     * every refusal on the install path is a named state carrying the reason a
+     * user has to act on (`install-failed: [fetch] …`, `manifest-invalid:
+     * iris.plugin.host — …`, `install-failed: id 已被占用 …`; the shape is
+     * `SystemPluginInstallError`, `packages/iris-app-service/src/plugins/install.ts:131`).
+     * So this reader takes `asRpcError().message`, which is the host's own
+     * words, and only wraps a fault of *ours* the way `pluginFailure` does.
+     */
+    const pluginInstallFailure = (error: unknown): string => isHostError(error)
+      ? asRpcError(error, getLanguage()).message
+      : translate(getLanguage(), 'irisOwnFault', { detail: describeError(error, getLanguage()) })
+
     const requestSystemPluginSnapshot = async (
       work: () => Promise<SystemPluginSnapshot>,
     ): Promise<SystemPluginOperationResult> => {
@@ -1746,6 +1794,48 @@ export function createIrisStore(
 
       async reloadSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
         return requestSystemPluginSnapshot(async () => client.call('plugin.reload', { id }))
+      },
+
+      async previewSystemPluginInstall(source: SystemPluginInstallSource): Promise<SystemPluginPreviewResult> {
+        try {
+          return { ok: true, preview: await client.call('plugin.previewInstall', { source }) }
+        } catch (error: unknown) {
+          return { ok: false, error: pluginInstallFailure(error) }
+        }
+      },
+
+      /*
+       * Every field but the token is an echo of what the preview showed, and the
+       * page is required to pass the preview object's own values — never a
+       * re-read of the form. The store does not re-derive them either: it
+       * forwards exactly what it is handed, so the one place that decides which
+       * bytes are being approved stays the consent page's `preview` variable.
+       */
+      async confirmSystemPluginInstall(params: SystemPluginConfirmParams): Promise<SystemPluginOperationResult> {
+        const session = systemPluginClock(store).session
+        try {
+          adoptSystemPluginSnapshot(store, await client.call('plugin.confirmInstall', params), session)
+          return { ok: true }
+        } catch (error: unknown) {
+          const message = pluginInstallFailure(error)
+          set(raise('error', message))
+          return { ok: false, error: message }
+        }
+      },
+
+      /*
+       * Best-effort by design. Cancel runs from an effect cleanup — a route
+       * change, a closed drawer, an unmount — where there is no one left to
+       * show a refusal to, and an unknown token is already a no-op on both the
+       * host and the fake. What it must not do is throw into a React cleanup.
+       */
+      async cancelSystemPluginInstall(previewToken: string): Promise<void> {
+        try {
+          await client.call('plugin.cancelInstall', { previewToken })
+        } catch {
+          // Staging that outlives this page is collected by the installer's
+          // recovery scan; a failed cancel is not a failure the reader can act on.
+        }
       },
 
       // The pilot plane's face. Attach carries the open chat id so a freshly

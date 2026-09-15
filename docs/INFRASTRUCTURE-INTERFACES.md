@@ -2,7 +2,7 @@
 
 核对日期：2026-09-15。适用基线：`main` 的 `2eccf30`（PR #88「Add the system plugin platform and ST extension pilot」）。
 
-上一版写于 2026-09-13，基线是尚未合入的 `dev/system-plugins`，因此把资产面、成员合并、设置面占位与 ST 扩展面都列为「待实现，不可按草案调用」。这些在 #88 一并落地，本版按 main 的代码重记：**已在 main 的**是插件控制面、运行期 RPC 注册、`/plugins` 资产面与聚合清单、帧侧成员表合并、设置槽占位渲染、ST 扩展安装与兼容面、插件中心页面；**仍不在 main 的**是插件可用的通用存储/设置/生成钩子、可发布的契约包、系统插件的 npm/Git 安装路径、i18n 命名空间合并（完整清单见 §8）。
+上一版写于 2026-09-13，基线是尚未合入的 `dev/system-plugins`，因此把资产面、成员合并、设置面占位与 ST 扩展面都列为「待实现，不可按草案调用」。这些在 #88 一并落地，本版按 main 的代码重记：**已在 main 的**是插件控制面、运行期 RPC 注册、`/plugins` 资产面与聚合清单、帧侧成员表合并、设置槽占位渲染、ST 扩展安装与兼容面、插件中心页面；**仍不在 main 的**是插件可用的通用存储/设置/生成钩子、可发布的契约包、i18n 命名空间合并（完整清单见 §8）。**系统插件的 Git/dev 安装路径此后闭合**（2026-09-15，[SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §10 的三个 PR 全部落地，含插件中心的安装表单与同意页）；npm 名与任意 tarball 是 §11 明确否决的，不在缺口里。
 
 本清单只记录读取到的实现，设计草案不算可调用 API。行号是本提交的证据，定位以符号名为准。
 
@@ -25,7 +25,7 @@
 | UI 插槽 | `apps/iris-web/src/slots/` | 五个页面扩展点、可撤销注册和渲染、占位查询 | 已落地；`useSlotOccupied` 让空槽连标题都不渲染。仍**不是**外部插件加载器 |
 | 设置面贡献 | `iris.settings.sections` + `PluginSettings` | 插件自己的设置区块，挂在插件页 | 已落地；当前唯一注册者是 shell 内的 ST 扩展面（`apps/iris-web/src/st-extensions/plane.tsx`），宿主侧插件无法贡献（见 §8） |
 | ST 扩展兼容面 | `@iris/compat-st-extension`、`@iris/extension-installer` | 安装、静态分析、facade、隐藏 iframe 内运行未改动的 ST 扩展 | 已落地；试点只服务一个扩展（§7） |
-| 插件中心 | `apps/iris-web/src/app/PluginCenter.tsx` | 目录、依赖、启停/重载/卸载、状态、资产与成员诊断 | 已落地，挂在设置抽屉的 `plugins` 路由（`apps/iris-web/src/app/SettingsDrawer.tsx:149`）。测试：[plugin-center.test.ts](../apps/iris-web/tests/plugin-center.test.ts) |
+| 插件中心 | `apps/iris-web/src/app/PluginCenter.tsx` | 目录、依赖、启停/重载/卸载、状态、资产与成员诊断，**以及包安装路径的整个 UI**：安装表单（`git` 远端 + 40 位 commit / `dev` 目录）、同意页 `PluginConsent`、`source` 徽标、`provenance`、六个失败状态、`tampered` 的重装按钮、按 `source` 分叉的卸载文案 | 已落地，挂在设置抽屉的 `plugins` 路由（`apps/iris-web/src/app/SettingsDrawer.tsx`），并从那里收 `active={open && route === 'plugins'}`——设置页从不卸载、只被 `hidden` 藏起来，而一张挂起的同意页必须在读者离开时被取消。测试：[plugin-center.test.ts](../apps/iris-web/tests/plugin-center.test.ts)（投影与双语文案）、[plugin-center-install.test.ts](../apps/iris-web/tests/plugin-center-install.test.ts)（jsdom 里真点，断言落在记录下来的 RPC 参数上） |
 
 系统插件、ST 扩展、卡脚本、shell UI 是四种执行位置。宿主系统插件运行在 Node 进程内，具有宿主权限；ST 扩展的代码运行在 shell 里的沙盒 iframe；卡片 JavaScript 运行在既有卡片 iframe 沙盒。不能把卡片脚本直接当系统插件加载。
 
@@ -273,7 +273,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 
 五个都是 root 作用域的 `list` 槽。注册方式是 `slots.core.register({ name, registrant, id, label }, () => element)`，返回撤销函数。
 
-`iris.settings.sections` 在 #88 里真正有了消费者：设置抽屉的 `PluginSettings` 用 `useSlotOccupied('iris.settings.sections')` 查占位，**空的时候连标题和引导语都不渲染**（`apps/iris-web/src/app/SettingsDrawer.tsx:187`），因为贡献的生命周期就是插件的启用期，停用后不能留下一个声称「这里有设置」的标题。位置在插件中心下方、`plugins` 路由内（`SettingsDrawer.tsx:149`），理由写在该函数的文档注释里：设置面属于「管理插件的地方」，而不是诊断页。
+`iris.settings.sections` 在 #88 里真正有了消费者：设置抽屉的 `PluginSettings` 用 `useSlotOccupied('iris.settings.sections')` 查占位，**空的时候连标题和引导语都不渲染**（`apps/iris-web/src/app/SettingsDrawer.tsx:191`），因为贡献的生命周期就是插件的启用期，停用后不能留下一个声称「这里有设置」的标题。位置在插件中心下方、`plugins` 路由内（`SettingsDrawer.tsx:153`），理由写在该函数的文档注释里：设置面属于「管理插件的地方」，而不是诊断页。
 
 当前唯一的注册者是 shell 内的 ST 扩展面（`apps/iris-web/src/st-extensions/plane.tsx`）。`main.tsx` 仍在页内构建单一 shell boot 图——**有 SlotCore 不等于外部代码能自动出现在页面上**：插件能自动进的是卡片帧（通过上面的 `client.js`），不是 shell。
 
@@ -341,11 +341,11 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | `scope.storage` / `scope.settings` | 未做：ST 设置走的是专门的 `StCompatOptions` 闭包，不是通用接口 | 路径包含性、原子写、损坏保留、profile lock 全部约束成立后再开放 |
 | 插件可写变量 | 未做为 API：仲裁模块是宿主内部的，结算处写死两个 pluginId（`service.ts:5119`、`:5142`） | 带 scope 的读写 + `baselineFor` 提供者 + 提案注册，而不是继续加分支 |
 | `contributeContext` / 开放 `ScriptContext` | 未做：`context.ts` 仍是单体 | —— |
-| i18n 命名空间合并 | 未做：插件中心的文案是内联 `COPY` 表（`apps/iris-web/src/app/PluginCenter.tsx:13`），ST 面板另有 `projection-i18n.ts` | 平面记录改命名空间合并 |
+| i18n 命名空间合并 | 未做，但**原因已经不是那张内联表了**：插件中心的 `COPY` 表在 #95 已并进 `apps/iris-web/src/app/i18n/strings.ts` 的 `pluginCenter*` 键族（ledger §98），安装路径的 85 个新键也在那里。缺的是**插件自己带文案**的那条路——ST 面板仍有独立的 `projection-i18n.ts`，宿主侧插件没有任何登记翻译的接口 | 平面记录改命名空间合并 |
 | `expandHelperMacros` 走 `registerMacroLike` | 未做：`packages/iris-app-service/src/entry.ts` 里仍是第二遍宏扫描（[PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §7 阶段 0 的遗留项） | 接线即可，等 `entry.ts` 不再被重写 |
 | 普查脚本改口径 | 未做 | 给普查一个不依赖文件位置的输入 |
 | 可发布契约包 | 未做：`@iris/plugin-api` 与 `@iris/plugin-web-api` 都是 `private: true`、`0.0.0`、`exports` 指向 `./src/*.ts` | 构建 JS 与声明入口、peer 依赖策略、apiVersion 兼容承诺、验证安装后的真实 exports、避免带入第二份 Cordis 实例、包外消费者测试 |
-| 系统插件的包外安装路径 | **PR-1 与 PR-2 已落地，PR-3（PluginCenter UI）未做**：一个 Node 系统插件包可以经 `plugin.previewInstall` / `plugin.confirmInstall` 从 https git 远端（钉完整 commit）或本地 `dev` 目录装进某个 profile，走 §3 那四个方法与 §6 的 `system-plugins.json` v2；开机对 `git` 行重算 `hashTree` 并在不符时以 `tampered` 拒绝激活；六个失败状态都落在 `plugin.list` 的行上。**没有** npm 名/任意 tarball 的路，也**没有更新事务**（`plugin.update` 预留未实现，本轮更新路径是卸载后重装）。**缺的是 UI**：安装入口、同意页、`source` 徽标、六个状态的中英文案、按 `source` 分叉的卸载文案，全部在 [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §8 里，仍是设计 | PR-3：同意页显示 §5.1 返回的每个字段、双语齐全、键盘可达、`dev` 徽标、浏览器验收证据落进 `notes/` |
+| 系统插件的包外安装路径 | **已闭合（PR-1/2/3 全部落地）**：一个 Node 系统插件包可以从插件中心的安装表单，经 `plugin.previewInstall` / `plugin.confirmInstall`，从 https git 远端（钉完整 commit）或本地 `dev` 目录装进某个 profile，走 §3 那四个方法与 §6 的 `system-plugins.json` v2；同意页显示 preview 的每一个字段并说明这是同权代码，确认回带的四个值全部读自 preview 对象；开机对 `git` 行重算 `hashTree`，不符即 `tampered` 且不激活，行上给「按记录的 remote + commit 重新安装」；六个失败状态在行上各有中英两句。**仍然开着的三件事**：(1) `plugin.update` 预留未实现（§12 裁决 2），更新路径是卸载后重装；(2) 安装器自己的 `validateExtensionSource` **不拒 URL 里的 userinfo**——系统插件这条路在 preview 前另做了一道拒绝，但 ST 扩展那条路没收紧，因为那会改 ST 行为（PR-2 记录）；(3) §9 不变量 #5（不递归子模块）**整棵树里没有测试**，`grep -rn submodule packages/*/tests` 为空（PR-2 记录）。没有 npm 名/任意 tarball 的路，这是 §11 明确否决的 | —— |
 | per-plugin 帧 CSP | **不需要**：bundle 与帧同源（`selfOrigin` 已在 `script-src` 里），没有第二个远端要开 | —— |
 | 信任模型的文档 | **已由实践确定、但未成文**：系统插件是与宿主同权的 Node 代码；ST 扩展代码跑在沙盒 iframe，卡片侧只经 tokened 成员代理触达。两条不同的线共用一个控制面 | 写进 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md)：同权插件的安装源约束（对照 [PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §8 问题 1 的「哈希锁定 vs 任意 git clone」） |
 
