@@ -37,10 +37,15 @@ and neither drags the other.
 transport, which itself depends only on the contract) and `@iris/client-fake`,
 plus three packages admitted on the strength that they drag **nothing else in
 behind them**: `@iris/compat-tavernhelper-core`, for the event-name tables a
-card subscribes to by literal string, and `@iris/text`, for `stringHash` and
-`parseRegexFromString` — two answers the frame and the host must compute
-identically, where a second copy drifts into a listener that never fires or a
-key one side matches as a pattern and the other as text — and
+card subscribes to by literal string, and `@iris/text`, for `stringHash`,
+`parseRegexFromString`, and the bilingual-copy audit (`copy.ts`) — two answers
+the frame and the host must compute identically, where a second copy drifts
+into a listener that never fires or a key one side matches as a pattern and the
+other as text, and a rule of the same shape whose two execution points are the
+host's install gate and the shell's own dictionary test rather than the frame:
+one implementation is what keeps the copy audit from quietly diverging into
+"the install gate admits what the dictionary gate would refuse" (or never
+refuses, for a plugin installed between test runs) — and
 `@iris/plugin-web-api`, for the system-plugin capability snapshot a frame is
 born with and the codec both the shell and the bootstrap read, whose only Iris
 import is the contract itself, as types (`import type` is erased before any

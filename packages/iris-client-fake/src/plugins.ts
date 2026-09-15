@@ -218,6 +218,9 @@ export class FakeSystemPlugins {
       permissions: ['provide-capability'],
       dependencies: [],
       hasClient: false,
+      // The fake must be exhaustive over the wire shape: a fixed fact, since
+      // the fake stages nothing and so carries no files to count.
+      i18n: { keys: 2, languages: ['en', 'zh'] },
       warnings: this.#plugins.has(id) ? [`id "${id}" 已被占用 / the id "${id}" is already in this catalog`] : [],
     }
     this.#previews.set(preview.previewToken, preview)

@@ -6968,3 +6968,83 @@ Dated 2026-09-15. PR-3 of `docs/SYSTEM-PLUGIN-INSTALL.md` §10。PR-2 已经把�
 - **第三种语言**：三行 `apiVersion` 的拆法是为「判决那一行不带槽」服务的，多一列时要重新看。
 - **fake 长出一个真实的 preview 造型能力**（例如它开始读一个夹具包）：那时 `renderConsent` 那条路
   可以退回成 fake 驱动，而本节「没有加 seam」的理由也随之作废。
+
+## 101. 插件自带文案并进壳：`plugin:` 命名空间覆盖层、`translate` 加宽而 `StringKey` 不动
+
+Dated 2026-09-16 (task sheet U5, branch `dev/plugin-i18n-bundles` against
+`269a97e`). The host half of this round — manifest field, install-time audit,
+asset face — is ledger §84 on `packages/iris-app-service`. What the shell
+gained: a runtime overlay of plugins' bundled copy, keyed
+`plugin:<id>:<key>`, loaded from the aggregate manifest and consulted only
+through the `plugin:` prefix of `translate`.
+
+### 形状与理由
+
+- **覆盖层是模块级外部 store**（`apps/iris-web/src/app/i18n/plugin-copy.ts`），
+  形状照抄 `language.ts`：`getPluginCopy` / `setPluginCopy` / `dropPluginCopy`
+  / `subscribePluginCopy`，React 侧 `usePluginCopy()` 走
+  `useSyncExternalStore`。文案到货晚于行首次渲染、语言切换要不重载就生效，
+  这两件事把「订阅式 + 模块级」定为唯一自然形状；挂在 **App.tsx** 而不是
+  PluginCenter，是因为后者从不卸载（`SettingsPage` 隐藏非激活页），拿它当
+  生命周期锚点会把「页面可见」和「文案在场」绑在一起。装载 hook
+  （`usePluginCopyLoader`）输入是聚合清单，按 `(id, lang, rev)` 去重——rev
+  没变的表一个字节都不重拉，这是资产面 `immutable` 契约买回来的；**清单里
+  没有的 id 一律 drop**，于是停用即消失，没有第二套失效逻辑。
+- **`translate` 加宽参数，`StringKey` 一字不动**（D4 的 (b) with (a)）：
+  参数类型放宽成 `StringKey | PluginCopyKey`（`` `plugin:${string}:${string}` ``)，
+  `plugin:` 前缀的键委托给 `translatePlugin`（实现住在 plugin-copy.ts，
+  strings.ts 再导出——单向运行期依赖，plugin-copy 只以 type-only 引
+  `Language`，槽位插值因此**复制**了 `interpolate` 的八行而不是反向导入，
+  否则环就成真的了）。静态键拼错仍是类型错误（`'sendd'` 不属于并集任何一支）；
+  `t()` 保持窄签名，另出 **`tPlugin(pluginId, key, params)`**，它必须订阅
+  覆盖层（文案到货要触发重渲），这是它与 `t()` 唯一的形状差。
+- **回退链 zh → en → 键名本身**：查不到显示 `plugin:demo:panelTitle`，不返
+  空串——空白是查不出来的失败。PluginCenter 行的三选一
+  （`DESCRIPTION_KEYS` → 覆盖层 → 快照句子）逐字实现裁决 R7，内置两行的
+  描述句不会被插件夺走；行通过 `usePluginCopy()` 订阅，文案到货即重渲。
+- **同步失败方向**：`syncPluginCopy` 按插件 all-or-nothing（一份表读不到就
+  drop 整个插件），console 点名 id 与语言；其余插件不动。这与宿主「两列全
+  有或全无」的发布规则是对合的。
+
+### 测试侧的接线与两处放宽
+
+- **`i18n.test.ts` 改接线后仍是那三条**：规则的实现搬进 `@iris/text` 的
+  `auditBilingualCopy`（`copySlots` 亦然），壳侧保留的只有消费者自己的事实
+  ——中性键白名单（13 个，作为参数传入）与 `dictionary` 失败前缀。每条测试
+  在真实字典的正例之外各带一个**故意写坏的对**，所以「规则从 `@iris/text`
+  上脱落」在这三条上会变红，而不只是审计悄悄失去覆盖。T9 的验证：删掉
+  `@iris/text` 的 `auditBilingualCopy` 导出，本文件即链接失败（SYNTAX
+  error, export not found）——import 就是证据，内联的 CJK/槽位实现已不在。
+- **`data-consent-field` 抓取正则 `[a-zA-Z]+` → `[a-zA-Z0-9]+`，共四处**：
+  任务单点名的 `plugin-center.test.ts:298`/`:328` 之外，同样牙齿还有
+  `plugin-center-install.test.ts:164`/`:198`（拿 fake 实际返回的 preview 键
+  集合做比较）和 `render-check.tsx` 的 `shownFields`。字段名叫 `i18n` 时旧
+  正则一个都抓不到，断言以「同意页从不渲染 i18n」变红——信息对、原因错。
+  放宽扫描器让它**多**比较一个此前看不见的字段，是收紧不是弱化；同时
+  两个 preview 字面量与 render-check 的 `stagedPreview` 都补上了 `i18n`，
+  集合比较因此真正覆盖新字段。
+- check:render 新增两处：同意页两语言的「Bundled copy: 4 strings · en/zh」
+  /「文案：4 条 · en/zh」行；以及喂 `setPluginCopy('mvu', …)` 后目录行显示
+  bundle 的 `displayName`、切语言跟随、英文列不漏进中文行，渲染后
+  `dropPluginCopy` 复原。
+
+### 牙齿（web 半）
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| T5 覆盖层不污染静态键：插件声明 `send`，`translate('en','send')` 仍是壳的句子（plugin-copy.test.ts） | `translate` 的静态路径先查覆盖层（overlay-wins 变异） | 红（fail 1）→ 复原绿 |
+| T6 切语言后插件文案跟着换（plugin-copy.test.ts） | `readPluginCopy` 忽略 `lang` 恒读 en 列 | 红（fail 2）→ 绿 |
+| T13 同意页渲染 `i18n` 行（plugin-center.test.ts 集合比较） | 删掉那一行 `ConsentField` | 红（fail 1）→ 绿 |
+| T3 壳侧：i18n.test.ts 的负例对（zh 列混英文被共享审计拒） | 同 §84 的 CJK 短路 | 与宿主半同一变异，i18n.test.ts 计入那 fail 3 |
+| T9 三条确实调 `@iris/text` | 删 `@iris/text` 的导出 | i18n.test.ts 链接失败（fail 1, export not found）→ 复原绿 |
+| 风险表点名的一条：`dropPluginCopy` 之后 `getPluginCopy(id)` 是 `undefined`（plugin-copy.test.ts） | ——（行为断言，正向覆盖） | 常绿 |
+
+### What would reopen this
+
+A third interface language (the overlay is two-column by construction, same
+trigger as §84's); a need for plugin copy in card frames (the projection that
+keeps i18n out of the frame meta is one line in `sandboxPluginRuntime`, but
+letting frames read the shell's dictionary is a trust-model question, not a
+plumbing one); or a plugin wanting parametric interpolation in the catalog
+row — today rows render copy raw, slots and all, and filling them needs data
+the row does not have.

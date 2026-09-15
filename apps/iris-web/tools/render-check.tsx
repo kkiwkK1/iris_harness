@@ -49,6 +49,7 @@ import { UsageDetailCard } from '../src/app/UsagePopover.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
 import { searchSettings } from '../src/app/SettingsNavigation.tsx'
 import { setLanguage } from '../src/app/i18n/language.ts'
+import { dropPluginCopy, setPluginCopy } from '../src/app/i18n/plugin-copy.ts'
 // Aliased: `totalTokens` above is the one-generation reader, and this is the
 // aggregate one. Two functions of the same name over different types is exactly
 // the confusion the protocol drops `totalTokens` from every aggregate to avoid.
@@ -241,6 +242,19 @@ async function main(): Promise<void> {
   assert.match(chinesePlugins, /data-plugin-asset-phase="undeclared"/, 'a plugin the host does not run shows its browser asset as undeclared')
   setLanguage('en')
 
+  // U5: a row speaks the bundle's own name where the copy carries one, and
+  // follows the language. The overlay is a module-level store, so the check
+  // feeds it directly and drops it after — no seam, no fake, no network.
+  setPluginCopy('mvu', { en: { displayName: 'MVU Roles Bundle' }, zh: { displayName: 'MVU 角色包' } })
+  const copyRowEn = render(pluginWired.store, slots.core, <PluginCenter />)
+  assert.match(copyRowEn, /MVU Roles Bundle/, 'the bundled displayName never reached the row')
+  setLanguage('zh')
+  const copyRowZh = render(pluginWired.store, slots.core, <PluginCenter />)
+  assert.match(copyRowZh, /MVU 角色包/, 'the bundled displayName does not follow the language')
+  assert.doesNotMatch(copyRowZh, /MVU Roles Bundle/, 'the English copy leaked into the Chinese row')
+  setLanguage('en')
+  dropPluginCopy('mvu')
+
   // ------------------------------------------- the install path's four states
   // `tampered` and `dev` are rows; the consent page is its own component, which
   // is how an `incompatible` preview gets rendered at all — the fake client
@@ -307,6 +321,7 @@ async function main(): Promise<void> {
     permissions: ['provide-capability', 'register-rpc'],
     dependencies: ['tavern-helper'],
     hasClient: true,
+    i18n: { keys: 4, languages: ['en', 'zh'] },
     warnings: ['a declared dependency is not in this profile'],
   }
   const consentProps = { busy: false, error: undefined, onConfirm: () => {}, onCancel: () => {} }
@@ -315,13 +330,16 @@ async function main(): Promise<void> {
   assert.match(incompatible, /This build cannot run this package/, 'an incompatible preview does not say why')
   assert.match(incompatible, /This is host code/, 'the consent page does not disclose same-privilege code')
   assert.match(incompatible, /not a boundary Iris enforces/, 'the permissions list is presented as a boundary')
+  // U5: the copy row states the fact — how many strings, which languages —
+  // and promises nothing about what Iris does with them.
+  assert.match(incompatible, /<dt>Bundled copy<\/dt><dd>4 strings · en\/zh<\/dd>/, 'the consent page does not state the bundled copy')
 
   const gitConsent = renderToString(<PluginConsent preview={{ ...stagedPreview, compatible: true }} lang="en" {...consentProps} />)
   assert.doesNotMatch(gitConsent, /data-consent-confirm[^>]*disabled=""/, 'a compatible package cannot be confirmed')
   // Compared as a SET against the preview's own keys, not as a count: a count
   // stays green when a field is renamed, which is exactly how a renamed wire
   // key would silently stop being shown (mutation 8 in the ledger).
-  const shownFields = new Set([...gitConsent.matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]))
+  const shownFields = new Set([...gitConsent.matchAll(/data-consent-field="([a-zA-Z0-9]+)"/g)].map(match => match[1]))
   assert.deepEqual(
     Object.keys(stagedPreview).filter(key => key !== 'previewToken').filter(key => !shownFields.has(key)),
     [],
@@ -340,6 +358,7 @@ async function main(): Promise<void> {
   assert.match(devConsent, /data-plugin-consent="dev"/, 'the dev consent page is not marked dev')
   assert.match(devConsent, /永远不会与记录下来的哈希复核/, 'the Chinese dev consent page omits the missing-check disclosure')
   assert.match(devConsent, /data-consent-field="path"/, 'the dev consent page hides the directory it would load from')
+  assert.match(devConsent, /<dt>文案<\/dt><dd>4 条 · en\/zh<\/dd>/, 'the Chinese consent page does not state the bundled copy')
 
   pluginWired.dispose()
   pluginClient.dispose()

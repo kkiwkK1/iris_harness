@@ -33,8 +33,23 @@
  * Helper compat layer. Root `notes/DEVIATIONS.md`, stage 0 records the move;
  * `notes/PLUGIN-FEASIBILITY.md` §3 is the reason.
  *
+ * `copy.ts` holds the bilingual-copy audit, a third member whose two execution
+ * points are the host's install gate and the shell's dictionary test rather
+ * than the frame; that variant of the rule — same rule, two execution points,
+ * one of them a gate — is stated in its own docblock.
+ *
  * @module @iris/text
  */
 
 export { parseRegexFromString } from './regex.ts'
 export { stringHash } from './hash.ts'
+export {
+  auditBilingualCopy,
+  auditCopyTable,
+  copySlots,
+  PLUGIN_COPY_KEY_RE,
+  PLUGIN_COPY_LANGUAGES,
+  PLUGIN_COPY_LIMITS,
+  type CopyAuditFailure,
+  type CopyLanguage,
+} from './copy.ts'

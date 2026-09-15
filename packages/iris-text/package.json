@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Pure text utilities the host and the card frame must compute identically: the string hash and the /pattern/flags key parser. Zero dependencies, by contract.",
+  "description": "Pure text utilities that two trust domains must compute identically: the string hash, the /pattern/flags key parser, and the bilingual-copy audit the host's install gate and the shell's dictionary test both apply. Zero dependencies, by contract.",
   "exports": {
     ".": "./src/index.ts",
     "./src/*": "./src/*"

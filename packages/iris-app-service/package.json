@@ -31,6 +31,7 @@
     "@iris/regex": "workspace:*",
     "@iris/rpc-host": "workspace:*",
     "@iris/script": "workspace:*",
+    "@iris/text": "workspace:*",
     "@iris/tokenizer": "workspace:*",
     "@iris/turn": "workspace:*",
     "@iris/variables": "workspace:*",

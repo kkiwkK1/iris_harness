@@ -234,3 +234,72 @@ test('the aggregate manifest parser refuses what the snapshot row parser would',
     assert.ok(typeof parsed === 'string' && pattern.test(parsed), text)
   }
 })
+
+// --- the U5 row shape: copy-only plugins, projected frame metas --------------
+
+test('the frame meta projects a copy-carrying row down to rev and client', () => {
+  // The copy tables are the shell's; a frame is never told about them, so the
+  // projection is asserted here where the frame contract is stated.
+  const runtime = sandboxPluginRuntime(snapshot([
+    view({ id: 'demo-panel', dependencies: ['tavern-helper'] }),
+    view({ id: 'tavern-helper' }),
+  ]), {
+    revision: 7,
+    plugins: {
+      'demo-panel': {
+        rev: '0d3a91c47ba2',
+        client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2',
+        i18n: { en: '/plugins/demo-panel/i18n/en.json?rev=111111111111', zh: '/plugins/demo-panel/i18n/zh.json?rev=222222222222' },
+      },
+    },
+  })
+  assert.deepEqual(runtime?.plugins, {
+    'demo-panel': { rev: '0d3a91c47ba2', client: '/plugins/demo-panel/client.js?rev=0d3a91c47ba2' },
+  })
+})
+
+test('a copy-only row — no client — parses and round-trips without a tag URL', () => {
+  const runtime: Parameters<typeof encodeSandboxPluginRuntime>[0] = {
+    revision: 3,
+    tavernHelper: true,
+    mvu: false,
+    plugins: { 'copy-only': { rev: '333333333333' } },
+  }
+  assert.deepEqual(parseSandboxPluginRuntime(encodeSandboxPluginRuntime(runtime)), runtime)
+})
+
+test('the aggregate manifest parser accepts the copy-only row and holds copy to the prefix', () => {
+  const copyOnly = parsePluginAssetManifest(JSON.stringify({
+    revision: 4,
+    plugins: {
+      solo: {
+        rev: '333333333333',
+        i18n: { en: '/plugins/solo/i18n/en.json?rev=444444444444', zh: '/plugins/solo/i18n/zh.json?rev=555555555555' },
+      },
+    },
+  }))
+  assert.notEqual(typeof copyOnly, 'string')
+  if (typeof copyOnly !== 'string') {
+    assert.deepEqual(copyOnly.plugins['solo'], {
+      rev: '333333333333',
+      i18n: { en: '/plugins/solo/i18n/en.json?rev=444444444444', zh: '/plugins/solo/i18n/zh.json?rev=555555555555' },
+    })
+  }
+
+  const bad: [unknown, RegExp][] = [
+    [{ en: 'https://cdn.example/en.json', zh: '/plugins/solo/i18n/zh.json?rev=555555555555' }, /i18n\.en URL outside/],
+    [{ en: '/plugins/solo/i18n/en.json?rev=444444444444', zh: 'relative.json' }, /i18n\.zh URL outside/],
+    [{ en: '/plugins/solo/i18n/en.json?rev=444444444444' }, /i18n\.zh URL outside/],
+    [{ en: '/plugins/solo/i18n/en.json?rev=444444444444', zh: 7 }, /i18n\.zh URL outside/],
+  ]
+  for (const [i18n, pattern] of bad) {
+    const parsed = parsePluginAssetManifest(JSON.stringify({
+      revision: 4,
+      plugins: { solo: { rev: '333333333333', i18n } },
+    }))
+    assert.ok(typeof parsed === 'string' && pattern.test(parsed), JSON.stringify(i18n))
+  }
+
+  const wrongType = parsePluginAssetManifest('{"revision":4,"plugins":{"solo":{"rev":"333333333333","i18n":"copy"}}}')
+  assert.ok(typeof wrongType === 'string' && /invalid i18n record/.test(wrongType))
+})

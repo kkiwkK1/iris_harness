@@ -7,7 +7,7 @@ import type {
 } from '@iris/protocol'
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { usePluginBrowserAssets, type PluginAssetErrorKind, type PluginBrowserAssetStatus } from './use-plugin-manifest.ts'
-import { t, useLanguage } from './i18n/use-language.ts'
+import { t, useLanguage, usePluginCopy } from './i18n/use-language.ts'
 import { translate, type Language, type StringKey } from './i18n/strings.ts'
 import { describeBytes } from './format.ts'
 import './plugin-center.css'
@@ -592,6 +592,13 @@ export function PluginConsent({ preview, lang, busy, error, onConfirm, onCancel 
       <ConsentField name="hasClient" label={translate(lang, 'pluginCenterConsentClient')}>
         {translate(lang, preview.hasClient ? 'pluginCenterConsentClientYes' : 'pluginCenterConsentClientNo')}
       </ConsentField>
+      {/* States the fact and promises nothing: the copy was audited before
+          this page ever rendered (the artifact contract), so the row only
+          says how much the package carries. */}
+      <ConsentField name="i18n" label={translate(lang, 'pluginCenterConsentCopy')}>
+        {preview.i18n === undefined ? translate(lang, 'pluginCenterConsentCopyNone')
+          : translate(lang, 'pluginCenterConsentCopyCount', { count: preview.i18n.keys, languages: preview.i18n.languages.join('/') })}
+      </ConsentField>
       <ConsentField name="warnings" label={translate(lang, 'pluginCenterConsentWarnings')}>
         {preview.warnings.length === 0 ? translate(lang, 'pluginCenterNone')
           : <ul className="iris-consent__warnings">
@@ -666,8 +673,21 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
     ? translate(lang, 'pluginCenterBlocked', { names: dependents.map(row => row.name).join(', ') })
     : undefined
   const status = translate(lang, STATUS_KEYS[plugin.status])
+  /*
+   * U5 ruling 7: the row speaks the plugin's own copy where it has one, under
+   * the shell's own sentences where the shell has something to say. Order:
+   * the two built-in descriptions stay the shell's (`DESCRIPTION_KEYS` — a
+   * plugin cannot take those sentences away), then the bundled copy in the
+   * current language (`zh` → `en`), then the snapshot's manifest sentence.
+   * The row subscribes to the overlay (`usePluginCopy`) because copy arrives
+   * after the row first renders.
+   */
+  const copyTables = usePluginCopy()[plugin.id]
   const descriptionKey = DESCRIPTION_KEYS[plugin.id]
-  const description = descriptionKey === undefined ? plugin.description : translate(lang, descriptionKey)
+  const description = descriptionKey !== undefined
+    ? translate(lang, descriptionKey)
+    : copyTables?.[lang]?.description ?? copyTables?.en?.description ?? plugin.description
+  const displayName = copyTables?.[lang]?.displayName ?? copyTables?.en?.displayName ?? plugin.name
   const dependencies = plugin.dependencies.map(id => snapshot.plugins.find(row => row.id === id)?.name ?? id)
   const statusId = `iris-plugin-status-${safeId(plugin.id)}`
   const blockedId = `iris-plugin-blocked-${safeId(plugin.id)}`
@@ -693,7 +713,7 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
   return <article className="iris-plugin" data-plugin-id={plugin.id} data-plugin-status={plugin.status} data-plugin-source={plugin.source ?? 'unrecorded'}>
     <header className="iris-plugin__head">
       <div>
-        <h4>{plugin.name}{plugin.source === undefined ? null : <> <SourceBadge source={plugin.source} lang={lang} /></>}</h4>
+        <h4>{displayName}{plugin.source === undefined ? null : <> <SourceBadge source={plugin.source} lang={lang} /></>}</h4>
         <p>{description}</p>
         <p className="iris-plugin__id">{plugin.id}</p>
       </div>

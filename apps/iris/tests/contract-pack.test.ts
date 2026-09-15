@@ -108,7 +108,7 @@ export const plugin: SystemPluginDefinition = {
   },
 }
 
-export function manifestRows(body: string): string | Record<string, { rev: string, client: string }> {
+export function manifestRows(body: string): string | Record<string, { rev: string, client?: string, i18n?: Record<'en' | 'zh', string> }> {
   const parsed = parsePluginAssetManifest(body)
   return typeof parsed === 'string' ? parsed : parsed.plugins
 }

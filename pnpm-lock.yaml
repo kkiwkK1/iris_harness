@@ -182,6 +182,9 @@ importers:
       '@iris/script':
         specifier: workspace:*
         version: link:../iris-script
+      '@iris/text':
+        specifier: workspace:*
+        version: link:../iris-text
       '@iris/tokenizer':
         specifier: workspace:*
         version: link:../iris-tokenizer

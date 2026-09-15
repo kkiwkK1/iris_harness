@@ -3,6 +3,8 @@ import { test } from 'node:test'
 import { readdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
+import { auditBilingualCopy, copySlots } from '@iris/text'
+
 import { DICTIONARIES, en, translate, interpolate, type StringKey } from '../src/app/i18n/strings.ts'
 import { detectLanguage, getLanguage, setLanguage, subscribeLanguage } from '../src/app/i18n/language.ts'
 import { chatMeta, since, describeBytes } from '../src/app/format.ts'
@@ -16,53 +18,77 @@ function run(phase: ScriptRunState['phase'], extra: Partial<ScriptRunState> = {}
   return { scriptId: 's', name: 's', phase, ...extra }
 }
 
+/*
+ * The three bilingual rules below are the host's install-gate rules: a plugin
+ * shipping its own copy is audited at preview by exactly these checks, so the
+ * rule's one implementation lives in `@iris/text` and this file is a consumer,
+ * not a second definition. What stayed here is the consumer's own fact — the
+ * neutral whitelist (which rows are number formats and units) and the
+ * `dictionary` failure prefix — and each test carries one deliberately broken
+ * pair, so a rule detached from `@iris/text` reddens here even while the real
+ * dictionaries are clean.
+ */
+const NEUTRAL = new Set([
+  'topP', 'topK', 'minP', 'langEn',
+  'tokensThousand', 'tokensMillion', 'thousandsSeparator', 'usageCount',
+  'usageSeconds', 'usageRate',
+  'contextCardFigures', 'compactedFigures', 'commandRow',
+])
+
+function auditShellColumns(): ReturnType<typeof auditBilingualCopy> {
+  return auditBilingualCopy(en, DICTIONARIES.zh, { neutralKeys: NEUTRAL, field: 'dictionary' })
+}
+
 test('the zh dictionary covers exactly the en key set, and nothing else', () => {
-  const enKeys = Object.keys(en).sort()
-  const zhKeys = Object.keys(DICTIONARIES.zh).sort()
-  assert.deepEqual(zhKeys, enKeys)
+  assert.equal(auditShellColumns(), null)
+  const drifted = auditBilingualCopy(
+    en, { ...DICTIONARIES.zh, extraRow: '多余的' }, { neutralKeys: NEUTRAL, field: 'dictionary' },
+  )
+  assert.ok(drifted !== null, 'a zh-only key must be refused by the shared audit')
+  assert.match(drifted.reason, /only in zh.*extraRow/s)
 })
 
 test('every zh string is actually Chinese, and every en string is not', () => {
-  // One mis-filed column would show a reader a language they cannot read. The
-  // check is blunt, so the few deliberately language-neutral rows — the shared
-  // parameter names and the language option shown in its own language — are
-  // allowlisted by key.
-  const cjk = /[\u3400-\u9fff]/
-  // `tokensThousand` / `tokensMillion` / `thousandsSeparator` / `usageCount`
-  // are number *formats*, not sentences: `12.2K`, `1,234`, `300 tok` read the
-  // same in both columns. They sit in the dictionary because a third language
-  // changes the separator before it changes anything else.
-  // `contextCardFigures` (`2,048 / 7,168 · 28%`), `compactedFigures`
-  // (`4.1K → 780`) and `commandRow` (`/compact —— …`) are the same kind of row:
-  // a layout for figures and names the surrounding copy supplies, with no words
-  // of their own in either column.
-  // `usageSeconds` (`1.8s`) and `usageRate` (`37.5 tok/s`) join them on the
-  // same grounds and with the same evidence: `tok` is already untranslated in
-  // `usageCount` above, and `tok/s` is the unit SillyTavern's own message timer
-  // prints (`t/s`), so a reader comparing the two hosts compares one string.
-  // The *words* beside them — 用时 / 首字 / 思考 / 输出速度 / 纯输出 — are in
-  // the dictionary and are checked.
-  const neutral = new Set([
-    'topP', 'topK', 'minP', 'langEn',
-    'tokensThousand', 'tokensMillion', 'thousandsSeparator', 'usageCount',
-    'usageSeconds', 'usageRate',
-    'contextCardFigures', 'compactedFigures', 'commandRow',
-  ])
-  for (const [key, value] of Object.entries(DICTIONARIES.zh)) {
-    if (neutral.has(key)) continue
-    assert.match(value, cjk, `zh["${key}"] has no Chinese: ${value}`)
-  }
+  // The check is blunt, so the few deliberately language-neutral rows — the
+  // shared parameter names and the language option shown in its own language —
+  // are allowlisted by key. `tokensThousand` / `tokensMillion` /
+  // `thousandsSeparator` / `usageCount` are number *formats*, not sentences:
+  // `12.2K`, `1,234`, `300 tok` read the same in both columns. They sit in the
+  // dictionary because a third language changes the separator before it
+  // changes anything else. `contextCardFigures` (`2,048 / 7,168 · 28%`),
+  // `compactedFigures` (`4.1K → 780`) and `commandRow` (`/compact —— …`) are
+  // the same kind of row: a layout for figures and names the surrounding copy
+  // supplies, with no words of their own in either column. `usageSeconds`
+  // (`1.8s`) and `usageRate` (`37.5 tok/s`) join them on the same grounds and
+  // with the same evidence: `tok` is already untranslated in `usageCount`
+  // above, and `tok/s` is the unit SillyTavern's own message timer prints
+  // (`t/s`), so a reader comparing the two hosts compares one string. The
+  // *words* beside them — 用时 / 首字 / 思考 / 输出速度 / 纯输出 — are in the
+  // dictionary and are checked.
+  assert.equal(auditShellColumns(), null)
+  const english = auditBilingualCopy(
+    en, { ...DICTIONARIES.zh, send: 'Send' }, { neutralKeys: NEUTRAL, field: 'dictionary' },
+  )
+  assert.ok(english !== null, 'an all-English zh row must be refused by the shared audit')
+  assert.equal(english.field, 'dictionary.zh.send')
+  assert.match(english.reason, /zh\["send"\] has no Chinese: Send/)
 })
 
 test('both columns use the same placeholder names', () => {
   // Compared as sets, not multisets: a language's grammar may repeat a slot
   // ("2 of 2") where the other says it once ("2 个全部"), but a slot that
-  // exists in one column and not the other is a broken sentence waiting.
-  const slots = (value: string): readonly string[] =>
-    [...new Set([...value.matchAll(/\{(\w+)\}/g)].map(match => match[1]!))].sort()
+  // exists in one column and not the other is a broken sentence waiting. The
+  // per-key loop stays so a drift is named by the key it breaks; the slot
+  // extraction itself is the shared `copySlots`.
   for (const [key, enValue] of Object.entries(en)) {
-    assert.deepEqual(slots(DICTIONARIES.zh[key as StringKey]), slots(enValue), `placeholder drift on "${key}"`)
+    assert.deepEqual(copySlots(DICTIONARIES.zh[key as StringKey]), copySlots(enValue), `placeholder drift on "${key}"`)
   }
+  const drifted = auditBilingualCopy(
+    { ...en, send: 'Send {target}' }, DICTIONARIES.zh, { neutralKeys: NEUTRAL, field: 'dictionary' },
+  )
+  assert.ok(drifted !== null, 'placeholder drift must be refused by the shared audit')
+  assert.equal(drifted.field, 'dictionary.zh.send')
+  assert.match(drifted.reason, /placeholder drift on "send"/)
 })
 
 test('interpolate fills named slots and leaves unknown ones alone', () => {

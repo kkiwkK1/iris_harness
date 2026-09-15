@@ -20,6 +20,7 @@
 import { useSyncExternalStore } from 'react'
 
 import { getLanguage, setLanguage, subscribeLanguage } from './language.ts'
+import { getPluginCopyAll, subscribePluginCopy, translatePlugin } from './plugin-copy.ts'
 import { translate, type Language, type StringKey } from './strings.ts'
 
 /**
@@ -32,6 +33,14 @@ export function useLanguage(): { lang: Language, setLang: (lang: Language) => vo
 }
 
 /**
+ * The plugins' copy overlay, subscribed.
+ * @returns the whole overlay, keyed by plugin id.
+ */
+export function usePluginCopy(): ReturnType<typeof getPluginCopyAll> {
+  return useSyncExternalStore(subscribePluginCopy, getPluginCopyAll, getPluginCopyAll)
+}
+
+/**
  * The word for a key, in the language in force.
  *
  * @param key - the string's key.
@@ -40,4 +49,26 @@ export function useLanguage(): { lang: Language, setLang: (lang: Language) => vo
  */
 export function t(key: StringKey, params?: Record<string, string | number>): string {
   return translate(getLanguage(), key, params)
+}
+
+/**
+ * The word from a plugin's bundled copy, in the language in force.
+ *
+ * Subscribes to the overlay as well as the language — a plugin's copy arrives
+ * after the row renders (it is fetched from the manifest), and a `displayName`
+ * that went on screen as the snapshot's name and stayed there when the real
+ * one landed would defeat the feature. The `plugin:` namespace is applied
+ * here and nowhere else.
+ * @param pluginId - the plugin whose copy to read.
+ * @param key - the key inside the plugin's own tables.
+ * @param params - values for the string's `{slots}`, if it has any.
+ * @returns the copy, or the runtime key itself when neither column has it.
+ */
+export function tPlugin(
+  pluginId: string,
+  key: string,
+  params?: Record<string, string | number>,
+): string {
+  usePluginCopy()
+  return translatePlugin(getLanguage(), pluginId, key, params)
 }

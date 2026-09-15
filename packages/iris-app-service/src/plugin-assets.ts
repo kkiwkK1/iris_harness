@@ -7,11 +7,14 @@
  * frame-side tags (the member-merge landing) cannot spell it differently:
  *
  * - `/plugins/manifest.json` — the aggregate manifest: every **enabled**
- *   plugin that has a client bundle, with the content rev of each, at the
- *   runtime revision the enabled set was read at.
+ *   plugin that has a client bundle or a bundled copy, with the content rev
+ *   of each, at the runtime revision the enabled set was read at.
  * - `/plugins/<id>/client.js` (and its `.map`) — one plugin's client bundle,
  *   from the host-level install directory: `<dataDir>/system-plugins/<id>/
  *   client/client.js`.
+ * - `/plugins/<id>/i18n/<lang>.json` — one language of the plugin's bundled
+ *   interface copy (U5), from `<dataDir>/system-plugins/<id>/i18n/`, served
+ *   under the same gates as the bundle: enabled, prefixed, rev-decided.
  *
  * Why Iris owns this route rather than mounting dsh's `client-modules` service
  * (`@deepseek-ai/dsh-client-modules`), whose `/plugins` route, revved URLs
@@ -43,6 +46,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 
+import { PLUGIN_COPY_LANGUAGES, type CopyLanguage } from '@iris/text'
 import { PLUGIN_ASSET_MANIFEST_PATH, PLUGIN_ASSET_PREFIX, type PluginAssetManifest } from '@iris/plugin-web-api'
 
 /**
@@ -71,6 +75,9 @@ const MANIFEST_NAME = PLUGIN_ASSET_MANIFEST_PATH.slice(PLUGIN_ASSET_PREFIX.lengt
 
 /** The bundle filename under `<install dir>/<id>/client/`. */
 const CLIENT_BUNDLE = 'client.js'
+
+/** The copy directory under `<install dir>/<id>/`, holding `<lang>.json` files (U5). */
+const I18N_DIR = 'i18n'
 
 /**
  * Whether a path segment may name a plugin directory.
@@ -103,12 +110,16 @@ export type PluginAssetStateView = () => PluginAssetState | undefined
 /**
  * The install directory's browser half: revs, manifest and route in one place.
  *
- * The rev of a bundle is expensive to compute and stable while the file is
- * unchanged, so it is memoised against the file's own `(mtime, size)` — the
- * standard cache key for "bytes I already hashed" — and recomputed the moment
- * either moves. A same-size rewrite inside the stat clock's resolution is the
- * one blind spot; the failure is a stale `?rev=` holding the *new* bytes under
- * the *old* address, which revalidation (the default here) absorbs.
+ * The rev of a served file is expensive to compute and stable while the file
+ * is unchanged, so it is memoised against the file's own `(mtime, size)` —
+ * the standard cache key for "bytes I already hashed" — and recomputed the
+ * moment either moves. The memo key is the **file's path relative to the
+ * install root** (`<id>/client/client.js`, `<id>/i18n/zh.json`), not the
+ * plugin id: one file, one rev, so a changed English table does not invalidate
+ * the Chinese URL's cache, and a row never states a rev that hides which of
+ * its files moved. A same-size rewrite inside the stat clock's resolution is
+ * the one blind spot; the failure is a stale `?rev=` holding the *new* bytes
+ * under the *old* address, which revalidation (the default here) absorbs.
  */
 export class PluginAssetStore {
   readonly #dir: string
@@ -120,29 +131,30 @@ export class PluginAssetStore {
   }
 
   /** One plugin's client directory, resolved inside the install root. */
-  #clientDir(id: string): string {
-    return resolve(join(this.#dir, id, 'client'))
+  #assetDir(id: string, subdir: string): string {
+    return resolve(join(this.#dir, id, subdir))
   }
 
   /**
-   * The current content rev of one plugin's bundle.
-   * @param id - the plugin id, already known safe.
-   * @returns the 12-hex rev, or `undefined` when there is no readable bundle.
+   * The current content rev of one served file, named relative to the install
+   * root.
+   * @param relative - the file's path under the install root, forward-slash.
+   * @returns the 12-hex rev, or `undefined` when there is no readable file.
    */
-  async #rev(id: string): Promise<string | undefined> {
-    const file = join(this.#clientDir(id), CLIENT_BUNDLE)
+  async #rev(relative: string): Promise<string | undefined> {
+    const file = join(this.#dir, ...relative.split('/'))
     let info
     try {
       info = await stat(file)
     } catch {
-      this.#revs.delete(id)
+      this.#revs.delete(relative)
       return undefined
     }
     if (!info.isFile()) {
-      this.#revs.delete(id)
+      this.#revs.delete(relative)
       return undefined
     }
-    const held = this.#revs.get(id)
+    const held = this.#revs.get(relative)
     if (held !== undefined && held.mtimeMs === info.mtimeMs && held.size === info.size) return held.rev
     let bytes: Buffer
     try {
@@ -151,17 +163,45 @@ export class PluginAssetStore {
       return undefined
     }
     const rev = createHash('sha1').update(bytes).digest('hex').slice(0, 12)
-    this.#revs.set(id, { mtimeMs: info.mtimeMs, size: info.size, rev })
+    this.#revs.set(relative, { mtimeMs: info.mtimeMs, size: info.size, rev })
     return rev
+  }
+
+  /** The install-root-relative path of one copy file. */
+  #copyRel(id: string, lang: CopyLanguage): string {
+    return `${id}/${I18N_DIR}/${lang}.json`
+  }
+
+  /**
+   * A plugin's copy row, both languages, or nothing.
+   *
+   * All-or-nothing on purpose: the overlay falls back across languages
+   * (`zh` → `en` → the key itself), so a one-language row would quietly turn
+   * the other language's readers onto raw key names. The host publishes both
+   * or neither; the manifest mirrors that, and a half-broken copy shows as no
+   * copy at all — the row still renders the snapshot's name and description.
+   */
+  async #copyRow(id: string): Promise<{ rev: string, tables: Record<'en' | 'zh', string> } | undefined> {
+    const tables: Record<'en' | 'zh', string> = {} as Record<'en' | 'zh', string>
+    let firstRev: string | undefined
+    for (const lang of PLUGIN_COPY_LANGUAGES) {
+      const rev = await this.#rev(this.#copyRel(id, lang))
+      if (rev === undefined) return undefined
+      tables[lang] = `${PLUGIN_ASSET_PREFIX}/${this.#copyRel(id, lang)}?rev=${rev}`
+      firstRev ??= rev
+    }
+    return { rev: firstRev!, tables }
   }
 
   /**
    * Compose the aggregate manifest for one state of the runtime.
    *
-   * Only enabled plugins with a bundle on disk get a row: the manifest is the
-   * enable state made fetchable, not the install directory's index. Keys are
-   * emitted sorted so the same state serialises to the same bytes — a cache
-   * that revalidates this path deserves a stable answer for a stable world.
+   * Only enabled plugins get a row, and only if they have something the
+   * browser face can use: a bundle on disk, a bundled copy, or both — the
+   * manifest is the enable state made fetchable, not the install directory's
+   * index. Keys are emitted sorted so the same state serialises to the same
+   * bytes — a cache that revalidates this path deserves a stable answer for a
+   * stable world.
    * @param state - the enable state, or `undefined` when there is no runtime.
    * @returns the manifest to serve.
    */
@@ -169,9 +209,17 @@ export class PluginAssetStore {
     if (state === undefined) return { revision: 0, plugins: {} }
     const plugins: PluginAssetManifest['plugins'] = {}
     for (const id of [...state.enabled].sort()) {
-      const rev = await this.#rev(id)
-      if (rev === undefined) continue
-      plugins[id] = { rev, client: `${PLUGIN_ASSET_PREFIX}/${id}/${CLIENT_BUNDLE}?rev=${rev}` }
+      const bundleRev = await this.#rev(`${id}/client/${CLIENT_BUNDLE}`)
+      const copy = await this.#copyRow(id)
+      if (bundleRev === undefined && copy === undefined) continue
+      const rev = bundleRev ?? copy!.rev
+      plugins[id] = {
+        rev,
+        ...(bundleRev !== undefined
+          ? { client: `${PLUGIN_ASSET_PREFIX}/${id}/${CLIENT_BUNDLE}?rev=${bundleRev}` }
+          : {}),
+        ...(copy !== undefined ? { i18n: copy.tables } : {}),
+      }
     }
     return { revision: state.revision, plugins }
   }
@@ -230,14 +278,24 @@ export class PluginAssetStore {
       return
     }
 
+    // Identify what the path names: the bundle, its source map, or one
+    // language of the bundled copy. The copy language is matched **verbatim**
+    // against `PLUGIN_COPY_LANGUAGES` — treating any decoded `.json` segment
+    // as a file name would be a directory listing served to whoever asked.
     const forMap = rest.endsWith(`/${CLIENT_BUNDLE}.map`)
     const forBundle = !forMap && rest.endsWith(`/${CLIENT_BUNDLE}`)
-    if (!forMap && !forBundle) {
+    const segments = rest.split('/')
+    const copyLang = !forMap && !forBundle && segments.length === 3 && segments[1] === I18N_DIR
+      ? PLUGIN_COPY_LANGUAGES.find(lang => segments[2] === `${lang}.json`)
+      : undefined
+    if (!forMap && !forBundle && copyLang === undefined) {
       res.writeHead(404, SHARED_HEADERS)
       res.end()
       return
     }
-    const id = rest.slice(0, rest.length - (forMap ? `/${CLIENT_BUNDLE}.map`.length : `/${CLIENT_BUNDLE}`.length))
+    const id = forMap || forBundle
+      ? rest.slice(0, rest.length - (forMap ? `/${CLIENT_BUNDLE}.map`.length : `/${CLIENT_BUNDLE}`.length))
+      : segments[0]!
     // 404 rather than 400: a malformed id names no plugin, the same answer an
     // unknown one gets, and nothing about the request's *shape* was wrong.
     if (!safePluginId(id)) {
@@ -246,7 +304,7 @@ export class PluginAssetStore {
       return
     }
 
-    // The gate that makes the manifest and the bundle route agree: a disabled
+    // The gate that makes the manifest and the asset routes agree: a disabled
     // plugin has no row in the manifest, so it has no URL either. A frame
     // built before the disable holds the old manifest, and the old address
     // must stop answering — the RPC face refuses stale incarnations
@@ -258,15 +316,21 @@ export class PluginAssetStore {
       return
     }
 
-    const rev = await this.#rev(id)
+    const subdir = copyLang === undefined ? 'client' : I18N_DIR
+    const name = forMap ? `${CLIENT_BUNDLE}.map` : forBundle ? CLIENT_BUNDLE : `${copyLang}.json`
+    const relative = `${id}/${subdir}/${name}`
+    // The map is an adjunct of the bundle and rides its address, so its cache
+    // decision — and its existence gate — reads the bundle's rev, exactly as
+    // when it was the only secondary served here. A copy file has an address
+    // of its own and is judged on its own bytes.
+    const rev = await this.#rev(forMap ? `${id}/client/${CLIENT_BUNDLE}` : relative)
     if (rev === undefined) {
       res.writeHead(404, SHARED_HEADERS)
       res.end()
       return
     }
 
-    const name = forMap ? `${CLIENT_BUNDLE}.map` : CLIENT_BUNDLE
-    const file = resolve(join(this.#clientDir(id), name))
+    const file = this.#assetDir(id, subdir + '/' + name)
     // Belt and braces, the `sandbox-assets.ts` containment check: `safePluginId`
     // already refuses separators, so this cannot fire today — it stands guard
     // over the day that check is relaxed for some future id shape.
@@ -294,7 +358,9 @@ export class PluginAssetStore {
     const asked = url.searchParams.get('rev')
     res.writeHead(200, {
       ...SHARED_HEADERS,
-      'content-type': forMap ? 'application/json; charset=utf-8' : 'text/javascript; charset=utf-8',
+      'content-type': forBundle
+        ? 'text/javascript; charset=utf-8'
+        : 'application/json; charset=utf-8',
       'content-length': body.byteLength,
       'cache-control': asked === rev ? IMMUTABLE : 'no-cache',
     })

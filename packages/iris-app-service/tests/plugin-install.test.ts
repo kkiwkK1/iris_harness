@@ -73,6 +73,7 @@ interface PackageOverrides {
   apiVersion?: number | string
   host?: string
   client?: string | null
+  i18n?: { en: string, zh: string } | null
   permissions?: unknown
   capabilities?: string[]
   dependencies?: string[]
@@ -95,6 +96,7 @@ function pluginPackage(overrides: PackageOverrides = {}): Map<string, string> {
     dependencies: overrides.dependencies ?? [],
   }
   if (overrides.client !== null) block['client'] = overrides.client ?? 'client.js'
+  if (overrides.i18n !== null && overrides.i18n !== undefined) block['i18n'] = overrides.i18n
   // `"type": "module"` because host.js is ESM and the host imports it by URL:
   // without it Node reparses the file after failing to read it as CommonJS,
   // which works but is a warning on every single import.
@@ -295,6 +297,64 @@ test('a dev package: preview, confirm, enable, disable, uninstall — and the us
     await exists(join((source as { path: string }).path, 'package.json')),
     true,
     'a dev uninstall must never delete the user’s own working directory',
+  )
+})
+
+test('a package with bundled copy: audited at preview, published at confirm, gone at uninstall (U5 T11)', async (t) => {
+  const value = await harness(t)
+  const copy = {
+    en: { displayName: 'Demo Panel', description: 'Demo {name} panel' },
+    zh: { displayName: '演示面板', description: '演示 {name} 面板' },
+  }
+  const source = await devSource(value, {
+    i18n: { en: 'i18n/en.json', zh: 'i18n/zh.json' },
+    extraFiles: {
+      'i18n/en.json': JSON.stringify(copy.en),
+      'i18n/zh.json': JSON.stringify(copy.zh),
+    },
+  })
+
+  const preview = await value.installer.preview(source)
+  // The count is the fixture's own, both columns summed — not a constant.
+  assert.deepEqual(preview.i18n, { keys: 4, languages: ['en', 'zh'] })
+
+  const installed = await value.installer.confirm({
+    previewToken: preview.previewToken,
+    id: preview.id,
+    commit: null,
+    treeHash: preview.treeHash,
+  })
+  assert.equal(row(installed, PLUGIN_ID).installed, true)
+
+  // Both tables reached the one place the asset face serves from, beside the
+  // bundle the same publish pass copies.
+  assert.equal(
+    await readFile(join(value.assetRoot, PLUGIN_ID, 'i18n', 'en.json'), 'utf8'),
+    JSON.stringify(copy.en),
+  )
+  assert.equal(
+    await readFile(join(value.assetRoot, PLUGIN_ID, 'i18n', 'zh.json'), 'utf8'),
+    JSON.stringify(copy.zh),
+  )
+
+  // Booting over the same profile republishes from the dev tree in place.
+  const rebooted = await value.reboot()
+  assert.equal(
+    await readFile(join(rebooted.assetRoot, PLUGIN_ID, 'i18n', 'zh.json'), 'utf8'),
+    JSON.stringify(copy.zh),
+  )
+
+  const afterUninstall = await rebooted.installer.uninstall(PLUGIN_ID)
+  assert.ok(missing(afterUninstall, PLUGIN_ID))
+  assert.equal(
+    await exists(join(rebooted.assetRoot, PLUGIN_ID)),
+    false,
+    'uninstall removes the whole served directory, copy included',
+  )
+  assert.equal(
+    await exists(join((source as { path: string }).path, 'i18n', 'en.json')),
+    true,
+    'and never touches the dev tree itself',
   )
 })
 

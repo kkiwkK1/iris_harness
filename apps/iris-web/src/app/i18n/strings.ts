@@ -21,6 +21,10 @@
  * @module iris-web/app/i18n/strings
  */
 
+import { translatePlugin } from './plugin-copy.ts'
+
+export { translatePlugin }
+
 /** The languages the shell ships with. English is the source of the keys. */
 export type Language = 'en' | 'zh'
 
@@ -1703,6 +1707,9 @@ export const en = {
   pluginCenterConsentClient: 'Browser bundle',
   pluginCenterConsentClientYes: 'Ships a client.js that runs in your browser beside card scripts.',
   pluginCenterConsentClientNo: 'None. Nothing from this package runs in the browser.',
+  pluginCenterConsentCopy: 'Bundled copy',
+  pluginCenterConsentCopyCount: '{count} strings · {languages}',
+  pluginCenterConsentCopyNone: 'None. This package carries no interface copy.',
   pluginCenterConsentWarnings: 'Warnings',
   pluginCenterConsentConfirm: 'Install this package',
   pluginCenterConsentCancel: 'Cancel',
@@ -3068,6 +3075,9 @@ export const zh: Record<StringKey, string> = {
   pluginCenterConsentClient: '浏览器包',
   pluginCenterConsentClientYes: '带一个 client.js，它会和卡片脚本一起在你的浏览器里运行。',
   pluginCenterConsentClientNo: '无。这个包没有任何东西在浏览器里运行。',
+  pluginCenterConsentCopy: '文案',
+  pluginCenterConsentCopyCount: '{count} 条 · {languages}',
+  pluginCenterConsentCopyNone: '无。这个包不带界面文案。',
   pluginCenterConsentWarnings: '提醒',
   pluginCenterConsentConfirm: '安装这个包',
   pluginCenterConsentCancel: '取消',
@@ -3125,17 +3135,35 @@ export function interpolate(template: string, params: Record<string, string | nu
 }
 
 /**
+ * A plugin copy's runtime key: `plugin:<id>:<key>`. A union member rather
+ * than `string` on purpose — a shell key spelled `plugin:demo:send` is a
+ * typo, and this keeps it a type error at every static call site.
+ */
+export type PluginCopyKey = `plugin:${string}:${string}`
+
+/**
  * Look a string up in one language. The pure core `t()` is built on.
+ *
+ * A `plugin:`-prefixed key reads the runtime overlay of plugins' bundled copy
+ * (`plugin-copy.ts`), never this dictionary — the prefix is the whole
+ * boundary that keeps a plugin's `send` from reaching a shell sentence.
  * @param lang - the language to read.
- * @param key - the string's key.
+ * @param key - the string's key, or a plugin copy's runtime key.
  * @param params - values for the string's `{slots}`, if it has any.
  * @returns the copy in the requested language.
  */
 export function translate(
   lang: Language,
-  key: StringKey,
+  key: StringKey | PluginCopyKey,
   params?: Record<string, string | number>,
 ): string {
-  const template = DICTIONARIES[lang][key] ?? en[key]
+  if (key.startsWith('plugin:')) {
+    const rest = key.slice('plugin:'.length)
+    const separator = rest.indexOf(':')
+    // A malformed runtime key names itself: visible, not blank.
+    if (separator < 0) return key
+    return translatePlugin(lang, rest.slice(0, separator), rest.slice(separator + 1), params)
+  }
+  const template = DICTIONARIES[lang][key as StringKey] ?? en[key as StringKey]
   return params === undefined ? template : interpolate(template, params)
 }
