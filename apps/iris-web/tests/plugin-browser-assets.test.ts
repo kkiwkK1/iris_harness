@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import type { SystemPluginSnapshot, SystemPluginView } from '@iris/protocol'
+
 import {
   classifyClientResponse,
   findMemberConflicts,
+  reducePluginBrowserAssetStatuses,
   scanPluginMemberNames,
   shouldProbeClient,
 } from '../src/app/use-plugin-manifest.ts'
+
+/** One enabled plugin row, the least the reduction's input needs. */
+function enabled(id: string): SystemPluginView {
+  return {
+    id, name: id, description: '', version: '0.0.0', apiVersion: 1,
+    dependencies: [], installed: true, enabled: true, status: 'enabled',
+  }
+}
+
+function snapshotWith(...plugins: SystemPluginView[]): SystemPluginSnapshot {
+  return { revision: 7, plugins }
+}
 
 test('a retry generation is consumed once, after its matching manifest read', () => {
   const failed = { phase: 'degraded' as const, rev: 'abc123def456', loadedAt: undefined, source: undefined, error: { kind: 'http' as const, message: 'old failure' } }
@@ -127,4 +142,44 @@ test('disjoint member namespaces produce no conflict', () => {
     'plugin-b': { phase: 'loaded' as const, rev: 'b', loadedAt: 1, error: undefined, source: `registerPluginMembers('plugin-b', { onlyB: 1 })` },
   }
   assert.deepEqual(findMemberConflicts(probes), {})
+})
+
+test('the reduction shows the catalog generation and the manifest generation side by side, so stale reads as two numbers that disagree', () => {
+  // The surface's whole job here is display, not judgment: the catalog
+  // revision (a counter the host bumps on every change) and the manifest
+  // revision (the generation the aggregate manifest was built at) are the
+  // same quantity and the two a stale row must show apart. The content rev is
+  // a different quantity — a hash — and pins nothing against either.
+  const snapshot = snapshotWith(enabled('demo'))
+  const stale = reducePluginBrowserAssetStatuses({
+    snapshot,
+    revision: 7,
+    manifest: { revision: 6, plugins: { demo: { rev: 'abc123def456', client: '/plugins/demo/client.js?rev=abc123def456' } } },
+    manifestFailure: undefined,
+    probes: {},
+    seenRows: new Map(),
+  })
+  const row = stale['demo']
+  assert.ok(row !== undefined, 'the reduction produced no row for the plugin')
+  assert.equal(row.phase, 'stale', 'a manifest answering for another revision is exactly the stale row')
+  assert.equal(row.expectedRevision, 7)
+  assert.equal(row.manifestRevision, 6)
+  assert.equal(typeof row.expectedRevision, 'number', 'the catalog revision must stay a number')
+  assert.equal(typeof row.manifestRevision, 'number', 'the manifest revision must stay a number, not the content hash the old row put here')
+  assert.notEqual(row.expectedRevision, row.manifestRevision, 'on the stale row the two generations must not read as equal')
+
+  const loaded = reducePluginBrowserAssetStatuses({
+    snapshot,
+    revision: 7,
+    manifest: { revision: 7, plugins: { demo: { rev: 'abc123def456', client: '/plugins/demo/client.js?rev=abc123def456' } } },
+    manifestFailure: undefined,
+    probes: { demo: { phase: 'loaded', rev: 'abc123def456', loadedAt: 1, error: undefined, source: undefined } },
+    seenRows: new Map(),
+  })
+  const served = loaded['demo']
+  assert.ok(served !== undefined)
+  assert.equal(served.phase, 'loaded')
+  assert.match(served.actualRevision ?? '', /^[0-9a-f]{12}$/, 'the served rev is a twelve-hex content hash')
+  assert.equal(typeof served.manifestRevision, 'number', 'the manifest generation is a number even on a healthy row')
+  assert.notEqual(served.actualRevision, String(served.expectedRevision), 'a content hash and a revision counter are not the same quantity and must never trade places')
 })
