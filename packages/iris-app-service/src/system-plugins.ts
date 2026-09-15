@@ -17,6 +17,7 @@ import type {
   SystemPluginDefinition,
   SystemPluginLease,
   SystemPluginRuntimeOptions,
+  VariableWriter,
 } from '@iris/plugin-api'
 
 import { atomicWriteFile } from './atomic.ts'
@@ -37,6 +38,7 @@ export type {
   SystemPluginDefinition,
   SystemPluginLease,
   SystemPluginRuntimeOptions,
+  VariableWriter,
 }
 
 const SERVICE_PREFIX = 'iris.system-plugin'
@@ -100,7 +102,10 @@ interface StoredSystemPlugins {
  * again, and §8's copy for them is "修好后重试启用或卸载". The four listed here
  * are facts about the install that no retry can change without a new install —
  * so a retry that re-imported the tree would be a retry that could succeed
- * against tampered bytes.
+ * against tampered bytes. The seventh state, `hook-failed`, belongs in neither
+ * bucket: it is not a stage of reaching `enabled` at all (it rides on an
+ * enabled row) and it clears itself on the plugin's next successful write, so
+ * it must neither block nor survive an enable.
  */
 const ENABLE_BLOCKING_FAILURES: ReadonlySet<SystemPluginFailureState> = new Set([
   'install-failed',
@@ -138,6 +143,12 @@ interface Activation {
   incarnation: number
   revision: number
   disposalError?: Error
+}
+
+/** One variable writer in the settlement order, flattened out of the registry. */
+export interface RegisteredVariableWriter {
+  pluginId: string
+  writer: VariableWriter
 }
 
 interface NormalizedDefinition extends Omit<SystemPluginDefinition, 'dependencies'> {
@@ -239,6 +250,21 @@ export class SystemPluginRuntime {
   readonly #persisted = new Map<string, StoredPluginPreference>()
   readonly #leases = new Map<string, { count: number, waiters: Set<() => void> }>()
   /**
+   * Variable writers by plugin id, one array per id in registration order.
+   *
+   * Two kinds of caller share the one registry: a plugin, through its
+   * activation scope (the id is its own definition's, and disposal of the
+   * activation removes the writer), and the host itself, for a reply plane it
+   * owns whose id names no catalog row — the ST-compat pilot serves the
+   * extension under its installed id, and the host registers the bridge's
+   * floor writer under that same id. That is why a registered id is allowed to
+   * have no row: `orderedVariableWriters` keeps such a writer and leaves its
+   * on/off state to the plane it belongs to, while a writer whose id *does*
+   * name a row participates only while the row is enabled — which is what
+   * makes "disable a writer, its proposals disappear" true by construction.
+   */
+  readonly #variableWriters = new Map<string, VariableWriter[]>()
+  /**
    * Ids that came from the constructor's definition list — the bundled ones.
    *
    * Kept as its own set rather than inferred later, because "was this id here
@@ -249,10 +275,13 @@ export class SystemPluginRuntime {
    */
   readonly #builtinIds = new Set<string>()
   /**
-   * The named failure on a row, when it has one. Not persisted: every one of
-   * the six states is re-derived at boot from the tree and the record, and a
-   * stored failure would be a claim about bytes that may since have been
-   * fixed.
+   * The named failure on a row, when it has one. Not persisted: the six
+   * install/lifecycle states are re-derived at boot from the tree and the
+   * record, and a stored failure would be a claim about bytes that may since
+   * have been fixed. `hook-failed` is the exception that proves the rule — it
+   * is a settlement-time fact about a running plugin, not a verdict on its
+   * bytes, so there is nothing at boot to re-derive it from and a new process
+   * simply starts with a clean slate.
    */
   readonly #failures = new Map<string, SystemPluginFailure>()
   #revision = 0
@@ -415,10 +444,12 @@ export class SystemPluginRuntime {
   /**
    * Put a named failure on a row and stop it running.
    *
-   * The six states are the whole vocabulary (§1 goal 4): a plugin that cannot
-   * run is a row the user can see and act on, never a log line and never a
-   * crash. Four of them also make `enable` a refusal — see
-   * `ENABLE_BLOCKING_FAILURES` for which and why.
+   * Six of the seven states are the whole vocabulary here (§1 goal 4): a
+   * plugin that cannot run is a row the user can see and act on, never a log
+   * line and never a crash. Four of them also make `enable` a refusal — see
+   * `ENABLE_BLOCKING_FAILURES` for which and why. The seventh, `hook-failed`,
+   * never passes through here: it must not stop the plugin, so it goes through
+   * {@link noteHookFailure}, which leaves `enabled`/`status`/`error` alone.
    */
   markFailure(id: string, failure: SystemPluginFailure): void {
     const plugin = this.#require(id)
@@ -432,6 +463,99 @@ export class SystemPluginRuntime {
   /** The named failure on a row, if it has one. */
   failure(id: string): SystemPluginFailure | undefined {
     return this.#failures.get(id)
+  }
+
+  /**
+   * Record that one writer's contribution to this turn failed.
+   *
+   * Deliberately not {@link markFailure}: a variable write that threw or timed
+   * out says nothing about whether the plugin runs, so `enabled`, `status` and
+   * `error` are all left alone and the reply settles without the failed
+   * proposal. The row keeps the reason so the interface can say what happened;
+   * {@link clearHookFailure} or the plugin's next successful write removes it.
+   */
+  noteHookFailure(id: string, reason: string): void {
+    const plugin = this.#plugins.get(id)
+    if (plugin === undefined) return
+    this.#failures.set(id, { state: 'hook-failed', reason })
+    this.#notify()
+  }
+
+  /**
+   * Clear a `hook-failed` this runtime wrote, after the writer's next
+   * successful proposal. The state check is load-bearing: a row carrying an
+   * install-path failure must not have it washed away by a settlement, so a
+   * key whose state is anything else is left exactly where it was.
+   */
+  clearHookFailure(id: string): void {
+    if (this.#failures.get(id)?.state !== 'hook-failed') return
+    this.#failures.delete(id)
+    this.#notify()
+  }
+
+  /**
+   * Register one variable writer under `pluginId`; the returned disposer
+   * removes it and is idempotent. The activation scope and the host share this
+   * one entry point — one registry, two callers, the same shape as
+   * `ScopedRequestSchema`/`RuntimeRequestSchema`.
+   */
+  registerVariableWriter(pluginId: string, writer: VariableWriter): () => void {
+    const writers = this.#variableWriters.get(pluginId) ?? []
+    writers.push(writer)
+    this.#variableWriters.set(pluginId, writers)
+    let disposed = false
+    return () => {
+      if (disposed) return
+      disposed = true
+      const current = this.#variableWriters.get(pluginId)
+      if (current === undefined) return
+      const index = current.indexOf(writer)
+      if (index >= 0) current.splice(index, 1)
+      if (current.length === 0) this.#variableWriters.delete(pluginId)
+    }
+  }
+
+  /**
+   * The writers that may propose this turn, in settlement order.
+   *
+   * The order is activation order, computed as `(dependency depth, id)` and
+   * compared lexicographically with depth first. **The MVU row sorts after a
+   * depth-0 writer because it declares `dependencies: ['tavern-helper']`, not
+   * because of how the ids are spelled** — `'mvu' < 'prompt-template'`
+   * alphabetically, so a plain `sort()` on the id would silently reverse a
+   * decade of upstream handler order (ST-Prompt-Template runs its reply
+   * handler first, card scripts such as MVU after) and hand every conflict to
+   * the wrong winner. The depth comes from `NormalizedDefinition.dependencies`
+   * in `#plugins`; a cycle cannot reach here because `enable` refuses one
+   * through `#enableOrder` before any writer is registered, and the visiting
+   * set below is only a belt for that guarantee.
+   *
+   * A writer whose id names no catalog row is kept and sorted at depth 0: only
+   * the host registers such an id (see `#variableWriters`), and its on/off
+   * state belongs to the plane it serves, not to the catalog.
+   */
+  orderedVariableWriters(): readonly RegisteredVariableWriter[] {
+    const entries: Array<{ pluginId: string, depth: number, writer: VariableWriter }> = []
+    for (const [pluginId, writers] of this.#variableWriters) {
+      if (this.#plugins.has(pluginId) && !this.isEnabled(pluginId)) continue
+      const depth = this.#dependencyDepth(pluginId, new Set())
+      for (const writer of writers) entries.push({ pluginId, depth, writer })
+    }
+    return entries
+      .sort((left, right) => left.depth - right.depth || (left.pluginId < right.pluginId ? -1 : left.pluginId > right.pluginId ? 1 : 0))
+      .map(({ pluginId, writer }) => ({ pluginId, writer }))
+  }
+
+  /** `1 + max(depth(dependency))`, or 0 for a row-less id; the set breaks cycles that cannot legitimately occur. */
+  #dependencyDepth(id: string, visiting: Set<string>): number {
+    const plugin = this.#plugins.get(id)
+    if (plugin === undefined || visiting.has(id)) return 0
+    visiting.add(id)
+    let depth = 0
+    for (const dependency of plugin.definition.dependencies) {
+      depth = Math.max(depth, 1 + this.#dependencyDepth(dependency, visiting))
+    }
+    return depth
   }
 
   /** Load profile preferences and activate the persisted enabled set. */
@@ -906,6 +1030,21 @@ export class SystemPluginRuntime {
               )
             }
             return this.capability<T>(pluginId, name)
+          },
+          variables: {
+            // Registered as an effect of this activation's own fiber, the way
+            // `registerRpc` below is: the writer joins when the plugin does and
+            // leaves when the fiber is disposed — a disable, a reload — so a
+            // plugin that ignores the returned disposer still cannot write past
+            // its own activation.
+            registerWriter: (writer: VariableWriter): (() => void) => {
+              let teardown: () => void = () => {}
+              context.effect(() => {
+                teardown = this.registerVariableWriter(definition.id, writer)
+                return teardown
+              }, `iris-system-plugin:${definition.id}: variable writer`)
+              return () => { teardown() }
+            },
           },
           registerRpc: <T>(
             method: string,

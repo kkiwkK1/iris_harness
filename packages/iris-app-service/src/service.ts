@@ -91,15 +91,17 @@ import type { ScriptChatMessage } from '@iris/protocol'
 import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
-import { DiagnosticBuffer, type ReportContext } from './diagnostics.ts'
+import { DiagnosticBuffer, isReportKind, type ReportContext } from './diagnostics.ts'
 import { CacheTraceStore, traceOf } from './cache-trace.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
 import type { PruneOptions } from './prune.ts'
 import { MVU_CAPABILITY } from './plugins/capabilities.ts'
-import type { MvuExecution } from './plugins/mvu.ts'
-import type { SystemPluginLease, SystemPluginRuntime } from './system-plugins.ts'
+import { MVU_PLUGIN_ID } from './plugins/builtins.ts'
+import { COMPAT_MVU, createMvuVariableWriter, type MvuCapability } from './plugins/mvu.ts'
+import type { VariableWriteKind, VariableWriteProposal, VariableWriteView } from '@iris/plugin-api'
+import type { SystemPluginLease, SystemPluginRuntime, VariableWriter } from './system-plugins.ts'
 import type { SystemPluginInstallService } from './plugins/install.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
@@ -117,6 +119,26 @@ import { arbitrateMessageVariables, type VariableProposal } from './variable-arb
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
+
+/**
+ * One variable writer's settlement budget, in milliseconds.
+ *
+ * Per writer, not per settlement: k writers run in series on purpose (the
+ * arbitrator applies deltas in array order, and "later wins" is decided by
+ * that order), so k slow writers can hold a reply for k times this long at
+ * the very worst. A writer that ignores its `AbortSignal` is not killed — it
+ * is simply no longer heard; its proposal is void and the row records
+ * `hook-failed`.
+ */
+export const WRITER_TIMEOUT_MS = 5000
+
+/** One settlement's variable writer, with the lease that pins its incarnation. */
+interface SettledVariableWriter {
+  pluginId: string
+  writer: VariableWriter
+  /** Present when the id names a catalog row; the ST-compat pilot's writer has none. */
+  lease?: SystemPluginLease
+}
 
 /**
  * The two utility prompts a generation kind can close its request with, in
@@ -623,6 +645,15 @@ export interface AppServiceOptions {
    */
   probeTimeoutMs?: number
   /**
+   * Test-only override of {@link WRITER_TIMEOUT_MS}, on the same seam as the
+   * installer's `limits`: a test that proved the budget by waiting five real
+   * seconds per case would be a test nobody runs, so the check is driven at a
+   * size a test can afford and the shipped number is pinned by its own
+   * assertion.
+   * @default 5000
+   */
+  variableWriterTimeoutMs?: number
+  /**
    * The transport `script.fetch` reaches the network through. Defaults to
    * {@link nodeFetch}.
    *
@@ -809,7 +840,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection' | 'stCompat'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection' | 'stCompat' | 'variableWriterTimeoutMs'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
@@ -919,6 +950,48 @@ export class IrisAppService {
   readonly #launch: { provider: string, model: string }
 
   /**
+   * The ST-compat bridge's floor-variable writer, as a writer like any other.
+   *
+   * Its only input is the per-settlement slot below, which is why its `propose`
+   * is total and synchronous: the slot is filled by the bridge call that runs
+   * earlier in the same settlement, and empty means "not this turn" — an
+   * aborted turn, a detached plane, a bridge that rewrote nothing. The reason
+   * gate here is the second net; the first is that the bridge call itself does
+   * not run on an aborted or impersonated turn, exactly as it always has.
+   */
+  readonly #stCompatWriter: VariableWriter = {
+    // The proposal's `before` is the turn's own message table — today's
+    // `variableBaseline`, which the bridge proposal has always carried.
+    baselineFor: view => view.baseline,
+    propose: view => {
+      if (view.reason !== 'completed') return undefined
+      const floor = this.#stFloorVariables.get(`${view.chatId}/${String(view.turn)}`)
+      return floor === undefined ? undefined : { variables: floor }
+    },
+  }
+
+  /**
+   * The bridge's floor result for the settlement in flight, keyed
+   * `chatId/turn`. Written by `#settle` after the bridge call, read by the
+   * writer above, deleted before the settlement returns — the slot does not
+   * outlive the settlement, so a writer can never see a previous turn's floor.
+   */
+  readonly #stFloorVariables = new Map<string, VariableWriteView['baseline']>()
+
+  /** The id the ST-compat writer is currently registered under, `''` for none. */
+  #stWriterId: string | undefined = undefined
+  #stWriterDisposer: (() => void) | undefined = undefined
+
+  /** Set once: the runtime-side MVU writer, registered under `MVU_PLUGIN_ID`. */
+  #mvuWriterDisposer: (() => void) | undefined = undefined
+
+  /** The no-runtime compatibility writer: MVU with the built-in engine, always on. */
+  readonly #legacyMvuWriter: VariableWriter = createMvuVariableWriter(COMPAT_MVU)
+
+  /** The settlement budget for one variable writer; `variableWriterTimeoutMs` overrides in tests. */
+  readonly #writerTimeoutMs: number
+
+  /**
    * @param options - domain stores, the model stream, and the event sink.
    */
   constructor(options: AppServiceOptions) {
@@ -976,6 +1049,7 @@ export class IrisAppService {
       provider: this.#options.hostConnection?.provider ?? this.#options.settings.configuredRoute(),
       model: this.#options.hostConnection?.model ?? this.#options.settings.configuredModel(),
     }
+    this.#writerTimeoutMs = options.variableWriterTimeoutMs ?? WRITER_TIMEOUT_MS
   }
 
   /** How well the token estimate currently tracks the provider, for diagnostics. */
@@ -5004,24 +5078,21 @@ export class IrisAppService {
     const pluginLeases: SystemPluginLease[] = []
     const plugins = this.#options.plugins
     if (plugins?.isEnabled('tavern-helper') === true) {
+      // Tavern Helper's lease is the macro-expander capability's lifetime for
+      // the whole generation (`entry.substitute` reads it mid-stream) and has
+      // nothing to do with variable settlement — which is why it survives this
+      // rewrite untouched.
       pluginLeases.push(plugins.lease('tavern-helper'))
     }
-    // Three states are intentional: an app service composed without a plugin
-    // runtime keeps the legacy always-on MVU behavior (`undefined`); a runtime
-    // with MVU disabled pins this turn off (`null`); an enabled runtime captures
-    // the admitted incarnation through settlement.
-    let mvuExecution: MvuExecution | null | undefined = plugins === undefined ? undefined : null
-    if (!impersonating && plugins?.isEnabled('mvu') === true) {
-      const lease = plugins.lease('mvu')
-      const capability = plugins.capability<MvuExecution['capability']>('mvu', MVU_CAPABILITY)
-      if (capability === undefined) {
-        lease.release()
-        for (const held of pluginLeases) held.release()
-        throw new AppError('internal', 'MVU is enabled without its runtime capability')
-      }
-      pluginLeases.push(lease)
-      mvuExecution = { capability, isCurrent: lease.isCurrent }
-    }
+    // One snapshot + one lease per writer locks the settlement's participant
+    // set for the whole generation. A disable that lands mid-generation
+    // neither joins nor leaves it: these are the writers who settle this turn,
+    // and each writer's lease is what lets the settle loop drop a proposal
+    // whose incarnation was replaced under it.
+    this.#ensureHostWriters()
+    const writers = plugins === undefined
+      ? this.#legacyVariableWriters()
+      : this.#runtimeVariableWriters(plugins, pluginLeases)
     let leasesReleased = false
     const releasePluginLeases = (): void => {
       if (leasesReleased) return
@@ -5075,7 +5146,8 @@ export class IrisAppService {
             'completed',
             {
               recordVariables: !impersonating,
-              ...mvuExecution === undefined ? {} : { mvu: mvuExecution },
+              kind: request.kind,
+              writers,
             },
           )
         } finally {
@@ -5084,7 +5156,7 @@ export class IrisAppService {
       },
       async error => {
         try {
-          await this.#fail(entry, turn, signal, error, request.kind, mvuExecution)
+          await this.#fail(entry, turn, signal, error, request.kind, writers)
         } finally {
           releasePluginLeases()
         }
@@ -5124,7 +5196,21 @@ export class IrisAppService {
     turn: number,
     text: string,
     reason: 'completed' | 'aborted',
-    options: { recordVariables?: boolean, mvu?: MvuExecution | null } = {},
+    options: {
+      /**
+       * Trim-only since the writer registry took over the variable side, and
+       * deliberately **not** merged with `kind` even though an impersonation
+       * is both untrimmed and variable-less: an aborted turn is untrimmed
+       * (nothing below `reason === 'completed'` runs) while its MVU write
+       * still runs. Two switches that agree on `completed` sends and disagree
+       * everywhere else.
+       */
+      recordVariables?: boolean
+      /** The generation's kind, as the writers' view reports it. */
+      kind?: VariableWriteKind
+      /** The participant set snapshotted in `#run`, leases included. */
+      writers?: readonly SettledVariableWriter[]
+    } = {},
   ): Promise<void> {
     // Whether this turn has already had its terminal event. Set **before** the
     // `stream.end` broadcast rather than after it: once the frame is handed to
@@ -5165,49 +5251,117 @@ export class IrisAppService {
       const messageOption = { type: 'message' as const, message_id: turn }
       const variableBaseline = entry.variables.getVariables(messageOption)
       const proposals: VariableProposal[] = []
-      if (reason === 'completed' && options.recordVariables !== false && turn !== undefined) {
+      // The bridge call stays here and not inside a writer: it returns the
+      // rewritten text as well as the floor variables, and the writer contract
+      // deliberately carries variables only — pushing text rewriting through
+      // it would preempt the generation-hook face before that face is drawn.
+      // Its floor result parks in the per-settlement slot; the host-registered
+      // ST-compat writer picks it up below like any other writer would.
+      const floorKey = `${entry.chatId}/${String(turn)}`
+      if (reason === 'completed' && options.kind !== 'impersonate' && turn !== undefined) {
         const processed = await this.#processReplyViaStCompat(entry, turn, settledText)
         if (processed !== undefined) {
           settledText = processed.text
           if (processed.floorVariables !== undefined) {
-            proposals.push({
-              pluginId: 'prompt-template',
-              before: variableBaseline,
-              after: processed.floorVariables,
-            })
+            this.#stFloorVariables.set(floorKey, processed.floorVariables)
           }
         }
       }
-      if (options.recordVariables !== false) {
-        const mvu = entry.computeVariables(
-          turn,
-          settledText,
-          message => {
-            this.#report(message, {
-              kind: 'mvu',
+      // Every writer sees the same settlement facts; the view is built once
+      // and handed to each in turn. Serial on purpose — the arbitrator below
+      // applies deltas in proposal order, and "later wins" is decided by that
+      // order, so a parallel loop would be a different ruling, not a faster
+      // one. The view-level signal is inert and only satisfies the shape:
+      // `baselineFor` is synchronous and carries no budget, and `#runWriter`
+      // overrides the signal with the per-writer budget's own.
+      const view: VariableWriteView = {
+        chatId: entry.chatId,
+        turn,
+        kind: options.kind ?? 'send',
+        reason,
+        text: settledText,
+        baseline: variableBaseline,
+        variablesAt: (earlier: number): VariableWriteView['baseline'] | undefined => {
+          try {
+            return entry.variables.getVariables({ type: 'message', message_id: earlier })
+          } catch {
+            // That turn produced no candidate to attach variables to — the
+            // same answer the baseline walk in `entry.baselineFor` gives it.
+            return undefined
+          }
+        },
+        declared: entry.initVars(),
+        signal: new AbortController().signal,
+      }
+      try {
+        const proposed = new Set<string>()
+        for (const registered of options.writers ?? []) {
+          const lease = registered.lease
+          if (lease !== undefined && !lease.isCurrent()) continue
+          let proposal: VariableWriteProposal | undefined
+          try {
+            proposal = await this.#runWriter(registered, view)
+          } catch (error: unknown) {
+            // The writer failed, the plugin did not: the reply settles, the
+            // rest of the writers run, and the row carries `hook-failed` until
+            // this writer's next successful proposal clears it.
+            this.#options.plugins?.noteHookFailure(
+              registered.pluginId,
+              error instanceof Error ? error.message : String(error),
+            )
+            continue
+          }
+          if (proposal === undefined) continue
+          // Once more between the propose and the push, not only before it: an
+          // asynchronous propose is exactly the window a disable can land in,
+          // and object identity is the incarnation token — a stale activation
+          // cannot append state.
+          if (lease !== undefined && !lease.isCurrent()) continue
+          // One proposal per plugin per settlement. The registry is the only
+          // proposal source, so a second writer under one id is a fault on the
+          // row rather than a silent double write — and the arbitrator would
+          // report no conflict for it, because it does not conflict with
+          // itself.
+          if (proposed.has(registered.pluginId)) {
+            this.#options.plugins?.noteHookFailure(
+              registered.pluginId,
+              `plugin "${registered.pluginId}" proposed message variables twice in one settlement`,
+            )
+            continue
+          }
+          proposed.add(registered.pluginId)
+          proposals.push({
+            pluginId: registered.pluginId,
+            before: registered.writer.baselineFor(view) as unknown as Variables,
+            after: proposal.variables as unknown as Variables,
+          })
+          // The reports travel with the proposal; the metadata is the host's
+          // to fill — a chat and a character belong to the settlement, not to
+          // the activation. An unknown kind spelling files under `variables`.
+          const reportKind = proposal.reportKind !== undefined && isReportKind(proposal.reportKind)
+            ? proposal.reportKind
+            : 'variables'
+          for (const line of proposal.reports ?? []) {
+            this.#report(line, {
+              kind: reportKind,
               grade: 'fault',
               chatId: entry.chatId,
               ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
             })
-          },
-          options.mvu,
-        )
-        if (mvu !== undefined) {
-          proposals.push({
-            pluginId: 'mvu',
-            before: entry.baselineFor(turn) as unknown as Variables,
-            after: mvu.data as unknown as Variables,
-          })
-        }
-        if (proposals.length > 0) {
-          const settled = arbitrateMessageVariables(variableBaseline, proposals)
-          entry.variables.replaceVariables(settled.variables, messageOption)
-          for (const conflict of settled.conflicts) {
-            this.#report(
-              `message variable conflict on "${conflict.key}": ${conflict.earlierPluginId} ran before ${conflict.laterPluginId}; ${conflict.winnerPluginId} won`,
-              { kind: 'variables', grade: 'note', chatId: entry.chatId },
-            )
           }
+          this.#options.plugins?.clearHookFailure(registered.pluginId)
+        }
+      } finally {
+        this.#stFloorVariables.delete(floorKey)
+      }
+      if (proposals.length > 0) {
+        const settled = arbitrateMessageVariables(variableBaseline, proposals)
+        entry.variables.replaceVariables(settled.variables, messageOption)
+        for (const conflict of settled.conflicts) {
+          this.#report(
+            `message variable conflict on "${conflict.key}": ${conflict.earlierPluginId} ran before ${conflict.laterPluginId}; ${conflict.winnerPluginId} won`,
+            { kind: 'variables', grade: 'note', chatId: entry.chatId },
+          )
         }
       }
       // Before `#storeRewritten`, which may rebuild the log: `rebuild` carries
@@ -5322,7 +5476,7 @@ export class IrisAppService {
     signal: AbortSignal,
     error: unknown,
     kind: 'send' | 'regenerate' | 'continue' | 'impersonate',
-    mvu: MvuExecution | null | undefined,
+    writers: readonly SettledVariableWriter[],
   ): Promise<void> {
     const partial = entry.pending?.text ?? ''
     // Three outcomes, not two. A budget expiring in the adapter aborts a
@@ -5337,7 +5491,7 @@ export class IrisAppService {
       if (signal.aborted && partial.length > 0) {
         try {
           this.#driver(entry, GENERATION_TYPE_OF.impersonate).recordImpersonation(entry.session, partial)
-          await this.#settle(entry, turn, partial, 'aborted', { recordVariables: false })
+          await this.#settle(entry, turn, partial, 'aborted', { kind: 'impersonate', writers })
           return
         } catch (cause: unknown) {
           this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
@@ -5372,13 +5526,7 @@ export class IrisAppService {
         // The interrupted path. Both paths converge here, which is why the
         // reason has to travel with the call: by the time the event is built,
         // nothing in the entry says whether the text arrived or was cut off.
-        await this.#settle(
-          entry,
-          turn,
-          partial,
-          'aborted',
-          mvu === undefined ? {} : { mvu },
-        )
+        await this.#settle(entry, turn, partial, 'aborted', { kind, writers })
         return
       } catch (cause: unknown) {
         this.#report(cause, { kind: 'host', grade: 'fault', chatId: entry.chatId })
@@ -5400,6 +5548,131 @@ export class IrisAppService {
       code,
       message: error instanceof Error ? error.message : String(error),
     })
+  }
+
+  /**
+   * Keep the host's own writers registered: MVU once, under the built-in row's
+   * id, and the ST-compat writer under whichever id the pilot currently
+   * serves.
+   *
+   * `st.extensionId()` is a live snapshot query — it answers `''` until an
+   * extension is installed and can change when one is — so that registration
+   * is re-evaluated at every `#run` instead of captured once at construction.
+   * A writer registered under a stale id would either propose under a name
+   * nobody installed or let a freshly installed plane's floor writes fall to
+   * the floor; both are answered by re-registering when the id moves. The
+   * runtime is the registry; the host is simply one of its two callers.
+   */
+  #ensureHostWriters(): void {
+    const plugins = this.#options.plugins
+    if (plugins === undefined) return
+    if (this.#mvuWriterDisposer === undefined) {
+      this.#mvuWriterDisposer = plugins.registerVariableWriter(MVU_PLUGIN_ID, this.#runtimeMvuWriter(plugins))
+    }
+    const st = this.#options.stCompat
+    if (st === undefined) return
+    const id = st.extensionId()
+    if (id === this.#stWriterId) return
+    this.#stWriterDisposer?.()
+    this.#stWriterDisposer = undefined
+    this.#stWriterId = id
+    if (id !== '') this.#stWriterDisposer = plugins.registerVariableWriter(id, this.#stCompatWriter)
+  }
+
+  /**
+   * The settlement's participants out of the runtime's registry, each with a
+   * lease taken now so the generation holds its writers' incarnations until it
+   * is done. A writer whose id names no catalog row is kept without a lease —
+   * only the host registers such an id (the ST-compat pilot), and that plane's
+   * on/off state is the bridge revision, not the catalog. A row that stopped
+   * accepting work between the snapshot and this lease is already gone from
+   * the settlement.
+   */
+  #runtimeVariableWriters(plugins: SystemPluginRuntime, pluginLeases: SystemPluginLease[]): SettledVariableWriter[] {
+    const settled: SettledVariableWriter[] = []
+    for (const registered of plugins.orderedVariableWriters()) {
+      try {
+        const lease = plugins.lease(registered.pluginId)
+        pluginLeases.push(lease)
+        settled.push({ ...registered, lease })
+      } catch (error: unknown) {
+        if ((error as AppError).code !== 'not-found') continue
+        settled.push({ ...registered })
+      }
+    }
+    return settled
+  }
+
+  /**
+   * The writers of a service composed without a plugin runtime: the bridge's
+   * floor writer, exactly as the runtime path would have ordered it, and the
+   * built-in MVU engine behind the same writer the runtime path carries. This
+   * local list is the whole registry when there is no runtime — it needs no
+   * ordering machinery because it is the same two entries in the order the
+   * `(depth, id)` rule produces.
+   */
+  #legacyVariableWriters(): SettledVariableWriter[] {
+    const st = this.#options.stCompat
+    const extensionId = st?.extensionId() ?? ''
+    return [
+      ...(st !== undefined && extensionId !== '' ? [{ pluginId: extensionId, writer: this.#stCompatWriter }] : []),
+      { pluginId: MVU_PLUGIN_ID, writer: this.#legacyMvuWriter },
+    ]
+  }
+
+  /**
+   * The runtime path's MVU writer: the walk and the impersonation rule live in
+   * `plugins/mvu.ts`, and this wrapper resolves the *live* capability per
+   * settlement — the same identity-at-the-commit-edge rule
+   * `entry.computeVariables` applies, with the lease's `isCurrent` checks in
+   * the settle loop playing the incarnation token. A row enabled without its
+   * capability proposes nothing instead of throwing: with the capability
+   * resolved here rather than captured at activation, the state the old
+   * settlement answered with an internal error is now simply nothing to write
+   * with.
+   */
+  #runtimeMvuWriter(plugins: SystemPluginRuntime): VariableWriter {
+    const resolve = (): VariableWriter | undefined => {
+      const capability = plugins.capability<MvuCapability>(MVU_PLUGIN_ID, MVU_CAPABILITY)
+      return capability === undefined ? undefined : createMvuVariableWriter(capability)
+    }
+    return {
+      baselineFor: view => resolve()?.baselineFor(view) ?? view.baseline,
+      propose: view => resolve()?.propose(view),
+    }
+  }
+
+  /**
+   * Run one writer's `propose` under its settlement budget.
+   *
+   * Two mechanisms, because one is not enough: the `Promise.race` is the
+   * enforcement — a writer that never resolves loses the race and its
+   * late answer is discarded — and the `AbortSignal` is the courtesy, the
+   * writer's one honest way to stop work it can stop. A writer that ignores
+   * the signal is not killed; it keeps running with nobody listening, and any
+   * side effect it takes in that state is its own doing.
+   */
+  async #runWriter(
+    registered: SettledVariableWriter,
+    view: Omit<VariableWriteView, 'signal'>,
+  ): Promise<VariableWriteProposal | undefined> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      controller.abort(new Error(
+        `the variable writer for "${registered.pluginId}" exceeded its ${String(this.#writerTimeoutMs)}ms settlement budget`,
+      ))
+    }, this.#writerTimeoutMs)
+    timer.unref?.()
+    try {
+      return await Promise.race([
+        Promise.resolve(registered.writer.propose({ ...view, signal: controller.signal })),
+        new Promise<never>((_, reject) => {
+          controller.signal.addEventListener('abort', () => { reject(controller.signal.reason) }, { once: true })
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**

@@ -184,9 +184,13 @@ Disabling Tavern Helper removes its optional API and stops its owned scripts.
 Native chat and base message rendering remain available. Missing capabilities
 must be identifiable; they must not fail later as an unexplained missing method.
 
-Disabling MVU stops its automatic initialization, update and replay. Stored
-variables remain readable as data and are not cleared. Re-enabling uses persisted
-state without applying historical commands a second time.
+Disabling MVU stops its automatic initialization, update and replay — and,
+since the variable-writer registry (U2), the mechanism is stronger than a flag
+check: disabling disposes the activation's fiber, the fiber disposal removes
+MVU's registered writer, and a disabled plugin is thus *absent from the
+settlement participant set*, not merely silent inside it. Stored variables
+remain readable as data and are not cleared. Re-enabling uses persisted state
+without applying historical commands a second time.
 
 Cards may bundle remote MVU code, and a disable is accounted for separately
 from it. What a disable revokes is named: the host-side capability, so

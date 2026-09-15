@@ -76,6 +76,7 @@ export const PLUGIN_MANIFEST_FILE = 'package.json'
  * | `get-dependency` | `getDependency(pluginId, name)` |
  * | `register-rpc` | `registerRpc(method, schema, handler)` |
  * | `host-context` | `context` — the host's Cordis `Context`, a property and not a method, and the largest thing the scope hands over |
+ * | `write-variables` | `variables.registerWriter(writer)` |
  *
  * `pluginId` and `revision` are the activation's own identity, not something
  * it reaches with, so they have no permission name. If the scope gains a
@@ -91,6 +92,7 @@ export const PLUGIN_PERMISSIONS = [
   'get-dependency',
   'register-rpc',
   'host-context',
+  'write-variables',
 ] as const
 
 export type PluginPermission = typeof PLUGIN_PERMISSIONS[number]

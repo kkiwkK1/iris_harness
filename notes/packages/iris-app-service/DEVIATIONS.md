@@ -7692,6 +7692,242 @@ check this" has to come off the consent page. (e) A second host implementation
 reading `system-plugins.json`, which is when the closed version set stops being
 a local decision.
 
+## 82. Variable proposals are collected by a registry, ordered by the dependency graph, and a writer's failure is no longer the plugin's failure
+
+U2 of the second infrastructure batch (`notes/INFRA-TASKS-2026-09-15.md`), branch
+`dev/plugin-variable-writers` over main `269a97e`. The task sheet's ruling is
+kept: writers register through the activation scope, settlement order is
+activation order with later-wins, a failed or slow writer voids only its own
+proposal, and the settlement's by-name branches are gone. `arbitrateMessageVariables`
+is untouched — zero algorithm changes, only the input source moved, which is
+why the five existing variable-settlement test files have an **empty `git diff`**
+(`variable-arbitration`, `st-compat-floor-variables`,
+`system-plugin-extraction`, `generation-kinds`, `mvu-dropped-commands`).
+
+### Premise corrections (code won; the PR's first paragraph)
+
+The sheet's U2 section describes four things the code at `269a97e` contradicts:
+
+1. **The two anchors the sheet names are not the two id literals that moved.**
+   `service.ts:5006`/`:5014`'s `plugins.isEnabled('tavern-helper')` /
+   `plugins.lease('tavern-helper')` have nothing to do with variables — the
+   Tavern Helper capability is the macro expander
+   (`plugins/capabilities.ts:15`), its only consumer is `entry.ts`'s
+   `expandMacros`, and that lease is the expander's lifetime for the whole
+   generation. It stayed exactly as it was. The two sites that moved are the
+   `VariableProposal` literals at `service.ts:5174` (`'prompt-template'`) and
+   `:5197` (`'mvu'`).
+2. **The two writers are the ST-compat bridge and MVU, not TH and MVU.** The
+   bridge's proposal data comes from `#processReplyViaStCompat`
+   (`service.ts:6470`), a channel wired by the host, unrelated to the
+   `tavern-helper` plugin; `plugins/tavern-helper.ts` is untouched (its
+   capability has no writable surface).
+3. **The `'prompt-template'` literal was wrong in production.** The pilot's
+   real id is `st.extensionId()` (`service.ts:482`, implemented at
+   `index.ts:863` as the first installed row that is neither builtin), which
+   equals the literal only when the installed directory happens to be named
+   `prompt-template`. The fixture used the literal
+   (`variable-arbitration.test.ts:143`), so nothing could catch it. The bridge
+   writer now registers under the live id, and re-registers when it moves.
+4. **`markFailure` cannot record `hook-failed`.** It sets
+   `plugin.enabled = false; plugin.status = 'error'`
+   (`system-plugins.ts:423`), which is precisely the outcome a settlement
+   failure must not have (the ruling: settlement continues, the reply is never
+   blocked). `noteHookFailure` writes `#failures` only, and the protocol
+   docblock's "failure is a refinement of `status: 'error'`" was rewritten:
+   `hook-failed` is the one state that rides on an `enabled: true, status:
+   'enabled'` row.
+
+### Decisions the code forced, against what the sheet sketched
+
+5. **The MVU writer is registered by the host, not in `builtins.ts`'s
+   `activate`.** The sheet put the registration there, but
+   `variable-arbitration.test.ts` — one of the five files that must stay
+   byte-identical — defines its own MVU activation that only provides
+   `MVU_CAPABILITY`; a registration living in the builtin's activate leaves the
+   registry empty under that fixture and `:170`/`:182` go red. The writer
+   logic stays in `plugins/mvu.ts` with the sheet's shape
+   (`createMvuVariableWriter(capability)`, no report closure, and it is also
+   what the no-runtime legacy path registers); the service registers a thin
+   adapter under `MVU_PLUGIN_ID` that resolves the live capability per
+   settlement — `plugins.capability('mvu', MVU_CAPABILITY)` — with the settle
+   loop's pre- and post-`propose` `lease.isCurrent()` checks playing the
+   incarnation-token role `entry.computeVariables`'s identity check played.
+   A row enabled without its capability now proposes nothing instead of
+   throwing.
+6. **The ST-compat writer is (re-)registered per `#run`, not once at
+   construction.** `st.extensionId()` is a live snapshot query that answers
+   `''` until an extension is installed; a construction-time capture would
+   register under `''` and a late install would rewrite text through the bridge
+   while its floor proposal silently vanished. `#ensureHostWriters` re-registers
+   when the id moves and disposes the stale registration.
+7. **`orderedVariableWriters` keeps a writer whose id names no catalog row,
+   and the lease step tolerates `not-found`.** Only the host registers such an
+   id (the bridge writer; see `#variableWriters`'s docblock), and its on/off
+   state belongs to the plane (`revisionOf`/detach), not the catalog. The
+   fixture has no `prompt-template` row, so a blanket `isEnabled` filter or an
+   unguarded lease would drop the bridge writer and redden the same tests. A
+   writer whose row exists participates only while the row is enabled, which
+   is the sheet's "disable ⇒ proposals disappear", by construction.
+8. **`propose` always answers `VariableWriteProposal | undefined`** —
+   `{ variables, reports?, reportKind? }`. The sheet first sketched a plain
+   table and later the report-carrying object; a `table | proposal` union would
+   be undecidable, since a proposal *is* a record. `reports` travel with the
+   proposal and the host fills the metadata (`chatId`, `characterId`), as the
+   sheet's recommended third option says; `reportKind` is a plain string
+   validated against the host's union (`isReportKind`, added to
+   `diagnostics.ts`) with `'variables'` as the fallback, so `WIRED_KINDS.mvu`
+   stays honest. One behaviour delta: reports emitted by a proposal that the
+   commit-edge identity check then drops are no longer reported (today
+   `entry.computeVariables` reports during compute and drops after). No test
+   observes the old ordering through `#settle`; the direct
+   `recordVariables` path is unchanged.
+9. **`hook-failed` is the seventh state and the odd one out**: not a stage of
+   reaching `enabled` (it rides an enabled row), cleared by the plugin's own
+   next successful proposal (`clearHookFailure` checks the state first, so it
+   cannot wash an install verdict), never in `ENABLE_BLOCKING_FAILURES`. The
+   committed-transition `#failures.delete` in `#commit`/`#activateAtStartup`
+   clears it for free. Intentionally momentary — the alternative (sticky until
+   the next lifecycle transition) would leave a permanent warning on a working
+   plugin after one 5-second jitter.
+10. **`'MVU is enabled without its runtime capability'` is deleted** rather
+    than kept: with the capability resolved per settlement inside the writer,
+    the state it named is unreachable, and the settle loop treats a
+    capability-less propose as "nothing to write with". Ledgered per the
+    sheet's own requirement, since it is a user-visible behaviour change.
+11. **One proposal per plugin per settlement**, second one a fault on the row
+    (the sheet's §9.2 guard). The registry allows several registrations under
+    one id, but the settlement contract is one proposal; the arbitrator would
+    not report a same-id conflict (`earlier.pluginId !== proposal.pluginId`),
+    so a silent second write is exactly the failure this guard exists to make
+    loud.
+
+### Ordering, and why it must never become a bare `sort()`
+
+`rank(id) = [depth(id), id]`, compared lexicographically with depth first;
+`depth = 1 + max(depth(deps))` over `NormalizedDefinition.dependencies`, 0 for
+a row-less id, a visiting set as a belt over the cycle refusal `#enableOrder`
+already performs at enable time. Verification on today's rows:
+`tavern-helper` no dependencies → 0; `mvu` declares
+`dependencies: ['tavern-helper']` (`plugins/builtins.ts:46`) → 1; an adopted
+ST extension row has none → 0. Order: prompt-template (0) < mvu (1) — ST
+first, MVU second, matching ledger §76's measured upstream order. **This
+conclusion rests on the dependency, not the alphabet**: `'mvu' <
+'prompt-template'`, so a comparator simplified to the id alone reverses the
+order and hands every conflict to the wrong winner — mutation M1 below
+reddens both the new order assertion and `variable-arbitration.test.ts`'s
+`mvu won` test, exactly as §9.1 predicted.
+
+### Permission: `write-variables` is a declaration, and is deliberately not a gate
+
+Per the sheet, the word joins `PLUGIN_PERMISSIONS` and the consent page shows
+it. No gate was added, for the sheet's §4.4 reasons, restated: the docblock
+itself says the list is a declaration the host spell-checks, not a boundary it
+enforces; the runtime has no manifest on the activation path
+(`SystemPluginDefinition` carries no `permissions`, and builtins plus adopted
+ST extension rows have no manifest at all, so a gate would refuse them all);
+and the risk asymmetry points the other way — a variable write is a proposal
+arbitrated by the host and reported by id, not an unconditional disk write. If
+U3 lands `RuntimePlugin.permissions` first, a one-line check plus one test in
+`registerVariableWriter` is the whole change, and the coordinator can then
+rule on gating the other four names.
+
+### Why the bridge call stayed in `#settle`, not inside a writer
+
+`#processReplyViaStCompat` returns the rewritten text *and* the floor
+variables; the writer contract carries variables only. Pushing text rewriting
+through it would overload the interface ahead of the generation-hook face
+(U4). So the bridge call keeps its exact old gates (`reason === 'completed'`,
+not an impersonation, turn defined — the old `recordVariables !== false`
+split into `reason`/`kind` checks), its floor result parks in a per-settlement
+slot keyed `chatId/turn` and deleted before the settlement returns, and the
+host-registered bridge writer reads the slot like any writer. The reason gate
+in the writer's `propose` is the second net; deleting the bridge gate alone
+(the first net) leaves the other holding — two nets, mutation-tested below as
+one pair.
+
+### Two baseline walks coexist, with a removal criterion
+
+`entry.baselineFor` / `entry.computeVariables` stay untouched
+(`system-plugin-extraction.test.ts:175`/`:213` call them directly, and
+`recordVariables` remains the compatibility wrapper), while the writer side
+walks the same rule through `view.variablesAt` / `view.declared`
+(`mvuBaselineOf`). They must answer identically — the writer tests pin the
+walk point by point. Removal criterion: `#settle` no longer calls
+`entry.computeVariables`; the function can go once the two direct-call tests
+migrate, and `entry.baselineFor` follows when its last reader
+(`recordVariables`) does.
+
+### Latency budget
+
+Serial on purpose: the arbitrator applies deltas in proposal order and
+later-wins is decided by that order, so parallelizing is a different ruling,
+not an optimization. Each writer gets its own 5 s
+(`WRITER_TIMEOUT_MS`; the enforcement is the `Promise.race`, the
+`AbortSignal` is only the courtesy — a writer that ignores it is not killed,
+it is no longer heard, and `clearTimeout` in `finally` plus `unref` keep the
+test process honest). Worst case a reply waits k × 5 s before
+`replaceVariables` and `stream.end`; today k ≤ 2 and both are synchronous, so
+the measured cost is zero, but one slow third-party writer is user-visible,
+which is why the runbook says `propose` should be synchronous or
+millisecond-scale.
+
+### The settlement's own two switches are not one switch
+
+`recordVariables` (trim only, since this change) and `view.kind` (variables)
+look interchangeable and are not: an impersonation is untrimmed *and*
+variable-less, but an aborted turn is untrimmed while its MVU write still
+runs. `#settle`'s options docblock says this in place; merging the two would
+trim impersonations (a behaviour change `generation-kinds` may not catch) and
+is flagged here so the next reader does not "simplify" it.
+
+### `service.ts` grew instead of shrinking, and here is the itemization
+
+The sheet expected roughly −45/+30. Measured: **+336/−63**. The deletions are
+the sheet's own targets (the 12-line three-state block, the two proposal
+constructions, the internal-error throw). The insertions, itemized: five new
+private methods with the house's load-bearing docblocks — `#ensureHostWriters`
+(the per-run ST re-registration the sheet's one-line sketch could not express),
+`#runtimeVariableWriters` (lease tolerance for row-less ids),
+`#legacyVariableWriters`, `#runtimeMvuWriter` (the per-settlement capability
+resolution of decision 5), `#runWriter` (the budget) — about 120 lines; the
+settlement fields (bridge writer, slot, registration state, legacy writer,
+timeout) about 40; the writer loop with the duplicate-proposal guard and the
+double `isCurrent` check about 60 replacing the sheet's two constructions. The
+sheet's line budget assumed builtins-side registration, a construction-time ST
+id, and no slot lifecycle; decisions 5–7 are what those assumptions cost.
+Nothing was added for decoration, and the comments carry the constraints the
+next editor must not re-derive wrongly.
+
+### The mutation table (the teeth)
+
+Thirteen named mutations, each applied alone (one as the composite named
+below), the named suites run, then reverted.
+
+| mutation | what reddened |
+| --- | --- |
+| M1: the order comparator drops depth and sorts by id alone | `settlement order is (dependency depth, id)` (T2), `a third writer joins…` (T1), **and the existing `same-key conflict follows ST handler order and names the MVU winner`** in `variable-arbitration.test.ts` — the §9.1 prediction, verified |
+| M2: `orderedVariableWriters` stops filtering `isEnabled` | green — absorbed by the lease layer (`lease` throws `unsupported` for the disabled row and the writer is dropped there). Recorded rather than hidden; see the composite below |
+| M2b: composite — the scope's writer deregistration disabled (the effect teardown ignored), the `isEnabled` filter removed, *and* the lease failure path keeps every writer | T3 red: `a disabled writer still appears in the settlement order`. Three independent layers must all fall before a disabled writer proposes again — fiber-disposal deregistration is the first (disable disposes the activation, the fiber disposal runs the effect teardown, the teardown unregisters the writer), the filter the second, the lease the third; the sheet's single-layer tooth was not enough to redden anything |
+| M3: the per-writer lease is taken but never pushed (so never released) | the suite **hangs**: T4's `await disabling` never resolves because disable's drain waits forever for the leaked lease. Red by hanging, and the hang is the proof — the drain semantics are what freeze the participant set, and `lease.isCurrent()` can never fire mid-settlement while the lease is held (which is why T4 asserts the real semantics — the turn keeps the proposal, the disable completes only after release — rather than the sheet's unreachable mid-`propose` drop) |
+| M4: `noteHookFailure` swapped for `markFailure` | T5 red: `a hook failure disabled the plugin` / `a hook failure errored the row` |
+| M5: the writer-loop catch rethrows instead of continuing | T5 red: the reply is taken down (`expected one commit` fails; the settle aborts before the store) |
+| M6: the `Promise.race` removed, only the `AbortSignal` kept | T6 **hangs** — the sheet's own wording: a writer that ignores the signal holds the settlement forever; the test going dark is the assertion |
+| M7: `clearHookFailure` drops its state check | T7 red: `clearHookFailure washed an install verdict` |
+| M8: the impersonate refusal deleted from `createMvuVariableWriter` | T8 red: `the MVU writer refuses impersonations…`. **The existing `generation-kinds` `an impersonate leaves the MVU pathway alone` stayed green**, recorded rather than hidden: that fixture's stream text carries no variable commands, so the writer's answer is `undefined`-vs-unchanged-baseline and the tables are identical either way. The existing test pins the settlement's table invariant, not the writer's gate; the new direct assertion is the one that bites |
+| M9: the bridge call's `reason`/`kind` gate and the bridge writer's `reason` gate both deleted | T9 red: `an aborted turn carried a bridge floor proposal` (`counts.st === 1`, a floor proposal on a partial). Deleting either net alone leaves the other holding |
+| M10: the legacy list loses the MVU writer | T10 red: `the compatibility MVU writer stopped writing without a runtime` |
+| M11: a `pluginId: 'prompt-template'` literal reappears in the settlement slice | T11 red: `the settlement still names "prompt-template"` — the source assertion's anchor pair (`const impersonating` → `arbitrateMessageVariables(`) with a >2000-char floor, so a stale anchor cannot go silently green |
+| M12: `mvuBaselineOf` returns `view.baseline` instead of walking | the baseline unit test red (`walks back to the nearest MVU table…`) |
+
+One expectation adjustment, arithmetic rather than behaviour: T1's sheet text
+says "冲突报文出现两条且 `winnerPluginId` 都是 `third-writer`". Three proposals
+on one key produce exactly two conflicts — ST→MVU (winner `mvu`) and
+MVU→third (winner `third-writer`) — so the assertion pins the pair of winners
+in order, plus the final value being the third writer's.
+
+---
+
 ## 84. 插件自带文案：清单、契约里的审计、以及资产面长出的第三种资产
 
 Dated 2026-09-16 (task sheet U5, branch `dev/plugin-i18n-bundles` against

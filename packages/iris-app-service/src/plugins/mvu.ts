@@ -10,6 +10,11 @@
  */
 
 import type { CharacterCard } from '@iris/character'
+import type {
+  PluginVariableTable,
+  VariableWriteView,
+  VariableWriter,
+} from '@iris/plugin-api'
 import {
   applyCommands,
   loadInitVars,
@@ -130,3 +135,58 @@ export function createMvuCapability(revision: number): MvuCapability {
 
 /** Compatibility behavior for callers constructed without a plugin runtime. */
 export const COMPAT_MVU = createMvuCapability(0)
+
+/**
+ * Whether a stored table is an MVU state tree rather than some other variable
+ * table. Structural, the same test `entry.ts`'s baseline walk applies: the
+ * message layer can carry any writer's table, and only one carrying a
+ * `stat_data` tree is a state MVU may inherit from.
+ */
+function isMvuData(value: unknown): value is MvuData {
+  return typeof value === 'object' && value !== null && 'stat_data' in value
+}
+
+/**
+ * The state a turn's MVU commands fold into, read off a settlement view.
+ *
+ * The nearest earlier turn's MVU tree, NOT the state as it stands — a rerolled
+ * turn must start from the same baseline the discarded reply did — walking
+ * backwards through `view.variablesAt` and falling back to what the card
+ * declares. This is the walk `entry.baselineFor` has always done; the two
+ * coexist until the service-side callers of that one are gone, and they must
+ * answer identically, which is what the writer tests pin.
+ */
+export function mvuBaselineOf(view: VariableWriteView): MvuData {
+  for (let earlier = view.turn - 1; earlier >= 0; earlier -= 1) {
+    const stored = view.variablesAt(earlier)
+    if (stored !== undefined && isMvuData(stored)) return stored
+  }
+  return view.declared as MvuData
+}
+
+/**
+ * MVU as a variable writer: the settlement side of the capability.
+ *
+ * The proposal is computed from the view alone — the capability travels in,
+ * everything else (`text`, the baseline walk, the impersonation rule) rides on
+ * the view — so one factory serves the live runtime (the host registers it
+ * under `mvu` and resolves the capability per settlement, which is what keeps
+ * a stale incarnation from writing) and the no-runtime compatibility path
+ * (registered once with `COMPAT_MVU`). The impersonation refusal moved here
+ * from the settlement's own `!impersonating` branch: an impersonated line
+ * becomes a user line, and a user line carries no variable consequences.
+ */
+export function createMvuVariableWriter(capability: MvuCapability): VariableWriter {
+  return {
+    baselineFor: view => mvuBaselineOf(view) as unknown as PluginVariableTable,
+    propose: view => {
+      if (view.kind === 'impersonate') return undefined
+      const result = capability.update(view.text, mvuBaselineOf(view))
+      return {
+        variables: result.data as unknown as PluginVariableTable,
+        reports: result.reports,
+        reportKind: 'mvu',
+      }
+    },
+  }
+}

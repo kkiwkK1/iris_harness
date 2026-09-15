@@ -1645,7 +1645,7 @@ export const en = {
    * Three families in reading order: the entry form (`pluginCenterInstall*`),
    * the consent page (`pluginCenterConsent*`), and the row's new columns —
    * `pluginCenterSource*` for the badge, `pluginCenterProvenance*` for what was
-   * recorded at install, `pluginCenterFailure*` for the six named states.
+   * recorded at install, `pluginCenterFailure*` for the seven named states.
    *
    * The sentences that carry a ruling rather than a label are the ones to read
    * twice: the same-privilege disclosure (§4, and §9 invariant #16's "the only
@@ -1742,6 +1742,8 @@ export const en = {
   pluginCenterFailureFixLoadFailed: 'Fix the file named above, then retry enable. Nothing was left registered.',
   pluginCenterFailureActivateFailed: 'The package loaded, then threw while starting.',
   pluginCenterFailureFixActivateFailed: 'Fix the reported cause, then retry enable. Iris rolled back everything it had registered.',
+  pluginCenterFailureHookFailed: 'The variable write failed or timed out this turn; the reply itself settled normally.',
+  pluginCenterFailureFixHookFailed: 'The plugin is still running; its next successful write clears this notice.',
   pluginCenterFailureReinstall: 'Reinstall from the recorded remote and commit',
   pluginCenterFailureReinstalling: 'Uninstalling, then staging the recorded commit…',
   pluginCenterFailureNoRecord: 'This row records no remote and commit, so there is nothing to reinstall from. Uninstall it and install the package again.',
@@ -3110,6 +3112,8 @@ export const zh: Record<StringKey, string> = {
   pluginCenterFailureFixLoadFailed: '请修好上面点名的文件，然后重试启用。没有任何东西被留在注册表里。',
   pluginCenterFailureActivateFailed: '这个包载入成功，但在启动时抛了错。',
   pluginCenterFailureFixActivateFailed: '请先处理上述原因，然后重试启用。Iris 已经回滚了它注册过的一切。',
+  pluginCenterFailureHookFailed: '这个插件这一轮的变量写入失败或超时了，本轮回复已正常结算。',
+  pluginCenterFailureFixHookFailed: '插件仍在运行；它下一轮成功写入后这条提示会自动清除。',
   pluginCenterFailureReinstall: '按记录的 remote + commit 重新安装',
   pluginCenterFailureReinstalling: '正在卸载，然后暂存记录下来的那个 commit…',
   pluginCenterFailureNoRecord: '这一行没有记录远端与 commit，没有可以据以重装的东西。请卸载它，然后重新安装这个包。',

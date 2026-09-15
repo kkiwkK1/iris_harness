@@ -122,7 +122,7 @@ const INSTALLED_DIR = 'installed'
 const CLIENT_BUNDLE = 'client.js'
 
 /**
- * A failure with one of the six names, raised where it happens.
+ * A failure with one of the install-path names, raised where it happens.
  *
  * Every refusal on this path is one of these; there is no generic `Error`
  * escaping to a caller that then has to guess which row to mark. The wire code
@@ -830,8 +830,9 @@ export class SystemPluginInstallService {
  *
  * The runtime's own catch turns any activation throw into `status: 'error'`
  * with a free-text message; the typed `failure` has to be recorded before that
- * happens, or the row would say "error" with no name for which of the six it
- * is — and §1's fourth goal is that every failure has a name a user can act on.
+ * happens, or the row would say "error" with no name for which install-path
+ * state it is — and §1's fourth goal is that every failure has a name a user
+ * can act on.
  */
 function markAndThrow(runtime: SystemPluginRuntime, id: string, failure: SystemPluginFailure): Error {
   runtime.markFailure(id, failure)

@@ -198,14 +198,32 @@ const dispose = slots.core.register(
 
 ### 变量写入规则
 
-产生消息变量变更的处理者**返回完整的变量表**，由宿主仲裁，不要自己往变量库里写：
+想在一轮回复落盘时写消息层变量，在 `activate` 里登记一个 **writer**，不要自己往变量库里写：
 
-- 参与合并的只有该处理者相对**共同基线**的**增量**。这既保住互不相干的写入，也阻止后手的完整快照抹掉前手的无关键。
-- 顺序照抄上游 ST：Prompt-Template 在前，MVU 这类卡脚本在后。
-- **后者胜**，每一次覆盖记成一条冲突（`key` / `earlierPluginId` / `laterPluginId` / `winnerPluginId`），以 `{ kind: 'variables', grade: 'note' }` 报出来。
-- 结算只有一处：`packages/iris-app-service/src/service.ts:5148`，随后一次 `replaceVariables` 落盘。
+```ts
+export function activate(scope) {
+  return scope.variables.registerWriter({
+    // 本 writer 的提案是相对哪张表的增量。
+    baselineFor: view => view.baseline,
+    // 提案：完整表；undefined 表示这一轮不写。
+    propose: view => {
+      if (view.kind === 'impersonate') return undefined
+      return { variables: compute(view.text, view.baseline) }
+    },
+  })
+}
+```
 
-算法在 [variable-arbitration.ts](../packages/iris-app-service/src/variable-arbitration.ts)。**注意这不是插件可用的 API**：该模块是宿主内部的，结算处写死了 `'prompt-template'` 与 `'mvu'` 两个 id（`service.ts:5119`、`:5142`）。第三个写变量的插件今天接不进来，要先把提案注册做成接口。
+`baselineFor` 与 `propose` 各答一个独立的问题。`propose` 给出**你想要的完整表**；`baselineFor` 声明**它是相对谁的增量**——参与合并的只有增量，宿主据此算出你实际改了什么。宿主自带的两个写方就选了不同的基线：ST-compat 桥的楼层表相对本轮消息层原表（`view.baseline`），MVU 相对「向前找最近一张带 `stat_data` 的表、找不到退回卡声明」走出来的状态树（`view.variablesAt` 逐轮回看，`view.declared` 兜底）。选错的后果是仲裁把你的整张表当成改动，或把你真正的改动漏算。
+
+`view` 携带结算的全部事实：`chatId`、`turn`、`kind`（`send`/`regenerate`/`continue`/`impersonate`——**扮演轮写出的是用户行，不携带变量后果，writer 自己判断并不写**，宿主不再代劳）、`reason`（`completed`/`aborted`——被叫停的轮次仍会结算它已有的文本）、`text`（已过 trim 与桥改写、即将落盘的那份）、`baseline`、`variablesAt(turn)`、`declared`、`signal`。**`propose` 应当是同步或毫秒级的**：每个 writer 的预算是 5 s（`WRITER_TIMEOUT_MS`），超时或抛错的提案本轮作废、行上记一条 `hook-failed`、回复照常落盘——writer 失败不是插件失败，插件不会被停用；下一轮成功提案自动清除该提示。串行结算，k 个慢 writer 最坏把回复拖住 k×5 s。
+
+- **顺序 = 激活顺序**，按 (依赖深度, id) 排序。你排在谁后面由**依赖声明**决定，不是由 id 拼写决定：`mvu` 排在无依赖插件之后，是因为它声明了 `dependencies: ['tavern-helper']` 而不是 `'mvu'` 的字母序靠后。**后者胜**，每一次覆盖记成一条冲突（`key` / `earlierPluginId` / `laterPluginId` / `winnerPluginId`），以 `{ kind: 'variables', grade: 'note' }` 报出来。
+- 一个插件一轮最多一条提案：同一插件在同一结算里出现第二条提案按故障处理（行上记 `hook-failed`），不会被静默合并。
+- 停用即摘除：writer 随 activation 的 fiber dispose 注销，停用的插件立刻从结算参与者集合里消失（下一次结算就看不见它）；进行中的那一轮以快照为准，不受中途停用影响。
+- 结算只有一处（`#settle` 的 writer 循环 + 一次 `arbitrateMessageVariables` + 一次 `replaceVariables`）。`propose` 里**永远不要**碰 `entry.variables`——那会绕过仲裁与冲突上报。
+
+算法在 [variable-arbitration.ts](../packages/iris-app-service/src/variable-arbitration.ts)，注册表在 `SystemPluginRuntime`（`registerVariableWriter` / `orderedVariableWriters`）。`.setVariables` 那类脚本面是宿主自己的写入口，与本接口无关；manifest 里声明 `write-variables`（同意页会显示，它是声明不是闸门）。
 
 ### 持久化
 
