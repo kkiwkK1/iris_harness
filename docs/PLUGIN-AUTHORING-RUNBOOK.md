@@ -231,7 +231,26 @@ export function activate(scope) {
 
 聊天/变量继续由既有 store 写，算法返回结果即可。卸载默认保留业务数据；删除数据应是另一个明确动作。
 
-通用插件 storage/settings namespace 尚未实现（ST 扩展的设置走的是专门的闭包，不是通用接口）。确需持久化的新插件，先定义宿主提供的窄存储接口，经过路径包含性、原子写、损坏保留、profile lock 等约束后再用，不能把 profile 路径暴露给卡片脚本。密钥不得进入普通插件 JSON、日志或快照。
+插件自己的持久化走下一节的 `scope.storage`（`dev/plugin-scope-storage` 轮落地）。settings namespace 仍未实现（ST 扩展的设置走的是专门的闭包，不是通用接口）。密钥不得进入普通插件 JSON、日志或快照。
+
+### 插件私有存储
+
+在清单的 `iris.plugin.permissions` 里声明 `plugin-storage`，`activate` 里拿到的 `scope.storage` 就是**这个插件独占**的一块键值存储，文件落在 `<profile>/plugin-data/<id>/<key>.json`，一键一文件。四个方法：
+
+```ts
+await scope.storage.get(key)             // → 值或 undefined
+await scope.storage.set(key, value)      // → void；值必须是 JSON 可表达的
+await scope.storage.delete(key)          // → void；删不存在的键不算错
+await scope.storage.keys()               // → string[]，排序后返回
+```
+
+- **键语法与安装 id 同一套**：`/^[a-z0-9][a-z0-9._-]{0,63}$/`。不合法的键在写入面抛 `invalid-request`。键名别当成路径来用——它就是一个文件名，Windows 上整条路径接近但不通常超过 260 字符。
+- **值**过宿主自己的存储守卫（禁 `__proto__`/`constructor`/`prototype` 键，拒 class 实例、非有限数、函数、symbol），与卡片脚本写变量是同一条规则。
+- **两个上限**：单值 1 MiB、单插件全量 64 MiB，按序列化后的 UTF-8 字节数计。超限时 `set` 抛 `invalid-request`，消息里带两个数字（你的值多大、闸门在哪）。
+- **没声明权限就调用**：四个方法都抛 `invalid-request`，消息点名 `plugin-storage`——这是权限词表里第一条真正挡人的规则，见安装一节裁决 1 的例外说明。
+- **`get` 对「没存过」和「存过但文件坏了」都答 `undefined`**，这是设计：坏文件的事实上报给宿主的诊断面（debug 页与日志），不抛给插件——插件处理不了它，能处理的人是用户。
+- **卸载保留数据**：`plugin.uninstall` 删安装树、删目录行，**不动** `plugin-data/<id>/`。重装同 id 插件读回的是上一代写下的字节，所以 `get` 的返回类型是 `unknown`——磁盘上的东西是上一个版本的插件写的，形状要自己收窄。
+- 写入是原子的（临时文件 + 改名）；宿主卸载后的写抛 `invalid-request`，插件被停用后的写抛 `unsupported`。读不受两者影响。
 
 ## 安装一个系统插件包
 
@@ -242,7 +261,8 @@ profile，走的是同一套目录、依赖、启停、卸载——不是第二�
 
 **先记住一件事**：系统插件是**与宿主同权的 Node 代码**，`activate` 在宿主进程里拿到宿主的全部触达
 能力。没有沙盒。清单里的 `permissions` 是**声明**，宿主只校验拼写并在同意页展示，它不是宿主强制的
-边界。挡风险的是「代码从哪来」和「用户是否明确同意」。
+边界——唯一的例外是 `plugin-storage`：宿主**能真的不给**「插件私有存储」这一块（见上文），其余名字
+仍是纯声明。挡风险的是「代码从哪来」和「用户是否明确同意」。
 
 ### 包长什么样
 

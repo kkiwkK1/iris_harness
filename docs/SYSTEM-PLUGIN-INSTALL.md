@@ -115,6 +115,8 @@
 
 裁决 1：**系统插件是与宿主同权的 Node 代码**，`activate` 在宿主进程里拿到宿主的全部触达能力。没有沙盒。限制风险的是**代码从哪来**和**用户是否明确同意**。
 
+由此，`permissions` 的默认读法是**声明而非边界**（§12 裁决 4）：宿主校验拼写、在同意页展示，不据此收回任何触达。`plugin-storage` 是这条规则的**第一个例外**（`dev/plugin-scope-storage` 轮）：插件私有存储是宿主**提供的服务**而不是插件本来就有的触达，宿主能真的不给——清单没声明 `plugin-storage` 的插件，`scope.storage` 四个方法各抛点名 `invalid-request`。它挡的只有这一件事：挡不住同权插件用自己的 `fs.writeFileSync` 写同一个目录，那不是它的对手盘。为什么先给存储开口而不是别的：存储是插件最普遍的落盘需求，宿主侧的边界（键语法 + resolve 前缀、原子写、坏文件隔离、双上限）已经成立，见 `packages/iris-app-service/src/plugins/storage.ts` 与 [PLUGIN-AUTHORING-RUNBOOK](PLUGIN-AUTHORING-RUNBOOK.md) 的「插件私有存储」一节。
+
 本轮三种源，按优先级：
 
 | 源 | 状态 | 约束 |

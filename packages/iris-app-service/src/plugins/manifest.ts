@@ -54,8 +54,8 @@ export const PLUGIN_MANIFEST_FILE = 'package.json'
  * `SystemPluginActivationScope` hands over
  * (`packages/iris-plugin-api/src/index.ts:95`).
  *
- * **This is a declaration, not a boundary.** A system plugin is Node code
- * running with the host's own privileges, in the host's own process
+ * **The default rule: a declaration, not a boundary.** A system plugin is
+ * Node code running with the host's own privileges, in the host's own process
  * (`docs/SYSTEM-PLUGIN-INSTALL.md` §4, ruling 1). It can read the filesystem,
  * open sockets and reach every global whether or not it lists a permission
  * here, and nothing in this file or downstream of it revokes a scope member
@@ -68,14 +68,26 @@ export const PLUGIN_MANIFEST_FILE = 'package.json'
  * answer to that question was to keep the list and say so, here and on the
  * consent page.
  *
+ * **The one exception, as of `plugin-storage`: a boundary.** Storage is a
+ * service the *host* provides — a directory under the profile, handed over as
+ * `scope.storage` — rather than a reach a plugin already had, so the host can
+ * really not give it: a manifest without `plugin-storage` gets a scope whose
+ * `storage` methods throw a named error instead of a working store. The
+ * boundary's edges, so nobody oversells it: it gates `scope.storage` and
+ * nothing else. The same-privilege plugin can still write the same files with
+ * its own `fs.writeFileSync`, because ruling 1 was never repealed — what the
+ * gate buys is that the documented, bounded face exists only for plugins that
+ * declared it, and a refusal says so in the plugin's own activation.
+ *
  * The mapping, name to scope member:
  *
  * | permission | scope member |
  * | --- | --- |
- * | `provide-capability` | `provide(name, value)` |
  * | `get-dependency` | `getDependency(pluginId, name)` |
- * | `register-rpc` | `registerRpc(method, schema, handler)` |
  * | `host-context` | `context` — the host's Cordis `Context`, a property and not a method, and the largest thing the scope hands over |
+ * | `plugin-storage` | `storage` — the private key–value store under `<profile>/plugin-data/<id>/`; the one name with a consequence |
+ * | `provide-capability` | `provide(name, value)` |
+ * | `register-rpc` | `registerRpc(method, schema, handler)` |
  * | `write-variables` | `variables.registerWriter(writer)` |
  *
  * `pluginId` and `revision` are the activation's own identity, not something
@@ -84,14 +96,16 @@ export const PLUGIN_MANIFEST_FILE = 'package.json'
  * maintenance rule, and `plugin-manifest.test.ts` pins the mapping so a scope
  * member added without one goes red.
  *
- * Exported as a readonly array so the consent page can render it in
- * declaration order rather than re-deriving a list it might get wrong.
+ * Kept in alphabetical order — the vocabulary is a set (validation reads it
+ * as `PERMISSION_SET`), and a sorted literal is the one order two branches
+ * appending to it in the same week cannot disagree about.
  */
 export const PLUGIN_PERMISSIONS = [
-  'provide-capability',
   'get-dependency',
-  'register-rpc',
   'host-context',
+  'plugin-storage',
+  'provide-capability',
+  'register-rpc',
   'write-variables',
 ] as const
 

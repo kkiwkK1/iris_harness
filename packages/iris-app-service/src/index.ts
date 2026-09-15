@@ -787,6 +787,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     context: ctx,
     file: join(paths.root, 'system-plugins.json'),
     definitions: BUILTIN_SYSTEM_PLUGIN_DEFINITIONS,
+    // The plugins' private stores live under the profile, beside everything
+    // else the profile owns; the runtime builds its store on this root and
+    // reports its problems through the `onError` line below, which is the
+    // same `reportStoreProblem` every other store here uses.
+    pluginDataRoot: paths.pluginData,
     onError: error => { reportStoreProblem(error.message) },
   })
   await systemPlugins.initialize()
@@ -1320,6 +1325,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       // through the store's own `onError`, and the catch is the same belt
       // card storage's is.
       void scriptVariables.flush().catch((error: unknown) => {
+        ctx.logger.warn(error instanceof Error ? error.message : String(error))
+      })
+      // Same drain for the plugins' private stores. The chains are per plugin,
+      // so this waits out a write a plugin made from its own dispose — the
+      // save that has no other moment — and then closes the stores: a `set`
+      // after it answers invalid-request, named after the script-variables
+      // refusal above. A failing write never rejects here; it was already
+      // thrown to its own caller and reported through the runtime's
+      // `onError`, and the catch is the same belt the two drains above wear.
+      void systemPlugins.flushPluginData().catch((error: unknown) => {
         ctx.logger.warn(error instanceof Error ? error.message : String(error))
       })
     }

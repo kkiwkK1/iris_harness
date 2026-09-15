@@ -37,9 +37,14 @@
  * - `docs/INFRASTRUCTURE-INTERFACES.md` — the maintained inventory of what a
  *   plugin can actually reach on `main`, §8 being the gap list. This package
  *   describes *what a plugin is and how it activates*; the runtime services a
- *   plugin might reach once active — a storage namespace under the profile, an
- *   event tap, generation-pipeline hooks, a contributed settings face — are
- *   one layer later in the paper stack, and none of them exists yet.
+ *   plugin might reach once active are one layer later in the paper stack.
+ *   `scope.storage` — the private key–value namespace under the profile —
+ *   crossed that layer and exists as of the `dev/plugin-scope-storage` round
+ *   (this file's `PluginStorage`); the event tap, the generation-pipeline
+ *   hooks and a contributed settings face still do not exist. Documents go
+ *   stale; a comment sits in the reader's hands, so this one names the commit
+ *   the answer changed in rather than letting "none of them exists yet" stand
+ *   past its truth.
  *
  * Dependencies, by contract: none of Iris's. The Cordis import is type-only —
  * the activation scope hands a plugin its host context, and Cordis is the
@@ -180,6 +185,54 @@ export interface PluginVariableFace {
   registerWriter(writer: VariableWriter): () => void
 }
 
+/**
+ * A JSON value, as `JSON.parse` can produce and `JSON.stringify` can write.
+ *
+ * This is the *whole* of what {@link PluginStorage.set} accepts: a class
+ * instance, a function, a symbol or a non-finite number is refused by the
+ * host before it reaches a file, because the store's only reader is
+ * `JSON.parse` and a value that cannot survive that round trip would be a
+ * save the plugin cannot get back.
+ */
+export type PluginJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | PluginJsonValue[]
+  | { [key: string]: PluginJsonValue }
+
+/**
+ * One plugin's private key–value store under the profile.
+ *
+ * Keys are flat strings following the same grammar an extension id follows
+ * (`^[a-z0-9][a-z0-9._-]{0,63}$`); each key is one file, and no plugin can
+ * see another's keys. Every method is async and every refusal is a thrown
+ * `Error` whose `code` names the reason: a key that breaks the grammar, a
+ * value over the size ceiling or a write after the host unloaded answers
+ * `invalid-request`, and a write from an activation that has been replaced
+ * or disabled answers `unsupported`.
+ */
+export interface PluginStorage {
+  /**
+   * Read one key.
+   *
+   * `undefined` answers "never stored" **and** "stored but the file on disk
+   * is damaged" — deliberately one answer, because the plugin cannot act on
+   * the second fact and the host reports the damaged file to *its* diagnostics
+   * instead. Narrow the result yourself; the bytes on disk were written by
+   * whatever version of this plugin ran last, so their shape is not something
+   * the type can promise.
+   */
+  get(key: string): Promise<unknown>
+  /** Write one key, replacing any value already there. */
+  set(key: string, value: PluginJsonValue): Promise<void>
+  /** Remove one key. Removing a key that was never stored is not an error. */
+  delete(key: string): Promise<void>
+  /** This plugin's keys, sorted. */
+  keys(): Promise<string[]>
+}
+
 /** The lifetime passed to a registered implementation during activation. */
 export interface SystemPluginActivationScope {
   readonly context: Context
@@ -229,6 +282,18 @@ export interface SystemPluginActivationScope {
     schema: ScopedRequestSchema<T>,
     handler: (params: T & ScopedPluginRevision) => unknown,
   ): () => void
+  /**
+   * This plugin's private store under the profile, declared by listing
+   * `plugin-storage` in the manifest's `iris.plugin.permissions`.
+   *
+   * Unlike the other permission names, this one is a boundary and not only a
+   * declaration: a plugin that skips it still has every other reach, but
+   * calling any method here throws a named error instead of working. The
+   * methods keep the interface's shape even when refused — a plugin that
+   * captured `scope.storage` and calls it after being disabled gets a thrown
+   * error naming why, never a silent no-op and never a different member.
+   */
+  readonly storage: PluginStorage
 }
 
 /** A lease held by work that started in one enabled plugin incarnation. */
@@ -248,6 +313,17 @@ export interface SystemPluginRuntimeOptions {
   definitions: readonly SystemPluginDefinition[]
   /** Defaults used only when the preference file does not exist. */
   defaultEnabled?: readonly string[]
+  /**
+   * The profile's `plugin-data` directory, where each activated plugin's
+   * {@link PluginStorage} files live (`<root>/<pluginId>/<key>.json`).
+   *
+   * Absent means this runtime provides no storage at all: `scope.storage`
+   * stays on the interface (it is not optional, so a plugin never has to
+   * wonder) but every method throws a named error saying the host has no
+   * plugin data root. Production always passes one; a runtime constructed by
+   * a lifecycle test that never touches storage omits it.
+   */
+  pluginDataRoot?: string
   onError?: (error: Error) => void
   /** Persistence seam used by lifecycle tests; production uses atomic replacement. */
   writePreferences?: (file: string, contents: string) => Promise<void>
