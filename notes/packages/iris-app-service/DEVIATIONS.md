@@ -7928,6 +7928,178 @@ in order, plus the final value being the third writer's.
 
 ---
 
+## 83. A plugin's own disk: `scope.storage` gives each system plugin a private, bounded, atomic store under the profile, and the permission vocabulary carried a consequence for the first time
+
+**What changed.** U3 of `notes/INFRA-TASKS-2026-09-15.md`, branch
+`dev/plugin-scope-storage` against main `269a97e`. New
+`packages/iris-app-service/src/plugins/storage.ts` (`PluginDataStore`: one
+directory per plugin id under `<profile>/plugin-data/`, one file per key,
+`atomicWriteFile` in, `readJsonStore` out, two byte ceilings, a per-plugin
+write chain, a byte counter seeded by one directory scan per host generation);
+`PluginJsonValue` and `PluginStorage` in `@iris/plugin-api` (types only — the
+contract package's no-runtime-import rule untouched);
+`SystemPluginActivationScope.storage` after `registerRpc`;
+`SystemPluginRuntimeOptions.pluginDataRoot?`; `paths.ts` gains `pluginData`
+beside `systemPluginPackages` with the code-vs-data split written on both
+constants; `PLUGIN_PERMISSIONS` gains `plugin-storage` and is re-sorted
+alphabetically; `manifest.ts`'s docblock keeps *a declaration, not a boundary*
+as the default rule and states the exception's edges; `system-plugins.ts`
+builds the scope's `storage` member through a `#storageFace` that can refuse
+by name; `flushPluginData()` joins `cardStorage.flush()` and
+`scriptVariables.flush()` in the handlers-effect teardown; the uninstall path
+is untouched (it never knew where the data lived) and a test pins that nobody
+adds it. `docs/PLUGIN-AUTHORING-RUNBOOK.md` gains the author-facing section,
+`docs/INFRASTRUCTURE-INTERFACES.md` §2/§6/§8 mark the storage half of the old
+gap row as closed, `docs/SYSTEM-PLUGIN-INSTALL.md` §4 records the exception to
+ruling 4.
+
+### Corrections to the task sheet, taken from the code
+
+1. **There is no `forbiddenKeys` to reuse.** The bottom predicate is
+   `FORBIDDEN`/`isForbiddenKey` in `@iris/variables`; the app-service write
+   face is `assertStorable` (`packages/iris-app-service/src/context.ts:57`),
+   which *also* refuses non-JSON values (class instances, non-finite numbers,
+   `undefined`/functions/symbols) and throws `invalid-request`. U3 calls it
+   with one line and writes no second predicate. The write-face count
+   measured 10 (`context.ts` ×4, `script-library.ts`, `script-variables.ts`,
+   `service.ts` ×2, `template.ts` ×2), not the sheet's 9 — the extra two
+   grep hits were the function's own recursion.
+2. **`storage-error` is not a reporting channel.** It is a `code` on
+   `stream.error` frames, bound to a chat and a turn; a plugin quarantine has
+   neither. The damaged-file report goes where every other store's goes —
+   `reportStoreProblem` in `packages/iris-app-service/src/index.ts`, reached
+   here through the runtime's own `onError` wiring — so a bad plugin data
+   file is one `debug.reports` row and never a stream frame.
+3. **The key grammar already refuses all three teeth keys**, so the
+   containment check cannot redden alone; both layers were written anyway and
+   both directions measured (see the teeth table — one direction is honestly
+   green, and one reds through `.` rather than the two traversal keys).
+4. **`ProfilePaths` and `SystemPluginRuntimeOptions` both needed a member the
+   sheet did not mention** — every profile path comes from the one
+   `profilePaths` derivation, and the runtime had no profile root to hand
+   out.
+5. **"Refuse after lease revocation" was two refusals.** A disabled plugin's
+   late write answers `unsupported` (the runtime's own vocabulary); a write
+   after the *host* closed the store answers `invalid-request`, named after
+   `ScriptVariableStore.flush`
+   (`packages/iris-app-service/src/script-variables.ts:247`). Both
+   implemented, separately named; T12 pins the *kind*.
+
+Three more facts the sheet did not have, found while building:
+
+6. **D7's predicate needed a three-line alignment to be true.** The sheet says
+   "the catalog row still points at this activation" holds through drain
+   *and* dispose — but `#disposeActivation` cleared `plugin.activation`
+   *before* `fiber.dispose()` ran, so the plugin's own dispose (the one
+   moment a final save is possible) read stale. The pointer is now cleared in
+   a `finally` after the fiber has finished, which is what the comment at the
+   `lease` factory already claimed ("work remains current until its
+   activation is actually disposed"). Transitions are serialized, so no
+   observer sits in the window; T10 pins the behaviour, and mutating the
+   predicate to `isEnabled()` — what a `lease()`-based check would consult —
+   reddens it.
+7. **The permission map is filled at both adoption moments, not one.** The
+   sheet named the boot scan's `#adoptRecorded`; but the acceptance flow
+   installs *and enables in one session*, whose adoption goes through
+   `confirm` → `adoptInstalled`, so `adoptDefinition` gained an optional
+   `permissions` and `adoptInstalled` a third parameter, both fed from the
+   manifest by `plugins/install.ts`. Builtins declare all of it (this
+   repository's own source); an adopted row with no manifest — an ST
+   extension in the runtime, a broken-tree placeholder — declares nothing,
+   which is the conservative reading of third-party code that never spelled a
+   declaration.
+8. **`PLUGIN_PERMISSIONS` was not sorted**, so "insert alphabetically" meant
+   re-sorting the four existing names; the consent page does not render the
+   array (only `PERMISSION_SET` reads it), so the reorder is
+   display-neutral. `get`'s return is spelled `Promise<unknown>` — the
+   sheet's `unknown | undefined` is the same type, and `unknown` already
+   contains `undefined`; the docblock carries the "narrow it yourself"
+   reasoning.
+
+### Decisions, and what would reopen them
+
+- **D1 No stable stringify.** `JSON.stringify(value, null, 2) + '\n'`,
+  matching `CardStorageStore` and `ScriptVariableStore` byte for byte; sizes
+  measured by `Buffer.byteLength(text, 'utf8')`, because the UTF-16 `.length`
+  of a Chinese value is about a third of its real bytes and the 1 MiB gate
+  would open three sizes wide on exactly the values this corpus is full of.
+  Reopened by: plugin data ever entering a hash-tree-style integrity record.
+- **D2 Counter, seeded lazily.** A scan per `set` is O(n) stats and lets two
+  concurrent writers both pass the gate; a bare counter drifts across
+  crashes. Counter + one seeding scan per plugin per host generation bounds
+  the drift to one lifetime, and the per-plugin chain makes the
+  read-modify-write a critical section.
+- **D3 One write chain per plugin id, on the store.** Not per activation: a
+  reload's leftover old-generation writes must queue ahead of the new
+  generation's. The chain's purpose here is the counter's critical section
+  (`ScriptVariableStore`'s single chain exists because it has one file; the
+  shape is the same, the reason is written down).
+- **D4 `flush()` closes before draining.** After the close there is no
+  "later" to promise; a write taken but never persisted is the silence every
+  failure in this family is written to avoid. Reads keep answering what is on
+  disk — refusing one would turn shutdown diagnostics into exceptions.
+  `flush` itself never rejects: each failed write was already thrown to its
+  own `set`/`delete` caller and reported through `onError`.
+- **D5 `keys()` filters, and the filter is asserted.** `<k>.json` with a
+  legal `k`; quarantine names end in a timestamp and temporaries end in
+  `.tmp`, so the two populations are disjoint *by naming convention* — which
+  is exactly why T9 is an assertion and not a comment (the convention lives
+  in `quarantineNameFor`, `packages/iris-app-service/src/atomic.ts:175`, not
+  in this file).
+- **D6 Three no-value answers, one `undefined`.** Absent, quarantined,
+  unreadable — the plugin cannot act on any of them; the host hears about the
+  latter two through `onProblem` (`readJsonStore`,
+  `packages/iris-app-service/src/atomic.ts:307`). Reopened by: a plugin that
+  needs "I saved but it rotted" to decide whether to rebuild — that wants a
+  `getStatus(key)`, not a throwing `get`.
+- **D7 Identity via the activation, not the lease.** Writes check "is this
+  face's activation still the catalog row's current one"; reads never check.
+  `lease()` admission would refuse the dispose write — see fact 6. **D8**
+  `delete` of an absent key is not an error, and the plugin's directory is
+  created by the first successful `set` and never before, the same rule that
+  keeps an empty card store from creating its file.
+- **D9 The ceilings answer card storage's precedent head-on.**
+  `card-storage.ts:33` deliberately has *no* per-value limit because it
+  replicates a browser API a card already lives inside and browsers impose
+  none. Plugin storage has no upstream to align with — it is a service this
+  host invented, and the ceiling is that service's own pricing; the two
+  docblocks now point at each other. 64 MiB follows `PLUGIN_TREE_LIMITS`'
+  convention with the data ceiling one deliberate notch below the code-tree
+  ceiling, because code arrives once and data accumulates.
+
+### The teeth
+
+`packages/iris-app-service/tests/plugin-storage.test.ts`, 15 tests. Every row
+was applied singly and reverted, and the run's fail-count recorded.
+
+| # | Assertion | Mutation | Result |
+| --- | --- | --- | --- |
+| T1 | `../x`, `C:\x`, `.` refused `invalid-request` by `set`/`get`/`delete` | delete the `isValidExtensionId` guard in `#fileFor` alone | **red, but only through `.`** — it becomes the in-directory file `..json`; `../x` and `C:\x` are still caught by the prefix check. The sheet's "all three redden" was wrong; this is the honest version |
+| T1 | same | delete the resolved-prefix check alone | **green — honestly not red.** The grammar refuses all three first; recorded, not hidden (correction 3's prediction, now measured) |
+| T1 | same | delete both guards | red — keys land outside the directory |
+| T2 | corrupt file → `undefined`, `.corrupt-<ts>` file, original gone, one `onProblem`; next `set` recovers | `readJsonStore` → bare `JSON.parse(readFile)` try/catch | red (2 assertions: quarantine name, problem count) |
+| T3 | over-ceiling refused with both numbers; at-ceiling passes | byte ruler → `JSON.stringify(value).length` | red via T3b's CJK fixture (3 fails: 12 real bytes vs 6 code units); the ASCII fixture alone would *not* have reddened it |
+| T3b | the CJK fixture above | (is T3's instrument) | — |
+| T4 | per-plugin ceiling, replaces charged for released bytes, deletes freed; both numbers in the message | remove the store gate | red |
+| T5 | undeclared permission: all four methods refuse, naming `plugin-storage` | face hands the real store unconditionally | red |
+| T6 | two plugins, same key, no visibility; separate directories on disk | drop the id from `#dirFor` | red (12 fails — the whole store layer shares one directory) |
+| T7 | `uninstall` leaves `<profile>/plugin-data/<id>/` byte-identical | add a data-directory `rm` to the uninstall path | red |
+| T8 | `__proto__`/`constructor`/`prototype` refused, nested one level | remove `assertStorable` | red |
+| T9 | `keys()` skips quarantine and leftover `.tmp` names | filter loosened to first-dot strip | red |
+| T10 | a `set` from the plugin's own dispose lands | identity predicate → `isEnabled()` (what a `lease()`-based check consults) | red — the dispose runs after `enabled` has already been dropped |
+| T11 | flush lands queued writes, refuses later ones, reads keep working | remove `#closed` | red |
+| T11 | same | move `#closed = true` after the drain | red — the mid-drain write is no longer refused at call time |
+| T12 | post-disable write is `unsupported`, not `invalid-request` | recode the stale refusal | red |
+
+### Seen on the way, not handled
+
+- **No global cap.** 64 MiB is per plugin; n plugins are n × 64 MiB and there
+  is no UI to clean any of it. Known and open, recorded here so the next
+  person does not rediscover it.
+- `StExtensionSettingsStore` hand-rolls its own third atomic write
+  (`writeFile` + `rename`, no retry, no quarantine). Observed, unchanged — it
+  is the ST pilot's behaviour, not this round's.
+
 ## 84. 插件自带文案：清单、契约里的审计、以及资产面长出的第三种资产
 
 Dated 2026-09-16 (task sheet U5, branch `dev/plugin-i18n-bundles` against
@@ -8039,3 +8211,7 @@ path (the republish-then-cleanup story assumes install/uninstall, not
 in-place generation swaps); or a second consumer of `StagedInstall` that
 would make carrying the audit result across `stage` cheaper than re-reading
 two small files.
+
+---
+
+---

@@ -351,6 +351,7 @@ test('the permission vocabulary covers what the activation scope hands over', as
     'register-rpc': 'registerRpc',
     'host-context': 'context',
     'write-variables': 'variables',
+    'plugin-storage': 'storage',
   }
   const identityOnly = new Set(['pluginId', 'revision'])
   assert.deepEqual([...PLUGIN_PERMISSIONS].sort(), Object.keys(mapping).sort())

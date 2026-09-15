@@ -482,9 +482,14 @@ export class SystemPluginInstallService {
 
       if (clientSourcePath !== undefined) await this.#publishClientBundle(params.id, clientSourcePath)
       await this.#publishCopyBundles(params.id, contentDir, pending.manifest)
+      // The declared permissions ride with the adoption: this is the one
+      // moment the manifest and the catalog row are in the same pair of hands,
+      // and `plugin-storage` is read from what was recorded here until the
+      // next boot's scan reads the manifest again.
       return await this.#runtime.adoptInstalled(
         this.#lazyDefinition(pending.manifest, hostPath),
         record,
+        [...pending.manifest.permissions],
       )
     } catch (error: unknown) {
       await installer.discard(pending.staged).catch(() => {})
@@ -659,7 +664,7 @@ export class SystemPluginInstallService {
     await this.#publishCopyBundles(id, root, manifest)
     this.#runtime.adoptDefinition(
       this.#lazyDefinition(manifest, path.join(root, ...manifest.host.split('/'))),
-      { installed: true, removable: true },
+      { installed: true, removable: true, permissions: [...manifest.permissions] },
     )
   }
 

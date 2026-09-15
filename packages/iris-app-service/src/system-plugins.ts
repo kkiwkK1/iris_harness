@@ -11,6 +11,7 @@ import {
   type SystemPluginView,
 } from '@iris/protocol'
 import type {
+  PluginStorage,
   ScopedPluginRevision,
   ScopedRequestSchema,
   SystemPluginActivationScope,
@@ -19,10 +20,13 @@ import type {
   SystemPluginRuntimeOptions,
   VariableWriter,
 } from '@iris/plugin-api'
+import type { RpcError } from '@iris/protocol'
 
 import { atomicWriteFile } from './atomic.ts'
 import { AppError } from './errors.ts'
 import { MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from './plugins/builtins.ts'
+import { PLUGIN_PERMISSIONS } from './plugins/manifest.ts'
+import { PluginDataStore } from './plugins/storage.ts'
 
 /*
  * The plugin contract lives in `@iris/plugin-api` — definition, activation
@@ -167,6 +171,28 @@ function serviceName(pluginId: string, capability: string): string {
   return `${SERVICE_PREFIX}:${pluginId}:${capability}`
 }
 
+/** The whole vocabulary — what a builtin's activation may assume was declared. */
+const ALL_PLUGIN_PERMISSIONS: ReadonlySet<string> = new Set<string>(PLUGIN_PERMISSIONS)
+
+/**
+ * A storage face whose every method answers the same named refusal.
+ *
+ * The scope's `storage` member stays non-optional even when the host cannot
+ * or will not provide a working store: an absent member would push
+ * `scope.storage?.` into every plugin and leave the author unable to tell
+ * "I did not declare the permission" from "this host is too old to have the
+ * member at all". A face that throws says which of the two it is.
+ */
+function refusedStorage(code: RpcError['code'], message: string): PluginStorage {
+  const refuse = (): never => { throw new AppError(code, message) }
+  return {
+    get: async () => refuse(),
+    set: async () => refuse(),
+    delete: async () => refuse(),
+    keys: async () => refuse(),
+  }
+}
+
 /**
  * What `registerRpc` needs of the transport: `IrisRpcHost.register`'s shape.
  *
@@ -284,6 +310,25 @@ export class SystemPluginRuntime {
    * simply starts with a clean slate.
    */
   readonly #failures = new Map<string, SystemPluginFailure>()
+  /**
+   * The permissions each adopted *package* declared in its manifest, filled
+   * by whoever adopted it with the manifest in hand — the boot scan's
+   * `#adoptRecorded` and the install path's confirm, both in
+   * `plugins/install.ts`.
+   *
+   * A row missing here was adopted without a manifest (an ST extension
+   * living in this runtime, a placeholder for a broken tree) and declares
+   * nothing, which is the conservative reading: third-party code that never
+   * spelled a declaration gets no host-provided service, and the refusal it
+   * sees names why.
+   */
+  readonly #declaredPermissions = new Map<string, ReadonlySet<string>>()
+  /**
+   * The private-store backend, present only when the host passed a
+   * `pluginDataRoot`. A runtime without one — every lifecycle test — hands
+   * out a `storage` face that refuses with a name rather than no member.
+   */
+  readonly #pluginData: PluginDataStore | undefined
   #revision = 0
   #queue: Promise<void> = Promise.resolve()
   #initialized = false
@@ -295,6 +340,16 @@ export class SystemPluginRuntime {
     this.#file = options.file
     this.#onError = options.onError ?? (() => {})
     this.#writePreferences = options.writePreferences ?? atomicWriteFile
+    this.#pluginData = options.pluginDataRoot === undefined
+      ? undefined
+      : new PluginDataStore({
+        root: options.pluginDataRoot,
+        // Both channels land where the runtime's own errors go —
+        // `reportStoreProblem` in production — so a damaged plugin data file
+        // is one diagnostic record and never a stream frame.
+        onProblem: message => { this.#report(new Error(message)) },
+        onError: error => { this.#report(error) },
+      })
     this.#defaultEnabled = new Set(options.defaultEnabled ?? [
       TAVERN_HELPER_PLUGIN_ID,
       MVU_PLUGIN_ID,
@@ -329,9 +384,17 @@ export class SystemPluginRuntime {
    * (unique ids, apiVersion 1, no self-dependency) are not relaxed for it.
    * Idempotent: re-adopting a known id is a no-op, so a boot scan and a
    * runtime install can race safely.
+   * @param options.permissions - what the adopted package's manifest declared,
+   *   when the adopter read one (`plugins/install.ts`'s boot scan and confirm
+   *   both did). Recorded once, at adoption, because that is the one moment
+   *   the manifest and the catalog row are in the same pair of hands. An
+   *   adopter without a manifest omits it and the row declares nothing.
    * @returns true when the definition was adopted, false when it already existed.
    */
-  adoptDefinition(raw: SystemPluginDefinition, options: { installed: boolean, removable?: boolean }): boolean {
+  adoptDefinition(
+    raw: SystemPluginDefinition,
+    options: { installed: boolean, removable?: boolean, permissions?: readonly string[] },
+  ): boolean {
     if (this.#plugins.has(raw.id)) return false
     if (raw.id.length === 0 || raw.id.length > 200) {
       throw new TypeError('system plugin ids must contain 1 to 200 characters')
@@ -349,6 +412,9 @@ export class SystemPluginRuntime {
       incarnation: 0,
       removable: options.removable ?? false,
     })
+    if (options.permissions !== undefined) {
+      this.#declaredPermissions.set(raw.id, new Set(options.permissions))
+    }
     if (!this.#persisted.has(raw.id)) {
       this.#persisted.set(raw.id, { installed: options.installed, enabled: false })
     }
@@ -410,13 +476,21 @@ export class SystemPluginRuntime {
    * false: installing is not enabling, which is the invariant the lock record
    * states for itself (`packages/iris-extension-installer/src/lock.ts:71`).
    */
-  adoptInstalled(raw: SystemPluginDefinition, record: InstalledPluginRecord): Promise<SystemPluginSnapshot> {
+  adoptInstalled(
+    raw: SystemPluginDefinition,
+    record: InstalledPluginRecord,
+    permissions?: readonly string[],
+  ): Promise<SystemPluginSnapshot> {
     return this.#serialize(async () => {
       this.#assertWritable()
       if (this.#plugins.has(raw.id)) {
         throw new AppError('invalid-request', `system plugin "${raw.id}" is already in this profile's catalog`)
       }
-      this.adoptDefinition(raw, { installed: true, removable: true })
+      this.adoptDefinition(raw, {
+        installed: true,
+        removable: true,
+        ...(permissions === undefined ? {} : { permissions }),
+      })
       const plugin = this.#require(raw.id)
       const before = this.#persisted.get(raw.id)
       this.#persisted.set(raw.id, { installed: true, enabled: false, ...record })
@@ -933,6 +1007,24 @@ export class SystemPluginRuntime {
     })
   }
 
+  /**
+   * Drain every plugin's private store and close it to new writes.
+   *
+   * The teardown counterpart of `cardStorage.flush()` and
+   * `scriptVariables.flush()`, from the same handlers-effect dispose: the
+   * chains run per plugin, so this returns only when every write enqueued
+   * before it — including one a plugin made from its own dispose, the save it
+   * could not have made at any other moment — is on disk. After it, `set` and
+   * `delete` answer `invalid-request`; reads keep answering what is on disk.
+   * Failures never reject here: each failed write was already thrown to its
+   * own caller and reported through the store's `onError`, and the host's
+   * shutdown cannot act on either.
+   */
+  flushPluginData(): Promise<void> {
+    if (this.#pluginData === undefined) return Promise.resolve()
+    return this.#pluginData.flush()
+  }
+
   /** Tear down every child fiber without changing persisted preferences. */
   async dispose(): Promise<void> {
     await this.#serialize(async () => {
@@ -1099,6 +1191,7 @@ export class SystemPluginRuntime {
             }, `iris-system-plugin:${definition.id}: rpc ${method}`)
             return () => { teardown() }
           },
+          storage: this.#storageFace(definition.id, activation),
         }
         const dispose = await definition.activate(scope)
         if (typeof dispose !== 'function') return
@@ -1128,9 +1221,71 @@ export class SystemPluginRuntime {
   async #disposeActivation(plugin: RuntimePlugin): Promise<void> {
     const activation = plugin.activation
     if (activation === undefined) return
-    plugin.activation = undefined
-    await activation.fiber.dispose()
+    try {
+      await activation.fiber.dispose()
+    } finally {
+      // Cleared only once the fiber — and with it the plugin's own dispose —
+      // has finished. A storage face captured by that dispose must still read
+      // as current while it runs, because writing its final state is the one
+      // save a plugin cannot make at any other moment; the moment the
+      // activation is truly gone, the same predicate reads stale. The
+      // transitions are serialized, so no observer sits between "drained" and
+      // "disposed" that this window could surprise.
+      plugin.activation = undefined
+    }
     if (activation.disposalError !== undefined) throw activation.disposalError
+  }
+
+  /**
+   * The permission set an activation of this id may assume.
+   *
+   * A builtin declares all of them: it is this repository's own source, ships
+   * with Iris, and making it write out a manifest of its own members would be
+   * ceremony — the one documented exception to the vocabulary carrying
+   * consequences (`plugins/manifest.ts`). An adopted package declares exactly
+   * what its manifest listed; an adopted row with no manifest on record
+   * declares nothing.
+   */
+  #permissionsOf(id: string): ReadonlySet<string> {
+    const declared = this.#declaredPermissions.get(id)
+    if (declared !== undefined) return declared
+    if (this.#builtinIds.has(id)) return ALL_PLUGIN_PERMISSIONS
+    return new Set<string>()
+  }
+
+  /**
+   * The `storage` half of one activation's scope.
+   *
+   * Three shapes, decided here rather than per call: a host with no plugin
+   * data root refuses with `internal` (wiring is missing — the host's fault,
+   * the same reading `registerRpc` gives an absent RPC registrar); a plugin
+   * that did not declare `plugin-storage` refuses with `invalid-request`,
+   * named after `getDependency`'s refusal of an undeclared dependency; and a
+   * plugin that did gets the real store.
+   *
+   * The real store's identity predicate is the same one `lease().isCurrent()`
+   * reads — the catalog row still points at *this* activation — and not
+   * `lease()` itself, whose admission requires `isEnabled`. The difference is
+   * the plugin's own dispose: by then the row has already left `enabled`, but
+   * the activation has not yet been disposed, and saving final state there is
+   * exactly the write a plugin cannot make at any other moment.
+   */
+  #storageFace(pluginId: string, activation: Activation): PluginStorage {
+    if (this.#pluginData === undefined) {
+      return refusedStorage(
+        'internal',
+        `system plugin "${pluginId}" cannot use storage: this host has no plugin data root`,
+      )
+    }
+    if (!this.#permissionsOf(pluginId).has('plugin-storage')) {
+      return refusedStorage(
+        'invalid-request',
+        `system plugin "${pluginId}" did not declare the "plugin-storage" permission;`
+        + ' add it to iris.plugin.permissions',
+      )
+    }
+    const store = this.#pluginData
+    return store.storageFor(pluginId, () => this.#plugins.get(pluginId)?.activation === activation)
   }
 
   /**

@@ -44,12 +44,13 @@
 | `scope.getDependency<T>(id, name)` | `T \| undefined` | 只读已声明依赖的 capability；未声明依赖会抛错，能力缺失返回 undefined |
 | `scope.registerRpc<T>(method, schema, handler)` | `() => void` | 成对登记运行期方法（schema 进协议注册表、handler 上运输层），两半同生同灭；重名/撞内置名在 activate 内抛错；每次调用经本插件 lease 收容并校验 pluginRevision；撤销幂等，且随 activation 的 fiber dispose 自动执行 |
 | `scope.variables.registerWriter(writer)` | `() => void` | 登记本 activation 的变量 writer（`baselineFor(view)` + `propose(view)`，提案是完整表或 undefined）。结算顺序 = 激活顺序，按 (依赖深度, id) 排序——`mvu` 排在无依赖插件之后靠的是它声明了 `dependencies: ['tavern-helper']`，不是 id 的字母序；后者的提案胜。每个 writer 一次结算 5 s 预算（AbortSignal 只作通知，`Promise.race` 才是执行），抛错/超时的提案作废、回复照常落盘、行上记 `hook-failed`，下一次成功提案自动清除。撤销幂等，随 activation 的 fiber dispose 自动执行——停用即从结算参与者集合里摘除 |
+| `scope.storage` | `PluginStorage` | 本插件的私有键值存储（`dev/plugin-scope-storage` 轮落地）：`get`/`set`/`delete`/`keys`，文件在 `<profile>/plugin-data/<id>/<key>.json`，一键一文件；清单须声明 `plugin-storage`，未声明时四个方法各抛点名 `invalid-request`（词表里第一条有后果的规则）；双上限（单值 1 MiB / 单插件 64 MiB）；卸载保留数据 |
+| `PluginStorage` | `{ get(key): Promise<unknown>, set(key, value: PluginJsonValue): Promise<void>, delete(key), keys() }` | `get` 对「没存过」与「文件损坏被隔离」都答 `undefined`（坏文件上报宿主诊断面，不抛给插件）；返回 `unknown`——盘上的字节是上一版插件写的，形状由作者收窄 |
 | `ScopedRequestSchema<T>` | 只读 `safeParse` 的结构化类型 | zod 或任何同形 schema 库都可直接传入 |
 | `ScopedPluginRevision` | `{ pluginRevision?: number }` | 帧栅栏字段在契约侧的重述，线上孪生是 `@iris/protocol` 的 `PluginRevisionRequest` |
 | `SystemPluginLease` | `{ pluginId, revision, incarnation, isCurrent, assertCurrent, release }` | 已接纳工作持有的生命周期凭据；release 幂等 |
-| `SystemPluginRuntimeOptions` | `{ context, file, definitions, defaultEnabled?, onError?, writePreferences? }` | runtime 构造参数；writePreferences 是测试替换点 |
-
-scope 上**仍然没有** `storage`（U3 进行中）、`settings`、`hooks`、`registerPluginMembers` 或事件订阅快捷接口；`variables` 自本批起存在（上表与 §8）。帧侧成员是插件自带的 `client.js` 在帧内登记的（§5），不经过 scope；设置区块目前只有 shell 内代码能注册（§8）。不要从草案复制其余名字后直接调用。
+| `SystemPluginRuntimeOptions` | `{ context, file, definitions, defaultEnabled?, pluginDataRoot?, onError?, writePreferences? }` | runtime 构造参数；writePreferences 是测试替换点；`pluginDataRoot` 缺省表示这台 runtime 不提供存储（`scope.storage` 各方法抛 `internal`） |
+scope 上**仍然没有** `settings`、`hooks`、`registerPluginMembers` 或事件订阅快捷接口——`variables` 自本批（U2，§8）起存在，`storage` 已于 `dev/plugin-scope-storage` 轮落地（上表）。帧侧成员是插件自带的 `client.js` 在帧内登记的（§5），不经过 scope；设置区块目前只有 shell 内代码能注册（§8）。不要从草案复制其余名字后直接调用。
 
 `ScopedRequestSchema` 在 `@iris/protocol` 侧的同形孪生是 `RuntimeRequestSchema`（[rpc-registry.ts](../packages/iris-protocol/src/rpc-registry.ts)），两边是同一契约在两个互不依赖的包里的两份声明——契约包按其自身宪法不 import 任何 `@iris` 包与运行时依赖，由 [contract.test.ts](../packages/iris-plugin-api/tests/contract.test.ts) 与 `apps/iris/tests/architecture.test.ts` 钉住。handler 内的主动拒绝：抛携带协议固定错误码之一的 `Error`（`not-found`/`invalid-request`/`busy`/`unsupported` 等），其余一律按 `internal` 上报。
 
@@ -289,6 +290,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | 变量仲裁 | `arbitrateMessageVariables`（[variable-arbitration.ts](../packages/iris-app-service/src/variable-arbitration.ts)） | 见下 |
 | ST 扩展设置 | `StExtensionSettingsStore` | 每扩展一份原子 JSON，落在 `<profile>/st-extension-settings/<key>.json`（`packages/iris-app-service/src/index.ts:791`）；写口是 `stCompat.settings`，revision 过期或缺失就拒绝 |
 | 原子写 | `atomic.ts`: atomicWriteFile、readJsonStore、quarantine* | app-service 内部基础设施；**不是**已发布插件存储 API |
+| 插件私有存储 | `<profile>/plugin-data/<id>/<key>.json`（`paths.ts` 的 `pluginData`；实现 `packages/iris-app-service/src/plugins/storage.ts` 的 `PluginDataStore`） | 每键一份原子 JSON，坏文件隔离并上报宿主诊断面；双上限（单值 1 MiB / 单插件 64 MiB，测试可注入收窄）；`plugin-storage` 权限门——清单未声明时 `scope.storage` 各方法抛点名 `invalid-request`；卸载删树**不删数据** |
 | profile 互斥 | `host-lock.ts`: acquireHostLock | 每份数据目录只运行一个宿主，无绕过开关 |
 | 插件偏好 | profile 内 `system-plugins.json` | runtime 独占写入；管理操作保持原子持久化。**v2**（PR-2）：每行除 `installed`/`enabled` 外可带 `source`（`builtin`/`git`/`dev`）、`remote`、`commit`、`path`、`treeHash`、`installedAt`；读 v1 就地升级（只给本次构建自己的内置定义补 `source: 'builtin'`），读到别的版本号走既有的「全体停摆、保留原文件、全部置 `error`」路径 |
 | 系统插件包安装树 | profile 内 `system-plugins/`（`paths.ts` 的 `systemPluginPackages`） | 安装器布局 `staging/ claims/ installed/<id>/`，与 ST 的 `st-extensions/` **分开**（artifact 契约不同、id 命名空间不同）。只有 `git` 源的树在这里；`dev` 源就地加载用户自己的目录，卸载绝不碰它。**与 `<dataDir>/system-plugins/` 同名不同层**——后者是浏览器资产根（`plugin-assets.ts:117`），只放 `<id>/client/client.js`，两个常量的注释互相指向 |
@@ -339,7 +341,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | `script.*` 与 TH 形状留在协议 | 未动：133 个静态键里 32 个是 `script.*`，`views.ts` 的 TH 类型原样 | 要么协议获得插件形状合并机制，要么承认 TH 只从实现剥离、不从契约剥离 |
 | th-core 仍在浏览器 import 白名单 | 未动（`apps/iris/tests/architecture.test.ts` 的 `allowed` 集合，现另含 `@iris/plugin-web-api` 与 `@iris/text`） | 帧与宿主两侧的事件名/正则解析对齐要有别的办法 |
 | 生成钩子（`AppServiceOptions`） | 未做：TH/MVU 经 `capabilities.ts` 在固定调用点被取用，没有 `beforePrompt`/`afterReplyText`/`onSettle` 之类的挂点（`hook-failed` 这个行上状态由本批 U2 定义，生成钩子设计复用该名字，见 DEVIATIONS §82） | 明确 owner、顺序、取消、错误语义与释放，再开放 |
-| `scope.storage` / `scope.settings` | 未做：ST 设置走的是专门的 `StCompatOptions` 闭包，不是通用接口 | 路径包含性、原子写、损坏保留、profile lock 全部约束成立后再开放 |
+| `scope.storage` / `scope.settings` | **部分闭合（`dev/plugin-scope-storage`）**：`storage` 已做——路径包含性（键语法复用 `isValidExtensionId` + resolve 前缀检查，`packages/iris-app-service/src/plugins/storage.ts`）、原子写（`atomicWriteFile`）、损坏保留（`readJsonStore` 隔离到 `.corrupt-<ts>` 并上报诊断面）、profile lock（既有）四条约束全部成立；`settings` 仍未做：ST 设置走的是专门的 `StCompatOptions` 闭包，不是通用接口 | `settings` 要有自己的owner与约束清单后再开放 |
 | 插件可写变量 | **已闭合（U2，DEVIATIONS §82）**：`scope.variables.registerWriter({ baselineFor, propose })` 是唯一提案来源，结算段不再按名分支；宿主自己的两个写方（ST-compat 桥的楼层表、MVU）与第三方 writer 走同一个注册表。顺序按 (依赖深度, id)，与 ledger §76 实测的 ST→MVU 顺序一致；后者胜、冲突上报语义逐字不变（`arbitrateMessageVariables` 算法零改动）。writer 抛错/超时（5 s）本轮作废、行上记 `hook-failed`、结算继续。`write-variables` 进权限词表，是**声明不是闸门**（runtime 拿不到 manifest，与既有四个名字同一前提）；ST-compat 桥的提案 id 从写死的 `'prompt-template'` 改为 `st.extensionId()` 的实时装载 id | —— |
 | `contributeContext` / 开放 `ScriptContext` | 未做：`context.ts` 仍是单体 | —— |
 | i18n 命名空间合并 | **已落地（U5）——插件自带文案的那条路通了**：清单 `iris.plugin.i18n: { en, zh }`（两份都必须在），安装期在 artifact contract 里按 `@iris/text` 的 `auditBilingualCopy` 做与壳 `i18n.test.ts` 同源的三条审计（键集合相等、zh 含中文、槽位集合一致；单份文件另限 256 KiB / 2,000 条）；文件经资产面 `/plugins/<id>/i18n/<lang>.json?rev=` 下发，聚合清单行多一个 `i18n?` 且纯文案插件也有行（`client` 转可选）；壳侧按 `plugin:<id>:<key>` 前缀并进运行期覆盖层（`plugin-copy.ts`），`translate` 只对 `plugin:` 前缀查覆盖层，静态 `StringKey` 类型不动，回退 zh → en → 键名本身；同意页多一行「文案：N 条 · en/zh」，目录行的 `displayName`/`description` 若文案里有同名键则按当前语言显示。**仍没做的**：只有 en/zh 两种语言；插件不能覆盖壳的键（前缀就是边界，这是设计）；没有插件侧的复数/语法机制；ST 面板的 `projection-i18n.ts` 仍是另一回事，未合并 | —— |

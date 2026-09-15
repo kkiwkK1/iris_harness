@@ -191,6 +191,18 @@ export interface ProfilePaths {
   /** Installed Node system-plugin packages, in the installer's own layout. */
   systemPluginPackages: string
   /**
+   * Each system plugin's private data directory, one subdirectory per plugin
+   * id (`scope.storage`'s files: `<pluginData>/<id>/<key>.json`).
+   *
+   * **Deliberately not inside `systemPluginPackages`.** That directory holds
+   * plugin *code* — a reproducible product of a `(remote, commit)` pair that
+   * uninstall deletes (`docs/SYSTEM-PLUGIN-INSTALL.md` §6); this one holds
+   * plugin *data*, which is user data, so uninstall keeps it the way ST keeps
+   * an extension's settings. The two constants point at each other, same as
+   * the `<dataDir>/system-plugins/` warning above.
+   */
+  pluginData: string
+  /**
    * Remote script bundles the host has fetched on a card's behalf.
    *
    * Not profile-specific in principle — the same jsDelivr URL is the same bytes
@@ -315,5 +327,6 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
      * constants point at each other on purpose.
      */
     systemPluginPackages: join(root, 'system-plugins'),
+    pluginData: join(root, 'plugin-data'),
   }
 }
