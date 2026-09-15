@@ -100,6 +100,8 @@ export class ScriptVariableStore {
   #loaded = false
   /** Writes are serialised through one chain so two flushes cannot interleave. */
   #queue: Promise<void> = Promise.resolve()
+  /** Set by {@link flush}; a store whose host unloaded no longer accepts writes. */
+  #closed = false
 
   /**
    * @param path - the JSON file backing the store.
@@ -177,6 +179,13 @@ export class ScriptVariableStore {
     return {
       read: option => tables[scriptIdOf(option)] ?? {},
       write: (option, next) => {
+        // Before the store is touched at all: a write that arrives after the
+        // host unloaded is refused outright rather than taken into memory —
+        // see {@link flush} for why refusal is the half that tells the truth.
+        if (this.#closed) {
+          throw invalid('this host was unloaded, so the write was not kept;'
+            + ' a newer host owns the script variables file now')
+        }
         // Through the host's own guard, like every other write: a script must not
         // be able to put something in a file that the host would have refused.
         assertStorable(next, 'script variables')
@@ -201,11 +210,45 @@ export class ScriptVariableStore {
   /**
    * Wait for every queued write to land.
    *
-   * For tests and for shutdown. Ordinary callers do not need it: a write is
-   * ordered behind the ones before it, so the file is never half a partition.
+   * For tests and for {@link forget}. Ordinary callers do not need it: a write
+   * is ordered behind the ones before it, so the file is never half a
+   * partition. Shutdown goes through {@link flush}, which drains this same
+   * queue and then closes the store.
    * @returns when the queue is empty.
    */
   async settled(): Promise<void> {
+    await this.#queue
+  }
+
+  /**
+   * Write anything still queued, now, and close the store.
+   *
+   * The unload-path counterpart of `CardStorageStore.flush`, from the same
+   * dispose (`index.ts`'s handlers effect). This store has no debounce — every
+   * write is queued the moment it happens — so unlike card storage there is
+   * nothing to *force*; what a hot reload loses is quieter. The process stays
+   * alive, so the queued writes would still run eventually, but "eventually"
+   * now races the store the reloading host creates over the same file: the old
+   * generation's write landing under the new generation's load is a second
+   * writer to a file that is supposed to have exactly one. Draining here hands
+   * the file over with the old generation's last write already in it.
+   *
+   * **Writes after this are refused, and that is the chosen half of the
+   * bargain** (the other half would be taking them silently into memory). A
+   * write taken into memory but never persisted lets a script believe it
+   * saved — the exact silence every failure in this store is written to avoid,
+   * and the reason the queue's own failures go to `onError` rather than
+   * vanishing. Refusal names what happened instead. It can only reach a write
+   * from a generation that has already been torn down: dispose revokes the
+   * handlers, so anything still holding a backend is a frame the reload was
+   * supposed to have retired.
+   * @returns when every write queued before the close has landed.
+   */
+  async flush(): Promise<void> {
+    // Closed before the drain, so a write arriving mid-flush is refused rather
+    // than enqueued behind it — after the close there is no "later" this store
+    // may promise.
+    this.#closed = true
     await this.#queue
   }
 
