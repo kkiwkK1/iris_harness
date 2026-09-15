@@ -250,6 +250,28 @@ plugin.confirmInstall（回带 id + treeHash + commit）
 
 第三个 RPC `plugin.cancelInstall({ previewToken })` 是必要的：没有它，一次被放弃的预览会把 staging 和 claim 留到下次 `recoverInstallations` 才清（`packages/iris-extension-installer/src/recovery.ts:46`），而那是**崩溃恢复**机制，不该被当成正常退出路径用。
 
+**更新分支（U1，2026-09-15 第二批）**：时序同一条路，入口换成 `plugin.update({ id, commit })`——remote 从行上的 provenance 读，不作为参数。preview 多带 `updateOf`（被替换的行、行上现记的 commit 与 treeHash），同意页多一行「从哪个 commit 更新到哪个」。confirm 仍是 `plugin.confirmInstall`，回带的四个值一个不加。
+
+### 5.4 更新事务（U1）
+
+`plugin.update({ id, commit })` 把一条已安装的 `git` 行更新到一个新 commit，走**同一条 preview 路**（staging、artifact 契约、包含性审计、哈希、清单），返回带 `updateOf` 的 `SystemPluginInstallPreview`。`dev` 行与 `builtin` 行答 `unsupported`（dev 就地加载，改文件即生效；builtin 随 Iris 本体发布）；不存在的 id 答 `not-found`；行上没有完整 git provenance（remote/commit/treeHash 任一缺失）答 `install-failed`。新 commit 改了包 id 的，丢弃整个 staging 并拒绝——更新替换一行，不给它改名的权力。
+
+**「这是一次更新」由服务端的事务记录判定，与回带无关**（`PendingPreview.updateOf`，`packages/iris-app-service/src/plugins/install.ts`）。普通安装的 preview 对已占用 id 只给 warning 不拒绝，所以若更新与否由 echo 决定，一次普通 `previewInstall` 配一个声称自己是更新的 confirm 就把裁决 5 绕过去了。confirm 的更新分支先核目标行：它必须还在、还是 `git`、还记着 preview 铸造时的那个 `(commit, treeHash)`——用户同意的是「把这一行从 A 换到 B」，不是「装一个新的 B」；预览之后行被卸载或被换过，整体拒绝并丢弃事务。
+
+替换事务本身（全部成功才提交，旧树的删除在最后一步）：
+
+1. 记下 `wasEnabled`；开着就先 `disable`（drain + dispose，Windows 上被 `import()` 过的目录可能改不了名，旧代的 fiber 也还持着 lease）；
+2. 旧树改名让位到 `<installRoot>/superseded/<id>.<8hex>/`——**必须在 promote 之前**：安装器的 `already-installed` 检查读的就是 `installed/<id>/` 里的 lock，rename 的目标非空也会失败；改名是同卷原子操作，lock 随树一起走，`superseded/` 是 `installed/` 的**兄弟目录**而不是它下面的一个名字，否则崩溃恢复扫描会把让位的树当成一个插件看；
+3. `promote` 到同一个 `installed/<id>/`；
+4. 浏览器包跟着新清单走：新清单有 `client` 就覆盖发布（`rev` 是文件字节的哈希，缓存自然失效），没有就把旧包的删掉——文件留着就还会被列进清单、被浏览器加载；
+5. `replaceInstalled` 换目录行的定义与 provenance：`installed`/`enabled`/`status` 不动，「更新保留 `enabled`」就是在这一步实现的；行上钉着的旧字节裁决（如 `tampered`）随定义一起退役——新树刚被重新哈希过，旧裁决针对的字节已经不在了；
+6. `wasEnabled` 就重新 `enable` 新代。新代的 `import()` 带 `?gen=<treeHash>` 代际串：Node 的 ESM 注册表按 URL 字符串缓存（2026-09-15 探针实测，见 ledger §81），同一个 `host.js` 路径换了字节，不带代际串就会无声地跑旧模块——这是整条路上**唯一没有症状的失败**；
+7. 最后才删 `superseded/` 下的旧树，尽力删、删不掉按名记日志（本仓库目录里递归 rm 可能静默无效——`scripts/pack-contracts.mjs` 的教训），删不掉不影响正确性。
+
+第 2 步之后任何一步失败走回滚：新树让位（`.failed` 后缀，尽力删）、旧树改名回位、目录行与浏览器包复原（旧清单可读时连定义一起恢复）、`wasEnabled` 就回到旧代。回滚成功时**行上不留 `failure`**——行回到了它原来的样子（原来开着的行必须读作开着），失败的名字在抛出的错误里（`state` 取实际发生的 `load-failed`/`activate-failed`，reason 带「已回到旧代 `<fromCommit>`」）。回滚自己再失败才是另一回事：那时行确实坏了，走既有的 `#setFailure`，消息里说明旧树现在在哪个目录。第 2 步与第 3 步之间断电，行会被下次开机的扫描标成 `install-failed`（既有行为），`superseded/` 下躺着一棵完好的旧树，可以按目录名手工放回 `installed/<id>/`。
+
+新 commit 与行上现记的 commit 相同是**允许**的（preview 的 `warnings` 会写明），对 `tampered` 行来说「按记录再取一遍」正是裁决 3 要的修复语义；`tampered`/`incompatible` 行可以被更新——整棵树按 (remote, commit) 重新取、取完重新哈希，不是「接受当前字节」。因此裁决 3 的重装按钮与 U1 的更新入口在 `tampered` 行上并存，两条路都走完整同意。
+
 ---
 
 ## 6. 存储与状态机
@@ -258,6 +280,12 @@ plugin.confirmInstall（回带 id + treeHash + commit）
 `PROFILE_PATHS.systemPluginPackages`（`packages/iris-app-service/src/paths.ts`），安装树在
 `<profile>/system-plugins/installed/<id>/`——**注意是 `installed/<id>/` 而不是 `<id>/`**：布局是安装器的，
 不是本文新发明的。
+
+**U1 增补（`superseded/`）**：更新事务把被替换的旧代改名让位到
+`<profile>/system-plugins/superseded/<id>.<8hex>/`，新代启用成功后删除。它是 `installed/` 的**兄弟**目录，
+理由有二：崩溃恢复的扫描把 `installed/` 下每个条目当作一个 extensionId 看（`packages/iris-extension-installer/src/recovery.ts:146`），
+没有合法 lock 的就清掉——让位的树带着 lock 一起改名，放进 `installed/` 里它既不会被清、还会被当成一个装好的插件；
+放进兄弟目录，这两件事都不会发生，人看目录时也一眼知道那是什么。同卷 rename，仍然是原子的。
 
 **PR-2 落地更正（`dev` 源不复制）**：只有 `git` 源会被促进进 `installed/<id>/`。`dev` 源**进 staging 只为
 过一遍同样的 artifact 契约、包含性审计与哈希**，confirm 时把 staging 丢掉，目录行记下用户自己的绝对路径，
@@ -441,7 +469,7 @@ interface SystemPluginView {
 | 回带 | 确认按钮回带的四个值全部读自 `preview` 对象，**不读表单**；`commit ?? null` 是 §5.2 的那条区分。断言落在 fake 记下的调用参数上，不落在 DOM 上——一个把 id 接到错误变量上的页面看起来一模一样 |
 | 取消 | 取消按钮、路由切走、组件卸载三条路都走同一个 `discard(token)`，已确认或已取消的 token 记在一个 `Set` 里不会被重复取消 |
 | 行 | `source` 徽标（`builtin`/`git`/**`dev`**，`dev` 最醒目并带 title 披露）；`provenance` 是一个 `<details>`，摘要给短 commit、短 treeHash 与安装时间，展开给全值；`failure` 六个状态各有「这是什么」与「你能做什么」两句，`manifest-invalid`/`load-failed` 点名字段，`install-failed` 点名 git 步骤 |
-| 裁决 3 | `tampered` 行多一个按钮，它**先卸载再 preview**（裁决 5 在 id 还占着时会拒绝 confirm），然后走同一张同意页。整棵树里没有「接受当前字节」，也没有任何 `plugin.update` 的入口（裁决 2） |
+| 裁决 3 | `tampered` 行多一个按钮，它**先卸载再 preview**（裁决 5 在 id 还占着时会拒绝 confirm），然后走同一张同意页。整棵树里没有「接受当前字节」。U1 之后行上还有第二个出口（`plugin.update` 的更新入口，见 §5.4），同样是整棵树按 (remote, commit) 重新取并重新哈希，不是接受当前字节；两个按钮并存，不互相替代 |
 | 裁决 1 | `dev` 在三处都标：`system-plugins.json`（PR-2）、行上的徽标、同意页上的徽标与那段披露 |
 
 ---
@@ -598,6 +626,9 @@ owner 已就下面五问裁决。五个问题按原样保留在后面，作为�
   这里用 `unsupported` 而不是新造一个 `not-implemented` 码：`RpcError['code']` 里没有这个
   成员，而「这个方法名存在、这次构建没实现它」在本树里本来就是 `unsupported`
   （`parseRequest` 对未知方法答的就是它，`requirePlugins()` 对未配置控制面答的也是它）。
+  **已改口并实现（2026-09-15 第二批 U1，`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4）**：保留上面这段，
+  因为它是当初这样做的理由；`plugin.update` 现在走同一条 preview 路并回答带 `updateOf` 的
+  `SystemPluginInstallPreview`，同意步骤是既有的 `plugin.confirmInstall`。请求形状没有变。
 - **裁决 3** 的前提已具备：`tampered` 行保留 `provenance.remote` 与 `provenance.commit`，
   测试「ruling 3: tamper, boot, then reinstall…」把整条路走了一遍。**要注意顺序**：这条路
   是「卸载 → preview → confirm」，中间那一步卸载不是可选的，因为裁决 5 在 id 还被占着的
@@ -613,6 +644,11 @@ owner 已就下面五问裁决。五个问题按原样保留在后面，作为�
   （`system-plugins.json`）是 PR-2 的。
 - **裁决 2** 落地为**没有按钮**：整个 UI 里没有任何 `plugin.update` 的入口，`plugin-center.test.ts`
   用一条 `doesNotMatch(/plugin\.update|check for updates/i)` 把它钉住。
+  **已改口并实现（2026-09-15 第二批 U1）**：git 行上多了「更新到…」入口，走同一张同意页、同意页多一行
+  `updateOf`（§5.4）。上面那条 `doesNotMatch` 断言随之退役——这不是弱化：`notes/apps/iris-web/DEVIATIONS.md`
+  §99 在写下它时就点名了「裁决 2 被改口的那天，删它的人应当在这里读到它当初为什么在」。替代它的是两条更严的
+  断言：更新入口只出现在已安装的 `git` 行上（按按钮自己的 `data-plugin-update` 属性数数量），`dev`/`builtin`
+  行没有；「接受当前字节」的否定断言原样保留、一个字没动。
 - **裁决 3** 落地：`tampered` 行上的「按记录的 remote + commit 重新安装」，它先 `plugin.uninstall`
   再 `plugin.previewInstall(recorded)`，然后走**同一张**同意页。顺序是被断言的，不是被注释的
   （`plugin-center-install.test.ts` 比较那两次调用的方法名序列与参数）。没有「接受当前字节」。

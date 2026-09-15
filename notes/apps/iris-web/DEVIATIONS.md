@@ -6971,6 +6971,87 @@ Dated 2026-09-15. PR-3 of `docs/SYSTEM-PLUGIN-INSTALL.md` §10。PR-2 已经把�
 - **fake 长出一个真实的 preview 造型能力**（例如它开始读一个夹具包）：那时 `renderConsent` 那条路
   可以退回成 fake 驱动，而本节「没有加 seam」的理由也随之作废。
 
+---
+
+## 100. 插件中心长出更新入口：行上的「更新到…」、同意页的 `updateOf` 行、以及一条否定断言按它自己的安排退役
+
+第二批 U1（2026-09-15）。宿主那一半的事在
+`notes/packages/iris-app-service/DEVIATIONS.md` §81 与
+`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4；这一节记的是页面这一半，以及
+`plugin-center.test.ts` 里那条被删掉的断言。
+
+### `doesNotMatch(/plugin\.update|check for updates/i)` 的退役
+
+这条断言（原 `plugin-center.test.ts:224`）钉的是「裁决 2 把 `plugin.update`
+预留了，页面不得提供它」。U1 把更新事务实现了，它当场变红——而这件事**不是
+这一节的作者先发现的**：`notes/apps/iris-web/DEVIATIONS.md` §99 的「什么会
+推翻这一节」第一条，在写下这条断言的同一天就点名了它会被谁删、删它的人应当
+先去那里读它当初为什么在。所以这是**裁决改口带来的断言退役**，不是弱化；
+`docs/SYSTEM-PLUGIN-INSTALL.md` §12 的 PR-3 落地情况里把这段来历写全了。
+
+替代它的是两条更严的断言，都在同一个测试里：
+
+- **更新入口只出现在已安装的 `git` 行上**：按按钮自己的
+  `data-plugin-update` 属性数数量（六个失败夹具行都是 git + installed，恰好
+  六个），`dev` 行与 `builtin` 行各自否定断言。按按钮自己的属性匹配，而不是
+  匹配 `<article>` 也带的 `data-plugin-source`——§99 的变异 3 就栽在这个
+  区别上，这里不再栽第二次。
+- 「接受当前字节」的否定断言（`/accept (the )?current bytes/i`）**原样保
+  留，一个字没动**：更新不是「接受当前字节」——整棵树按 (remote, commit) 重
+  新取、取完重新哈希——所以这两件事并存不矛盾。
+
+### 同意页的 `updateOf` 行
+
+`plugin.update` 铸造的 preview 多一个可选键 `updateOf`（被替换的行、行上现
+记的 commit 与 treeHash）。同意页的字段集合断言——页面上所有
+`data-consent-field` 收成集合，与 `Object.keys(preview)` 去掉
+`previewToken` 后比较——是结构性断言：preview 多一个键而页面不渲染它，这条
+当场红。`PluginConsent` 据此多渲染一行「替换」：从哪个 commit 到哪个、两个
+tree hash 的短写，旁注写明「确认后旧树被替换，`enabled` 保留；旧树在新代
+启用成功前不会被删」。普通安装的 preview 没有 `updateOf`，也就没有这一行——
+`doesNotMatch(/data-consent-field="updateOf"/)` 把这件事也钉住了。
+
+行上的入口只有一句：`git` 且已安装的行多一个「更新到…」按钮，展开一个只有
+一个 commit 输入框的内联表单；形状检查复用安装表单的 `COMMIT_SHAPE` 那条
+分支，拒绝分支、tag 与短 sha 与安装表单同一个规则、同一句文案。`dev` 行改
+为显示一句「就地加载，改了文件即生效，不需要更新事务」，`builtin` 行什么都不
+显示。`tampered` 行上重装按钮与更新入口**并存**——两个出口都走完整同意，
+留哪个删哪个不是页面这一层该做的决定。
+
+### store
+
+新 action `updateSystemPlugin(id, commit)`，与 `previewSystemPluginInstall`
+同构：失败走 `pluginInstallFailure`（宿主那句话原样显示——这条路的 refusal
+详情就是信息本身，§99 讲过为什么）。确认仍然走既有的
+`confirmSystemPluginInstall`，回带的四个值全部读自 preview 对象——
+`plugin-center-install.test.ts` 的一条变异（把确认的 `treeHash` 接到
+`updateOf.fromTreeHash` 上）就是钉这个的：用户看的是新字节的哈希，页面就必
+须回带新字节的哈希。
+
+### 牙齿表
+
+变异逐条施加、逐条还原（`git checkout` 还原）。
+
+| 断言 | 变异 | 结果 |
+| --- | --- | --- |
+| 同意页字段集合（含 `updateOf`） | `PluginConsent` 不渲染 `updateOf` 行 | 红 |
+| 更新入口只在 git 行（数量为 6，dev/builtin 无） | `updatable` 恒为 false | 红（期望 6 个按钮，见到 0 个） |
+| 确认回带 preview 自己的 `treeHash`（RPC 参数断言） | 回带接到 `updateOf.fromTreeHash` | 红 |
+| 点击流：更新到… → 输 commit → 提交 → 同意页 → 确认 | （上面三条的共同载体） | 全绿时通过；`plugin.update` 先于 `plugin.confirmInstall` 的顺序由调用序列断言 |
+| i18n 两本字典键集与槽一致 | —（未变异） | `i18n.test.ts` 未改动、保持绿：14 个新键两本各一份，槽位 `{from}/{to}/{fromHash}/{toHash}/{detail}` 一致 |
+
+### 什么会推翻这一节
+
+- **更新入口长出第二个字段**（例如允许换 remote）：内联表单与
+  `updateSystemPlugin` 的形状都要重新看，行上的「remote 从行上读」那句话也
+  是。
+- **`tampered` 的两个出口要合并**：重装按钮与更新入口在 D5 之下是并存关系；
+  若 owner 裁决只留一个，本节与宿主 §81 的 D5 段一起改。
+- **`check:render` 改成真浏览器截图**：更新态的两段断言（同意页 `updateOf`
+  行、git 行的更新按钮）要跟着搬。
+
+---
+
 ## 101. 插件自带文案并进壳：`plugin:` 命名空间覆盖层、`translate` 加宽而 `StringKey` 不动
 
 Dated 2026-09-16 (task sheet U5, branch `dev/plugin-i18n-bundles` against
