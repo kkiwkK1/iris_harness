@@ -310,18 +310,50 @@ staging 当场删掉。**安装不等于启用**：confirm 之后行是 `install
 `install-failed`（id 已被占用）拒绝。没有「装得进去但永远不激活」的影子行。
 
 **更新**：本轮没有更新事务。`plugin.update({ id, commit })` 的位子留着，但它答 `unsupported`。
-换 commit 的路是**卸载后重装**，走完整同意。
+换 commit 的路是**卸载后重装**，走完整同意。UI 里也**没有**这个按钮。
+
+### 用户在界面上实际看到的是什么
+
+上面那些 RPC 是给测试和脚本看的；用户走的是**设置抽屉 → 插件 → 「安装插件包…」**
+（`apps/iris-web/src/app/PluginCenter.tsx`）。作为作者，你的包会以下面这个样子被人审视：
+
+**表单。** 两个单选源。`git` 要一个远端 URL 和一个 commit，浏览器先自己检查一遍 commit 的形状
+（必须是 40 位小写十六进制），所以打错一个字符当场就说，不用等一次 clone；不合规的远端仍然由宿主
+拒绝，**宿主那句话原样显示**，不会被换成一句笼统的「Iris 不会发送这个请求」。`dev` 只要一个目录路径。
+
+**同意页。** preview 除 `previewToken` 外的**每一个字段各占一行**，字段名就是协议键名
+（页面上带 `data-consent-field`，测试拿它和 preview 对象的键集对账，所以协议加字段而页面漏显示是一条
+变红的断言）。排在最前面的是三段话，不是字段：
+
+1. 「这是宿主代码。一旦启用，它能触及 Iris 能触及的一切：你的对话、你的文件、你的 API 密钥。
+   Iris 不给系统插件沙箱，本页上的任何一项都不是对它能做什么的限制。」——§9 不变量 #16 要求的那句。
+2. `dev` 源还多一段：它的字节永远不会被复核，所以它在哪都标着 `dev`。
+3. 「安装不等于启用。」
+
+然后才是 id、名称、描述、版本、`apiVersion` / 本机支持区间 / 是否兼容（三行）、源徽标、
+remote + commit 或 path、`treeHash`（旁注「确认即是同意这一份字节，仅此而已」）、文件数、
+体量（人类单位）、`capabilities`（旁注「Iris 没有能力注册表可以校验它」）、`permissions`
+（列表 + 裁决 4 那句「不是 Iris 强制的边界」）、`dependencies`、是否带 `client.js`、`warnings`。
+
+**`incompatible` 的预览照样显示整页**，只是确认按钮是灰的，并多一句为什么——你想让作者看见自己的包
+被拒在哪一行，而不是一个空白页。
+
+**你的包装好之后，行上会多两样**：`source` 徽标（`dev` 最醒目）与一个可展开的「安装时记录」
+（摘要是短 commit / 短 treeHash / 安装时间，展开是全值）。`git` 行的卸载注记写着「卸载会从这个
+profile 里删掉安装树」，`dev` 行写着「你的开发目录绝不会被碰」。
 
 ### 六个失败状态，对作者分别意味着什么
 
-它们都落在 `plugin.list` 的行上（`failure.state`），不是日志，也不是崩溃。
+它们都落在 `plugin.list` 的行上（`failure.state`），不是日志，也不是崩溃。**在界面上**，每个状态在行上
+都是同一个形状的红块：一句「这是什么」、点名的字段或 git 步骤、**宿主自己那句 `reason` 原样照抄**、
+再一句「你能做什么」。所以下表第三列就是用户会读到的那句话的来源。
 
 | 状态 | 发生在 | 你该改什么 |
 | --- | --- | --- |
-| `install-failed` | 取源 / 促进 | 远端或 commit 不合规（非 https、未钉满 40 位、URL 带凭据）、远端没有这个 commit、树超上限、树里有 `node_modules/`、或 id 已被占用。消息里带 git 的哪一步 |
+| `install-failed` | 取源 / 促进 | 远端或 commit 不合规（非 https、未钉满 40 位、URL 带凭据）、远端没有这个 commit、树超上限、树里有 `node_modules/`、或 id 已被占用。消息里带 git 的哪一步，行上写成「git 步骤：fetch」 |
 | `manifest-invalid` | 读清单 | `iris.plugin` 缺失或字段不合规。**永远点名字段**：`id`、`apiVersion`、`host`、`client`、`displayName`、`description`、`permissions[i]`、`dependencies[i]`。`host`/`client` 必须是相对、正斜杠、树内路径，不能有 `..`、盘符、反斜杠，也不能穿过符号链接 |
 | `incompatible` | 读清单之后 | 你的 `apiVersion` 不在本机支持区间内。装的时候直接拒；已经装着的行留在目录里不激活，行上写明「需要 N，本机支持 1.0–1.0」 |
-| `tampered` | 开机复核 | 磁盘上的字节与安装时记录的 `treeHash` 不符——手改过安装树就会这样。出路是按记录的 `(remote, commit)` 重新装一次；没有「接受当前字节」这个按钮，那会让整个哈希锁定被一键绕过 |
+| `tampered` | 开机复核 | 磁盘上的字节与安装时记录的 `treeHash` 不符——手改过安装树就会这样。行上因此多一个「按记录的 remote + commit 重新安装」按钮，它**先卸载再 preview**（裁决 5 在 id 还占着时会拒绝 confirm），然后走同一张同意页；没有「接受当前字节」这个按钮，那会让整个哈希锁定被一键绕过 |
 | `load-failed` | `import(host.js)` | 模块顶层抛错，或默认导出不是一个 definition / id 对不上 / apiVersion 对不上 / 没有 `activate`。行上带字段名 |
 | `activate-failed` | `activate()` 抛错 | 你的 `activate` 抛了。走既有的失败回滚，不会留下半注册的能力 |
 
