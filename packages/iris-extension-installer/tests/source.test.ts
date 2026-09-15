@@ -23,6 +23,45 @@ test('git sources accept only https (or file:// under the test-only option) and 
   assert.throws(() => validateExtensionSource({ kind: 'git', repository: 'https://host/repo', commit: 'main' }), SourceError)
   assert.throws(() => validateExtensionSource({ kind: 'git', repository: 'https://host/repo', commit: 'f9a07da' }), SourceError, 'short SHA is a moving pin')
   assert.throws(() => assertPinnedCommit('dev'), SourceError)
+
+  // Userinfo is refused on every path: the URL is recorded verbatim in the
+  // lock, in the catalog and on the consent page, so a credential pasted into
+  // a remote becomes a credential in four files. SillyTavern accepts such
+  // URLs; Iris deliberately does not — the divergence is argued once in the
+  // app-service ledger (§85), not at each call site.
+  for (const repository of ['https://user@host/repo', 'https://user:token@host/repo', 'https://:token@host/repo']) {
+    assert.throws(
+      () => validateExtensionSource({ kind: 'git', repository, commit: 'f'.repeat(40) }),
+      (error: unknown) => {
+        assert.ok(error instanceof SourceError, `${repository} did not refuse as a SourceError`)
+        assert.equal(error.code, 'bad-repository', `${repository} was not refused as the repository it is`)
+        assert.match(error.message, /credentials/u, `${repository} was not refused for its userinfo`)
+        return true
+      },
+      repository,
+    )
+  }
+  // The refusal is not a by-product of the https-only rule: file:// with the
+  // test-only option is otherwise allowed, and userinfo still refuses it.
+  assert.throws(
+    () => validateExtensionSource({ kind: 'git', repository: 'file://user@host/repo', commit: 'f'.repeat(40) }, { allowLocalGit: true }),
+    (error: unknown) => error instanceof SourceError && error.code === 'bad-repository',
+    'file:// with userinfo must refuse under allowLocalGit too',
+  )
+  // An @ in the path is not userinfo — the authority ends at the first slash,
+  // so this URL carries no credential and must keep passing.
+  validateExtensionSource({ kind: 'git', repository: 'https://host/~user@org/repo', commit: 'f'.repeat(40) })
+  // Priority: a URL that both carries credentials and lacks a pin is refused
+  // for the credentials — the secret is the thing to remove first.
+  assert.throws(
+    () => validateExtensionSource({ kind: 'git', repository: 'https://user:token@host/repo', commit: 'main' }),
+    (error: unknown) => {
+      assert.ok(error instanceof SourceError)
+      assert.equal(error.code, 'bad-repository', 'the credential check must run before the pin check')
+      return true
+    },
+    'a credentialed, unpinned URL must be refused',
+  )
 })
 
 test('git materialization fetches the pinned commit and proves HEAD equals the pin', async () => {

@@ -46,6 +46,57 @@ export interface MaterializeOutcome {
 
 const GIT_COMMIT_RE = /^[0-9a-f]{40}$/
 
+/**
+ * Userinfo in a repository URL is refused on every path, not just the https
+ * one: the URL is recorded verbatim in the lock, in the caller's catalog and
+ * on every consent surface, so a credential pasted into a remote becomes a
+ * credential in four files, three of which the user never looks at.
+ *
+ * SillyTavern's own installer accepts such URLs; Iris deliberately does not —
+ * a recorded divergence, argued once in the app-service ledger (§85) rather
+ * than re-argued at each call site. A string that does not parse as a URL is
+ * left for the scheme branch below, which refuses it with a message that
+ * names the actual defect.
+ */
+function refuseCredentialedRemote(repository: string): void {
+  let url: URL
+  try {
+    url = new URL(repository)
+  } catch {
+    // A `file://` authority carrying userinfo is unparseable as a WHATWG URL
+    // at all — file hosts have no userinfo slot — so this is not the
+    // not-a-URL case the scheme branch refuses better: under
+    // `allowLocalGit` the scheme branch would admit it, @ and all. The
+    // textual check reads the same authority the parser would have.
+    if (userinfoInAuthority(repository)) {
+      throw new SourceError(
+        'the remote URL carries credentials in its userinfo — refused before the fetch, because the URL is recorded'
+        + ' in the lock, in the catalog and on the consent page, and a secret written there is a secret in four files',
+        'bad-repository',
+      )
+    }
+    return
+  }
+  if (url.username !== '' || url.password !== '') {
+    throw new SourceError(
+      'the remote URL carries credentials in its userinfo — refused before the fetch, because the URL is recorded'
+      + ' in the lock, in the catalog and on the consent page, and a secret written there is a secret in four files',
+      'bad-repository',
+    )
+  }
+}
+
+/** An `@` in the authority — after `://`, before the first `/`. */
+function userinfoInAuthority(repository: string): boolean {
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//iu.exec(repository)
+  if (scheme === null) return false
+  const authority = repository.slice(scheme[0].length)
+  const at = authority.indexOf('@')
+  if (at < 0) return false
+  const slash = authority.indexOf('/')
+  return slash < 0 || at < slash
+}
+
 export function validateExtensionSource(source: ExtensionSource, options: SourceOptions = {}): void {
   switch (source.kind) {
     case 'local-archive':
@@ -63,6 +114,11 @@ export function validateExtensionSource(source: ExtensionSource, options: Source
       if (/[\s"']/u.test(source.repository)) {
         throw new SourceError('git repository URL contains whitespace or quotes: refused', 'bad-repository')
       }
+      // Credentials before the pin: a URL that both carries userinfo and lacks
+      // a pin must be refused for the userinfo — the secret is the thing to
+      // remove first, and the scheme and pin refusals would read as a fix
+      // somewhere else.
+      refuseCredentialedRemote(source.repository)
       assertPinnedCommit(source.commit)
       if (source.repository.startsWith('https://')) return
       if (options.allowLocalGit && source.repository.startsWith('file://')) return
