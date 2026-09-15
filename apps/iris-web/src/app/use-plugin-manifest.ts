@@ -128,6 +128,15 @@ export interface PluginBrowserAssetStatus {
   phase: PluginAssetPhase
   /** The snapshot revision the browser assets should answer for. */
   expectedRevision: number | undefined
+  /**
+   * The manifest revision the aggregate manifest answers for — the generation
+   * it was built at. Same quantity as `expectedRevision` (a catalog counter),
+   * and shown beside it exactly so a stale surface reads as two numbers that
+   * visibly disagree; `stale` is the row where that disagreement is the whole
+   * story. The third number, `actualRevision`, is a different quantity
+   * altogether (a content hash) and is not comparable to either.
+   */
+  manifestRevision: number | undefined
   /** The content rev actually served for the plugin, when known. */
   actualRevision: string | undefined
   error: PluginAssetError | undefined
@@ -386,6 +395,84 @@ function manifestErrorKind(message: string): PluginAssetErrorKind {
 }
 
 /**
+ * The reduction: snapshot, manifest and probes → the status each row shows.
+ *
+ * Exported as a pure function because the status surface's contract is exactly
+ * this merge — which phase a row reads for which inputs, and which two numbers
+ * it displays — and the tests that pin that contract should not need a DOM and
+ * a fetch double to reach it. `seenRows` is passed rather than read from the
+ * module for the same reason: the declaration-evidence cache is a session
+ * detail of the hook, not an input the reduction's answer may secretly depend
+ * on being global.
+ */
+export function reducePluginBrowserAssetStatuses(input: {
+  snapshot: SystemPluginSnapshot
+  revision: number | undefined
+  manifest: PluginAssetManifest | undefined
+  manifestFailure: string | undefined
+  probes: Readonly<Record<string, PluginProbe>>
+  seenRows: ReadonlyMap<string, { rev: string, revision: number }>
+}): Record<string, PluginBrowserAssetStatus> {
+  const { snapshot, revision, manifest, manifestFailure, probes, seenRows } = input
+  const statuses: Record<string, PluginBrowserAssetStatus> = {}
+  const conflicts = findMemberConflicts(probes)
+  for (const plugin of snapshot.plugins) {
+    if (!(plugin.installed && plugin.enabled && plugin.status === 'enabled')) {
+      statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, manifestRevision: manifest?.revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
+      continue
+    }
+    if (manifestFailure !== undefined) {
+      statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, manifestRevision: manifest?.revision, actualRevision: undefined, loadedAt: undefined, error: { kind: manifestErrorKind(manifestFailure), message: `the aggregate manifest could not be read (${manifestFailure})` } }
+      continue
+    }
+    if (manifest === undefined) {
+      statuses[plugin.id] = { phase: 'loading', expectedRevision: revision, manifestRevision: undefined, actualRevision: undefined, error: undefined, loadedAt: undefined }
+      continue
+    }
+    if (manifest.revision !== revision) {
+      // The stale row exists to display this disagreement: the catalog says
+      // one generation, the manifest answers for another. Both numbers are
+      // carried so the row can show them side by side.
+      statuses[plugin.id] = { phase: 'stale', expectedRevision: revision, manifestRevision: manifest.revision, actualRevision: undefined, loadedAt: undefined, error: { kind: 'revision', message: `the manifest answers for revision ${String(manifest.revision)}, not the current ${String(revision)}` } }
+      continue
+    }
+    if (manifest.plugins[plugin.id] === undefined) {
+      // Enabled with no row: a plugin that never declared browser assets
+      // (the bundled catalog's normal state) reads `undeclared`; a row this
+      // session served at the current revision and now lost reads as a
+      // server-side deletion — `degraded`, with the retry left armed.
+      const seen = seenRows.get(plugin.id)
+      if (seen !== undefined && seen.revision === revision) {
+        statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, manifestRevision: manifest.revision, actualRevision: seen.rev, loadedAt: probes[plugin.id]?.loadedAt, error: { kind: 'client-missing', message: 'the manifest stopped listing this enabled plugin without a revision change — its client.js was removed from the server' } }
+      } else {
+        statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, manifestRevision: manifest.revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
+      }
+      continue
+    }
+    if (manifest.plugins[plugin.id]?.client === undefined) {
+      // A copy-only row (U5): the plugin ships no browser bundle, so there
+      // is nothing for a frame to load and nothing to probe. The row is
+      // real — its rev is the copy's — and its copy feeds the shell's
+      // overlay, not this column.
+      statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, manifestRevision: manifest.revision, actualRevision: manifest.plugins[plugin.id]?.rev, error: undefined, loadedAt: undefined }
+      continue
+    }
+    const probe = probes[plugin.id]
+    if (probe === undefined) {
+      statuses[plugin.id] = { phase: 'loading', expectedRevision: revision, manifestRevision: manifest.revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
+      continue
+    }
+    const conflict = conflicts[plugin.id]
+    if (conflict !== undefined) {
+      statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, manifestRevision: manifest.revision, actualRevision: probe.rev, loadedAt: probe.loadedAt, error: conflict }
+      continue
+    }
+    statuses[plugin.id] = { phase: probe.phase, expectedRevision: revision, manifestRevision: manifest.revision, actualRevision: probe.rev, error: probe.error, loadedAt: probe.loadedAt }
+  }
+  return statuses
+}
+
+/**
  * Rows the shell has seen the manifest carry this session, keyed by plugin id.
  *
  * The wire snapshot does not say whether a plugin *declares* browser assets,
@@ -525,59 +612,8 @@ export function usePluginBrowserAssets(snapshot: SystemPluginSnapshot | undefine
     // revision and per retry, and a probe landing must not re-run it.
   }, [manifest, manifestFailure, snapshot, retryRequest, manifestGeneration])
 
-  const statuses: Record<string, PluginBrowserAssetStatus> = {}
-  if (snapshot !== undefined) {
-    const conflicts = findMemberConflicts(probes)
-    for (const plugin of snapshot.plugins) {
-      if (!(plugin.installed && plugin.enabled && plugin.status === 'enabled')) {
-        statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
-        continue
-      }
-      if (manifestFailure !== undefined) {
-        statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, actualRevision: undefined, loadedAt: undefined, error: { kind: manifestErrorKind(manifestFailure), message: `the aggregate manifest could not be read (${manifestFailure})` } }
-        continue
-      }
-      if (manifest === undefined) {
-        statuses[plugin.id] = { phase: 'loading', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
-        continue
-      }
-      if (manifest.revision !== revision) {
-        statuses[plugin.id] = { phase: 'stale', expectedRevision: revision, actualRevision: undefined, loadedAt: undefined, error: { kind: 'revision', message: `the manifest answers for revision ${String(manifest.revision)}, not the current ${String(revision)}` } }
-        continue
-      }
-      if (manifest.plugins[plugin.id] === undefined) {
-        // Enabled with no row: a plugin that never declared browser assets
-        // (the bundled catalog's normal state) reads `undeclared`; a row this
-        // session served at the current revision and now lost reads as a
-        // server-side deletion — `degraded`, with the retry left armed.
-        const seen = seenRows.get(plugin.id)
-        if (seen !== undefined && seen.revision === revision) {
-          statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, actualRevision: seen.rev, loadedAt: probes[plugin.id]?.loadedAt, error: { kind: 'client-missing', message: 'the manifest stopped listing this enabled plugin without a revision change — its client.js was removed from the server' } }
-        } else {
-          statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
-        }
-        continue
-      }
-      if (manifest.plugins[plugin.id]?.client === undefined) {
-        // A copy-only row (U5): the plugin ships no browser bundle, so there
-        // is nothing for a frame to load and nothing to probe. The row is
-        // real — its rev is the copy's — and its copy feeds the shell's
-        // overlay, not this column.
-        statuses[plugin.id] = { phase: 'undeclared', expectedRevision: revision, actualRevision: manifest.plugins[plugin.id]?.rev, error: undefined, loadedAt: undefined }
-        continue
-      }
-      const probe = probes[plugin.id]
-      if (probe === undefined) {
-        statuses[plugin.id] = { phase: 'loading', expectedRevision: revision, actualRevision: undefined, error: undefined, loadedAt: undefined }
-        continue
-      }
-      const conflict = conflicts[plugin.id]
-      if (conflict !== undefined) {
-        statuses[plugin.id] = { phase: 'degraded', expectedRevision: revision, actualRevision: probe.rev, loadedAt: probe.loadedAt, error: conflict }
-        continue
-      }
-      statuses[plugin.id] = { phase: probe.phase, expectedRevision: revision, actualRevision: probe.rev, error: probe.error, loadedAt: probe.loadedAt }
-    }
-  }
+  const statuses = snapshot === undefined
+    ? {}
+    : reducePluginBrowserAssetStatuses({ snapshot, revision, manifest, manifestFailure, probes, seenRows })
   return { statuses, retry }
 }

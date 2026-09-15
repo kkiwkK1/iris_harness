@@ -74,7 +74,8 @@ test('plugin center renders factual lifecycle, dependency and host-error guidanc
   // even before any manifest fetch has answered (SSR shows the loading phase).
   assert.match(enabled, /data-plugin-asset-phase="loading"/)
   assert.match(enabled, /Browser asset/)
-  assert.match(enabled, /Expected revision/)
+  assert.match(enabled, /Catalog revision/)
+  assert.match(enabled, /Manifest revision/, 'the manifest generation cell is missing beside the catalog generation')
   assert.doesNotMatch(enabled, /marketplace|download package/i)
 
   const current = wired.store.getState().systemPlugins
@@ -104,8 +105,9 @@ test('plugin center renders factual lifecycle, dependency and host-error guidanc
   assert.match(chinese, /请先处理上述原因/)
   assert.match(chinese, /宿主运行时/)
   assert.match(chinese, /浏览器资产/)
-  assert.match(chinese, /期望 revision/)
-  assert.match(chinese, /实际加载 revision/)
+  assert.match(chinese, /目录 revision/)
+  assert.match(chinese, /清单 revision/, 'the manifest generation cell has no Chinese label')
+  assert.match(chinese, /资产内容 rev/)
   assert.match(chinese, /最近成功加载/)
   assert.match(chinese, /data-plugin-asset-phase="loading"/)
   assert.match(chinese, /未声明/, 'a plugin the host does not run shows its browser asset as undeclared')

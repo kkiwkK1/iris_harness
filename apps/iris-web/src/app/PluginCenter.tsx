@@ -819,12 +819,19 @@ function Provenance({ provenance, lang }: {
 /**
  * The browser-asset half of the status surface: a second, independent row of
  * state next to the host's enable chip. A degraded or stale asset names the
- * expected revision, the revision actually served, the last error (classified
- * so the six failure kinds read differently), the last successful load, and a
- * retry that re-fetches the manifest row and the bundle — it never touches the
- * host plugin's enabled state, which stays exactly what the snapshot says.
+ * catalog revision, the manifest revision that answers for it, the content rev
+ * of the bytes actually served, the last error (classified so the six failure
+ * kinds read differently), the last successful load, and a retry that
+ * re-fetches the manifest row and the bundle — it never touches the host
+ * plugin's enabled state, which stays exactly what the snapshot says.
+ *
+ * The three numbers are exported for render-check for the same reason the
+ * consent page is: the surface's whole point is what it shows for a given
+ * input, and the dimension mistake it used to carry — a catalog revision
+ * count and a content hash side by side under labels that read as comparable —
+ * is exactly the kind of thing a server render of one constructed row pins.
  */
-function AssetStatus({ plugin, asset, lang, onRetry }: {
+export function AssetStatus({ plugin, asset, lang, onRetry }: {
   plugin: SystemPluginView
   asset: PluginBrowserAssetStatus
   lang: Language
@@ -839,7 +846,8 @@ function AssetStatus({ plugin, asset, lang, onRetry }: {
       <div><dt>{translate(lang, 'pluginCenterHostRuntime')}</dt><dd>{translate(lang, STATUS_KEYS[plugin.status])}</dd></div>
       <div><dt>{translate(lang, 'pluginCenterBrowserAsset')}</dt><dd className="iris-plugin__asset-phase">{translate(lang, PHASE_KEYS[asset.phase])}</dd></div>
       <div><dt>{translate(lang, 'pluginCenterExpectedRevision')}</dt><dd>{asset.expectedRevision === undefined ? translate(lang, 'pluginCenterNone') : String(asset.expectedRevision)}</dd></div>
-      <div><dt>{translate(lang, 'pluginCenterActualRevision')}</dt><dd>{asset.actualRevision ?? translate(lang, 'pluginCenterNone')}</dd></div>
+      <div><dt>{translate(lang, 'pluginCenterManifestRevision')}</dt><dd>{asset.manifestRevision === undefined ? translate(lang, 'pluginCenterNone') : String(asset.manifestRevision)}</dd></div>
+      <div><dt>{translate(lang, 'pluginCenterActualRevision')}</dt><dd data-asset-rev={asset.actualRevision}>{asset.actualRevision ?? translate(lang, 'pluginCenterNone')}</dd></div>
       <div><dt>{translate(lang, 'pluginCenterLastLoaded')}</dt><dd>{loadedAt ?? translate(lang, 'pluginCenterLastLoadedNever')}</dd></div>
     </dl>
     {degraded && asset.error !== undefined ? <div className="iris-plugin__asset-failure">

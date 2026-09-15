@@ -23,7 +23,9 @@ import { App } from '../src/app/App.tsx'
 import { CharacterPage } from '../src/app/CharacterPage.tsx'
 import { Sidebar } from '../src/app/Sidebar.tsx'
 import { ConnectionPanel } from '../src/app/ConnectionPanel.tsx'
-import { PluginCenter, PluginConsent } from '../src/app/PluginCenter.tsx'
+import { AssetStatus, PluginCenter, PluginConsent } from '../src/app/PluginCenter.tsx'
+import type { PluginBrowserAssetStatus } from '../src/app/use-plugin-manifest.ts'
+import type { SystemPluginView } from '@iris/protocol'
 import { StoreProvider } from '../src/client/provider.tsx'
 import { createIrisStore, type IrisStore } from '../src/client/store.ts'
 import { SlotProvider } from '../src/slots/Slot.tsx'
@@ -206,7 +208,33 @@ async function main(): Promise<void> {
   // fetch has answered, an enabled plugin reads as loading (SSR has no effects).
   assert.match(pluginCenter, /data-plugin-asset-phase="loading"/, 'an enabled plugin does not show its browser asset as loading')
   assert.match(pluginCenter, /Browser asset/, 'the browser-asset status half is missing')
-  assert.match(pluginCenter, /Expected revision/, 'the expected revision fact is missing')
+  // The three revision facts are three quantities, and a constructed stale row
+  // pins what each cell shows: the catalog generation (7) and the manifest
+  // generation (6) side by side as DIFFERENT numbers — that disagreement is
+  // the entire meaning of a stale row — and the content rev (a hash) in its
+  // own cell, stamped with data-asset-rev so the cell is read by value rather
+  // than by label proximity. Driven directly through the exported component,
+  // the same way the consent page is, because a live SSR of PluginCenter never
+  // gets past the loading phase.
+  const staleRowPlugin: SystemPluginView = {
+    id: 'demo', name: 'Demo', description: 'render-check stale row', version: '0.0.0',
+    apiVersion: 1, dependencies: [], installed: true, enabled: true, status: 'enabled',
+  }
+  const staleRowAsset: PluginBrowserAssetStatus = {
+    phase: 'stale', expectedRevision: 7, manifestRevision: 6, actualRevision: '124631e8264a',
+    error: { kind: 'revision', message: 'the manifest answers for revision 6, not the current 7' },
+    loadedAt: undefined,
+  }
+  const staleRow = renderToString(
+    <AssetStatus plugin={staleRowPlugin} asset={staleRowAsset} lang="en" onRetry={() => {}} />,
+  )
+  assert.match(staleRow, />Catalog revision<\/dt><dd>7<\/dd>/, 'the catalog revision cell is missing or does not show the snapshot generation')
+  assert.match(staleRow, />Manifest revision<\/dt><dd>6<\/dd>/, 'the manifest revision cell is missing — three quantities need three cells, not two')
+  const rev = staleRow.match(/data-asset-rev="([^"]*)"/)?.[1]
+  assert.ok(rev !== undefined, 'the content-rev cell carries no data-asset-rev stamp')
+  assert.match(rev, /^[0-9a-f]{12}$/, 'the content-rev cell does not carry a twelve-hex rev')
+  assert.notEqual(rev, '7', 'the content-rev cell shows the catalog revision — the quantity confusion this row exists to end')
+  assert.match(pluginCenter, /Catalog revision/, 'the catalog revision fact is missing')
   assert.match(pluginCenter, /Last loaded/, 'the last-successful-load fact is missing')
   assert.match(pluginCenter, /Disable MVU first/, 'TavernHelper actions do not explain the enabled dependent')
   assert.match(pluginCenter, /Uninstalling keeps card and chat data/, 'the plugin center does not state what uninstall retains')

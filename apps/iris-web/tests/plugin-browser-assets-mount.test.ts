@@ -181,3 +181,112 @@ test('a retried probe lands without the poll timer, and a late older response ca
     dom.window.close()
   }
 })
+
+test('a manifest answering for an older generation mounts as stale, carrying both generations as numbers', async () => {
+  // The same fixture as the retry test above (snapshot revision 7), with the
+  // manifest answered at 6: the mounted hook must mark the row stale and
+  // surface BOTH generations — the catalog's and the manifest's — as numbers
+  // a row can show side by side, not fold one into the other.
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' })
+  const previous = {
+    fetch: globalThis.fetch,
+    window: (globalThis as Record<string, unknown>)['window'],
+    document: (globalThis as Record<string, unknown>)['document'],
+    navigator: (globalThis as Record<string, unknown>)['navigator'],
+  }
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  })
+  Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true })
+
+  interface FakeResponse {
+    ok: boolean
+    status: number
+    text: () => Promise<string>
+  }
+  const calls: Array<{ url: string, kind: 'manifest' | 'client', respond: (response: FakeResponse) => void }> = []
+  globalThis.fetch = ((input: unknown): Promise<FakeResponse> => {
+    const url = String(input)
+    return new Promise(resolve => {
+      calls.push({
+        url,
+        kind: url.endsWith('manifest.json') ? 'manifest' : 'client',
+        respond: response => resolve(response),
+      })
+    })
+  }) as typeof fetch
+
+  try {
+    const { createElement, act } = await import('react')
+    const { createRoot } = await import('react-dom/client')
+    const { usePluginBrowserAssets } = await import('../src/app/use-plugin-manifest.ts')
+
+    const snapshot: SystemPluginSnapshot = {
+      revision: 7,
+      plugins: [{
+        id: 'demo',
+        name: 'Demo',
+        description: 'stale fixture',
+        version: '0.0.0',
+        apiVersion: 1,
+        dependencies: [],
+        installed: true,
+        enabled: true,
+        status: 'enabled',
+      }],
+    }
+
+    let latest: { statuses: Record<string, PluginBrowserAssetStatus>, retry: (pluginId?: string) => void } | undefined
+    function Probe(): null {
+      latest = usePluginBrowserAssets(snapshot)
+      return null
+    }
+
+    const root = createRoot(document.getElementById('root')!)
+    let mounted = true
+    try {
+      await act(async () => {
+        root.render(createElement(Probe))
+      })
+      const manifestCall = calls.find(row => row.kind === 'manifest')
+      assert.ok(manifestCall !== undefined, 'the mount issued no manifest read')
+      // Answer for generation 6 while the snapshot says 7: stale, by
+      // construction.
+      manifestCall.respond({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          revision: 6,
+          plugins: { demo: { rev: 'abc123def456', client: '/plugins/demo/client.js?rev=abc123def456' } },
+        }),
+      })
+      await act(async () => {})
+
+      const status = latest?.statuses['demo']
+      assert.equal(status?.phase, 'stale', 'a manifest answering for generation 6 under snapshot 7 must read stale')
+      assert.equal(status?.expectedRevision, 7)
+      assert.equal(status?.manifestRevision, 6)
+      assert.equal(typeof status?.expectedRevision, 'number')
+      assert.equal(typeof status?.manifestRevision, 'number')
+      assert.notEqual(status?.expectedRevision, status?.manifestRevision,
+        'the stale row exists to show two generations apart; folding one into the other erases the row')
+    } finally {
+      if (mounted) {
+        mounted = false
+        await act(async () => {
+          root.unmount()
+        })
+      }
+    }
+  } finally {
+    globalThis.fetch = previous.fetch
+    Object.assign(globalThis, { window: previous.window, document: previous.document })
+    Object.defineProperty(globalThis, 'navigator', { value: previous.navigator, configurable: true, writable: true })
+    delete (globalThis as Record<string, unknown>).HTMLElement
+    delete (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT
+    dom.window.close()
+  }
+})
