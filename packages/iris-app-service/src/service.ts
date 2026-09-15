@@ -100,6 +100,7 @@ import type { PruneOptions } from './prune.ts'
 import { MVU_CAPABILITY } from './plugins/capabilities.ts'
 import type { MvuExecution } from './plugins/mvu.ts'
 import type { SystemPluginLease, SystemPluginRuntime } from './system-plugins.ts'
+import type { SystemPluginInstallService } from './plugins/install.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
 import { runScripts } from './regex.ts'
 // —— family②: regex ——
@@ -496,6 +497,18 @@ export interface AppServiceOptions {
   /** The profile's live system-plugin owner. Absent preserves legacy library behavior. */
   plugins?: SystemPluginRuntime
   /**
+   * The package install path (`plugin.previewInstall` / `confirmInstall` /
+   * `cancelInstall`) and the tree-deleting half of `plugin.uninstall`.
+   *
+   * Optional and separate from `plugins` because the catalog and the installer
+   * are different capabilities: a host can own a profile's plugin lifecycle
+   * without owning a directory it may fetch package trees into, and a test
+   * driving enable/disable should not have to hand over an install root.
+   * Absent means the three install methods answer `unsupported` and
+   * `plugin.uninstall` behaves exactly as it did before this round.
+   */
+  pluginInstaller?: SystemPluginInstallService
+  /**
    * The user's decisions about card scripts.
    *
    * Optional so that a host with no page attached — a test, a headless run —
@@ -796,11 +809,12 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection' | 'stCompat'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection' | 'stCompat'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
       plugins?: SystemPluginRuntime
+      pluginInstaller?: SystemPluginInstallService
       stCompat?: StCompatOptions
       scripts?: ScriptPolicyStore
       scriptLibrary?: ScriptLibraryStore
@@ -928,6 +942,7 @@ export class IrisAppService {
       // why the *product* says otherwise and a library caller does not.
       requireProvider: options.requireProvider ?? false,
       ...options.plugins === undefined ? {} : { plugins: options.plugins },
+      ...options.pluginInstaller === undefined ? {} : { pluginInstaller: options.pluginInstaller },
       ...options.stCompat === undefined ? {} : { stCompat: options.stCompat },
       ...options.hostConnection === undefined ? {} : { hostConnection: options.hostConnection },
       ...options.installConnection === undefined ? {} : { installConnection: options.installConnection },
@@ -1765,6 +1780,14 @@ export class IrisAppService {
       return plugins
     }
 
+    const pluginInstaller = this.#options.pluginInstaller
+    const requirePluginInstaller = (): SystemPluginInstallService => {
+      if (pluginInstaller === undefined) {
+        throw new AppError('unsupported', 'the system-plugin install path is not configured on this host')
+      }
+      return pluginInstaller
+    }
+
     const requireStCompat = (): StCompatOptions => {
       const st = this.#options.stCompat
       if (st === undefined) {
@@ -1942,10 +1965,42 @@ export class IrisAppService {
     const handlers: Handlers = {
       'plugin.list': async () => requirePlugins().snapshot(),
       'plugin.install': async ({ id }) => await requirePlugins().install(id),
-      'plugin.uninstall': async ({ id }) => await requirePlugins().uninstall(id),
+      // Routed through the install path when one is configured, because an
+      // installed package's uninstall deletes its tree (§6) and the catalog
+      // alone cannot do that. A host without an installer keeps the old
+      // behaviour exactly: the row's installed flag flips and nothing on disk
+      // moves.
+      'plugin.uninstall': async ({ id }) => pluginInstaller === undefined
+        ? await requirePlugins().uninstall(id)
+        : await pluginInstaller.uninstall(id),
       'plugin.enable': async ({ id }) => await requirePlugins().enable(id),
       'plugin.disable': async ({ id }) => await requirePlugins().disable(id),
       'plugin.reload': async ({ id }) => await requirePlugins().reload(id),
+      'plugin.previewInstall': async ({ source }) => await requirePluginInstaller().preview(source),
+      'plugin.confirmInstall': async params => await requirePluginInstaller().confirm(params),
+      'plugin.cancelInstall': async ({ previewToken }) => {
+        await requirePluginInstaller().cancel(previewToken)
+        return { ok: true }
+      },
+      /**
+       * Reserved by §12 ruling 2, and refused.
+       *
+       * `unsupported` rather than a new `not-implemented` code: the protocol's
+       * `RpcError['code']` union has no such member, and the tree's convention
+       * for "this name exists and this build does not implement it" is already
+       * `unsupported` — it is what `parseRequest` answers for an unknown
+       * method (`packages/iris-protocol/src/rpc.ts:3024`) and what
+       * `requirePlugins` answers for an unconfigured control plane. Adding a
+       * seventh code so one handler could refuse in its own dialect would put
+       * a case in every client's error switch for a method that does nothing.
+       */
+      'plugin.update': async ({ id }) => {
+        throw new AppError(
+          'unsupported',
+          `plugin.update is reserved and not implemented (docs/SYSTEM-PLUGIN-INSTALL.md §12 ruling 2): to change`
+          + ` "${id}" to another commit, uninstall it and install the new commit through the full consent step`,
+        )
+      },
 
       // The ST-compat pilot's plane face. The arm/detach pair is the bridge's
       // whole liveness model; submit re-validates the revision so a stale

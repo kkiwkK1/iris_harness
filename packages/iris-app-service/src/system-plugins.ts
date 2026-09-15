@@ -1,7 +1,15 @@
 import { readFile } from 'node:fs/promises'
 
 import { Context, type Fiber } from '@deepseek-ai/cordis'
-import { registerRequestSchema, type SystemPluginSnapshot, type SystemPluginView } from '@iris/protocol'
+import {
+  registerRequestSchema,
+  type SystemPluginFailure,
+  type SystemPluginFailureState,
+  type SystemPluginProvenance,
+  type SystemPluginSnapshot,
+  type SystemPluginSource,
+  type SystemPluginView,
+} from '@iris/protocol'
 import type {
   ScopedPluginRevision,
   ScopedRequestSchema,
@@ -33,16 +41,73 @@ export type {
 
 const SERVICE_PREFIX = 'iris.system-plugin'
 
+/**
+ * The catalog file's current version.
+ *
+ * Raised from 1 to 2 by PR-2 of `docs/SYSTEM-PLUGIN-INSTALL.md`, and
+ * deliberately *not* done as "add optional keys, stay at 1". §6 argues the
+ * direction: a v1-reading binary handed a file whose rows carry a `treeHash`
+ * it has never heard of would activate those rows anyway, including the ones
+ * it cannot re-verify. Under version 2 it cannot read the file at all and
+ * takes `initialize`'s existing unreadable-file path — retain the bytes,
+ * disable everything, every row `error`. For a feature whose whole point is
+ * refusing to run bytes that changed, refusing *everything* is the safe
+ * direction.
+ */
+const STORED_VERSION = 2
+
+/** The versions this reader accepts. Anything else is an unreadable file. */
+const READABLE_VERSIONS = new Set([1, STORED_VERSION])
+
 interface StoredPluginPreference {
   installed: boolean
   enabled: boolean
+  /** v2. Absent on a row this host has no provenance for (a legacy adopted ST extension). */
+  source?: SystemPluginSource
+  /** v2, `git`: the https remote. */
+  remote?: string
+  /** v2, `git`: the full 40-hex commit. */
+  commit?: string
+  /** v2, `dev`: the absolute directory the plugin is loaded from in place. */
+  path?: string
+  /** v2: the canonical tree hash recorded at install; re-checked every boot for `git`. */
+  treeHash?: string
+  /** v2: ISO timestamp of the promotion. */
+  installedAt?: string
+}
+
+/** The provenance half of a stored row, as the install path hands it over. */
+export interface InstalledPluginRecord {
+  source: SystemPluginSource
+  remote?: string
+  commit?: string
+  path?: string
+  treeHash?: string
+  installedAt?: string
 }
 
 interface StoredSystemPlugins {
-  version: 1
+  version: 1 | 2
   revision: number
   plugins: Record<string, StoredPluginPreference>
 }
+
+/**
+ * Failure states that make `enable` a refusal rather than an attempt.
+ *
+ * `load-failed` and `activate-failed` are deliberately absent: those two are
+ * the plugin's own code misbehaving, the author fixes the file and tries
+ * again, and §8's copy for them is "修好后重试启用或卸载". The four listed here
+ * are facts about the install that no retry can change without a new install —
+ * so a retry that re-imported the tree would be a retry that could succeed
+ * against tampered bytes.
+ */
+const ENABLE_BLOCKING_FAILURES: ReadonlySet<SystemPluginFailureState> = new Set([
+  'install-failed',
+  'manifest-invalid',
+  'incompatible',
+  'tampered',
+])
 
 interface RuntimePlugin {
   definition: NormalizedDefinition
@@ -52,6 +117,20 @@ interface RuntimePlugin {
   error: string | undefined
   activation: Activation | undefined
   incarnation: number
+  /**
+   * Whether `uninstall` removes the catalog row itself, not just its installed
+   * flag.
+   *
+   * False for everything that was here before this round: a builtin is always
+   * in the catalog (uninstalling it means "do not run it", and the row must
+   * stay so it can be reinstalled), and an adopted ST extension keeps its row
+   * because ST's uninstall keeps the tree too (`st-reinstall.ts:18` — the
+   * artifact and the settings are user data, and the same id arriving again is
+   * a *reinstall*). True only for a row this round's install path created,
+   * where the opposite ruling holds (§6): the tree is deleted, so a row
+   * pointing at a tree that no longer exists would be a lie.
+   */
+  removable: boolean
 }
 
 interface Activation {
@@ -89,16 +168,33 @@ interface RpcRegistrar {
   register(method: string, handler: (params: unknown) => unknown | Promise<unknown>): () => void
 }
 
+const STORED_SOURCES: ReadonlySet<string> = new Set<SystemPluginSource>(['builtin', 'git', 'dev'])
+
+function optionalString(row: Record<string, unknown>, key: string): boolean {
+  return row[key] === undefined || typeof row[key] === 'string'
+}
+
 function validPreference(value: unknown): value is StoredPluginPreference {
   if (value === null || typeof value !== 'object') return false
   const row = value as Record<string, unknown>
-  return typeof row['installed'] === 'boolean' && typeof row['enabled'] === 'boolean'
+  if (typeof row['installed'] !== 'boolean' || typeof row['enabled'] !== 'boolean') return false
+  // The v2 keys are type-checked when present rather than tolerated as
+  // unknown extras. A row whose `treeHash` is a number is not a row with a
+  // missing hash: it is a file this host cannot act on, and reading it as
+  // "no hash recorded" would silently retire the re-verification this version
+  // exists to add.
+  if (row['source'] !== undefined && (typeof row['source'] !== 'string' || !STORED_SOURCES.has(row['source']))) return false
+  for (const key of ['remote', 'commit', 'path', 'treeHash', 'installedAt']) {
+    if (!optionalString(row, key)) return false
+  }
+  return true
 }
 
 function parseStored(value: unknown): StoredSystemPlugins | undefined {
   if (value === null || typeof value !== 'object') return undefined
   const row = value as Record<string, unknown>
-  if (row['version'] !== 1) return undefined
+  const version = row['version']
+  if (typeof version !== 'number' || !READABLE_VERSIONS.has(version)) return undefined
   if (!Number.isSafeInteger(row['revision']) || (row['revision'] as number) < 0) return undefined
   const plugins = row['plugins']
   if (plugins === null || typeof plugins !== 'object' || Array.isArray(plugins)) return undefined
@@ -106,10 +202,22 @@ function parseStored(value: unknown): StoredSystemPlugins | undefined {
     if (!validPreference(preference)) return undefined
   }
   return {
-    version: 1,
+    version: version as 1 | 2,
     revision: row['revision'] as number,
     plugins: plugins as Record<string, StoredPluginPreference>,
   }
+}
+
+function provenanceOf(preference: StoredPluginPreference | undefined): SystemPluginProvenance | undefined {
+  if (preference === undefined) return undefined
+  const provenance: SystemPluginProvenance = {
+    ...(preference.remote !== undefined ? { remote: preference.remote } : {}),
+    ...(preference.commit !== undefined ? { commit: preference.commit } : {}),
+    ...(preference.path !== undefined ? { path: preference.path } : {}),
+    ...(preference.treeHash !== undefined ? { treeHash: preference.treeHash } : {}),
+    ...(preference.installedAt !== undefined ? { installedAt: preference.installedAt } : {}),
+  }
+  return Object.keys(provenance).length === 0 ? undefined : provenance
 }
 
 /**
@@ -130,6 +238,23 @@ export class SystemPluginRuntime {
   readonly #defaultEnabled: ReadonlySet<string>
   readonly #persisted = new Map<string, StoredPluginPreference>()
   readonly #leases = new Map<string, { count: number, waiters: Set<() => void> }>()
+  /**
+   * Ids that came from the constructor's definition list — the bundled ones.
+   *
+   * Kept as its own set rather than inferred later, because "was this id here
+   * before anything was adopted?" stops being answerable the moment the boot
+   * scan starts adopting. It answers two questions: which rows a v1→v2 upgrade
+   * may honestly stamp `source: 'builtin'`, and which ids the install path
+   * refuses at confirm (§12 ruling 5).
+   */
+  readonly #builtinIds = new Set<string>()
+  /**
+   * The named failure on a row, when it has one. Not persisted: every one of
+   * the six states is re-derived at boot from the tree and the record, and a
+   * stored failure would be a claim about bytes that may since have been
+   * fixed.
+   */
+  readonly #failures = new Map<string, SystemPluginFailure>()
   #revision = 0
   #queue: Promise<void> = Promise.resolve()
   #initialized = false
@@ -162,7 +287,9 @@ export class SystemPluginRuntime {
         error: undefined,
         activation: undefined,
         incarnation: 0,
+        removable: false,
       })
+      this.#builtinIds.add(raw.id)
     }
   }
 
@@ -175,7 +302,7 @@ export class SystemPluginRuntime {
    * runtime install can race safely.
    * @returns true when the definition was adopted, false when it already existed.
    */
-  adoptDefinition(raw: SystemPluginDefinition, options: { installed: boolean }): boolean {
+  adoptDefinition(raw: SystemPluginDefinition, options: { installed: boolean, removable?: boolean }): boolean {
     if (this.#plugins.has(raw.id)) return false
     if (raw.id.length === 0 || raw.id.length > 200) {
       throw new TypeError('system plugin ids must contain 1 to 200 characters')
@@ -191,11 +318,120 @@ export class SystemPluginRuntime {
       error: undefined,
       activation: undefined,
       incarnation: 0,
+      removable: options.removable ?? false,
     })
     if (!this.#persisted.has(raw.id)) {
       this.#persisted.set(raw.id, { installed: options.installed, enabled: false })
     }
     return true
+  }
+
+  /** Whether this id came from the constructor's definition list. */
+  isBuiltin(id: string): boolean {
+    return this.#builtinIds.has(id)
+  }
+
+  /** Every id the catalog currently holds, builtin or adopted. */
+  ids(): string[] {
+    return [...this.#plugins.keys()]
+  }
+
+  /**
+   * Every persisted row that records where its bytes came from, whether or not
+   * the catalog currently holds a definition for it.
+   *
+   * The boot scan reads *this*, not `ids()`, and the difference is the whole
+   * point: after `initialize` the catalog holds only the bundled definitions,
+   * while the file holds a row for every package installed in earlier runs.
+   * Iterating the catalog would have scanned nothing and reported nothing —
+   * a plugin plane that silently forgot every installed package, with no error
+   * anywhere, because the loop it was in was empty.
+   */
+  recordedInstalls(): { id: string, record: InstalledPluginRecord, enabled: boolean }[] {
+    const rows: { id: string, record: InstalledPluginRecord, enabled: boolean }[] = []
+    for (const [id, preference] of this.#persisted) {
+      const record = this.record(id)
+      if (record === undefined || record.source === 'builtin') continue
+      rows.push({ id, record, enabled: preference.installed && preference.enabled })
+    }
+    return rows
+  }
+
+  /** The stored provenance of one row, as the boot scan and the install path read it. */
+  record(id: string): InstalledPluginRecord | undefined {
+    const preference = this.#persisted.get(id)
+    if (preference?.source === undefined) return undefined
+    return {
+      source: preference.source,
+      ...(preference.remote !== undefined ? { remote: preference.remote } : {}),
+      ...(preference.commit !== undefined ? { commit: preference.commit } : {}),
+      ...(preference.path !== undefined ? { path: preference.path } : {}),
+      ...(preference.treeHash !== undefined ? { treeHash: preference.treeHash } : {}),
+      ...(preference.installedAt !== undefined ? { installedAt: preference.installedAt } : {}),
+    }
+  }
+
+  /**
+   * Adopt a definition that came from an installed package tree, together with
+   * where its bytes came from.
+   *
+   * The provenance is written to `system-plugins.json` in the same transition
+   * that adds the row, so a catalog row and the record that lets a later boot
+   * re-verify it can never be one write apart. `enabled` is false and stays
+   * false: installing is not enabling, which is the invariant the lock record
+   * states for itself (`packages/iris-extension-installer/src/lock.ts:71`).
+   */
+  adoptInstalled(raw: SystemPluginDefinition, record: InstalledPluginRecord): Promise<SystemPluginSnapshot> {
+    return this.#serialize(async () => {
+      this.#assertWritable()
+      if (this.#plugins.has(raw.id)) {
+        throw new AppError('invalid-request', `system plugin "${raw.id}" is already in this profile's catalog`)
+      }
+      this.adoptDefinition(raw, { installed: true, removable: true })
+      const plugin = this.#require(raw.id)
+      const before = this.#persisted.get(raw.id)
+      this.#persisted.set(raw.id, { installed: true, enabled: false, ...record })
+      const revision = this.#revision + 1
+      try {
+        await this.#write(revision)
+      } catch (error: unknown) {
+        this.#plugins.delete(raw.id)
+        if (before === undefined) this.#persisted.delete(raw.id)
+        else this.#persisted.set(raw.id, before)
+        throw new AppError(
+          'internal',
+          `system plugin "${raw.id}" could not be recorded: ${messageOf(error)}`,
+        )
+      }
+      this.#revision = revision
+      plugin.installed = true
+      plugin.enabled = false
+      plugin.status = 'disabled'
+      this.#notify()
+      return this.snapshot()
+    })
+  }
+
+  /**
+   * Put a named failure on a row and stop it running.
+   *
+   * The six states are the whole vocabulary (§1 goal 4): a plugin that cannot
+   * run is a row the user can see and act on, never a log line and never a
+   * crash. Four of them also make `enable` a refusal — see
+   * `ENABLE_BLOCKING_FAILURES` for which and why.
+   */
+  markFailure(id: string, failure: SystemPluginFailure): void {
+    const plugin = this.#require(id)
+    this.#failures.set(id, failure)
+    plugin.enabled = false
+    plugin.status = 'error'
+    plugin.error = `${failure.state}: ${failure.reason}`
+    this.#notify()
+  }
+
+  /** The named failure on a row, if it has one. */
+  failure(id: string): SystemPluginFailure | undefined {
+    return this.#failures.get(id)
   }
 
   /** Load profile preferences and activate the persisted enabled set. */
@@ -241,13 +477,28 @@ export class SystemPluginRuntime {
       for (const [id, preference] of Object.entries(stored?.plugins ?? {})) {
         this.#persisted.set(id, { ...preference })
       }
+      // v1 → v2, in place. §6 words it as "every row gains
+      // `source: "builtin"`"; only the rows this build actually registered as
+      // builtins get it here, because a v1 file can also hold rows for adopted
+      // ST extensions, and stamping those `builtin` would put a claim about
+      // where bytes came from into the one field that exists to answer that
+      // question. Those rows keep no `source`, which is what "this host has no
+      // provenance for this row" is spelled as — the boot scan fills it in if
+      // it finds a tree, and the field is optional precisely so that absent
+      // stays sayable. Recorded in DEVIATIONS §80.
+      if (stored?.version === 1) {
+        for (const [id, preference] of this.#persisted) {
+          if (this.#builtinIds.has(id)) this.#persisted.set(id, { ...preference, source: 'builtin' })
+        }
+      }
       for (const [id, plugin] of this.#plugins) {
         const preference = stored?.plugins[id]
           ?? { installed: this.#defaultEnabled.has(id), enabled: this.#defaultEnabled.has(id) }
         plugin.installed = preference.installed
         plugin.enabled = preference.installed && preference.enabled
         plugin.status = plugin.installed ? 'disabled' : 'not-installed'
-        this.#persisted.set(id, { installed: plugin.installed, enabled: plugin.enabled })
+        this.#remember(id, { installed: plugin.installed, enabled: plugin.enabled })
+        if (this.#builtinIds.has(id)) this.#remember(id, { source: 'builtin' })
       }
 
       // A persisted boot increment prevents a surviving old frame from sharing
@@ -272,7 +523,7 @@ export class SystemPluginRuntime {
           plugin.enabled = false
           plugin.status = 'error'
           plugin.error = `system plugin "${plugin.definition.id}" could not start: ${messageOf(error)}`
-          this.#persisted.set(plugin.definition.id, { installed: plugin.installed, enabled: false })
+          this.#remember(plugin.definition.id, { installed: plugin.installed, enabled: false })
           await this.#persistFailure(plugin, error)
         }
       }
@@ -297,7 +548,7 @@ export class SystemPluginRuntime {
           plugin.enabled = false
           plugin.status = 'error'
           plugin.error = reason.message
-          this.#persisted.set(plugin.definition.id, {
+          this.#remember(plugin.definition.id, {
             installed: plugin.installed,
             enabled: false,
           })
@@ -323,18 +574,29 @@ export class SystemPluginRuntime {
   snapshot(): SystemPluginSnapshot {
     return {
       revision: this.#revision,
-      plugins: [...this.#plugins.values()].map(plugin => ({
-        id: plugin.definition.id,
-        name: plugin.definition.name,
-        description: plugin.definition.description,
-        version: plugin.definition.version,
-        apiVersion: 1,
-        dependencies: [...plugin.definition.dependencies],
-        installed: plugin.installed,
-        enabled: plugin.enabled,
-        status: plugin.status,
-        ...plugin.error === undefined ? {} : { error: plugin.error },
-      })),
+      plugins: [...this.#plugins.values()].map(plugin => {
+        const stored = this.#persisted.get(plugin.definition.id)
+        const provenance = provenanceOf(stored)
+        const failure = this.#failures.get(plugin.definition.id)
+        return {
+          id: plugin.definition.id,
+          name: plugin.definition.name,
+          description: plugin.definition.description,
+          version: plugin.definition.version,
+          apiVersion: 1,
+          dependencies: [...plugin.definition.dependencies],
+          installed: plugin.installed,
+          enabled: plugin.enabled,
+          status: plugin.status,
+          ...plugin.error === undefined ? {} : { error: plugin.error },
+          // The three optional fields of PR-2. Omitted rather than set to
+          // undefined, so a row with no provenance serializes to exactly the
+          // bytes it serialized to before this round.
+          ...stored?.source === undefined ? {} : { source: stored.source },
+          ...provenance === undefined ? {} : { provenance },
+          ...failure === undefined ? {} : { failure: { ...failure } },
+        }
+      }),
     }
   }
 
@@ -421,6 +683,24 @@ export class SystemPluginRuntime {
       this.#assertWritable()
       const target = this.#require(id)
       if (this.isEnabled(id)) return this.snapshot()
+      // A named install-path failure is refused here rather than attempted: a
+      // `tampered` row whose enable re-imported the tree would be an enable
+      // that can succeed against bytes the hash record disagrees with, which
+      // is the one thing the hash record exists to stop. The refusal names the
+      // state so the interface can offer the right next step (§8).
+      for (const blocked of this.#enableOrderSafe(id)) {
+        const failure = this.#failures.get(blocked)
+        if (failure !== undefined && ENABLE_BLOCKING_FAILURES.has(failure.state)) {
+          throw new AppError(
+            'unsupported',
+            `system plugin "${blocked}" is ${failure.state} and cannot be enabled: ${failure.reason}`,
+          )
+        }
+      }
+      // The two retryable states are cleared by the attempt itself: the author
+      // fixed the file, the row gets a fresh verdict rather than inheriting the
+      // last one.
+      this.#failures.delete(id)
       const order = this.#enableOrder(id)
       const prior = new Map(order.map(plugin => [plugin.definition.id, {
         installed: plugin.installed,
@@ -498,7 +778,32 @@ export class SystemPluginRuntime {
       const plugin = this.#require(id)
       this.#refuseEnabledDependents(plugin, 'uninstall')
       if (this.isEnabled(id)) await this.#disableOne(plugin, 'uninstall')
-      if (!plugin.installed) return this.snapshot()
+      if (!plugin.installed && !plugin.removable) return this.snapshot()
+      if (plugin.removable) {
+        // The row itself goes, not just its installed flag. The caller deletes
+        // the tree (§6: a plugin tree holds no user data, and one left on disk
+        // after the user believes they removed it is a same-privilege code
+        // tree they have stopped watching) — so a row that stayed would point
+        // at nothing and would also keep the id occupied against a reinstall.
+        const before = this.#persisted.get(id)
+        this.#plugins.delete(id)
+        this.#persisted.delete(id)
+        this.#failures.delete(id)
+        const revision = this.#revision + 1
+        try {
+          await this.#write(revision)
+        } catch (error: unknown) {
+          this.#plugins.set(id, plugin)
+          if (before !== undefined) this.#persisted.set(id, before)
+          throw new AppError(
+            'internal',
+            `system plugin "${plugin.definition.name}" state could not be saved: ${messageOf(error)}`,
+          )
+        }
+        this.#revision = revision
+        this.#notify()
+        return this.snapshot()
+      }
       await this.#commit(plugin, { installed: false, enabled: false, status: 'not-installed' })
       return this.snapshot()
     })
@@ -569,13 +874,14 @@ export class SystemPluginRuntime {
       plugin.enabled = true
       plugin.status = 'enabled'
       plugin.error = undefined
-      this.#persisted.set(plugin.definition.id, { installed: true, enabled: true })
+      this.#failures.delete(plugin.definition.id)
+      this.#remember(plugin.definition.id, { installed: true, enabled: true })
     } catch (error: unknown) {
       await this.#disposeActivation(plugin)
       plugin.enabled = false
       plugin.status = 'error'
       plugin.error = `system plugin "${plugin.definition.id}" could not start: ${messageOf(error)}`
-      this.#persisted.set(plugin.definition.id, { installed: true, enabled: false })
+      this.#remember(plugin.definition.id, { installed: true, enabled: false })
       throw error
     }
   }
@@ -688,6 +994,27 @@ export class SystemPluginRuntime {
     if (activation.disposalError !== undefined) throw activation.disposalError
   }
 
+  /**
+   * The ids an enable of `id` would touch, without the opinions `#enableOrder`
+   * has about cycles and missing rows.
+   *
+   * Separate because the failure check runs *before* the ordering: a row
+   * blocked by a `tampered` dependency must be refused by that name, not by a
+   * cycle error the ordering happened to hit first.
+   */
+  #enableOrderSafe(id: string): string[] {
+    const seen = new Set<string>()
+    const walk = (current: string): void => {
+      if (seen.has(current)) return
+      seen.add(current)
+      const plugin = this.#plugins.get(current)
+      if (plugin === undefined) return
+      for (const dependency of plugin.definition.dependencies) walk(dependency)
+    }
+    walk(id)
+    return [...seen]
+  }
+
   #enableOrder(id: string): RuntimePlugin[] {
     const result: RuntimePlugin[] = []
     const visited = new Set<string>()
@@ -750,7 +1077,12 @@ export class SystemPluginRuntime {
     const enabled = installed && (change.enabled ?? plugin.enabled)
     const revision = this.#revision + 1
     const before = this.#persisted.get(plugin.definition.id)
-    this.#persisted.set(plugin.definition.id, { installed, enabled })
+    // The provenance keys ride through every lifecycle transition untouched.
+    // Spreading `before` first is what makes an enable/disable a change to two
+    // booleans rather than a silent erasure of where the bytes came from — and
+    // the erasure would be invisible until the next boot declined to
+    // re-verify a row it no longer knew was a `git` row.
+    this.#persisted.set(plugin.definition.id, { ...before, installed, enabled })
     try {
       await this.#write(revision)
     } catch (error: unknown) {
@@ -766,7 +1098,17 @@ export class SystemPluginRuntime {
     plugin.enabled = enabled
     plugin.status = change.status ?? (installed ? (enabled ? 'enabled' : 'disabled') : 'not-installed')
     plugin.error = undefined
+    // A committed transition clears the free-text error; the typed failure
+    // beside it has to go with it, or the row would carry a `failure.state`
+    // under a `status` that says everything is fine.
+    this.#failures.delete(plugin.definition.id)
     this.#notify()
+  }
+
+  /** Update the two lifecycle booleans (or a provenance key) without erasing the rest of the row. */
+  #remember(id: string, patch: Partial<StoredPluginPreference>): void {
+    const before = this.#persisted.get(id) ?? { installed: false, enabled: false }
+    this.#persisted.set(id, { ...before, ...patch })
   }
 
   async #setFailure(plugin: RuntimePlugin, error: unknown): Promise<void> {
@@ -774,7 +1116,7 @@ export class SystemPluginRuntime {
     plugin.enabled = false
     plugin.status = 'error'
     plugin.error = reason
-    this.#persisted.set(plugin.definition.id, { installed: plugin.installed, enabled: false })
+    this.#remember(plugin.definition.id, { installed: plugin.installed, enabled: false })
     try {
       const revision = this.#revision + 1
       await this.#write(revision)
@@ -801,7 +1143,7 @@ export class SystemPluginRuntime {
   async #write(revision: number): Promise<void> {
     const plugins: Record<string, StoredPluginPreference> = Object.create(null)
     for (const [id, preference] of this.#persisted) plugins[id] = { ...preference }
-    const stored: StoredSystemPlugins = { version: 1, revision, plugins }
+    const stored: StoredSystemPlugins = { version: STORED_VERSION, revision, plugins }
     await this.#writePreferences(this.#file, `${JSON.stringify(stored, null, 2)}\n`)
   }
 

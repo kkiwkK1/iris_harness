@@ -20,7 +20,7 @@ import { lookupRequestSchema } from './rpc-registry.ts'
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
 import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
-import type { SystemPluginSnapshot } from './system-plugins.ts'
+import type { SystemPluginInstallPreview, SystemPluginSnapshot } from './system-plugins.ts'
 // —— family①: identity & messages ——
 import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
 
@@ -241,6 +241,27 @@ const userScriptRequest = z.looseObject({
   }).optional(),
 })
 
+/**
+ * The install path's id grammar, on the wire.
+ *
+ * Deliberately **stricter** than the `min(1).max(200)` the six lifecycle
+ * methods use, and deliberately not a replacement for it. An id that arrives
+ * through `plugin.confirmInstall` is about to become a directory name under
+ * `<profile>/system-plugins/installed/`, a URL segment under
+ * `/plugins/<id>/client.js` and the catalog's primary key, and the one rule in
+ * the tree that takes responsibility for the first of those is the installer's
+ * `EXTENSION_ID_RE` (`packages/iris-extension-installer/src/lock.ts:28`). The
+ * six existing methods keep their loose bound because they also address rows
+ * that were adopted, not installed — an ST extension's slug, a builtin — and
+ * tightening a live wire schema would be a compatibility break with nothing to
+ * gain: the strict rule belongs where a filesystem path is minted.
+ */
+const PLUGIN_PACKAGE_ID = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/u)
+/** A full 40-hex commit. A moving ref would make the recorded provenance a lie. */
+const PLUGIN_GIT_COMMIT = z.string().regex(/^[0-9a-f]{40}$/u)
+/** The canonical tree hash `hashTree` produces. */
+const PLUGIN_TREE_HASH = z.string().regex(/^[0-9a-f]{64}$/u)
+
 /** Runtime schemas for every request body, keyed by method. */
 export const requestSchemas = {
   'plugin.list': z.object({}),
@@ -249,6 +270,58 @@ export const requestSchemas = {
   'plugin.enable': z.object({ id: z.string().min(1).max(200) }),
   'plugin.disable': z.object({ id: z.string().min(1).max(200) }),
   'plugin.reload': z.object({ id: z.string().min(1).max(200) }),
+  /**
+   * Stage a package and stop, so the user can be shown what they are about to
+   * run before a byte of it is imported (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.1).
+   *
+   * Nothing from the package executes in this method: the tree is materialized
+   * into staging, its `package.json` read, its bytes hashed, and the
+   * transaction parked at the installer's existing `hashed` phase.
+   */
+  'plugin.previewInstall': z.object({
+    source: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('git'), remote: z.string().min(1).max(2000), commit: PLUGIN_GIT_COMMIT }),
+      z.object({ kind: z.literal('dev'), path: z.string().min(1).max(1000) }),
+    ]),
+  }),
+  /**
+   * Promote a staged package the user has consented to.
+   *
+   * Every field but the token is an **echo** of what the preview showed, and
+   * the host compares each one against the transaction record it already holds
+   * — never against a fresh fetch. That is what makes a stale consent
+   * unusable: if the staged tree moved, or the preview named a different
+   * commit, the echo no longer matches the record and the whole transaction is
+   * refused and discarded. `commit` is `null` for a `dev` source, which has
+   * none, rather than absent, so an omitted field cannot pass for "no commit
+   * required".
+   */
+  'plugin.confirmInstall': z.object({
+    previewToken: z.string().min(1).max(200),
+    id: PLUGIN_PACKAGE_ID,
+    commit: PLUGIN_GIT_COMMIT.nullable(),
+    treeHash: PLUGIN_TREE_HASH,
+  }),
+  /**
+   * Abandon a preview and delete its staging.
+   *
+   * Without it an abandoned consent page would leave staging and a claim for
+   * the crash-recovery scan (`packages/iris-extension-installer/src/recovery.ts:46`)
+   * to collect, and that scan is a crash mechanism, not a normal exit path.
+   */
+  'plugin.cancelInstall': z.object({ previewToken: z.string().min(1).max(200) }),
+  /**
+   * **Reserved, not implemented** (§12 ruling 2, 2026-09-15).
+   *
+   * The owner ruled that the method name and its request shape exist now —
+   * so a client can be written against the shape the update transaction will
+   * have, and so the shape is decided once rather than under deadline — while
+   * this round's update path stays "uninstall, then install again through the
+   * full consent step". The handler and the fake both refuse with
+   * `unsupported`, naming the ruling; there is no half-built promotion behind
+   * it.
+   */
+  'plugin.update': z.object({ id: PLUGIN_PACKAGE_ID, commit: PLUGIN_GIT_COMMIT }),
   /** The ST-compat plane reports an extension frame is live at this revision. */
   'stCompat.plane.attach': z.object({ extensionId: z.string().min(1).max(200), pluginRevision: z.number().int().nonnegative(), chatId: z.string().min(1).max(200).optional() }),
   /** The plane went away (frame rebuilt, page closed, extension disabled). */
@@ -2324,6 +2397,18 @@ export interface RpcResponseMap {
   'plugin.enable': SystemPluginSnapshot
   'plugin.disable': SystemPluginSnapshot
   'plugin.reload': SystemPluginSnapshot
+  'plugin.previewInstall': SystemPluginInstallPreview
+  'plugin.confirmInstall': SystemPluginSnapshot
+  'plugin.cancelInstall': { ok: true }
+  /**
+   * The shape the reserved update transaction will answer with when it is
+   * built — the same snapshot every other lifecycle method returns, because
+   * an update changes one catalog row and nothing else. Today the handler
+   * always refuses, so nothing ever produces this value; it is typed anyway,
+   * because a reserved slot whose response type was `never` would be a slot
+   * no client could be written against, which is the opposite of reserving it.
+   */
+  'plugin.update': SystemPluginSnapshot
   'stCompat.plane.attach': { ok: true }
   'stCompat.plane.detach': { ok: true }
   'stCompat.submit': { accepted: boolean, why?: string }

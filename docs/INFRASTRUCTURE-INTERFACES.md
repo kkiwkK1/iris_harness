@@ -105,9 +105,30 @@ capability 在实现中使用 `iris.system-plugin:<id>:<name>` 服务名。插�
 | `plugin.enable` | `{ id }` | 按依赖顺序安装/启用所需项 |
 | `plugin.disable` | `{ id }` | 关闭入口、排空、释放；存在启用的依赖方则拒绝 |
 | `plugin.reload` | `{ id }` | 实际释放并重新激活；存在启用的依赖方则拒绝 |
-| `plugin.uninstall` | `{ id }` | 移除本 profile 的安装状态；保留业务数据 |
+| `plugin.uninstall` | `{ id }` | 移除本 profile 的安装状态；内置行与 ST 接纳行保留业务数据与安装树，本轮装进来的插件包行**整行移除并删树**（见下） |
 
 六个方法均返回 `SystemPluginSnapshot = { revision, plugins }`。每项含 `id/name/description/version/apiVersion/dependencies/installed/enabled/status/error?`；status 为 `not-installed | disabled | enabling | enabled | disabling | error`。
+
+**安装路径另有四个方法**（PR-2，[SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §5）。形状权威在
+`packages/iris-protocol/src/rpc.ts` 的 `requestSchemas` 与
+`packages/iris-protocol/src/system-plugins.ts` 的 `SystemPluginInstallPreview`：
+
+| 方法 | 参数 | 返回 / 行为 |
+| --- | --- | --- |
+| `plugin.previewInstall` | `{ source: { kind:'git', remote, commit } \| { kind:'dev', path } }` | `SystemPluginInstallPreview`：把树装进 staging、审计、算哈希、读清单，**停在安装器既有的 `hashed` 阶段**；不 import 包里任何东西 |
+| `plugin.confirmInstall` | `{ previewToken, id, commit \| null, treeHash }` | `SystemPluginSnapshot`；每个字段都是 preview 的回带，逐条与**事务记录**比对（绝不重新拉取），任何一条不符即 `install-failed` 并丢弃整个事务 |
+| `plugin.cancelInstall` | `{ previewToken }` | `{ ok: true }`；删 staging。未知 token 不是错误 |
+| `plugin.update` | `{ id, commit }` | **预留未实现**（该文 §12 裁决 2）：宿主与 fake 都答 `unsupported`，消息点名裁决与「卸载后重装」这条替代路径 |
+
+`SystemPluginView` 因此多了三个**可选**字段，既有九个字段、六值 `status` 与 `error?: string` 一个没动：
+`source?: 'builtin'|'git'|'dev'`、`provenance?: { remote?, commit?, path?, treeHash?, installedAt? }`、
+`failure?: { state, field?, step?, reason }`，其中 `state` 是六值闭合集
+`install-failed | manifest-invalid | incompatible | tampered | load-failed | activate-failed`；
+`failure` 是对 `status: 'error'` 的**细化**而不是替代。
+
+宿主未配置安装路径（`AppServiceOptions.pluginInstaller` 缺席）时，前三个方法经 `requirePluginInstaller()`
+答 `unsupported`，`plugin.update` 照样答 `unsupported`（它与配置无关），而 `plugin.uninstall` 保持本轮
+之前的行为一字不变。
 
 ST 兼容面另有五个方法，形状见 `packages/iris-protocol/src/rpc.ts:252` 起：
 
@@ -148,11 +169,13 @@ ST 兼容面另有五个方法，形状见 `packages/iris-protocol/src/rpc.ts:25
 
 类型层：`AnyRpcMethod = RpcMethod | (string & {})`；`RpcMethod` 本身不扩，`RpcResponseMap` 与穷尽守卫不动；动态方法的 params/响应类型为 `unknown`（注册处的 schema 即其类型）。fake 的 `FakeSystemPlugins`（`packages/iris-client-fake/src/plugins.ts`）复刻目录、依赖、成环与被依赖拒绝规则并广播 `plugins.changed`；静态 switch 末尾的 `never` 穷尽守卫原样保留（`packages/iris-client-fake/src/client.ts:1960`）。
 
-行为测试：[rpc-registry.test.ts](../packages/iris-protocol/tests/rpc-registry.test.ts)、[system-plugin-rpc.test.ts](../packages/iris-app-service/tests/system-plugin-rpc.test.ts)、[rpc-transport.test.ts](../apps/iris/tests/rpc-transport.test.ts)、[plugin-methods.test.ts](../packages/iris-client-fake/tests/plugin-methods.test.ts)、[system-plugins.test.ts](../packages/iris-client-fake/tests/system-plugins.test.ts)。
+行为测试：[rpc-registry.test.ts](../packages/iris-protocol/tests/rpc-registry.test.ts)、[system-plugin-rpc.test.ts](../packages/iris-app-service/tests/system-plugin-rpc.test.ts)、[rpc-transport.test.ts](../apps/iris/tests/rpc-transport.test.ts)、[plugin-methods.test.ts](../packages/iris-client-fake/tests/plugin-methods.test.ts)、[system-plugins.test.ts](../packages/iris-client-fake/tests/system-plugins.test.ts)。安装路径另有：[plugin-install.test.ts](../packages/iris-app-service/tests/plugin-install.test.ts)（真实包、真实本地 git 仓库，走完 preview → confirm → enable → disable → uninstall，含篡改、过期同意、六个失败状态与 v1→v2 升级）、[plugin-install-rpc.test.ts](../packages/iris-app-service/tests/plugin-install-rpc.test.ts)（schema 在前、handler 在后的那一对）、[plugin-install.test.ts](../packages/iris-client-fake/tests/plugin-install.test.ts)（fake 侧同一套握手）、[staged-install.test.ts](../packages/iris-extension-installer/tests/staged-install.test.ts)（安装器的 `stage`/`promote`/`discard` 两段式）。
 
 ## 4. 业务 RPC 目录（完整方法名索引）
 
-本次从 `requestSchemas` 提取 **133 个方法**（main 原有 122 + plugin 6 + stCompat 4 + stExtension 1）。这是宿主**静态**线协议数量，不是 ST API 覆盖率，也不表示卡片可以调用全部方法；系统插件经 `scope.registerRpc` 登记的运行期方法不在此表（数量随启停变化，权威在协议注册表与运输层 handler 表，都不在文档）。参数权威为 rpc.ts 的 `requestSchemas`，响应权威为 `RpcResponseMap`；不在文档维护第二份容易漂移的 schema。
+本次从 `requestSchemas` 提取 **137 个方法**（main 原有 122 + plugin 10 + stCompat 4 + stExtension 1）。
+plugin 域从 6 涨到 10 是 PR-2 的四个安装方法（`previewInstall` / `confirmInstall` / `cancelInstall` /
+预留未实现的 `update`）。这是宿主**静态**线协议数量，不是 ST API 覆盖率，也不表示卡片可以调用全部方法；系统插件经 `scope.registerRpc` 登记的运行期方法不在此表（数量随启停变化，权威在协议注册表与运输层 handler 表，都不在文档）。参数权威为 rpc.ts 的 `requestSchemas`，响应权威为 `RpcResponseMap`；不在文档维护第二份容易漂移的 schema。
 
 计数口径：`requestSchemas` 对象字面量里的全部顶层键。注意 `stCompat.plane.attach` / `stCompat.plane.detach` 是**三段**方法名，只按「域.方法」两段 grep 会漏掉这两个、得到 131。
 
@@ -166,7 +189,7 @@ ST 兼容面另有五个方法，形状见 `packages/iris-protocol/src/rpc.ts:25
 | connection | 5 | list, save, delete, activate, test |
 | debug | 1 | reports |
 | persona | 4 | list, get, set, delete |
-| plugin | 6 | list, install, uninstall, enable, disable, reload |
+| plugin | 10 | list, install, uninstall, enable, disable, reload, previewInstall, confirmInstall, cancelInstall, update |
 | preset | 12 | list, select, view, setEnabled, move, upsertPrompt, removePrompt, save, delete, read, import, importFile |
 | prompt | 2 | itemize, divergence |
 | regex | 11 | list, set, scopedList, setScopedAllowed, setScopedEnabled, presetList, setPresetAllowed, setPresetEnabled, tavernList, tavernReplace, tavernFormat |
@@ -266,7 +289,8 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | ST 扩展设置 | `StExtensionSettingsStore` | 每扩展一份原子 JSON，落在 `<profile>/st-extension-settings/<key>.json`（`packages/iris-app-service/src/index.ts:791`）；写口是 `stCompat.settings`，revision 过期或缺失就拒绝 |
 | 原子写 | `atomic.ts`: atomicWriteFile、readJsonStore、quarantine* | app-service 内部基础设施；**不是**已发布插件存储 API |
 | profile 互斥 | `host-lock.ts`: acquireHostLock | 每份数据目录只运行一个宿主，无绕过开关 |
-| 插件偏好 | profile 内 `system-plugins.json` | runtime 独占写入；管理操作保持原子持久化 |
+| 插件偏好 | profile 内 `system-plugins.json` | runtime 独占写入；管理操作保持原子持久化。**v2**（PR-2）：每行除 `installed`/`enabled` 外可带 `source`（`builtin`/`git`/`dev`）、`remote`、`commit`、`path`、`treeHash`、`installedAt`；读 v1 就地升级（只给本次构建自己的内置定义补 `source: 'builtin'`），读到别的版本号走既有的「全体停摆、保留原文件、全部置 `error`」路径 |
+| 系统插件包安装树 | profile 内 `system-plugins/`（`paths.ts` 的 `systemPluginPackages`） | 安装器布局 `staging/ claims/ installed/<id>/`，与 ST 的 `st-extensions/` **分开**（artifact 契约不同、id 命名空间不同）。只有 `git` 源的树在这里；`dev` 源就地加载用户自己的目录，卸载绝不碰它。**与 `<dataDir>/system-plugins/` 同名不同层**——后者是浏览器资产根（`plugin-assets.ts:117`），只放 `<id>/client/client.js`，两个常量的注释互相指向 |
 | 生成与记账 | `service.ts` 既有生成路径 | 必须保留预算、取消、用量、错误及落盘链；**未提供**通用插件生成 hook |
 | 用户脚本存储 | `storage.*` RPC | 卡脚本现有存储，不是系统插件通用 namespace |
 
@@ -321,7 +345,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | `expandHelperMacros` 走 `registerMacroLike` | 未做：`packages/iris-app-service/src/entry.ts` 里仍是第二遍宏扫描（[PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §7 阶段 0 的遗留项） | 接线即可，等 `entry.ts` 不再被重写 |
 | 普查脚本改口径 | 未做 | 给普查一个不依赖文件位置的输入 |
 | 可发布契约包 | 未做：`@iris/plugin-api` 与 `@iris/plugin-web-api` 都是 `private: true`、`0.0.0`、`exports` 指向 `./src/*.ts` | 构建 JS 与声明入口、peer 依赖策略、apiVersion 兼容承诺、验证安装后的真实 exports、避免带入第二份 Cordis 实例、包外消费者测试 |
-| 系统插件的包外安装路径 | 未做：一个 Node 系统插件必须出现在 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS` 里，或者以 ST 扩展身份经 `adoptDefinition` 进来；**没有** npm 名/Git URL 装系统插件的路。设计稿见 [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md)，**提案，五问已于 2026-09-15 裁决**（该文 §12），其中 PR-1 已落地（安装器 artifact 契约注入点 `ArtifactContract`、系统插件清单契约 `parsePluginManifest`），**安装路径本身仍未做** | 插件发现、资产、贡献注册与版本撤回机制一起定 |
+| 系统插件的包外安装路径 | **PR-1 与 PR-2 已落地，PR-3（PluginCenter UI）未做**：一个 Node 系统插件包可以经 `plugin.previewInstall` / `plugin.confirmInstall` 从 https git 远端（钉完整 commit）或本地 `dev` 目录装进某个 profile，走 §3 那四个方法与 §6 的 `system-plugins.json` v2；开机对 `git` 行重算 `hashTree` 并在不符时以 `tampered` 拒绝激活；六个失败状态都落在 `plugin.list` 的行上。**没有** npm 名/任意 tarball 的路，也**没有更新事务**（`plugin.update` 预留未实现，本轮更新路径是卸载后重装）。**缺的是 UI**：安装入口、同意页、`source` 徽标、六个状态的中英文案、按 `source` 分叉的卸载文案，全部在 [SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §8 里，仍是设计 | PR-3：同意页显示 §5.1 返回的每个字段、双语齐全、键盘可达、`dev` 徽标、浏览器验收证据落进 `notes/` |
 | per-plugin 帧 CSP | **不需要**：bundle 与帧同源（`selfOrigin` 已在 `script-src` 里），没有第二个远端要开 | —— |
 | 信任模型的文档 | **已由实践确定、但未成文**：系统插件是与宿主同权的 Node 代码；ST 扩展代码跑在沙盒 iframe，卡片侧只经 tokened 成员代理触达。两条不同的线共用一个控制面 | 写进 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md)：同权插件的安装源约束（对照 [PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §8 问题 1 的「哈希锁定 vs 任意 git clone」） |
 

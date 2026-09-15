@@ -70,6 +70,7 @@ import { ScriptLibraryStore } from './script-library.ts'
 import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 import { SystemPluginRuntime } from './system-plugins.ts'
+import { SystemPluginInstallService } from './plugins/install.ts'
 import { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
 import { PLUGIN_ASSET_PREFIX } from '@iris/plugin-web-api'
 
@@ -87,12 +88,20 @@ export {
 export { ChatStore, formatCreateDate, seedGreeting } from './chats.ts'
 export {
   SystemPluginRuntime,
+  type InstalledPluginRecord,
   type SystemPluginActivationScope,
   type SystemPluginDefinition,
   type SystemPluginLease,
   type SystemPluginRuntimeOptions,
 } from './system-plugins.ts'
-export { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
+export {
+  PLUGIN_TREE_LIMITS,
+  SystemPluginInstallError,
+  SystemPluginInstallService,
+  type PluginInstallSource,
+  type SystemPluginInstallOptions,
+} from './plugins/install.ts'
+export { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS, MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from './plugins/builtins.ts'
 export type { SystemPluginCapabilities } from './plugins/capabilities.ts'
 export { createTavernHelperCapability, type TavernHelperCapability } from './plugins/tavern-helper.ts'
 export { createMvuCapability, type MvuCapability } from './plugins/mvu.ts'
@@ -782,6 +791,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   await systemPlugins.initialize()
 
+  // ---- Installed system-plugin packages (PR-2) ----------------------------
+  // The install path and the boot scan that gives every recorded row a verdict
+  // before a request can name it. The scan runs before the ST adoption below
+  // for one reason that matters: both write catalog rows, and a package that
+  // was installed under an id an ST extension would also slugify to must lose
+  // the race to the one whose bytes were hash-pinned, not to whichever scan
+  // happened to run first.
+  const systemPluginInstaller = new SystemPluginInstallService({
+    runtime: systemPlugins,
+    installRoot: paths.systemPluginPackages,
+    clientAssetRoot: join(dataDir, 'system-plugins'),
+    log: message => { ctx.logger.warn(message) },
+  })
+  await systemPluginInstaller.scanInstalled()
+
   // ---- The ST-compat pilot (P3) ------------------------------------------
   // Installed third-party ST extensions join the runtime here: every directory
   // under installed/ with a valid lock becomes a definition the runtime runs
@@ -1053,6 +1077,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     chats,
     settings,
     plugins: systemPlugins,
+    pluginInstaller: systemPluginInstaller,
     stCompat,
     scripts,
     scriptLibrary,
@@ -1137,6 +1162,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('plugin.enable', handlers['plugin.enable']),
       ctx.irisRpc.register('plugin.disable', handlers['plugin.disable']),
       ctx.irisRpc.register('plugin.reload', handlers['plugin.reload']),
+      ctx.irisRpc.register('plugin.previewInstall', handlers['plugin.previewInstall']),
+      ctx.irisRpc.register('plugin.confirmInstall', handlers['plugin.confirmInstall']),
+      ctx.irisRpc.register('plugin.cancelInstall', handlers['plugin.cancelInstall']),
+      ctx.irisRpc.register('plugin.update', handlers['plugin.update']),
       ctx.irisRpc.register('stCompat.plane.attach', handlers['stCompat.plane.attach']),
       ctx.irisRpc.register('stCompat.plane.detach', handlers['stCompat.plane.detach']),
       ctx.irisRpc.register('stCompat.submit', handlers['stCompat.submit']),

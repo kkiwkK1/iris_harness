@@ -215,6 +215,120 @@ const dispose = slots.core.register(
 
 通用插件 storage/settings namespace 尚未实现（ST 扩展的设置走的是专门的闭包，不是通用接口）。确需持久化的新插件，先定义宿主提供的窄存储接口，经过路径包含性、原子写、损坏保留、profile lock 等约束后再用，不能把 profile 路径暴露给卡片脚本。密钥不得进入普通插件 JSON、日志或快照。
 
+## 安装一个系统插件包
+
+第 2 节的最小宿主插件是**随仓库发行**的（进 `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`）。同一份
+`SystemPluginDefinition` 也可以打成一个**仓库外的包**，从一个 https git 远端或本地开发目录装进某个
+profile，走的是同一套目录、依赖、启停、卸载——不是第二套生命周期。裁决与设计在
+[SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md)；本节是作者视角的操作说明。
+
+**先记住一件事**：系统插件是**与宿主同权的 Node 代码**，`activate` 在宿主进程里拿到宿主的全部触达
+能力。没有沙盒。清单里的 `permissions` 是**声明**，宿主只校验拼写并在同意页展示，它不是宿主强制的
+边界。挡风险的是「代码从哪来」和「用户是否明确同意」。
+
+### 包长什么样
+
+一个目录，根部 `package.json` 带一个 `iris.plugin` 块：
+
+```jsonc
+{
+  "name": "iris-plugin-demo",
+  "version": "0.3.1",
+  "type": "module",
+  "iris": {
+    "plugin": {
+      "id": "demo",                     // [a-z0-9][a-z0-9._-]{0,63}：它会变成目录名和 URL 段
+      "apiVersion": 1,                  // 整数，或 "1.0" 这样的 major.minor 字符串
+      "host": "host.js",                // 必填，相对树内路径，默认导出一个 SystemPluginDefinition
+      "client": "client.js",            // 可选，帧侧成员 bundle
+      "displayName": "Demo",            // 必填
+      "description": "…",               // 必填
+      "capabilities": ["demo.state"],   // 可选，自由文本：我**提供**什么
+      "permissions": ["provide-capability", "register-rpc"],  // 可选，闭合词表：我**用到**什么
+      "dependencies": ["tavern-helper"] // 可选，其他插件 id
+    }
+  }
+}
+```
+
+- `host.js` 是普通 ESM，**默认导出一个 definition 对象，不是工厂**。启用时宿主
+  `import(pathToFileURL(host.js))`，然后逐条核对：`id` 必须等于清单的 `id`，`apiVersion` 必须等于
+  清单的 major，`activate` 必须是函数。任何一条不符是 `load-failed` 并点名字段。
+- `permissions` 的四个合法值是 `provide-capability`、`get-dependency`、`register-rpc`、`host-context`，
+  一一对应 `SystemPluginActivationScope` 上四个交出触达能力的成员。写错一个名字是
+  `manifest-invalid`，字段为 `permissions[i]`。
+- `client.js` 的要求就是帧侧扫描器的要求：`registerPluginMembers('<字符串字面量 id>', { 字面量键: … })`。
+  计算出来的 id 或成员键**扫不出来**，那不是报错，是「这个插件不声明成员」；真正的拒绝发生在重名
+  （`conflict`）与帧内没跑完，且都是**按插件拒，不是按帧**。
+- 包里**不允许**有 `node_modules/`：`@iris/*` 是 `import type`、构建期擦除，而带进第二份 cordis
+  的失败**没有任何症状**——你的服务会落进宿主永远不读的注册表。带了就是 `install-failed`。
+- 上限：**256 MiB / 20,000 文件**（`PLUGIN_TREE_LIMITS`）。树里不能有符号链接或 junction。
+
+### 开发时用 `dev` 源
+
+```ts
+const preview = await client.call('plugin.previewInstall', {
+  source: { kind: 'dev', path: 'D:/work/iris-plugin-demo' },
+})
+await client.call('plugin.confirmInstall', {
+  previewToken: preview.previewToken, id: preview.id, commit: null, treeHash: preview.treeHash,
+})
+```
+
+`dev` 源**就地加载你自己的目录**：包不会被复制进 profile，卸载也**绝不**碰你的工作目录。代价是它是
+唯一一条不做字节复核的源，所以它在 `system-plugins.json`、在目录行、在同意页上**三处都被标成
+`dev`**。改完代码重启宿主（或 `plugin.reload`）即可生效——它永远不会变成 `tampered`。
+
+### 发布时用 `git` 源
+
+```ts
+const preview = await client.call('plugin.previewInstall', {
+  source: { kind: 'git', remote: 'https://example.invalid/acme/iris-plugin-demo.git', commit: '<完整 40 位 sha>' },
+})
+```
+
+约束是硬的：**只接受 `https://`**，**必须钉完整 40 位十六进制 commit**（会动的 ref 会让锁记录说谎），
+URL 里含空白、引号或**用户名密码**一律拒。git 固定 argv、不过 shell、每次清空 `core.hooksPath`、
+`--depth 1 --no-recurse-submodules --no-tags`，`.git/` 在哈希与促进之前被删掉。装进来的树落在
+`<profile>/system-plugins/installed/<id>/`，并记下 `(remote, commit, treeHash)`；**每次开机重算
+`hashTree` 并比对**，不符即 `tampered` 且不激活。卸载会**删掉这棵树**（插件树里没有用户数据，它是一个
+可复现的只读产物），这与 ST 扩展「卸载保留安装树」是**相反**的，故意如此。
+
+### 同意页给用户看什么
+
+`plugin.previewInstall` 把包装进 staging 就停下——**不 import 包里任何东西**——然后返回：id、
+displayName、description、version、apiVersion 与是否兼容（以及本机支持的区间）、源与
+remote/commit 或 path、`treeHash`、文件数与字节数、`capabilities`、`permissions`、`dependencies`、
+是否带 `client.js`，以及 `warnings`（例如「声明的 dependency 不在本机目录里」「id 已被占用」）。
+
+用户确认时 `plugin.confirmInstall` 把 id、`treeHash`、commit **原样回带**，宿主逐条与**事务记录**
+比对（不重新拉取），任何一条不符就整体拒绝并丢弃事务。放弃则 `plugin.cancelInstall({ previewToken })`，
+staging 当场删掉。**安装不等于启用**：confirm 之后行是 `installed, enabled: false`，用户另点一次
+「启用」，那才是 `host.js` 第一次被 import 的时刻。
+
+**id 撞车**：装进来的 id 与目录里已有的任何 id（内置的或已装的）相同，confirm 阶段以
+`install-failed`（id 已被占用）拒绝。没有「装得进去但永远不激活」的影子行。
+
+**更新**：本轮没有更新事务。`plugin.update({ id, commit })` 的位子留着，但它答 `unsupported`。
+换 commit 的路是**卸载后重装**，走完整同意。
+
+### 六个失败状态，对作者分别意味着什么
+
+它们都落在 `plugin.list` 的行上（`failure.state`），不是日志，也不是崩溃。
+
+| 状态 | 发生在 | 你该改什么 |
+| --- | --- | --- |
+| `install-failed` | 取源 / 促进 | 远端或 commit 不合规（非 https、未钉满 40 位、URL 带凭据）、远端没有这个 commit、树超上限、树里有 `node_modules/`、或 id 已被占用。消息里带 git 的哪一步 |
+| `manifest-invalid` | 读清单 | `iris.plugin` 缺失或字段不合规。**永远点名字段**：`id`、`apiVersion`、`host`、`client`、`displayName`、`description`、`permissions[i]`、`dependencies[i]`。`host`/`client` 必须是相对、正斜杠、树内路径，不能有 `..`、盘符、反斜杠，也不能穿过符号链接 |
+| `incompatible` | 读清单之后 | 你的 `apiVersion` 不在本机支持区间内。装的时候直接拒；已经装着的行留在目录里不激活，行上写明「需要 N，本机支持 1.0–1.0」 |
+| `tampered` | 开机复核 | 磁盘上的字节与安装时记录的 `treeHash` 不符——手改过安装树就会这样。出路是按记录的 `(remote, commit)` 重新装一次；没有「接受当前字节」这个按钮，那会让整个哈希锁定被一键绕过 |
+| `load-failed` | `import(host.js)` | 模块顶层抛错，或默认导出不是一个 definition / id 对不上 / apiVersion 对不上 / 没有 `activate`。行上带字段名 |
+| `activate-failed` | `activate()` 抛错 | 你的 `activate` 抛了。走既有的失败回滚，不会留下半注册的能力 |
+
+前四个状态下 `plugin.enable` 是**拒绝**（`unsupported`，消息点名状态）：一次重新 import 树的重试，
+就是一次可能在被篡改的字节上成功的启用。`load-failed` 与 `activate-failed` 是仅有的两个可重试状态——
+改完文件再点一次启用即可。
+
 ## 安装一个 ST 扩展
 
 一个未经修改的 SillyTavern 扩展可以装进 Iris，在 shell 的隐藏 facade iframe 里运行。**它就是一个系统插件**：安装后被 `adoptDefinition` 接纳，之后的启停/卸载走的是同一套 `plugin.*`。

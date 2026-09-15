@@ -1,10 +1,42 @@
 /** The bundled system-plugin lifecycle, held in memory for demos and tests. */
 import type {
+  SystemPluginInstallPreview,
   SystemPluginSnapshot,
   SystemPluginView,
 } from '@iris/protocol'
 
-type Refuse = (code: 'not-found' | 'invalid-request', message: string) => never
+type Refuse = (code: 'not-found' | 'invalid-request' | 'unsupported', message: string) => never
+
+/**
+ * A deterministic 64-hex digest of a string, computed without `node:crypto`.
+ *
+ * This package is bundled into the browser (`apps/iris-web` builds it through
+ * Vite, where `node:crypto` resolves to an empty external and `createHash` is
+ * an undefined import that fails the *build*, not the test run). The value is
+ * never a security claim: it stands in for the tree hash a real staging step
+ * would compute, and the only property anything depends on is that the same
+ * request previews the same way twice, so a test can assert on it and a
+ * mismatched echo can be refused.
+ *
+ * Eight independent FNV-1a lanes, each seeded differently, concatenated as
+ * 32-bit hex — exactly 64 characters, enough spread that two different sources
+ * do not collide in a demo catalog, and no more than that is claimed.
+ */
+function fakeDigest(input: string): string {
+  const lanes = [
+    0x811c9dc5, 0x01000193, 0x9e3779b9, 0x85ebca6b,
+    0xc2b2ae35, 0x27d4eb2f, 0x165667b1, 0xd3a2646c,
+  ]
+  for (let lane = 0; lane < lanes.length; lane++) {
+    let hash = lanes[lane] as number
+    for (let index = 0; index < input.length; index++) {
+      hash ^= input.charCodeAt(index) + lane
+      hash = Math.imul(hash, 0x01000193)
+    }
+    lanes[lane] = hash >>> 0
+  }
+  return lanes.map(lane => (lane >>> 0).toString(16).padStart(8, '0')).join('').padEnd(64, '0').slice(0, 64)
+}
 
 const BUNDLED = [
   {
@@ -47,6 +79,8 @@ export class FakeSystemPlugins {
   readonly #emit: (snapshot: SystemPluginSnapshot) => void
   readonly #refuse: Refuse
   readonly #plugins: Map<string, SystemPluginView>
+  /** Staged previews awaiting a confirm, keyed by the token this fake minted. */
+  readonly #previews = new Map<string, SystemPluginInstallPreview>()
 
   constructor(
     emit: (snapshot: SystemPluginSnapshot) => void,
@@ -143,6 +177,123 @@ export class FakeSystemPlugins {
     if (!plugin.installed) this.install(plugin.id)
     this.#write(plugin.id, { status: 'enabling' })
     this.#write(plugin.id, { enabled: true, status: 'enabled' })
+  }
+
+  // ------------------------------------------------------- the install path
+
+  /**
+   * Stage nothing and describe what a real preview would have described.
+   *
+   * The fake has no filesystem, no git and no staging, so what it models is the
+   * **handshake**, not the transport: a token it minted, a preview whose
+   * `treeHash` is derived from the request so the same request always previews
+   * the same way, and a `confirm` that refuses any echo that disagrees with
+   * what this preview said. That is the part a page is written against, and it
+   * is the part that can lie if it is written loosely — a fake that accepted
+   * any `treeHash` would let a page ship with the echo wired to the wrong
+   * variable and still look correct.
+   *
+   * The id is derived from the source rather than invented, because a page
+   * renders it and a test asserts on it.
+   */
+  previewInstall(source: { kind: 'git', remote: string, commit: string } | { kind: 'dev', path: string }): SystemPluginInstallPreview {
+    const seed = source.kind === 'git' ? `${source.remote} | ${source.commit}` : source.path
+    const digest = fakeDigest(seed)
+    const id = `demo-${digest.slice(0, 8)}`
+    const preview: SystemPluginInstallPreview = {
+      previewToken: `preview-${digest.slice(0, 16)}`,
+      id,
+      displayName: `Demo package ${digest.slice(0, 4)}`,
+      description: 'A staged system-plugin package the fake client describes without fetching anything.',
+      version: '1.0.0',
+      apiVersion: '1.0',
+      compatible: true,
+      supportedApiVersions: '1.0–1.0',
+      source: source.kind,
+      ...(source.kind === 'git' ? { remote: source.remote, commit: source.commit } : { path: source.path }),
+      treeHash: digest,
+      fileCount: 3,
+      sizeBytes: 2048,
+      capabilities: ['demo.state'],
+      permissions: ['provide-capability'],
+      dependencies: [],
+      hasClient: false,
+      warnings: this.#plugins.has(id) ? [`id "${id}" 已被占用 / the id "${id}" is already in this catalog`] : [],
+    }
+    this.#previews.set(preview.previewToken, preview)
+    return preview
+  }
+
+  /** Discard a preview. An unknown token is not an error — the same as the host. */
+  cancelInstall(previewToken: string): void {
+    this.#previews.delete(previewToken)
+  }
+
+  /**
+   * Promote a previewed package, if every echoed field agrees with the preview.
+   *
+   * Ruling 5 is modelled too: an id already in the catalog is refused rather
+   * than shadowed, which is what makes `plugin.confirmInstall` against
+   * `tavern-helper` a refusal here as well as on the host.
+   */
+  confirmInstall(params: { previewToken: string, id: string, commit: string | null, treeHash: string }): SystemPluginSnapshot {
+    const preview = this.#previews.get(params.previewToken)
+    if (preview === undefined) {
+      this.#refuse('invalid-request', `install-failed: no staged install for token ${JSON.stringify(params.previewToken)}`)
+    }
+    this.#previews.delete(params.previewToken)
+    if (params.id !== preview.id) {
+      this.#refuse('invalid-request', `install-failed: the confirmation names id ${JSON.stringify(params.id)}, the preview staged ${JSON.stringify(preview.id)}`)
+    }
+    if (params.treeHash !== preview.treeHash) {
+      this.#refuse('invalid-request', `install-failed: the confirmation names treeHash ${params.treeHash}, the preview staged ${preview.treeHash}`)
+    }
+    if ((params.commit ?? null) !== (preview.commit ?? null)) {
+      this.#refuse('invalid-request', `install-failed: the confirmation names commit ${String(params.commit)}, the preview staged ${String(preview.commit ?? null)}`)
+    }
+    if (this.#plugins.has(params.id)) {
+      this.#refuse('invalid-request', `install-failed: id 已被占用 / the id "${params.id}" is already taken in this catalog`)
+    }
+    const row: SystemPluginView = {
+      id: preview.id,
+      name: preview.displayName,
+      description: preview.description,
+      version: preview.version,
+      apiVersion: 1,
+      dependencies: [...preview.dependencies],
+      installed: true,
+      enabled: false,
+      status: 'disabled',
+      source: preview.source,
+      provenance: {
+        ...(preview.remote !== undefined ? { remote: preview.remote } : {}),
+        ...(preview.commit !== undefined ? { commit: preview.commit } : {}),
+        ...(preview.path !== undefined ? { path: preview.path } : {}),
+        treeHash: preview.treeHash,
+        installedAt: new Date().toISOString(),
+      },
+    }
+    this.#plugins.set(row.id, row)
+    this.#revision += 1
+    this.#emit(this.snapshot())
+    return this.snapshot()
+  }
+
+  /**
+   * Reserved and refused, on both sides of the wire.
+   *
+   * The fake refuses for the same reason and with the same code the host does
+   * (`unsupported`), so a client that handles the refusal against this fake
+   * handles it against a real host. A fake that quietly succeeded here would be
+   * the single most misleading thing in this file: it would let a page ship an
+   * update button that works in every test and fails for every user.
+   */
+  update(id: string): never {
+    return this.#refuse(
+      'unsupported',
+      `plugin.update is reserved and not implemented (docs/SYSTEM-PLUGIN-INSTALL.md §12 ruling 2): to change "${id}"`
+      + ' to another commit, uninstall it and install the new commit through the full consent step',
+    )
   }
 
   #require(id: string): SystemPluginView {
