@@ -825,6 +825,15 @@ export interface IrisActions {
    * user reads, or the host's own refusal sentence, verbatim.
    */
   previewSystemPluginInstall(source: SystemPluginInstallSource): Promise<SystemPluginPreviewResult>
+  /**
+   * Stage an update of one installed `git` row and stop, so the same consent
+   * page can show what replaces what.
+   *
+   * The answer carries `updateOf` — the row and generation the preview was
+   * minted from. Like `previewSystemPluginInstall`, this moves nothing; the
+   * consent step is `confirmSystemPluginInstall` with the preview's own echo.
+   */
+  updateSystemPlugin(id: string, commit: string): Promise<SystemPluginPreviewResult>
   /** Promote a staged package, echoing the preview's own fields back. */
   confirmSystemPluginInstall(params: SystemPluginConfirmParams): Promise<SystemPluginOperationResult>
   /** Discard a staged preview. Best-effort: an unknown token is not an error. */
@@ -1799,6 +1808,18 @@ export function createIrisStore(
       async previewSystemPluginInstall(source: SystemPluginInstallSource): Promise<SystemPluginPreviewResult> {
         try {
           return { ok: true, preview: await client.call('plugin.previewInstall', { source }) }
+        } catch (error: unknown) {
+          return { ok: false, error: pluginInstallFailure(error) }
+        }
+      },
+
+      // Structurally the same call as `previewSystemPluginInstall`, and kept a
+      // separate action because the wire method is a different one with its own
+      // refusal vocabulary (`unsupported` for a dev or builtin row, `not-found`
+      // for an id the catalog does not hold).
+      async updateSystemPlugin(id: string, commit: string): Promise<SystemPluginPreviewResult> {
+        try {
+          return { ok: true, preview: await client.call('plugin.update', { id, commit }) }
         } catch (error: unknown) {
           return { ok: false, error: pluginInstallFailure(error) }
         }

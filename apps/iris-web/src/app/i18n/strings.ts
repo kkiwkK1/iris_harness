@@ -1748,6 +1748,21 @@ export const en = {
   pluginCenterFailureReinstall: 'Reinstall from the recorded remote and commit',
   pluginCenterFailureReinstalling: 'Uninstalling, then staging the recorded commit…',
   pluginCenterFailureNoRecord: 'This row records no remote and commit, so there is nothing to reinstall from. Uninstall it and install the package again.',
+
+  pluginCenterUpdate: 'Update an installed plugin',
+  pluginCenterUpdateOpen: 'Update to…',
+  pluginCenterUpdateCommit: 'New commit',
+  pluginCenterUpdateCommitHint: 'A full 40-character commit from the same remote the row was installed from. The update goes through the same review page as an install.',
+  pluginCenterUpdateSubmit: 'Stage and review the update',
+  pluginCenterUpdateStaging: 'Staging the update…',
+  pluginCenterUpdateCancel: 'Close the update form',
+  pluginCenterUpdateRefused: 'Iris did not stage the update. {detail}',
+  pluginCenterUpdateDevNote: 'A dev plugin is loaded in place — editing its files is the update, effective on the next enable. There is no update transaction for it.',
+  pluginCenterUpdateSameCommit: 'That commit is the one installed right now. Staging it again is the repair path for a tampered row, and the review page will say so.',
+  pluginCenterConsentUpdateOf: 'Replaces',
+  pluginCenterConsentUpdateOfValue: 'Commit {from}, updating to {to}',
+  pluginCenterConsentUpdateOfHashes: 'Tree hash {fromHash} becomes {toHash}',
+  pluginCenterConsentUpdateOfNote: 'Confirming replaces the installed tree; the row\'s enabled preference is kept. The old tree is not deleted until the new generation is enabled.',
 } as const
 
 /** The key union: every translation has to cover exactly these. */
@@ -3119,6 +3134,21 @@ export const zh: Record<StringKey, string> = {
   pluginCenterFailureReinstall: '按记录的 remote + commit 重新安装',
   pluginCenterFailureReinstalling: '正在卸载，然后暂存记录下来的那个 commit…',
   pluginCenterFailureNoRecord: '这一行没有记录远端与 commit，没有可以据以重装的东西。请卸载它，然后重新安装这个包。',
+
+  pluginCenterUpdate: '更新已安装的插件',
+  pluginCenterUpdateOpen: '更新到…',
+  pluginCenterUpdateCommit: '新 commit',
+  pluginCenterUpdateCommitHint: '同一远端上的完整 40 位 commit——这一行就是从它安装来的。更新会走与安装相同的确认页。',
+  pluginCenterUpdateSubmit: '暂存并核对这次更新',
+  pluginCenterUpdateStaging: '正在暂存更新…',
+  pluginCenterUpdateCancel: '收起更新表单',
+  pluginCenterUpdateRefused: 'Iris 没有暂存这次更新。{detail}',
+  pluginCenterUpdateDevNote: 'dev 插件就地加载——改了文件即生效（下次启用时生效），不需要更新事务。',
+  pluginCenterUpdateSameCommit: '这个 commit 与当前安装的相同。对 tampered 行来说，按记录重新取一遍正是修复路径，核对页会写明这一点。',
+  pluginCenterConsentUpdateOf: '替换',
+  pluginCenterConsentUpdateOfValue: 'commit {from}，更新到 {to}',
+  pluginCenterConsentUpdateOfHashes: '树哈希 {fromHash} 将变为 {toHash}',
+  pluginCenterConsentUpdateOfNote: '确认后会替换已安装的目录树；这一行的 enabled 偏好会保留。旧树要等新代启用成功后才会删除。',
 }
 
 /** Both dictionaries, keyed by language. */

@@ -183,6 +183,14 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
   const [staging, setStaging] = useState(false)
   const [installing, setInstalling] = useState(false)
   const [reinstalling, setReinstalling] = useState<string | undefined>()
+  // The row whose update form is open, and that form's one field. One row at a
+  // time: an update is a question about one row's bytes, and two open forms
+  // would read as two unrelated text boxes.
+  const [updateFor, setUpdateFor] = useState<string | undefined>()
+  const [updateCommit, setUpdateCommit] = useState('')
+  const [updateStaging, setUpdateStaging] = useState(false)
+  const [updateProblem, setUpdateProblem] = useState<StringKey | undefined>()
+  const [updateError, setUpdateError] = useState<{ id: string, message: string } | undefined>()
 
   /*
    * Tokens whose transaction is already gone — confirmed, refused (a refused
@@ -286,7 +294,10 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
    * §12 ruling 3. The uninstall is not optional and not a convenience: ruling 5
    * refuses a confirm whose id is already in the catalog, so the row has to go
    * before the same id can be staged again. Both steps are the ordinary RPCs —
-   * there is no "reinstall" method, and `plugin.update` is reserved (ruling 2).
+   * there is no "reinstall" method. This is also why the update entry exists
+   * beside it (U1): for a `tampered` row the update is the other road to the
+   * same repair — full consent, fresh bytes fetched from the recorded remote —
+   * and neither one removes the other.
    */
   const reinstall = async (plugin: SystemPluginView): Promise<void> => {
     const recordedRemote = plugin.provenance?.remote
@@ -306,6 +317,43 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
     } finally {
       setReinstalling(undefined)
     }
+  }
+
+  /** Open (or reset) one row's update form. */
+  const openUpdate = (id: string): void => {
+    setUpdateFor(id)
+    setUpdateCommit('')
+    setUpdateProblem(undefined)
+    setUpdateError(current => current?.id === id ? undefined : current)
+  }
+
+  /*
+   * The update goes through the same consent page as an install, and the echo
+   * rules are the same: this side only checks the commit's *shape* (the wire's
+   * own regex, mirrored for the same reason the install form mirrors it), and
+   * the confirm reads the preview object, never this field.
+   */
+  const submitUpdate = (plugin: SystemPluginView): void => {
+    if (updateStaging) return
+    const trimmed = updateCommit.trim()
+    if (!COMMIT_SHAPE.test(trimmed)) {
+      setUpdateProblem('pluginCenterInstallBadCommit')
+      return
+    }
+    setUpdateProblem(undefined)
+    setUpdateStaging(true)
+    setUpdateError(current => current?.id === plugin.id ? undefined : current)
+    void actions.updateSystemPlugin(plugin.id, trimmed).then(staged => {
+      setUpdateStaging(false)
+      if (staged.ok) setPreview(staged.preview)
+      else setUpdateError({ id: plugin.id, message: t('pluginCenterUpdateRefused', { detail: staged.error }) })
+    })
+  }
+
+  const closeUpdate = (): void => {
+    setUpdateFor(undefined)
+    setUpdateCommit('')
+    setUpdateProblem(undefined)
   }
 
   /*
@@ -333,6 +381,7 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
         setRemote('')
         setCommit('')
         setPath('')
+        closeUpdate()
       } else {
         setInstallError(t('pluginCenterConsentRefused', { detail: result.error }))
       }
@@ -353,6 +402,7 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
           discard(preview.previewToken)
           setPreview(undefined)
           setInstallError(undefined)
+          closeUpdate()
         }}
       />
     </div>
@@ -399,6 +449,15 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
         requestError={operationError?.id === plugin.id ? operationError.message : undefined}
         asset={assetStatuses[plugin.id]}
         reinstalling={reinstalling === plugin.id}
+        updateOpen={updateFor === plugin.id}
+        updateCommit={updateFor === plugin.id ? updateCommit : ''}
+        updateStaging={updateFor === plugin.id && updateStaging}
+        updateProblem={updateFor === plugin.id ? updateProblem : undefined}
+        updateError={updateError?.id === plugin.id ? updateError.message : undefined}
+        onUpdateOpen={() => openUpdate(plugin.id)}
+        onUpdateCommit={setUpdateCommit}
+        onUpdateSubmit={() => submitUpdate(plugin)}
+        onUpdateCancel={closeUpdate}
         onRetryAsset={() => retryAsset(plugin.id)}
         onReinstall={reinstall}
         onRun={run}
@@ -559,6 +618,20 @@ export function PluginConsent({ preview, lang, busy, error, onConfirm, onCancel 
     </aside>
     <dl className="iris-consent__facts">
       <ConsentField name="id" label={translate(lang, 'pluginCenterConsentId')}>{preview.id}</ConsentField>
+      {preview.updateOf === undefined ? null : <ConsentField
+        name="updateOf"
+        label={translate(lang, 'pluginCenterConsentUpdateOf')}
+        note={translate(lang, 'pluginCenterConsentUpdateOfNote')}
+      >
+        <span>{translate(lang, 'pluginCenterConsentUpdateOfValue', {
+          from: abbreviate(preview.updateOf.fromCommit),
+          to: preview.commit === undefined ? '—' : abbreviate(preview.commit),
+        })}</span>
+        <span className="iris-consent__note">{translate(lang, 'pluginCenterConsentUpdateOfHashes', {
+          fromHash: abbreviate(preview.updateOf.fromTreeHash),
+          toHash: abbreviate(preview.treeHash),
+        })}</span>
+      </ConsentField>}
       <ConsentField name="displayName" label={translate(lang, 'pluginCenterConsentName')}>{preview.displayName}</ConsentField>
       <ConsentField name="description" label={translate(lang, 'pluginCenterConsentDescription')}>{preview.description}</ConsentField>
       <ConsentField name="version" label={translate(lang, 'pluginCenterConsentVersion')}>{preview.version}</ConsentField>
@@ -654,7 +727,7 @@ function SourceBadge({ source, lang }: { source: SystemPluginSource, lang: Langu
   >{translate(lang, SOURCE_KEYS[source])}</span>
 }
 
-function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, asset, reinstalling, onRetryAsset, onReinstall, onRun }: {
+function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, asset, reinstalling, updateOpen, updateCommit, updateStaging, updateProblem, updateError, onUpdateOpen, onUpdateCommit, onUpdateSubmit, onUpdateCancel, onRetryAsset, onReinstall, onRun }: {
   plugin: SystemPluginView
   snapshot: SystemPluginSnapshot
   lang: Language
@@ -663,6 +736,15 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
   requestError: string | undefined
   asset: PluginBrowserAssetStatus | undefined
   reinstalling: boolean
+  updateOpen: boolean
+  updateCommit: string
+  updateStaging: boolean
+  updateProblem: StringKey | undefined
+  updateError: string | undefined
+  onUpdateOpen: () => void
+  onUpdateCommit: (value: string) => void
+  onUpdateSubmit: () => void
+  onUpdateCancel: () => void
   onRetryAsset: () => void
   onReinstall: (plugin: SystemPluginView) => Promise<void>
   onRun: (plugin: SystemPluginView, operation: Operation) => Promise<void>
@@ -705,12 +787,17 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
    * §12 ruling 3: the one way out of `tampered` is the recorded (remote,
    * commit) through the full consent. There is deliberately no button that
    * accepts the current bytes — that would make the whole hash lock bypassable
-   * in one click — and no `plugin.update` button either (ruling 2).
+   * in one click. U1 adds the update entry beside it: the same consent, the
+   * row's own remote, a commit the user types. Both roads run the full review;
+   * neither one replaces the other.
    */
   const reinstallable = plugin.failure?.state === 'tampered'
   const recorded = reinstallable
     && plugin.provenance?.remote !== undefined
     && plugin.provenance.commit !== undefined
+  // The update entry is for installed git rows only: a dev row is loaded in
+  // place (its note says so), and a builtin row ships with this build.
+  const updatable = plugin.source === 'git' && plugin.installed
 
   return <article className="iris-plugin" data-plugin-id={plugin.id} data-plugin-status={plugin.status} data-plugin-source={plugin.source ?? 'unrecorded'}>
     <header className="iris-plugin__head">
@@ -763,7 +850,49 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
         title={busy || blocked ? (blockedText ?? busyReason) : undefined}
         onClick={() => { void onReinstall(plugin) }}
       >{translate(lang, reinstalling ? 'pluginCenterFailureReinstalling' : 'pluginCenterFailureReinstall')}</button> : null}
+      {updatable ? <button
+        type="button"
+        className="iris-plugin__action"
+        data-plugin-update={plugin.id}
+        disabled={busy}
+        title={busy ? (blockedText ?? busyReason) : undefined}
+        onClick={onUpdateOpen}
+      >{translate(lang, 'pluginCenterUpdateOpen')}</button> : null}
     </div>
+    {updateOpen && updatable ? <form
+      className="iris-plugin__update"
+      data-plugin-update-form={plugin.id}
+      onSubmit={event => { event.preventDefault(); onUpdateSubmit() }}
+    >
+      <h5>{translate(lang, 'pluginCenterUpdate')}</h5>
+      <div className="iris-plugin__update-field">
+        <label htmlFor={`iris-plugin-update-commit-${safeId(plugin.id)}`}>{translate(lang, 'pluginCenterUpdateCommit')}</label>
+        <input
+          id={`iris-plugin-update-commit-${safeId(plugin.id)}`}
+          type="text"
+          value={updateCommit}
+          aria-describedby={`iris-plugin-update-hint-${safeId(plugin.id)}`}
+          onChange={event => onUpdateCommit(event.target.value)}
+        />
+        <p id={`iris-plugin-update-hint-${safeId(plugin.id)}`}>{translate(lang, 'pluginCenterUpdateCommitHint')}</p>
+      </div>
+      {updateProblem === undefined ? null : <p className="iris-plugins__install-problem" role="alert">{translate(lang, updateProblem)}</p>}
+      {updateError === undefined ? null : <p className="iris-plugins__install-problem" role="alert">{updateError}</p>}
+      {updateCommit.trim() !== '' && updateCommit.trim() === plugin.provenance?.commit
+        ? <p className="iris-plugin__update-note" role="status">{translate(lang, 'pluginCenterUpdateSameCommit')}</p>
+        : null}
+      <div className="iris-plugin__actions">
+        <button type="submit" className="iris-plugin__action" disabled={updateStaging}>
+          {translate(lang, updateStaging ? 'pluginCenterUpdateStaging' : 'pluginCenterUpdateSubmit')}
+        </button>
+        <button type="button" className="iris-plugin__action" disabled={updateStaging} onClick={onUpdateCancel}>
+          {translate(lang, 'pluginCenterUpdateCancel')}
+        </button>
+      </div>
+    </form> : null}
+    {plugin.source === 'dev' && plugin.installed ? <p className="iris-plugin__update-note" data-plugin-dev-note>
+      {translate(lang, 'pluginCenterUpdateDevNote')}
+    </p> : null}
     {uninstallKey === undefined ? null : <p className="iris-plugin__uninstall-note" data-uninstall-copy={plugin.source}>
       {translate(lang, uninstallKey)}
     </p>}

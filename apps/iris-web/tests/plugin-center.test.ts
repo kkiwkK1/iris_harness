@@ -226,7 +226,23 @@ test('every failure state, every source badge and the consent page read in both 
   assert.match(english, /data-plugin-reinstall="pkg-tampered"/, 'a tampered row offers no reinstall')
   assert.equal(english.match(/data-plugin-reinstall=/g)?.length, 1, 'a state other than tampered offers a reinstall')
   assert.doesNotMatch(english, /accept (the )?current bytes/i, 'there is an accept-current-bytes affordance')
-  assert.doesNotMatch(english, /plugin\.update|check for updates/i, 'ruling 2 reserved plugin.update and the page offers it')
+  // Ruling 2 was reserved when this assertion was written, and the page was
+  // forbidden to offer an update. U1 implemented the update transaction
+  // (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4), so the blanket ban is retired —
+  // retired, not loosened, exactly as this file's own ledger §99 arranged when
+  // it said the implementer would find this line and delete it. What replaced
+  // it is *stricter where it matters*: the update entry exists on installed
+  // `git` rows and nowhere else, matched on the button's own attribute rather
+  // than the `<article>`'s `data-plugin-source` (the same blunt-match trap the
+  // source-badge test fell into before its mutation tightened it).
+  const updateButtons = english.match(/data-plugin-update="[^"]+"/g) ?? []
+  assert.equal(updateButtons.length, 6, 'an update entry appeared on a row that is not an installed git row')
+  for (const state of STATES) {
+    assert.ok(updateButtons.includes(`data-plugin-update="pkg-${state}"`), `${state} (git, installed) offers no update entry`)
+  }
+  assert.doesNotMatch(english, /data-plugin-update="pkg-dev"/, 'a dev row offers an update entry')
+  assert.doesNotMatch(english, /data-plugin-update="pkg-builtin"/, 'a builtin row offers an update entry')
+  assert.match(english, /data-plugin-dev-note/, 'a dev row does not say why it needs no update')
 
   // Ruling 1: `dev` is marked on the row, and the three sources read apart.
   // Matched on the badge's own class, not on `data-plugin-source`: the article
@@ -335,4 +351,24 @@ test('every failure state, every source badge and the consent page read in both 
   const devShown = new Set([...devConsent.matchAll(/data-consent-field="([a-zA-Z0-9]+)"/g)].map(match => match[1]!))
   assert.ok(devShown.has('path'), 'the dev consent page hides the directory it would load from')
   assert.ok(!devShown.has('remote') && !devShown.has('commit'), 'a dev package rendered a remote it does not have')
+
+  // -------------------------------------------------- an update preview's page
+
+  // `plugin.update` mints the same preview carrying `updateOf`, and the set
+  // comparison above is exactly the law that forces the page to grow the row:
+  // a field on the wire that the page never renders is this failure, not a
+  // quietly shorter page. The user consents to a *replacement* — the row, the
+  // commit it records, and the tree hash it will stop having.
+  const updatePreview: SystemPluginInstallPreview = {
+    ...preview, compatible: true,
+    updateOf: { id: 'acme-demo', fromCommit: 'a'.repeat(40), fromTreeHash: 'd'.repeat(64) },
+  }
+  const updateConsent = harness.renderConsent(updatePreview, 'en')
+  const updateShown = new Set([...updateConsent.matchAll(/data-consent-field="([a-zA-Z]+)"/g)].map(match => match[1]!))
+  assert.ok(updateShown.has('updateOf'), 'an update preview rendered no updateOf row')
+  assert.match(updateConsent, /Commit a{12}…, updating to b{12}…/, 'the updateOf row does not name both commits')
+  assert.match(updateConsent, /Tree hash d{12}… becomes c{12}…/, 'the updateOf row does not name both tree hashes')
+  assert.match(updateConsent, /enabled preference is kept/, 'the updateOf note does not say what an update preserves')
+  const plainConsent = harness.renderConsent(preview)
+  assert.doesNotMatch(plainConsent, /data-consent-field="updateOf"/, 'a fresh-install preview rendered an updateOf row')
 })
