@@ -7573,17 +7573,15 @@ the sequence is uninstall → preview → confirm, which is exactly the
 "卸载后重装" §1 already names as this round's update path. The test
 "ruling 3: tamper, boot, then reinstall…" drives all four steps.
 
-**8. Embedded credentials are refused on this path, not in the installer.**
-`validateExtensionSource` (`packages/iris-extension-installer/src/source.ts:60`)
+**8. Embedded credentials are refused on this path, not in the installer.** (Closed by §85, which also retires the asymmetry this decision was recorded for.)
+`validateExtensionSource` (`packages/iris-extension-installer/src/source.ts:49`)
 checks the scheme and refuses whitespace and quotes; it says nothing about
 userinfo, so `https://user:token@host/repo.git` passes it today. It is not
 tightened there, because that would change the ST install path's behaviour in a
 round that is not about ST. On this path it is an `install-failed`: the remote
 string is copied into the lock, into `system-plugins.json`, onto the consent
 page and into every `plugin.list` broadcast, so a secret pasted once is a secret
-in four files, three of which nobody looks at. **Open, and deliberately left
-open:** the ST path still accepts such a URL. If the installer ever gains the
-check, this one becomes redundant rather than wrong.
+in four files, three of which nobody looks at. **Closed by §85 (U6):** the installer gained the check, so both install paths refuse userinfo now, and this path's copy of the check was deleted rather than kept beside the original.
 
 **9. Uninstall deletes the tree first and the row second.** A crash between the
 two leaves a row whose tree is gone, which the next boot names `install-failed`
@@ -7682,8 +7680,7 @@ other row of §9 #1–#14 names a test that exists.
 (a) A second consumer of `Installer.stage`/`promote`, at which point the
 `StagedInstall` handle's in-memory-only lifetime becomes a question — today a
 preview that does not survive the process is cleaned by the recovery scan, which
-is acceptable exactly because `cancelInstall` is the normal exit. (b) The
-installer refusing userinfo itself, which retires decision 8's asymmetry. (c)
+is acceptable exactly because `cancelInstall` is the normal exit. (b) ~~The installer refusing userinfo itself, which retires decision 8's asymmetry~~ — retired by §85. (c)
 `plugin.update` being built, which is the first time a row changes `treeHash`
 without the id being freed, and therefore the first time ruling 5's check needs
 an exception rather than an uninstall. (d) A capability registry, which is when
@@ -8215,3 +8212,233 @@ two small files.
 ---
 
 ---
+
+---
+
+---
+
+## 85. The installer refuses userinfo in repository URLs, both install paths share the one refusal, and the submodule invariant got the test §9 said it never had
+
+**What changed.** Two of U6's four items, both about the installer package's
+own contract (`packages/iris-extension-installer`, one of the `pack:contracts`
+packages): `validateExtensionSource` now refuses a repository URL carrying
+credentials in its userinfo, and
+`packages/iris-extension-installer/tests/git-submodule.test.ts` gives §9 #5 —
+git never brings submodule content into the installed tree — the test that had
+never existed anywhere in the tree. The system-plugin install path's private
+copy of the credential check (`refuseEmbeddedCredentials`,
+`plugins/install.ts`) is deleted, not kept beside the original: both
+`installAs` and `stage` open with `validateExtensionSource`, so one refusal
+covers both transaction paths and both callers, and the app-service test that
+walked a credentialed remote to `preview` passes unchanged — same
+`install-failed`, same "credentials" sentence (the installer kept the wording
+this path's copy used), staging still empty.
+
+### The credential refusal is a deliberate divergence from ST
+
+SillyTavern's installer accepts `https://user:token@host/repo`. Iris refuses
+it, and the ledger records the divergence rather than burying it in a commit
+message: a URL that carries credentials is recorded verbatim in the lock, in
+`system-plugins.json`, on the consent page and in every `plugin.list`
+broadcast — a secret pasted once and persisted in four files, three of which
+the user never looks at. ST does not record the URL the way Iris does, which
+is exactly why the same acceptance is a smaller sin there.
+
+**What this is not: hole-plugging.** Today no reachable ST path constructs a
+git source in production code. The only `{ kind: 'git' }` construction in the
+tree is the system-plugin path (`install.ts`, `#toExtensionSource`, which
+already refused userinfo), `stExtension.install` (`service.ts:2045`) takes a
+directory, and the host's own pilot install uses `local-directory`. So nothing
+that used to load stops loading; what changed is the contract of a package
+shipped to outside consumers, which is the right time to tighten it — before
+someone builds the first ST-git consumer on top.
+
+**Two corrections to the task sheet's premises.** First, the sheet and ledger
+§80 both cited `source.ts:60` for `validateExtensionSource`; `:60` is the
+whitespace branch, the function is at `:49`. Fixed here and in §80. Second,
+one case the sheet's wording did not cover and the tests caught: WHATWG URL
+refuses to parse a userinfo-bearing `file://` authority *at all* (file hosts
+have no userinfo slot), so the "unparseable → let the scheme branch refuse it
+with a better message" rule would have let `file://user@host/repo` straight
+through under `allowLocalGit`. The parse-failure branch now checks the
+authority textually — an `@` after `://` and before the first `/` — and the
+pass-through sample `https://host/~user@org/repo` (an `@` in the *path*)
+proves the check reads userinfo, not at-signs.
+
+**Ordering inside the git branch**: whitespace/quotes, then userinfo, then the
+pin. A URL that both carries credentials and lacks a pin is refused for the
+credentials — the secret is the thing to remove first.
+
+**Known gap, recorded rather than migrated.** A recorded row whose remote
+carries userinfo re-verifies by re-hashing its tree at boot (`#adoptRecorded`
+never re-runs source validation, and nothing in `recovery.ts` calls it
+either), so after this change it keeps loading, and the secret stays in the
+catalog, the lock and the consent page's provenance expansion. Only
+*reinstalling* is refused. Migration — deleting or rewriting a user's recorded
+row — is not work a hardening round does on its own; the user's way out is
+uninstall, then reinstall with a clean remote.
+
+### The submodule test, and what it honestly does and does not hold
+
+The fixture carries a real gitlink (index mode `160000` at `sub`) over the
+demo tree plus a real `.gitmodules`, written with `update-index --add
+--cacheinfo` rather than `git submodule add` — git ≥ 2.38.1 refuses `file://`
+submodule transports by default (`protocol.file.allow`), so a fixture built
+through the transport would make the suite's green/red depend on the CI's git
+version, and `update-index` touches no transport layer. A fixture self-check
+requires `git ls-files -s` to carry the `160000 … sub` line, because every
+assertion below asserts *absence*, and absence is exactly what a fixture
+degraded into a plain directory would trivially produce.
+
+Measured on git 2.33.0.windows.2 (the CI's version is the first thing to
+check the day this reds somewhere new):
+
+- checkout leaves the gitlink's path as an **existing empty directory** — not
+  an absent one — and `.gitmodules` is an ordinary tracked file that **stays
+  in the tree and enters the artifact hash**. The assertions accept
+  empty-or-absent (which of the two a checkout draws is git's business) and
+  pin `.gitmodules` as present and hash-contributing, so a future "tidy up"
+  filter reds with its reason attached.
+- The hash count is an **equality** — `files == demo tree + .gitmodules +
+  lock` — because an inequality ("does not contain X") is vacuously true for
+  empty directories and would have no teeth.
+- **The invariant is held by the argv not containing `git submodule update`,
+  not by `--no-recurse-submodules`.** Deleting the flag — or replacing it with
+  `--recurse-submodules` — leaves the working tree byte-identical, measured:
+  this path is `fetch --depth 1` + `checkout --detach FETCH_HEAD` and never
+  runs `submodule update`, so no submodule object can reach a working tree at
+  all. The behaviour assertions redden when someone *adds* that command; the
+  flag is kept as a saved network round trip and as the place the intent is
+  declared, and is pinned by a **source-text** assertion (the same shape as
+  plugin-install's "never spawns anything but git") whose message says it does
+  not claim behaviour coverage. That assertion is the one deliberately
+  toothless spot in this round, recorded rather than hidden.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| three userinfo refusals (`https://user@host/…`, `…user:token…`, `…:token…`) | delete the `refuseCredentialedRemote` call | red → revert → green |
+| `https://host/~user@org/repo` still passes | replace URL userinfo with `repository.includes('@')` | red → revert → green |
+| credentialed + unpinned is refused *for the credentials* | move the check after `assertPinnedCommit` | red → revert → green |
+| preview of a credentialed remote answers `install-failed` naming credentials, staging empty | delete app-service's copy *without* the installer check — this actually happened mid-round, when the worktree's `@iris` link still resolved the old installer: the preview test went red (a `git-failed`, the fetch attempted), green once the installer carried the check | red → green |
+| submodule path empty/absent; `secret.txt` nowhere in the installed tree; hash count equals the outer files | add `git submodule update --init --recursive` after checkout | red (`sub/secret.txt` appears) → revert → green |
+| fixture self-check (`ls-files -s` carries `160000 … sub`) | drop the fixture's `update-index --cacheinfo` line | red while the content assertions stay green — the reason the self-check exists |
+| `.gitmodules` present and hash-contributing | installer-side `.gitmodules` filter | red → revert → green |
+| argv still carries `--no-recurse-submodules` | delete the flag | **content assertions stay green** (measured: byte-identical tree); only the source-text assertion reds — the one honest no-teeth row |
+
+### What would reopen this
+
+(a) A second consumer building git sources outside the installer, at which
+point "userinfo is refused" belongs in the packaging document, not just in the
+code. (b) A git version that materializes a gitlink's path as something other
+than empty-or-absent — the assertions already accept both shapes, but a
+version that materialized *content* without `submodule update` would need a
+third look at the invariant itself. (c) Iris gaining an ST git-install path,
+which would make the recorded ST divergence load-bearing for compatibility in
+the other direction.
+
+---
+
+## 86. The two load-flaky tests stopped measuring the machine: the chat search holds proportionality by counts, and the chat-integrity flake was the test's own observation window
+
+**What changed.** The other two of U6's four items. `chat-search.test.ts`'s
+two proportionality assertions now read a meter the scan fills instead of a
+stopwatch, and `chat-integrity.test.ts`'s fixture barrier waits for the
+broadcast that proves the previous turn's announce has landed. Neither change
+touches product behaviour, and neither loosens an assertion: the counts bound
+is *stricter* than the clock bound ever was, and the new barrier is *strictly
+stronger* than the old one. Task sheet §0's「已知偶发红」item is closed by
+this entry; the sheet itself is another round's file and was not edited.
+
+### 4a. Proportionality by counts (`SearchScanMeter`)
+
+`searchChatText` takes an optional out-param — `{ foldedChars, parsedLines,
+scannedFiles }` — the caller hands in and the scan accumulates into;
+`ChatStore.search` threads it through its own options, and no product caller
+sets it (the RPC handler forwards protocol fields only, so the wire shape is
+untouched; type-wise this is a pure addition). The two tests' ratio assertions
+become: large scan's `foldedChars` ≤ small scan's `foldedChars` × byte-ratio ×
+1.1; plus the bound the clock never held at all — `parsedLines ≤ matches +
+files`, which pins "JSON.parse only on flagged lines"; plus the one assertion
+that catches the test lying for itself: the meter must have been written
+(`foldedChars > 0`), or a dropped passthrough leaves every count at zero and
+the rest green.
+
+**What was deleted, and why this is not the weak version of "fix the flaky
+test by loosening it".** `SCAN_SLACK`, `SCAN_ROUNDS`, `median`, `timed`,
+`alternatingMedians` and `degraded` are gone, with the wall-clock rationale
+comments, because a leftover machine nobody calls misleads harder than a
+deleted one. What the stopwatch bound tolerated (×3, for a loaded machine
+moving one clock and not the other) has no purchase over counts: two scans of
+the same fixture in the same process count the same work whatever else the
+box is doing, so the slack drops from 3 to 1.1 — a tightening; the tenth
+covers characters-vs-bytes and header lines. **The price, stated plainly:** a
+constant-factor regression — an extra regex per line, say — no longer has any
+witness. The deleted stopwatch could not measure order-of-magnitude on the
+synthetic fixture anyway (its own comment recorded the quadratic mutant
+staying green: `small=19.6ms big=311.1ms allowed=645.7ms`), and guarding
+constant factors is a benchmark suite's job, not an `assert`'s.
+
+The functional halves are untouched: found, located, `messageCount === 677`,
+snippet carries the fragment, gibberish invents nothing, per-chat cap, and
+the corpus test still skips when the real chat is not on the machine — the
+`test:no-corpus` count of 40 skipped stays what it was, and the skip
+condition is byte-identical.
+
+### 4b. The second report was the previous turn's own announce
+
+The diagnosis, which the sheet asked for before any fix: the "reported twice"
+flake was never two concurrent scanners — `#chatList()` is the one place the
+list is read (`service.ts`'s own comment says so). `#settle` broadcasts
+`stream.end` and then, as its next statement (`service.ts:5270`), awaits
+`#announceChats()`, whose `#chatList()` read is where `ChatStore.list`
+reports each unparseable header. The fixture waited on `stream.end` — so it
+was released while that read was still in flight, and a `wrecked.jsonl`
+written into that window was picked up by the *previous turn's* announce and
+reported a second time by the time the test's own `chat.list` ran: quiet
+alone, red under parallel load, product side blameless throughout, and
+`chats.ts:301`'s "once per listing" contract never violated.
+
+**Confirmed before changing**, per the sheet's bar: a wrapped `ChatStore`
+parking the settle announce on a deferred gate reproduced it deterministically
+(two reports in the window, the `=== 1` assertion red) and captured the second
+report's stack, which names `#announceChats ← #settle` while the test's own
+listing names `chat.list` — one source, not two scanners. The tool was a
+temporary file, run and deleted; nothing of it is committed.
+
+**The fix is the fixture's barrier**: it counts `chats.updated` — broadcast
+only *after* `#chatList()` has returned (`service.ts:4865`) — instead of
+`stream.end`, relative to the post-create baseline (`chat.create` announces
+too). Strictly stricter, since `chats.updated` always follows `stream.end`.
+The fixture also gained the sheet's assertion — at barrier exit, the announce
+count must have advanced by the turn count — so a barrier waiting on the
+wrong or on any event reds the fixture itself. The `=== 1` report assertion
+is untouched, and no dedup was added anywhere: once-per-listing is the
+store's documented contract and `DiagnosticBuffer.record` is unduplicated on
+purpose; dedup would have turned a test-timing problem into a product
+observation defect. Every other test in the file inherits the quieter barrier
+through the fixture.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| 10 MiB synthetic: `foldedChars` ratio ≤ byte-ratio × 1.1 | re-fold every earlier line each step (the docblock's named quadratic degradation) | red at ~9× over the allowed count — **green under the old clock bound on this very fixture**, which is the whole point |
+| corpus test: same ratio bound | same mutation | red (same shape) |
+| `parsedLines ≤ matches + files` | parse every line unconditionally | red (442 and 719 parses against bounds of 3) |
+| meter was written (`foldedChars > 0`) | drop the `meter` passthrough in `ChatStore.search` | red on both tests — without it, all counts are zero and everything above is green |
+| wrecked file reported exactly once (untouched `=== 1`) | old barrier (count `stream.end`) + the announce parked inside the window | red: two reports, deterministic |
+| barrier exit implies the announce landed | barrier waits on the wrong or on any event | red: the fixture's own count assertion fails |
+| the sidebar keeps the other conversation (untouched) | — | unchanged |
+
+### What would reopen this
+
+(a) A real constant-factor regression someone wants a witness for — that is a
+benchmark suite, not this file. (b) A second product path that lists chats and
+reports: the new barrier would wait it out and mask it, which is exactly why
+the stack was captured before the barrier moved; a third report source needs
+its own named surface, not a dedup in the buffer. (c) A git version that
+materializes a gitlink differently than empty-or-absent (§85b) — the two
+flaky-test fixes and the fixture share one CI, so one version change can
+touch both.

@@ -49,3 +49,7 @@
 ## 本文不做的事
 
 不替代 `check:render` 与 `tests/plugin-center-install.test.ts`；不按发行版更新。它只记录 2026-09-15 这一次、这一棵树、这一条 dev 路径。git 源在页面上的同一条路径没有在浏览器里走（需要一个 https 远端；host 侧的 git 路径由 `packages/iris-app-service/tests/plugin-install.test.ts` 用本地 bare 仓库覆盖），是本文明确没做的一项。
+
+---
+
+2026-09-15 状态：「顺手看到」第二条（浏览器资产列的量纲）由 `dev/infra-hardening-batch-2` 件 3 关闭：该列改为「目录 revision / 清单 revision / 资产内容 rev」三格，键名不变、值与标签更新，记在 web ledger §102。第一条（headless 字体回退）仍然开着。

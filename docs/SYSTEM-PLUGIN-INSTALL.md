@@ -60,7 +60,7 @@
 
 | 能力 | 符号与位置 |
 | --- | --- |
-| 源校验 | `validateExtensionSource` / `assertPinnedCommit`（`packages/iris-extension-installer/src/source.ts:49`、`:77`）：https 限定、40 位十六进制 commit、URL 含空白或引号直接拒 |
+| 源校验 | `validateExtensionSource` / `assertPinnedCommit`（`packages/iris-extension-installer/src/source.ts:49`、`:77`）：https 限定、40 位十六进制 commit、URL 含空白或引号直接拒、URL 的 userinfo 里带凭据直接拒（检查在 pin 之前，`file://` 权威段里的 userinfo 同样拒；两条安装路径共用，是对 ST 的有意偏离，见 app-service ledger §85） |
 | git 执行 | `materializeGit`（`packages/iris-extension-installer/src/source.ts:162`）：固定 argv、不过 shell、每次 `-c core.hooksPath=`、`--depth 1 --no-recurse-submodules --no-tags`、checkout 后 `rev-parse HEAD` 必须等于钉住的 commit |
 | 事务状态机 | `InstallPhase`：`downloading → staged → validated → hashed → promoting → installed`，失败是唯一旁路（`packages/iris-extension-installer/src/transaction.ts:18`） |
 | 树哈希 | `hashTree`（`packages/iris-extension-installer/src/hash.ts:30`）：逐文件 sha256，再对**按正斜杠相对路径字节序排序**的 `相对路径\0文件哈希\n` 行求 sha256；遇 symlink/junction 直接抛 |
@@ -456,7 +456,7 @@ interface SystemPluginView {
 | 2 | 仅 https | `git://`、`ssh://`、`http://`、裸路径、`file://`（未开 `allowLocalGit`）各一例，全部 `bad-repository` |
 | 3 | 必须完整 40 位 commit | `main`、短 sha、41 位、含大写十六进制各一例，全部 `unpinned-commit` |
 | 4 | 钩子禁用 | 造一个带 `hooks/post-checkout` 的本地仓库，install 后断言钩子的副作用文件**不存在** |
-| 5 | 不递归子模块 | 带 submodule 的仓库，断言安装树里子模块目录为空 |
+| 5 | 不递归子模块 | 带真 gitlink（`update-index --cacheinfo`，不走 `submodule add` 的 `file://` 传输）的仓库，断言安装树里子模块路径为**空目录或不存在**（实测 git 2.33.0.windows.2 留下的是存在的空目录，两种都接受）、子模块内容全树无痕、`.gitmodules` 留在树里且进 hash（`packages/iris-extension-installer/tests/git-submodule.test.ts`） |
 | 6 | HEAD 必须等于钉住的 commit | 让远端在 fetch 后移动，断言 `head-mismatch` |
 | 7 | 路径包含性 | 清单 `host` 为 `../x.js`、`/etc/x.js`、`C:\x.js`、含 `\` 各一例，全部 `manifest-invalid` 且字段为 `host`；并断言**没有**在树外发生任何读 |
 | 8 | 安装树内不得有符号链接 | 在 dev 源目录里放一个 junction，断言 `auditContainment` 拒绝，且 `hashTree` 独立地也拒绝（两道网，各自测）（`packages/iris-extension-installer/tests/archive-security.test.ts`） |
@@ -488,7 +488,7 @@ interface SystemPluginView {
 | 2 | 既有 source.test.ts 的 https 限定；本轮 `plugin-install.test.ts`「install-failed: a non-https remote…」把同一条拒绝走到了 preview 面上 |
 | 3 | 既有 source.test.ts 的 `assertPinnedCommit`；本轮 `plugin-install-rpc.test.ts`「the wire schemas refuse…」在协议层再钉一次（`main`、短 sha 都不过 schema） |
 | 4 | 本轮 `plugin-install.test.ts`「git hooks in the fixture repository never run during an install」——真装一个带 `post-checkout` 的本地仓库，断言副作用文件不存在 |
-| 5 | **没有测试**。整棵树里 `submodule` 这个词只出现在 `materializeGit` 的固定 argv 与 `source.ts` 的模块注释里；`grep -rn submodule packages/*/tests` 为空。本轮也没有补：造一个带 submodule 的本地仓库夹具是一件真事，不该顺手塞进一个关于目录与哈希的 PR 里。**这一条是本表里唯一一条无测试的不变量**，记在这里而不是写成「既有测试覆盖」 |
+| 5 | `packages/iris-extension-installer/tests/git-submodule.test.ts`（U6 件 2 补上）：真 gitlink 夹具走真实安装，断言安装树里子模块路径为空/不存在、内容全树无痕、`hashTree` 文件数恰等于外层自己的文件、`.gitmodules` 在树里且进 hash。**要诚实记下保证的边界**：这条不变量是由 argv 里*没有* `submodule update` 守住的（测试对「有人加了 `submodule update`」变红），不是由 `--no-recurse-submodules` 守住的——实测（git 2.33.0.windows.2）删掉、甚至反转为 `--recurse-submodules`，工作树逐字节相同；flag 本身由同文件里一条**源文本**断言守住，那条断言不冒充行为覆盖 |
 | 6 | 既有 source.test.ts「git materialization fetches the pinned commit and proves HEAD equals the pin」；本轮 `plugin-install.test.ts`「the installed tree is the pinned commit, not the branch head」 |
 | 7 | 既有 `packages/iris-app-service/tests/plugin-manifest.test.ts`（PR-1，四种写法逐条）；本轮把 `host: '../outside.js'` 走到 preview 面上 |
 | 8 | 既有 source.test.ts（junction）与 archive-security.test.ts；`hashTree` 与 `auditContainment` 两道网各自测 |

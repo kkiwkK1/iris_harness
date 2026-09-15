@@ -6814,7 +6814,9 @@ bit could close the gap, which is the same overturn condition as above.
 **What would overturn it.** A manifest route that gains per-plugin status from
 the host (a fifth manifest field, or a `plugin.assetStatus` RPC) would make the
 probe and the scan redundant; the hook is written so the fetch path is the only
-thing that would need replacing.
+thing that would need replacing. (U6 later added a third fact to this row —
+the manifest revision, beside the catalog one — and corrected what the row's
+two old numbers were being read as: §102.)
 
 ---
 
@@ -7048,3 +7050,59 @@ letting frames read the shell's dictionary is a trust-model question, not a
 plumbing one); or a plugin wanting parametric interpolation in the catalog
 row — today rows render copy raw, slots and all, and filling them needs data
 the row does not have.
+
+---
+
+## 102. The plugin center's browser-asset row shows the three quantities it always had, under labels that say what each is
+
+**What changed.** U6 件 3. The `<dl>` in `AssetStatus` grows a third revision
+cell, and the two old ones say what they are: Catalog revision
+(`pluginCenterExpectedRevision`, value unchanged — the snapshot's generation
+counter), Manifest revision (`pluginCenterManifestRevision`, **new field**
+`PluginBrowserAssetStatus.manifestRevision: number | undefined`, carried by
+every reduction branch), Asset content rev (`pluginCenterActualRevision`,
+value unchanged — the twelve-hex content rev — now stamped `data-asset-rev`
+so tests read the cell by value, not by label proximity). Key names are kept
+and values changed; the one new key is added to both dictionaries, which is
+what the sheet's "同步两列字典" becomes under that choice. The acceptance
+record's「顺手看到」second item (`notes/PLUGIN-INSTALL-ACCEPTANCE-2026-09-15.md:47`)
+is closed by this and gets a status line in that file; its first item
+(headless font fallback) stays open — it is a font question, not this round's.
+
+**The premise the sheet corrected.** The code never compared
+`expectedRevision` with `actualRevision`. The only comparison is
+`manifest.revision !== revision` (`use-plugin-manifest.ts`, the stale branch)
+— two numbers, and the stale row's whole meaning — and *neither* of those was
+displayed. The two rendered values just sat side by side under labels that
+read as comparable. So the fix is a third cell, not a unification: the
+catalog generation and the manifest generation are the same quantity and now
+sit beside each other, disagreeing legibly exactly when the row says stale;
+the content rev is a different quantity (a hash) and pins nothing against
+either. The one thing this round refuses to build is a rendered 一致/不一致
+verdict comparing the rev against a revision, because that comparison is the
+quantity mistake itself.
+
+**The reduction became a pure function.** `reducePluginBrowserAssetStatuses`
+is exported from `use-plugin-manifest.ts`, with `seenRows` passed in rather
+than read from module scope, so the status contract is testable without a DOM
+and a fetch double; the extraction is mechanical — the nine assignment sites
+each gained the one field, and TypeScript named every branch the first edit
+missed. §97's surface is unchanged in shape; it shows one more fact per row.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| pure reduction (`plugin-browser-assets.test.ts`): on `stale`, `expectedRevision !== manifestRevision`, both `typeof number` | fill `manifestRevision` with the snapshot revision — the "make both the same quantity" wrong implementation | red → revert → green |
+| pure reduction: on `loaded`, `actualRevision` matches `/^[0-9a-f]{12}$/` and never equals the catalog revision's string form | render a revision into `actualRevision` | red → revert → green |
+| mount (`plugin-browser-assets-mount.test.ts`): snapshot 7 answered by manifest 6 mounts `stale` carrying both generations as numbers | same wrong fill, through the real hook | red → revert → green |
+| `render-check.tsx` drives the exported `AssetStatus` directly (the consent-page pattern, because SSR never gets past loading): three cells; `data-asset-rev` is twelve-hex and ≠ the catalog revision | delete the third cell while keeping the copy | red → revert → green |
+| `plugin-center.test.ts` reads the new copy in both languages | add the key to one dictionary only | red (zh render misses 清单 revision, i18n parity) → revert → green |
+
+### What would reopen this
+
+(a) A caller wanting the manifest generation for logic rather than display —
+it is on the status object now, so the temptation exists; the comparison that
+makes sense is manifest-vs-catalog (already made in the hook), never
+rev-vs-hash. (b) A fourth quantity joining the row — the `<dl>` is getting
+long; if it grows again the facts should re-group rather than append.
