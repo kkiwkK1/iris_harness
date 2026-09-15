@@ -34,7 +34,12 @@ export {
 } from './events.ts'
 
 export type {
+  SystemPluginFailure,
+  SystemPluginFailureState,
+  SystemPluginInstallPreview,
+  SystemPluginProvenance,
   SystemPluginSnapshot,
+  SystemPluginSource,
   SystemPluginView,
 } from './system-plugins.ts'
 

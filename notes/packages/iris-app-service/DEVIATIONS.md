@@ -7482,3 +7482,212 @@ own, and the root `notes/DEVIATIONS.md` is task M's preset ledger (its title
 and its first line say so) — not a general one. This entry covers both sides of
 the seam because the new module lands here and because §77 already put the
 plugin-id question in this file.
+
+---
+
+## 80. A system plugin can be installed from outside the repository, and the catalog file learned to say where its bytes came from
+
+**What changed.** PR-2 of `docs/SYSTEM-PLUGIN-INSTALL.md` §10. Four methods
+(`plugin.previewInstall`, `plugin.confirmInstall`, `plugin.cancelInstall`, and
+the reserved-and-refused `plugin.update`), a new
+`packages/iris-app-service/src/plugins/install.ts` that owns the sequence,
+`system-plugins.json` at version 2 with per-row provenance, a boot scan that
+re-hashes every `git` row before it may run, six named failure states on the
+catalog row, and three optional fields on `SystemPluginView`. No UI: PR-3 owns
+that, and `docs/SYSTEM-PLUGIN-INSTALL.md` §8 is still design.
+
+The installer gained a seam rather than a feature. `Installer.installAs` is now
+`stage` then `promote`, with `discard` for the third exit; the body of each
+half is the code that was in `installAs`, moved, and `installAs` is the two of
+them called in order with nothing in between. That is what lets a caller park a
+transaction at the existing `hashed` phase while a human decides — which is the
+whole of the two-step handshake — without a second copy of the phase machine.
+`TransactionStore.retarget` is the one genuinely new mechanism: an ST
+extension's id is derived before anything is fetched, but a plugin package's id
+lives inside the tree, so such a transaction begins under
+`PROVISIONAL_EXTENSION_ID` and learns its real id before it may take a claim.
+
+### Decisions the code forced, against what the design said
+
+**1. `dev` is loaded in place; it is not copied.** §6 said the layout is the ST
+one and §7 said `dev` skips re-verification "because its tree is being edited".
+Those two only hold together if the dev tree is the user's own directory — a
+copy under `installed/<id>/` is not the tree being edited, and copying would
+turn the source that exists so a plugin can be debugged against a release build
+into a slower kind of local install. So `dev` stages (contract, containment
+audit and hash all run, exactly as for `git`), then the staging is discarded and
+the catalog records the absolute path. §6 now says this.
+
+**2. The v1 → v2 upgrade stamps `source: 'builtin'` only on this build's own
+definitions.** §6 said "every row". A v1 file can also hold rows for adopted ST
+extensions, and those are not builtin; writing `builtin` into the one field
+whose job is to answer "where did these bytes come from" would be putting a
+false answer in it. Rows the runtime does not recognise keep no `source` — the
+field is optional precisely so that "this host has no provenance for this row"
+is sayable — and the boot scan fills it in when it finds a tree. The existing
+`system-plugins.test.ts` case "startup repairs and persists an enabled
+dependency closure at the boot revision" now pins both halves: its `helper` row
+gained `source: 'builtin'` in the expected object, and its `unavailableLater`
+row (persisted, but not one of this runtime's definitions) still expects exactly
+`{ installed, enabled }`. That assertion was made *stricter*, not looser.
+
+**3. `clientMembers` is not in the preview.** §5.1 promised the member names a
+`client.js` registers, for a clash warning on the consent page. The scanner is
+`scanPluginMemberNames` (`apps/iris-web/src/app/use-plugin-manifest.ts:208`), a
+browser-app module; app-service cannot import it without pulling the web app in.
+The scan already happens in the frame and already refuses **per plugin, not per
+frame** (`apps/iris-web/src/sandbox/plugin-members.ts:13`), so the host reports
+`hasClient` and leaves the names to the side that reads the bundle. §5.1 records
+this.
+
+**4. Four field renames on the wire.** `repository`/`directory` →
+`remote`/`path` so the request uses the same names as the catalog row, the
+provenance and the v2 file; `transactionId` → `previewToken` because to a caller
+the value is a consent ticket and a name that says "transaction" invites a
+caller to think it can look one up; `files`/`bytes` → `fileCount`/`sizeBytes`;
+and `apiVersion` became the normalized `major.minor` string PR-1's manifest
+parser already produces, with a `supportedApiVersions` beside it so the
+interface does not assemble "needs N, this host does 1.0–1.0" itself.
+
+**5. `confirmInstall.commit` is `nullable`, not `optional`.** §5.2 wrote
+`.optional()` with the comment "required for git". Optional makes "I forgot to
+echo the commit" and "this is a dev source and there is no commit" the same
+request, and the promotion has to answer those two differently.
+
+**6. `not-implemented` is not a wire code.** The task for this round asked
+`plugin.update` to answer a named `not-implemented` refusal. `RpcError['code']`
+(`packages/iris-protocol/src/rpc.ts`) has seven members and that is not one of
+them; the tree's convention for "this name exists and this build does not
+implement it" is `unsupported` — it is what `parseRequest` answers for an
+unknown method and what `requirePlugins()` answers for an unconfigured control
+plane. A seventh code for one handler would put an arm in every client's error
+switch for a method that does nothing, so the refusal is `unsupported` and the
+*message* carries the ruling and the path that does work.
+
+**7. Ruling 5 forces an uninstall into ruling 3's sequence.** The tampered-row
+recovery §12 ruling 3 describes is "reinstall from the recorded remote and
+commit, through the full consent". It cannot be preview → confirm directly,
+because until the row goes the id is taken and ruling 5 refuses the confirm (and
+the installer's own `already-installed` would refuse the promotion anyway). So
+the sequence is uninstall → preview → confirm, which is exactly the
+"卸载后重装" §1 already names as this round's update path. The test
+"ruling 3: tamper, boot, then reinstall…" drives all four steps.
+
+**8. Embedded credentials are refused on this path, not in the installer.**
+`validateExtensionSource` (`packages/iris-extension-installer/src/source.ts:60`)
+checks the scheme and refuses whitespace and quotes; it says nothing about
+userinfo, so `https://user:token@host/repo.git` passes it today. It is not
+tightened there, because that would change the ST install path's behaviour in a
+round that is not about ST. On this path it is an `install-failed`: the remote
+string is copied into the lock, into `system-plugins.json`, onto the consent
+page and into every `plugin.list` broadcast, so a secret pasted once is a secret
+in four files, three of which nobody looks at. **Open, and deliberately left
+open:** the ST path still accepts such a URL. If the installer ever gains the
+check, this one becomes redundant rather than wrong.
+
+**9. Uninstall deletes the tree first and the row second.** A crash between the
+two leaves a row whose tree is gone, which the next boot names `install-failed`
+and the user can act on. The other order leaves a tree with no row — and the
+boot scan would re-adopt it, resurrecting a plugin the user just removed, in
+silence. The row itself is removed only for rows this round's install path
+created (`RuntimePlugin.removable`); builtins and adopted ST extensions keep the
+uninstall semantics they had, which for ST is "keep the tree and the settings,
+because they are user data" (`st-reinstall.ts:1`).
+
+**10. The size ceiling is checked after the hash, and is injectable.**
+`hashTree` is the only walk that already counts files and bytes, so checking
+before it would mean walking the tree twice to learn what the second walk was
+about to report. The archive path's own 1 GiB extraction ceiling is what bounds
+the pre-hash window. `PLUGIN_TREE_LIMITS` is 256 MiB / 20,000 files, with the
+pilot-tree measurement (415 files / 102,374,704 bytes,
+`notes/st-compat/pilot-lock.md` §2) in its docblock, and `SystemPluginInstallOptions.limits`
+is a test-only override for the same reason `maxArchiveBytes` is one: a test
+that built a 20,001-file tree would take minutes and still would not exercise
+the byte ceiling.
+
+### The mutation table
+
+Fifteen named mutations, each applied alone, the five suites below run, then
+reverted. Every one reddened a named assertion.
+
+| mutation | what reddened |
+| --- | --- |
+| confirm stops comparing the echoed `treeHash` | `a confirmation that echoes a different treeHash is refused…` and `a stale preview cannot approve a tree that moved` |
+| confirm stops comparing the echoed `commit` | `a confirmation that echoes a different id, or a different commit, is refused` |
+| confirm stops refusing a taken id (ruling 5) | `confirming under a builtin id is refused as install-failed, id 已被占用` |
+| the boot scan stops re-hashing `git` trees | `a tampered git tree is listed as tampered…` and `ruling 3: tamper, boot, then reinstall…` |
+| uninstall stops deleting the installed `git` tree | `a git package: promoted, locked, hashed…` and `ruling 3: …` |
+| the loaded default export's `id` is no longer checked | `load-failed: the default export is checked against the manifest before activate is called` |
+| a package may ship `node_modules` | `a package that ships node_modules is refused…` |
+| both tree ceilings dropped | `a package over the file or byte ceiling is refused as install-failed` |
+| a remote carrying credentials is accepted | `install-failed: a non-https remote, an unpinned commit, and a remote carrying credentials` |
+| `#commit` erases provenance again (the pre-PR-2 line) | 5 tests, incl. `a lifecycle transition never erases provenance` and both reboot tests |
+| the catalog reader accepts any version number | `a catalog version this build does not know is retained and everything fails closed` |
+| `enable` stops refusing a blocking failure state | `a tampered git tree is…cannot be enabled` |
+| the v1 upgrade stamps every row `builtin` | the existing `startup repairs and persists an enabled dependency closure at the boot revision` |
+| the boot scan stops restoring the persisted `enabled` flag | both reboot tests |
+| `promote` accepts a transaction outside the `hashed` phase | `a handle that is no longer staged cannot promote, and the refusal names the phase` |
+
+Two of these went green on the first run and are recorded rather than hidden,
+because the reason is instructive in both cases and the fix was to the
+assertion, not to the code:
+
+- **`enable` stops refusing a blocking failure state.** It went green because
+  the check has a second net under it: a `tampered` row's catalog entry carries
+  a *placeholder* definition whose `activate` throws, so the enable was refused
+  either way and the assertion, which matched `/tampered/`, could not tell the
+  two apart. What differs is the wire code — `unsupported` from the recorded
+  verdict, `internal` from a failed activation — and the assertion now pins it.
+  The same shape as §79's resolved-prefix row: a guard with teeth only under a
+  single-fault assumption, made falsifiable by asserting the thing that actually
+  differs.
+- **`promote` accepts a non-`hashed` transaction.** Green because nothing
+  reachable violates it: `confirm` deletes the pending token before it promotes,
+  so a token cannot be replayed, and `installAs` hands promote a freshly staged
+  handle. It is reachable from a direct `Installer` caller, and
+  `staged-install.test.ts` is now that caller: stage, discard, promote, and the
+  refusal must be a `SourceError` with code `not-staged`. Without the check the
+  same call still throws — an `InvalidTransitionError` from the phase machine —
+  so again the discriminating assertion is the *kind* of refusal, not that one
+  happened.
+
+### Tests
+
+New: `packages/iris-app-service/tests/plugin-install.test.ts` (31),
+`packages/iris-app-service/tests/plugin-install-rpc.test.ts` (5),
+`packages/iris-client-fake/tests/plugin-install.test.ts` (6),
+`packages/iris-extension-installer/tests/staged-install.test.ts` (6). Edited:
+one expected object in `packages/iris-app-service/tests/system-plugins.test.ts`,
+described under decision 2 — no other existing test file was touched, and no
+assertion anywhere was weakened or removed.
+
+The install tests run against real trees and a real local git repository over
+`file://` (the installer suite's own `buildGitFixture`), with a fixture package
+whose `host.js` appends to a marker file **at module scope** — which is what
+makes "host.js was never imported" assertable rather than merely "activate never
+ran".
+
+### One invariant with no test
+
+§9 #5 (git never recurses into submodules) is enforced by the fixed argv in
+`materializeGit` and by nothing else: `grep -rn submodule packages/*/tests` is
+empty, before this round and after it. It is recorded here and in §9 rather than
+reported as covered, because the honest version of that row is a fixture — a
+local repository with a real submodule — and building one is its own piece of
+work, not something to attach to a round about directories and hashes. Every
+other row of §9 #1–#14 names a test that exists.
+
+### What would reopen this
+
+(a) A second consumer of `Installer.stage`/`promote`, at which point the
+`StagedInstall` handle's in-memory-only lifetime becomes a question — today a
+preview that does not survive the process is cleaned by the recovery scan, which
+is acceptable exactly because `cancelInstall` is the normal exit. (b) The
+installer refusing userinfo itself, which retires decision 8's asymmetry. (c)
+`plugin.update` being built, which is the first time a row changes `treeHash`
+without the id being freed, and therefore the first time ruling 5's check needs
+an exception rather than an uninstall. (d) A capability registry, which is when
+`capabilities` stops being display-only and the sentence "the host does not
+check this" has to come off the consent page. (e) A second host implementation
+reading `system-plugins.json`, which is when the closed version set stops being
+a local decision.

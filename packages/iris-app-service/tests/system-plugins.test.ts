@@ -113,14 +113,21 @@ test('startup repairs and persists an enabled dependency closure at the boot rev
 
   const stored = JSON.parse(await readFile(value.file, 'utf8')) as {
     revision: number
-    plugins: Record<string, { installed: boolean, enabled: boolean }>
+    plugins: Record<string, { installed: boolean, enabled: boolean, source?: string }>
   }
   assert.equal(stored.revision, 10)
-  assert.deepEqual(stored.plugins['helper'], { installed: true, enabled: true })
+  // The expected row gained `source: 'builtin'` with the v1 → v2 upgrade
+  // (PR-2 of docs/SYSTEM-PLUGIN-INSTALL.md §6). The claim this line always
+  // made — the repaired dependency is persisted installed *and* enabled at the
+  // boot revision — is unchanged and still exact; the upgrade is pinned beside
+  // it rather than tolerated by loosening the comparison.
+  assert.deepEqual(stored.plugins['helper'], { installed: true, enabled: true, source: 'builtin' })
   assert.deepEqual(
     stored.plugins['unavailableLater'],
     { installed: true, enabled: false },
-    'an unknown persisted id was discarded',
+    'an unknown persisted id was discarded — and, since it is not one of this runtime\'s own definitions, '
+    + 'the v1 → v2 upgrade did not stamp it `source: "builtin"`, which would have been a claim about bytes '
+    + 'this host has never seen',
   )
 })
 

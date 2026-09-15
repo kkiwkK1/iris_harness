@@ -188,6 +188,8 @@ export interface ProfilePaths {
   cardStorage: string
   /** Third-party ST extensions, in the installer's own layout. */
   extensions: string
+  /** Installed Node system-plugin packages, in the installer's own layout. */
+  systemPluginPackages: string
   /**
    * Remote script bundles the host has fetched on a card's behalf.
    *
@@ -291,5 +293,27 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     cacheTrace: join(root, 'cache-trace'),
     /** Third-party ST extensions, laid out by the installer (staging/ claims/ installed/). */
     extensions: join(root, 'st-extensions'),
+    /**
+     * Installed Node system-plugin packages, in the same installer layout
+     * (`staging/ claims/ installed/<id>/`) and deliberately **not** in the
+     * directory above.
+     *
+     * Two reasons, neither of them tidiness
+     * (`docs/SYSTEM-PLUGIN-INSTALL.md` §6). The artifact contracts differ — an
+     * ST tree must carry `manifest.json` with a `js` entry, a plugin tree must
+     * carry `package.json` with an `iris.plugin` block — so one shared
+     * `installed/` would have to be told apart by trial at scan time. And the
+     * id namespaces differ: an ST id is a slug of `display_name`, a plugin id
+     * is what its author wrote, and a collision between the two should not be
+     * decided by who installed first.
+     *
+     * **Name collision warning.** `<dataDir>/system-plugins/` also exists and
+     * is a different thing: it is the browser asset root
+     * (`packages/iris-app-service/src/plugin-assets.ts:117`), it is dataDir-
+     * level rather than profile-level, and it holds only
+     * `<id>/client/client.js`. This one holds whole package trees. The two
+     * constants point at each other on purpose.
+     */
+    systemPluginPackages: join(root, 'system-plugins'),
   }
 }

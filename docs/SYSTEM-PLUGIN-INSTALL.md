@@ -1,6 +1,6 @@
 # 系统插件安装路径（裁决已下，分阶段落地中）
 
-状态：**设计已裁决**（2026-09-15，见 §12 裁决记录），§10 的 PR-1（安装器泛化 + 清单解析）已落地，PR-2/PR-3 未开工；本文其余各节仍是设计而非现状描述，代码以 `docs/INFRASTRUCTURE-INTERFACES.md` 为准。原状态说明保留如下——状态：**提案**。本文不描述 `main` 上存在的代码，除了第 2 节——那一节的每一条都按 `8552c4b` 重新读过源码，行号只作为该提交的证据，事实以符号名定位。其余各节是**待裁决的设计**，落地前不得被引用为现状。
+状态：**设计已裁决**（2026-09-15，见 §12 裁决记录）。§10 的 **PR-1（安装器泛化 + 清单解析）与 PR-2（安装路径与持久化）已落地，PR-3（PluginCenter）未开工**——§3 / §5 / §6 / §7 / §9 现在描述的是代码，落地时被代码推翻的地方在各节里就地标了「**PR-2 落地更正**」；§8（PluginCenter 变更）仍然是设计，不得被引用为现状。代码以 `docs/INFRASTRUCTURE-INTERFACES.md` 为准。原状态说明保留如下——状态：**提案**。本文不描述 `main` 上存在的代码，除了第 2 节——那一节的每一条都按 `8552c4b` 重新读过源码，行号只作为该提交的证据，事实以符号名定位。其余各节是**待裁决的设计**，落地前不得被引用为现状。
 
 它回答的是 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md)「Trust model (信任模型)」留下的那个公开问题——**同权宿主代码的安装源受什么约束**——以及 [INFRASTRUCTURE-INTERFACES](INFRASTRUCTURE-INTERFACES.md) §8 里「系统插件的包外安装路径」那一行。两者在文档里就是同一件事的两面。
 
@@ -135,15 +135,38 @@
 
 ### 5.1 `plugin.previewInstall`
 
+**PR-2 落地更正（四处字段改名，一处字段删除）**。落地形状以
+`packages/iris-protocol/src/rpc.ts` 的 `requestSchemas` 与
+`packages/iris-protocol/src/system-plugins.ts` 的 `SystemPluginInstallPreview`
+为准；本节改写成落地形状，被改掉的地方逐条记在这里，理由见
+`notes/packages/iris-app-service/DEVIATIONS.md` §80：
+
+- 请求里 `repository` → `remote`，`directory` → `path`：目录行、`provenance`
+  与 `system-plugins.json` 的 v2 键（§6）用的都是 `remote`/`path`，请求用第二套
+  名字只会让 UI 在两组名字之间来回翻译。
+- 返回里 `transactionId` → `previewToken`，`files`/`bytes` →
+  `fileCount`/`sizeBytes`：前者是因为这个值对调用方只是**一张同意票据**，叫
+  `transactionId` 会诱导调用方以为它可以拿去查事务；后者只是说清单位。
+- 返回里 `apiVersion` 从 `number` 改成**归一化后的 `major.minor` 字符串**
+  （整数写法 `1` 读作 `'1.0'`），与 PR-1 的 `SystemPluginManifest.apiVersion`
+  一致；另加 `supportedApiVersions`，这样「需要 N，本机支持 1.0–1.0」这句话
+  不用 UI 自己拼。
+- **`clientMembers` 删除。** 扫成员的是 `scanPluginMemberNames`
+  （`apps/iris-web/src/app/use-plugin-manifest.ts:208`），它是浏览器侧模块，
+  app-service 不能 import 它而不把整个 web 应用拖进来。成员扫描与重名拒绝本来
+  就发生在帧里、而且**按插件不按帧**
+  （`apps/iris-web/src/sandbox/plugin-members.ts:13`），所以宿主只报
+  `hasClient`，成员名留给读它的那一侧。
+
 ```ts
 'plugin.previewInstall': z.object({
   source: z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('git'),
-      repository: z.string().min(1).max(2000),
+      remote: z.string().min(1).max(2000),
       commit: z.string().regex(/^[0-9a-f]{40}$/),
     }),
-    z.object({ kind: z.literal('dev'), directory: z.string().min(1).max(1000) }),
+    z.object({ kind: z.literal('dev'), path: z.string().min(1).max(1000) }),
   ]),
 })
 ```
@@ -152,25 +175,26 @@
 
 ```ts
 interface SystemPluginInstallPreview {
-  transactionId: string            // 已有事务 id，阶段停在 'hashed'
+  previewToken: string             // 已有事务 id，阶段停在 'hashed'
   id: string                       // 清单里的 iris.plugin.id
   displayName: string
   description: string
   version: string                  // package.json 的 version
-  apiVersion: number
+  apiVersion: string               // 归一化的 major.minor
   compatible: boolean              // apiVersion 是否在宿主区间内
+  supportedApiVersions: string     // 本机区间，形如 "1.0–1.0"
   source: 'git' | 'dev'
-  remote?: string                  // git 的 repository
+  remote?: string                  // git 的远端
   commit?: string                  // git 的 resolvedCommit（== 请求里的 commit）
+  path?: string                    // dev 的绝对目录
   treeHash: string                 // 64-hex，规范遍历的结果
-  files: number
-  bytes: number
+  fileCount: number
+  sizeBytes: number
   capabilities: string[]
   permissions: string[]            // 闭合词表，见 §12 裁决 4：展示与拼写校验，不是边界
   dependencies: string[]
   hasClient: boolean               // 是否带 client.js
-  clientMembers: string[]          // scanPluginMemberNames 扫出的成员名，供重名预警
-  warnings: string[]               // 例如「声明的 dependency 不在本机目录里」
+  warnings: string[]               // 「声明的 dependency 不在本机目录里」「id 已被占用」
 }
 ```
 
@@ -180,12 +204,16 @@ interface SystemPluginInstallPreview {
 
 ```ts
 'plugin.confirmInstall': z.object({
-  transactionId: z.string().min(1).max(200),
+  previewToken: z.string().min(1).max(200),
   id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
   treeHash: z.string().regex(/^[0-9a-f]{64}$/),
-  commit: z.string().regex(/^[0-9a-f]{40}$/).optional(),   // git 源必填
+  commit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),   // dev 源写 null
 })
 ```
+
+**PR-2 落地更正**：`commit` 是 `nullable` 而不是 `optional`。`optional` 会让
+「忘了回带 commit」和「这是 dev 源，本来就没有 commit」在线上长成同一个请求，
+而这两件事在促进前的比对里必须是两个答案。
 
 返回 `SystemPluginSnapshot`，与其余 `plugin.*` 一致。
 
@@ -215,13 +243,22 @@ plugin.confirmInstall（回带 id + treeHash + commit）
 用户另点「启用」 ⇒ 复核 treeHash ⇒ import host.js ⇒ activate
 ```
 
-第三个 RPC `plugin.cancelInstall({ transactionId })` 是必要的：没有它，一次被放弃的预览会把 staging 和 claim 留到下次 `recoverInstallations` 才清（`packages/iris-extension-installer/src/recovery.ts:46`），而那是**崩溃恢复**机制，不该被当成正常退出路径用。
+第三个 RPC `plugin.cancelInstall({ previewToken })` 是必要的：没有它，一次被放弃的预览会把 staging 和 claim 留到下次 `recoverInstallations` 才清（`packages/iris-extension-installer/src/recovery.ts:46`），而那是**崩溃恢复**机制，不该被当成正常退出路径用。
 
 ---
 
 ## 6. 存储与状态机
 
-**位置**：`<profile>/system-plugins/`，布局与 ST 那份一致（`staging/ claims/ installed/<id>/`）。
+**位置**：`<profile>/system-plugins/`，布局与 ST 那份一致（`staging/ claims/ installed/<id>/`）。落地常量是
+`PROFILE_PATHS.systemPluginPackages`（`packages/iris-app-service/src/paths.ts`），安装树在
+`<profile>/system-plugins/installed/<id>/`——**注意是 `installed/<id>/` 而不是 `<id>/`**：布局是安装器的，
+不是本文新发明的。
+
+**PR-2 落地更正（`dev` 源不复制）**：只有 `git` 源会被促进进 `installed/<id>/`。`dev` 源**进 staging 只为
+过一遍同样的 artifact 契约、包含性审计与哈希**，confirm 时把 staging 丢掉，目录行记下用户自己的绝对路径，
+`host.js` 直接从那里 import。理由就是 §7 第 2 条自己写的那句「dev 源跳过复核（它的树本来就在被编辑）」——
+一棵被复制进安装根的树不是「正在被编辑的那棵树」，复制之后这条源就不再是「按发行版调试插件」的路，
+而只是一条更麻烦的本地安装。代价就是裁决 1 已经接受的那一条：发行版里存在一条无字节校验的同权装载路径。
 
 与 ST 的 `<profile>/st-extensions/`（`packages/iris-app-service/src/paths.ts:293`）**分开**，理由有两条且都不是洁癖：一是两者的 artifact 契约不同（ST 树要有 `manifest.json` 且 `js` 必须存在——`requireManifest`，`packages/iris-extension-installer/src/installer.ts:218`；插件树要有 `package.json` 的 `iris.plugin`），混在一个 `installed/` 下就要在扫描时靠试探区分；二是 id 命名空间不同，ST 的 id 是 `display_name` 的 slug，插件的 id 是作者写的，撞名时不该是先到先得。
 
@@ -254,7 +291,19 @@ plugin.confirmInstall（回带 id + treeHash + commit）
 }
 ```
 
-版本**升到 2**，而不是「加可选键、保持 1」。后者读起来更平滑（现有的 `validPreference` 本来就容忍多余键），但方向是错的：旧版 Iris 读到一个 v1 的文件会照常激活，包括那些它根本不会复核 `treeHash` 的行。升到 2 之后，旧版读不懂，走的是既有的「读不动即全体停摆、保留原文件、全部置 `error`」路径——对一个安全特性来说，**拒绝一切**是安全的那个方向。新版读 v1 文件就地升级：所有行补 `source: "builtin"`。
+版本**升到 2**，而不是「加可选键、保持 1」。后者读起来更平滑（现有的 `validPreference` 本来就容忍多余键），但方向是错的：旧版 Iris 读到一个 v1 的文件会照常激活，包括那些它根本不会复核 `treeHash` 的行。升到 2 之后，旧版读不懂，走的是既有的「读不动即全体停摆、保留原文件、全部置 `error`」路径——对一个安全特性来说，**拒绝一切**是安全的那个方向。新版读 v1 文件就地升级。
+
+**PR-2 落地更正（升级只给内置行补 `source`）**：上一句原本写的是「所有行补
+`source: "builtin"`」，落地时改成**只给本次构建自己注册的内置定义补**。一个 v1 文件里也可能有被
+`adoptDefinition` 接纳进来的 ST 扩展行，而那不是内置的；把它标成 `builtin` 就是在「这些字节从哪来」
+这个唯一负责回答该问题的字段里写一句假话。其余行升级后**不带 `source`**——这个字段是可选的，
+正是为了让「本机对这一行没有来源记录」说得出口，开机扫描找到树时再补上。落地行为由
+`packages/iris-app-service/tests/system-plugins.test.ts`「startup repairs and persists an enabled dependency
+closure at the boot revision」钉住（它的两条 `deepEqual` 一条有 `source`、一条没有）。
+
+**另一条落地事实**：`parseStored` 接受的版本是**闭合集 `{1, 2}`**，别的一律走「读不动」那条路。
+旧读者拿到 v2 会走同一条路，这一点在本树里已经不能直接执行了（v1 读者的代码没了），能执行的是它的
+另一半：给一个 version 9 的文件，全体 `error`、原文件保留、`enable` 被拒。
 
 **状态机**（目录行的视角）
 
@@ -285,6 +334,12 @@ plugin.confirmInstall（回带 id + treeHash + commit）
 
 **卸载删树**。这一条**与 ST 现行行为不同**，是有意的。ST 那边保留安装树与设置文件，理由写在 `packages/iris-app-service/src/st-reinstall.ts:1` 起的注释里：artifact 和设置是用户数据，同 id 再装是「重装」。对系统插件不成立——插件树里没有用户数据，它是**从一个可复现的 (remote, commit) 拉下来的只读产物**，随时能原样再拉一次；而留着它意味着一棵同权代码树在用户以为自己已经删掉之后继续躺在磁盘上，并且下次同 id 安装时会碰上 `already-installed`。所以：卸载删树，**但保留偏好行以外的业务数据**（变量、聊天）不变，这一点与现有卸载语义一致。`dev` 源例外：`dev` 的「树」是用户自己的工作目录，卸载**绝不**碰它，只删目录行。
 
+**PR-2 落地补充（删除顺序与目录行）**：先删树、后删目录行。中间崩溃会留下一条树已不在的目录行，
+下次开机把它命名为 `install-failed`，用户看得见也能再卸一次；反过来（先删行）中间崩溃会留下一棵没有
+目录行的树，而开机扫描会把它重新接纳——用户刚删掉的插件自己回来了，且无声。此外，本轮安装进来的行在
+卸载时**整行移除**（不是 `installed: false`），因为树已经没了、id 也必须腾出来给重装；内置行与
+ST 接纳进来的行的卸载语义**一个字没改**（`SystemPluginRuntime` 里以 `removable` 区分）。
+
 ---
 
 ## 7. 加载与激活
@@ -296,6 +351,23 @@ plugin.confirmInstall（回带 id + treeHash + commit）
 5. **加载**：只有在**启用**时才 `import(pathToFileURL(join(installedDir, iris.plugin.host)))`。路径在拼之前必须过包含性检查（§9）。顶层抛错 ⇒ `load-failed`；默认导出不是合法 definition ⇒ `manifest-invalid`（字段 `host`）。
 6. **激活**：definition 交给既有的 `enable` 路径——DFS 拓扑序、失败回滚、lease、fiber。`activate` 抛错 ⇒ `activate-failed`，走既有的「失败激活不得留下半注册能力」不变量。
 7. **client**：若清单有 `client`，在接纳时把它放到 `<dataDir>/system-plugins/<id>/client/client.js`，其余由资产面接管（rev、404、清单行）。
+
+**PR-2 落地更正（第 4 条与第 5 条的实现形状）**：目录行拿到的是一个**延迟 definition**——
+id / name / description / version / dependencies 全部来自清单（读清单不执行任何东西），而
+`activate` 里才 `import(pathToFileURL(host.js))`。于是「只有启用时才加载」不是一条纪律而是结构：
+`adoptDefinition` 之后、`enable` 之前，`host.js` 从未被 import（测试用一个在模块顶层写标记文件的
+`host.js` 断言标记不存在）。默认导出的运行期校验是三条——`id` 必须等于清单的 id、`apiVersion`
+必须等于清单的 major、`activate` 必须是函数——任何一条不符是 `load-failed` 并点名字段；插件自己的
+`activate` 抛错是 `activate-failed`。
+
+**第 4 条的 id 撞车**：`adoptDefinition` 对已知 id 返回 `false` 并静默跳过这件事**没有变**，
+变的是它够不到了——裁决 5 在 confirm 阶段就以 `install-failed`（id 已被占用）拒绝，所以不存在
+「装进来但被忽略」的行。
+
+**`tampered` / `incompatible` / `manifest-invalid` / `install-failed` 四个状态下的 `enable`**是拒绝
+（`unsupported`，消息点名状态），不是「试一次再失败」：一个重新 import 树的重试，就是一次可能在
+被篡改的字节上成功的启用。`load-failed` 与 `activate-failed` 不在此列——作者改完文件重试是 §8
+给它们写的出路。
 
 **契约包**：`host.js` 只 `import type` `@iris/plugin-api`，运行时被类型擦除，装出来的树里不需要也不应该有 `@iris/*` 的副本。若插件要 `cordis`，它是 **peer**，由宿主提供那唯一一份——这与 `pack:contracts` 把 `@deepseek-ai/cordis` 从 `dependencies` 移到 `peerDependencies` 是同一个理由，且失败时**没有症状**：第二份实例会让宿主的 `Context` 与插件的 `Context` 变成无关类型，插件的服务落进一个宿主永远不读的注册表。因此 §9 的尺寸不变量里顺带禁掉 `node_modules`。
 
@@ -356,6 +428,25 @@ interface SystemPluginView {
 | 16 | 不新增任何能读密钥的 API | 断言 `SystemPluginActivationScope` 的键集合未变（`packages/iris-plugin-api/src/index.ts:95` 的六个成员）。`key.txt` 与连接密钥本来就不在 scope 上，本提案也不放上去——**唯一的保证是「没有新接口」，不是「插件够不到」**：同权代码本来就能读文件系统，这一点必须在同意页上说清楚，不能假装 scope 是边界 |
 | 17 | `client.js` 不合格只拒该插件 | 一个成员重名的 client 与一个正常 client 同时启用，断言正常那个的成员在帧内可用、重名那个报 `conflict`，且帧仍然跑（`apps/iris-web/tests/plugin-member-merge.test.ts`） |
 
+**PR-2 落地：#1–#14 各自落在哪个测试上**（#15–#17 属于 PR-3 与既有帧侧测试，本轮未动）：
+
+| # | 落地测试 |
+| --- | --- |
+| 1 | 既有 `packages/iris-extension-installer/tests/source.test.ts`（含 `;` 的 URL 被拒、argv 固定）；本轮另加 `plugin-install.test.ts`「the install path never spawns anything but git」——断言新模块里根本没有 `node:child_process` |
+| 2 | 既有 source.test.ts 的 https 限定；本轮 `plugin-install.test.ts`「install-failed: a non-https remote…」把同一条拒绝走到了 preview 面上 |
+| 3 | 既有 source.test.ts 的 `assertPinnedCommit`；本轮 `plugin-install-rpc.test.ts`「the wire schemas refuse…」在协议层再钉一次（`main`、短 sha 都不过 schema） |
+| 4 | 本轮 `plugin-install.test.ts`「git hooks in the fixture repository never run during an install」——真装一个带 `post-checkout` 的本地仓库，断言副作用文件不存在 |
+| 5 | **没有测试**。整棵树里 `submodule` 这个词只出现在 `materializeGit` 的固定 argv 与 `source.ts` 的模块注释里；`grep -rn submodule packages/*/tests` 为空。本轮也没有补：造一个带 submodule 的本地仓库夹具是一件真事，不该顺手塞进一个关于目录与哈希的 PR 里。**这一条是本表里唯一一条无测试的不变量**，记在这里而不是写成「既有测试覆盖」 |
+| 6 | 既有 source.test.ts「git materialization fetches the pinned commit and proves HEAD equals the pin」；本轮 `plugin-install.test.ts`「the installed tree is the pinned commit, not the branch head」 |
+| 7 | 既有 `packages/iris-app-service/tests/plugin-manifest.test.ts`（PR-1，四种写法逐条）；本轮把 `host: '../outside.js'` 走到 preview 面上 |
+| 8 | 既有 source.test.ts（junction）与 archive-security.test.ts；`hashTree` 与 `auditContainment` 两道网各自测 |
+| 9 | 本轮 `plugin-install.test.ts` 两条：常量本身（256 MiB / 20,000，且都大于试点树的实测值）与「a package over the file or byte ceiling is refused」（用可注入的小上限把拒绝走通） |
+| 10 | 本轮「a package that ships node_modules is refused」 |
+| 11 | 既有 transaction.test.ts / source.test.ts「different clone metadata, identical working tree」；本轮「the boot hash is taken over the tree without its lock」补上了**锁文件不入哈希**这半条 |
+| 12 | 本轮「a tampered git tree is listed as tampered, is never imported, and cannot be enabled」——标记文件断言 `host.js` 从未被 import |
+| 13 | 本轮三条：改 treeHash 回带被拒、改 id / 改 commit 回带被拒、以及「a stale preview cannot approve a tree that moved」 |
+| 14 | 本轮「a dev package: …」与「a git package: …」都断言 confirm 之后 `enabled: false` 且 lock 的 `enabled === false` 且标记文件不存在 |
+
 ---
 
 ## 10. 分阶段交付
@@ -366,9 +457,16 @@ interface SystemPluginView {
 把 `iris-extension-installer` 里与「ST 扩展」有关的**唯一一处**耦合——`requireManifest`（`packages/iris-extension-installer/src/installer.ts:218`，硬编码 `manifest.json` 与 `js` 字段）——提成注入的 artifact 契约：`installAs(id, source, { artifactContract })`，ST 传现有的那份，插件传 `package.json` + `iris.plugin` 那份。其余七个模块（`source`/`hash`/`archive`/`lock`/`staging`/`transaction`/`recovery`）**一行不动**，这就是「泛化而不是 fork」的具体含义。新增 `parsePluginManifest` 与 `SystemPluginManifest` 类型（放 `@iris/plugin-api`，因为它是契约的一部分）。
 验收：现有 installer 测试全绿；新增清单解析测试覆盖 §9 的 #7、#10 与全部 `manifest-invalid` 字段；ST 安装路径行为逐字不变（`packages/iris-compat-st-extension/tests/pilot-host.test.ts` 不改一行仍绿）。
 
-**PR-2：安装路径与持久化**
-三个 RPC（preview/confirm/cancel）、`<profile>/system-plugins/` 布局、`system-plugins.json` v2 与 v1 升级、开机复核、六个命名失败状态、`SystemPluginView` 的三个可选字段。**不含 UI**，用测试驱动。
-验收：§9 的 #1–#14 全绿；v1 profile 升级后 `revision` 不倒退；一个真实的最小插件包（fixture，含 `host.js` 与 `client.js`）走完 preview → confirm → enable → disable → uninstall，且卸载后树不存在；`tampered` 路径下 host.js 从未被 import。
+**PR-2：安装路径与持久化**（**已落地**）
+三个 RPC（preview/confirm/cancel）加预留的 `plugin.update`、`<profile>/system-plugins/` 布局、`system-plugins.json` v2 与 v1 升级、开机复核、六个命名失败状态、`SystemPluginView` 的三个可选字段。**不含 UI**，用测试驱动。
+验收：§9 的 #1–#14 全绿（逐条落点见 §9 末尾的表）；v1 profile 升级后 `revision` 不倒退；一个真实的最小插件包（fixture，含 `host.js` 与 `client.js`）走完 preview → confirm → enable → disable → uninstall，且卸载后树不存在；`tampered` 路径下 host.js 从未被 import。
+落地代码：`packages/iris-app-service/src/plugins/install.ts`（安装服务与开机扫描）、
+`packages/iris-app-service/src/system-plugins.ts`（v2 目录、`provenance`/`failure` 投影、`removable` 卸载）、
+`packages/iris-extension-installer/src/installer.ts` 的 `stage`/`promote`/`discard` 拆分。
+落地测试：`packages/iris-app-service/tests/plugin-install.test.ts`（31）、
+`packages/iris-app-service/tests/plugin-install-rpc.test.ts`（5）、
+`packages/iris-client-fake/tests/plugin-install.test.ts`（6）、
+`packages/iris-extension-installer/tests/staged-install.test.ts`（6）。
 
 **PR-3：PluginCenter**
 安装入口、同意页、`source` 徽标、六个失败状态的中英文案、按 `source` 分叉的卸载文案。
@@ -419,6 +517,24 @@ owner 已就下面五问裁决。五个问题按原样保留在后面，作为�
 （`packages/iris-app-service/src/plugins/manifest.ts`）是闭合词表与清单契约，未知权限名以
 `manifest-invalid` 拒绝且字段为 `permissions[i]`。裁决 1、2、3、5 都落在 PR-2/PR-3 的面
 上，本轮没有写对应代码。
+
+**PR-2 的落地情况**：
+
+- **裁决 1** 已实现：`dev` 是三种 `source` 之一，进 `system-plugins.json`、进
+  `SystemPluginView.source`、进 preview 的 `source` 字段；开机扫描对它跳过哈希复核，
+  所以它永远不会是 `tampered`（测试「a dev row skips the hash check」）。
+- **裁决 2** 已实现为**拒绝**：`plugin.update({ id, commit })` 有静态 schema、有 handler、
+  fake 也有，三者都答 `unsupported` 并在消息里点名裁决 2 与「卸载后重装」这条替代路径。
+  这里用 `unsupported` 而不是新造一个 `not-implemented` 码：`RpcError['code']` 里没有这个
+  成员，而「这个方法名存在、这次构建没实现它」在本树里本来就是 `unsupported`
+  （`parseRequest` 对未知方法答的就是它，`requirePlugins()` 对未配置控制面答的也是它）。
+- **裁决 3** 的前提已具备：`tampered` 行保留 `provenance.remote` 与 `provenance.commit`，
+  测试「ruling 3: tamper, boot, then reinstall…」把整条路走了一遍。**要注意顺序**：这条路
+  是「卸载 → preview → confirm」，中间那一步卸载不是可选的，因为裁决 5 在 id 还被占着的
+  时候会拒绝 confirm，而本轮的更新路径本来就是 §1 非目标里写的「卸载后重装」。按钮是 PR-3 的事。
+- **裁决 5** 已实现：confirm 阶段比对目录里全部 id（内置与已装都算），撞车即
+  `install-failed`，消息含「id 已被占用」。preview 额外把这件事放进 `warnings`，这样同意页
+  不必等到用户点下去才告诉他——但**拒绝仍然在 confirm**，位置没挪。没有 `shadowed` 状态。
 
 1. **`dev` 源是否进发行版？** 它是唯一一个跳过 `treeHash` 复核的源。选项：(a) 永远可用并永远标 `dev`；(b) 只在开发构建里编译进去，发行版根本没有这条路。本文按 (a) 写，因为 (b) 会让「按发行版调试插件」变成不可能，但 (a) 的代价是发行版里存在一条无字节校验的同权装载路径。
 2. **更新事务现在留不留位？** 本轮的更新路径是「卸载后重装」，而卸载删树、重装要重新走完同意。这对一个常更新的插件是明显的摩擦。是否现在就把 `plugin.update({ id, commit })` 的位子留出来（preview 复用、confirm 时把新树促进到同一 id 并保留偏好行），还是等有真实使用者再说？

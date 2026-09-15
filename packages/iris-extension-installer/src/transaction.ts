@@ -114,6 +114,41 @@ export class TransactionStore {
     return txn
   }
 
+  /**
+   * Point a staged transaction at the id it turned out to be for.
+   *
+   * A SillyTavern extension's id is derived before anything is fetched (it is
+   * the slug of a `display_name` the caller already read), so `begin` has
+   * always been told the id up front. A system-plugin package does not work
+   * that way: its id lives in the `iris.plugin` block *inside* the tree, and
+   * the tree only exists after materialization. So such a transaction begins
+   * under a provisional id and learns the real one here, before it may leave
+   * the `hashed` phase.
+   *
+   * Refused in any later phase: the claim, the target and the lock are all
+   * keyed by the id, and a record that renamed itself mid-promotion would be
+   * one recovery cannot interpret — `deriveTargetPath`
+   * (`recovery.ts:60`) re-derives the target from `extensionId` and refuses a
+   * record whose embedded `targetPath` disagrees, which is exactly the
+   * inconsistency a late rename would create.
+   */
+  async retarget(txn: ExtensionInstallPhase, extensionId: string): Promise<ExtensionInstallPhase> {
+    if (txn.phase !== 'downloading' && txn.phase !== 'staged' && txn.phase !== 'validated' && txn.phase !== 'hashed') {
+      throw new Error(
+        `a transaction may only learn its extension id before promotion, not in phase ${txn.phase}`,
+      )
+    }
+    const next: ExtensionInstallPhase = {
+      ...txn,
+      extensionId,
+      targetPath: this.targetPath(extensionId),
+      updatedAt: new Date().toISOString(),
+    }
+    await this.write(next)
+    Object.assign(txn, next)
+    return txn
+  }
+
   private async write(txn: ExtensionInstallTransaction): Promise<void> {
     await atomicWriteJson(path.join(txn.stagingPath, TXN_FILE_NAME), txn)
   }

@@ -260,6 +260,28 @@ const PROBES: Record<string, unknown> = {
   'plugin.enable': { id: 'no-such-plugin' },
   'plugin.disable': { id: 'no-such-plugin' },
   'plugin.reload': { id: 'no-such-plugin' },
+  // The install path. Every one of these is made for real against the probe
+  // host, so each names something that cannot exist: a directory that is not
+  // there (the stage fails and cleans its own staging), a token nothing minted,
+  // and an id nothing holds. None of them can promote anything, which matters
+  // here more than usual — a probe that *succeeded* would leave a
+  // same-privilege code tree in the probe profile.
+  'plugin.previewInstall': { source: { kind: 'dev', path: 'no-such-plugin-directory' } },
+  'plugin.confirmInstall': {
+    previewToken: 'probe-token-nothing-minted',
+    id: 'no-such-plugin',
+    commit: null,
+    treeHash: '0'.repeat(64),
+  },
+  // An unknown token is deliberately *not* an error on this method, so this
+  // probe answers `{ ok: true }` — which still proves the handler ran, and is
+  // the only one of the four that reaches a success path.
+  'plugin.cancelInstall': { previewToken: 'probe-token-nothing-minted' },
+  // Reserved and refused (SYSTEM-PLUGIN-INSTALL §12 ruling 2): the answer is
+  // `unsupported` from the handler itself, which the guard tells apart from a
+  // missing registration by matching the transport's own "no handler is
+  // registered" wording rather than the code.
+  'plugin.update': { id: 'no-such-plugin', commit: '0'.repeat(40) },
   'chat.list': {},
   'chat.create': { characterId: 'no-such-card' },
   'chat.open': { chatId: 'no-such-chat' },

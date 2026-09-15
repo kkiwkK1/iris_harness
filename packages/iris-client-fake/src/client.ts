@@ -447,6 +447,23 @@ class InMemoryClient implements FakeClient {
       case 'plugin.reload':
         return this.#systemPlugins.reload((params as RpcRequest<'plugin.reload'>).id)
 
+      // The install path. The fake stages nothing — it has no filesystem and
+      // no git — but it models the consent handshake exactly: a token, a
+      // preview whose fields the confirm has to echo back unchanged, and a
+      // refusal for an id the catalog already holds (§12 ruling 5).
+      case 'plugin.previewInstall':
+        return this.#systemPlugins.previewInstall((params as RpcRequest<'plugin.previewInstall'>).source)
+
+      case 'plugin.confirmInstall':
+        return this.#systemPlugins.confirmInstall(params as RpcRequest<'plugin.confirmInstall'>)
+
+      case 'plugin.cancelInstall':
+        this.#systemPlugins.cancelInstall((params as RpcRequest<'plugin.cancelInstall'>).previewToken)
+        return { ok: true }
+
+      case 'plugin.update':
+        return this.#systemPlugins.update((params as RpcRequest<'plugin.update'>).id)
+
       // The ST-compat plane's face. The fake runs no extension frame, so the
       // bridge arms are recorded and forgotten, submits are refused (nothing
       // is pending), and settings/install answer in their stored shape.
