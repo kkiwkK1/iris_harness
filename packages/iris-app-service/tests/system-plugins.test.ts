@@ -238,3 +238,92 @@ test('a throwing change observer cannot roll back or reject a durable transition
   assert.equal(row(runtime, 'one').status, 'enabled')
   assert.match(reports.at(-1)?.message ?? '', /observer exploded/u)
 })
+
+const OLD_COMMIT = 'a'.repeat(40)
+const NEW_COMMIT = 'b'.repeat(40)
+const OLD_HASH = 'c'.repeat(64)
+const NEW_HASH = 'd'.repeat(64)
+
+function gitRecord(commit: string, treeHash: string) {
+  return {
+    source: 'git' as const,
+    remote: 'https://example.test/update.git',
+    commit,
+    treeHash,
+    installedAt: '2026-09-15T00:00:00.000Z',
+  }
+}
+
+test('replaceInstalled swaps a removable row\'s definition and provenance and keeps its lifecycle fields', async (t) => {
+  const value = await harness(t, [definition('builtin-one')])
+  await value.runtime.initialize()
+
+  await value.runtime.adoptInstalled(definition('swapped'), gitRecord(OLD_COMMIT, OLD_HASH))
+  // The state confirm's replacement transaction hands over: the row was
+  // enabled, and disable (its step 2) has already run.
+  await value.runtime.enable('swapped')
+  assert.equal(row(value.runtime, 'swapped').enabled, true)
+  await value.runtime.disable('swapped')
+
+  const next = { ...definition('swapped'), version: '2.0.0' }
+  await value.runtime.replaceInstalled(next, gitRecord(NEW_COMMIT, NEW_HASH))
+
+  const after = row(value.runtime, 'swapped')
+  assert.equal(after.installed, true, 'the row must stay installed')
+  assert.equal(after.enabled, false, 'the lifecycle preference disable left behind is kept, not reset')
+  assert.equal(after.status, 'disabled')
+  assert.equal(after.version, '2.0.0', 'the definition itself swapped')
+  assert.equal(after.provenance?.commit, NEW_COMMIT)
+  assert.equal(after.provenance?.treeHash, NEW_HASH)
+  assert.equal(value.runtime.capability('swapped', 'value'), undefined, 'a disabled row offers no capability')
+
+  const stored = JSON.parse(await readFile(value.file, 'utf8')) as {
+    plugins: Record<string, { installed: boolean, enabled: boolean, source?: string, commit?: string, treeHash?: string }>
+  }
+  assert.deepEqual(
+    stored.plugins['swapped'],
+    {
+      installed: true,
+      enabled: false,
+      source: 'git',
+      remote: 'https://example.test/update.git',
+      commit: NEW_COMMIT,
+      treeHash: NEW_HASH,
+      installedAt: '2026-09-15T00:00:00.000Z',
+    },
+  )
+
+  // The new generation is what runs afterwards — confirm's step 7 re-enables,
+  // and the snapshot must name the version the user just consented to.
+  await value.runtime.enable('swapped')
+  assert.equal(row(value.runtime, 'swapped').enabled, true)
+  assert.equal(row(value.runtime, 'swapped').version, '2.0.0')
+})
+
+test('replaceInstalled refuses a builtin row, an enabled row and an unknown id', async (t) => {
+  const value = await harness(t, [definition('builtin-one')])
+  await value.runtime.initialize()
+
+  await assert.rejects(
+    () => value.runtime.replaceInstalled(definition('builtin-one'), gitRecord(NEW_COMMIT, NEW_HASH)),
+    (error: unknown) => error instanceof AppError && error.code === 'invalid-request'
+      && /builtin definition cannot be replaced/u.test(error.message),
+    'a builtin row\'s definition is this build\'s own bytes and cannot be swapped out from under it',
+  )
+  await assert.rejects(
+    () => value.runtime.replaceInstalled(definition('ghost'), gitRecord(NEW_COMMIT, NEW_HASH)),
+    (error: unknown) => error instanceof AppError && error.code === 'invalid-request',
+  )
+
+  await value.runtime.adoptInstalled(definition('live'), gitRecord(OLD_COMMIT, OLD_HASH))
+  await value.runtime.enable('live')
+  await assert.rejects(
+    () => value.runtime.replaceInstalled({ ...definition('live'), version: '2.0.0' }, gitRecord(NEW_COMMIT, NEW_HASH)),
+    (error: unknown) => error instanceof AppError && error.code === 'busy',
+    'replacing a definition under a live activation must be refused, not trusted to the caller',
+  )
+  // The refused calls changed nothing.
+  assert.equal(row(value.runtime, 'builtin-one').version, '1.0.0')
+  assert.equal(row(value.runtime, 'live').version, '1.0.0')
+  assert.equal(row(value.runtime, 'live').enabled, true)
+})

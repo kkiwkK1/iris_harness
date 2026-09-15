@@ -110,6 +110,25 @@ export interface SystemPluginSnapshot {
 }
 
 /**
+ * When a preview is an update of an installed row, the row it replaces.
+ *
+ * Only `plugin.update` mints previews carrying this field; a preview from
+ * `plugin.previewInstall` never has it, so its presence is the protocol-level
+ * statement "the user is consenting to a replacement, not a fresh install".
+ * The field is **display and intent**, not authorization: the host decides
+ * whether a confirm is an update from its own transaction record
+ (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4), never from what the echo claims.
+ */
+export interface SystemPluginUpdateOf {
+  /** The catalog row being replaced. Equal to this preview's `id`. */
+  id: string
+  /** The commit the row records today. */
+  fromCommit: string
+  /** The treeHash the row records today. */
+  fromTreeHash: string
+}
+
+/**
  * What a staged-but-not-installed package says about itself, for the consent
  * step (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.1).
  *
@@ -175,4 +194,6 @@ export interface SystemPluginInstallPreview {
   i18n?: { keys: number, languages: string[] }
   /** Things the user should see before consenting that are not refusals — a dependency this profile does not have, an id already taken. */
   warnings: string[]
+  /** Present only when this preview was minted by `plugin.update` for an installed row (§5.4); a fresh-install preview omits it. */
+  updateOf?: SystemPluginUpdateOf
 }
