@@ -40,6 +40,7 @@ export type {
   SystemPluginProvenance,
   SystemPluginSnapshot,
   SystemPluginSource,
+  SystemPluginUpdateOf,
   SystemPluginView,
 } from './system-plugins.ts'
 

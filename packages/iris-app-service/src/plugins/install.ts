@@ -71,12 +71,14 @@ import {
   parseLock,
   type ExtensionSource,
   type InstalledExtensionLock,
+  type InstallResult,
   type StagedInstall,
 } from '@iris/extension-installer'
 import type {
   SystemPluginFailure,
   SystemPluginInstallPreview,
   SystemPluginSnapshot,
+  SystemPluginUpdateOf,
 } from '@iris/protocol'
 
 import { AppError } from '../errors.ts'
@@ -117,6 +119,20 @@ export const PLUGIN_TREE_LIMITS = {
 
 /** The directory name the installer promotes into, under the install root. */
 const INSTALLED_DIR = 'installed'
+
+/**
+ * Where a replaced generation waits while the new one is being enabled, under
+ * the install root — a **sibling** of `installed/`, never inside it.
+ *
+ * Two reasons it cannot sit in `installed/` under another name: the
+ * crash-recovery scan reads every entry of `installed/` as an extension id
+ * (`packages/iris-extension-installer/src/recovery.ts:146`) and would either
+ * clean the set-aside tree away or resurrect it as a row; and a set-aside
+ * directory that looks installed is a lie to a human reading the tree. In
+ * `superseded/` it is visibly neither installed nor gone, the rename stays
+ * atomic (same volume), and its lock travels with it.
+ */
+const SUPERSEDED_DIR = 'superseded'
 
 /** The file name the asset face serves a plugin's browser bundle under. */
 const CLIENT_BUNDLE = 'client.js'
@@ -200,6 +216,14 @@ interface PendingPreview {
   manifest: SystemPluginManifest
   source: PluginInstallSource
   preview: SystemPluginInstallPreview
+  /**
+   * Set only by `update`: the installed row this transaction replaces.
+   * `confirm` decides update-vs-fresh-install from **this record alone**, never
+   * from the request's echo — a fresh-install preview of an occupied id
+   * carries only a warning by design, so an echo-claimed update could dress
+   * ruling 5's refusal up as an update and walk straight past it.
+   */
+  updateOf?: SystemPluginUpdateOf
 }
 
 /** Walk a staged tree for a `node_modules` directory at any depth. */
@@ -245,7 +269,23 @@ export class SystemPluginInstallService {
    * returned token is the install transaction's own id, which is what
    * `confirm` compares against.
    */
-  async preview(source: PluginInstallSource): Promise<SystemPluginInstallPreview> {
+  preview(source: PluginInstallSource): Promise<SystemPluginInstallPreview> {
+    return this.#stage(source, { takenIdWarning: true })
+  }
+
+  /**
+   * The one staging road both `previewInstall` and `plugin.update` walk.
+   *
+   * `takenIdWarning` is the only fork. A fresh-install preview warns when the
+   * id is occupied (ruling 5 still refuses at confirm; the warning just saves
+   * the user a download); an update preview suppresses it, because there the
+   * occupied id is not a hazard to warn about — it is the row being replaced,
+   * and the preview says so structurally with `updateOf`.
+   */
+  async #stage(
+    source: PluginInstallSource,
+    options: { takenIdWarning: boolean },
+  ): Promise<SystemPluginInstallPreview> {
     const extensionSource = this.#toExtensionSource(source)
     const installer = await Installer.create(this.#installRoot)
     let staged: StagedInstall
@@ -311,8 +351,9 @@ export class SystemPluginInstallService {
       // Ruling 5 refuses a taken id at *confirm*, not here — but a consent page
       // that only learns at the last click has wasted the user's download, so
       // the fact travels in the preview as a warning while the refusal stays
-      // where the owner put it.
-      if (this.#runtime.ids().includes(manifest.id)) {
+      // where the owner put it. `update` suppresses the warning: there the
+      // taken id is the row being replaced, not a collision.
+      if (options.takenIdWarning && this.#runtime.ids().includes(manifest.id)) {
         warnings.push(`id "${manifest.id}" 已被占用 / the id "${manifest.id}" is already in this profile's catalog`)
       }
       for (const dependency of manifest.dependencies) {
@@ -363,6 +404,85 @@ export class SystemPluginInstallService {
   }
 
   /**
+   * Stage an update of one installed `git` row to a new commit and answer the
+   * preview the consent page shows.
+   *
+   * The road is the fresh-install preview's — same staging, same artifact
+   * contract, same containment audit, same hash — with two differences. The
+   * remote is not a parameter: it comes from the row's own provenance, so an
+   * update can only ever pull from where the row came from. And the
+   * transaction record is stamped `updateOf`, which does two things: the
+   * preview carries it so the consent page can show "from this commit to that
+   * one", and `confirm` treats the transaction as a replacement of that row
+   * rather than a fresh install. Whether a confirm is an update is decided
+   * from this stamp and nothing else — see `PendingPreview.updateOf`.
+   *
+   * This method replaces nothing. Until `plugin.confirmInstall`, the installed
+   * tree and its catalog row are exactly what they were.
+   */
+  async update(params: { id: string, commit: string }): Promise<SystemPluginInstallPreview> {
+    const record = this.#runtime.record(params.id)
+    if (record === undefined) {
+      throw new AppError('not-found', `system plugin "${params.id}" is not installed in this profile`)
+    }
+    if (record.source === 'dev') {
+      throw new AppError(
+        'unsupported',
+        `system plugin "${params.id}" is a dev plugin, loaded in place from ${record.path ?? 'its directory'} —`
+        + ' editing its files is the update; there is no update transaction for it',
+      )
+    }
+    if (record.source === 'builtin') {
+      throw new AppError(
+        'unsupported',
+        `system plugin "${params.id}" is builtin — it ships with this Iris build and updates with it;`
+        + ' there is no update transaction for it',
+      )
+    }
+    if (record.source !== 'git' || record.remote === undefined || record.commit === undefined || record.treeHash === undefined) {
+      throw installFailed(
+        `the catalog row for "${params.id}" does not record a complete git provenance (remote, commit, treeHash),`
+        + ' so there is nothing to update from',
+      )
+    }
+
+    const preview = await this.#stage(
+      { kind: 'git', remote: record.remote, commit: params.commit },
+      { takenIdWarning: false },
+    )
+    if (preview.id !== params.id) {
+      // The new commit renamed the package. Promoting it would install a
+      // *different* plugin, not update this one — and the consent the user is
+      // about to give is for a replacement of the row they can see. Discard
+      // the whole staging: a preview that can never be confirmed must not
+      // linger as a claim on the crash-recovery scan.
+      await this.cancel(preview.previewToken)
+      throw installFailed(
+        `the tree at that commit declares id ${JSON.stringify(preview.id)}, but the update was asked for`
+        + ` ${JSON.stringify(params.id)} — an update replaces a row, it does not rename it`,
+      )
+    }
+    const pending = this.#pending.get(preview.previewToken)
+    if (pending === undefined) {
+      throw installFailed(`the staged update for "${params.id}" disappeared before it could be recorded`)
+    }
+    pending.updateOf = { id: params.id, fromCommit: record.commit, fromTreeHash: record.treeHash }
+    // `pending.preview` and the returned object are the same record; both
+    // spellings here are for the reader, not because two objects exist.
+    preview.updateOf = pending.updateOf
+    if (params.commit === record.commit) {
+      // Re-fetching the recorded commit is exactly the repair path ruling 3
+      // installed for a tampered row, so this is allowed — but the consent
+      // page says plainly that the bytes may not differ.
+      preview.warnings.push(
+        '与当前安装的是同一个 commit / the requested commit equals the one installed right now —'
+        + ' re-fetching it is the repair path for a tampered row',
+      )
+    }
+    return preview
+  }
+
+  /**
    * Promote a previewed package the user consented to.
    *
    * Every echoed field is compared against the record `preview` wrote. A single
@@ -370,7 +490,20 @@ export class SystemPluginInstallService {
    * *these bytes*, and a promotion that accepted three matching fields out of
    * four would be a promotion of bytes nobody agreed to.
    */
-  async confirm(params: {
+  confirm(params: {
+    previewToken: string
+    id: string
+    commit: string | null
+    treeHash: string
+  }): Promise<SystemPluginSnapshot> {
+    // One confirm at a time. An update's replacement transaction renames the
+    // installed tree aside and back across several awaits; two interleaved
+    // confirms could each rename the other's tree aside. Plain installs share
+    // the queue — same take-from-`#pending`-then-surgery shape, one gate.
+    return this.#serializeConfirm(() => this.#confirmOne(params))
+  }
+
+  async #confirmOne(params: {
     previewToken: string
     id: string
     commit: string | null
@@ -402,15 +535,42 @@ export class SystemPluginInstallService {
           `the confirmation names commit ${String(params.commit)} but the staged tree came from ${String(stagedCommit)}`,
         )
       }
-      // §12 ruling 5. A builtin id is refused by name; an id that is merely
-      // installed is refused by the installer's own `already-installed` a few
-      // lines down, and both surface as `install-failed`, because the answer
-      // to "that id is taken" is the same either way and a row that installs,
-      // occupies disk and can never activate is the opposite of a named state.
-      if (this.#runtime.ids().includes(params.id)) {
-        throw installFailed(
-          `id 已被占用：本 profile 的插件目录里已经有 "${params.id}" / the id "${params.id}" is already taken in this profile's catalog`,
-        )
+      const updateOf = pending.updateOf
+      if (updateOf === undefined) {
+        // §12 ruling 5, unchanged for fresh installs. A builtin id is refused
+        // by name; an id that is merely installed is refused by the installer's
+        // own `already-installed` a few lines down, and both surface as
+        // `install-failed`, because the answer to "that id is taken" is the
+        // same either way and a row that installs, occupies disk and can never
+        // activate is the opposite of a named state.
+        if (this.#runtime.ids().includes(params.id)) {
+          throw installFailed(
+            `id 已被占用：本 profile 的插件目录里已经有 "${params.id}" / the id "${params.id}" is already taken in this profile's catalog`,
+          )
+        }
+      } else {
+        // The update's target must still be the row the preview was minted
+        // from. The user consented to replacing *that* row — not to installing
+        // the new bytes wherever an id happens to be free. Either refusal
+        // discards the transaction below, so a stale consent cannot be spent
+        // after the world moved.
+        const live = this.#runtime.record(params.id)
+        if (live === undefined || live.source !== 'git') {
+          throw installFailed(
+            `更新的目标行已经不在目录里："${params.id}" 已不是一条已安装的 git 行`
+            + ` / the row this update replaces is gone: "${params.id}" is no longer an installed git row`,
+          )
+        }
+        if (live.commit !== updateOf.fromCommit || live.treeHash !== updateOf.fromTreeHash) {
+          throw installFailed(
+            `这一行在你看到预览之后被换过了：它现在记着 ${live.commit ?? '没有 commit'}`
+            + ` / the row changed after the preview was shown: it now records ${live.commit ?? 'no commit'}`,
+          )
+        }
+      }
+
+      if (updateOf !== undefined) {
+        return await this.#replaceRow(pending, updateOf, installer)
       }
 
       const installedAt = new Date().toISOString()
@@ -457,7 +617,10 @@ export class SystemPluginInstallService {
       // and `plugin-storage` is read from what was recorded here until the
       // next boot's scan reads the manifest again.
       return await this.#runtime.adoptInstalled(
-        this.#lazyDefinition(pending.manifest, hostPath),
+        // The generation is the tree hash of *these* bytes: a future update of
+        // the same row changes it, and that is what separates the new module
+        // from the one any earlier enable already cached.
+        this.#lazyDefinition(pending.manifest, hostPath, record.treeHash ?? ''),
         record,
         [...pending.manifest.permissions],
       )
@@ -465,6 +628,213 @@ export class SystemPluginInstallService {
       await installer.discard(pending.staged).catch(() => {})
       throw error instanceof AppError ? error : this.#stageFailure(error)
     }
+  }
+
+  /**
+   * The update transaction: old tree aside, new tree in, catalog swapped,
+   * re-enabled, only then the old tree deleted — and a rollback that puts the
+   * old generation back whole when any of it fails.
+   *
+   * The order is forced (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4, §12 ruling on
+   * `already-installed`): the installer's `promote` reads the lock inside
+   * `installed/<id>/` and refuses a second install under the same id, and its
+   * rename into a non-empty target would fail anyway — so the old tree must
+   * step aside **before** the new one is promoted, and is deleted only after
+   * the new generation is enabled, because until then it is the rollback.
+   *
+   * Failure semantics (`D8` of the construction notes): a failed enable rolls
+   * back to the old generation and the *error* names what happened — the row
+   * itself goes back to what it was (a rolled-back row that was enabled before
+   * must read enabled, so the row carries no `failure` on a successful
+   * rollback). Only a rollback that itself fails leaves the row marked.
+   */
+  async #replaceRow(
+    pending: PendingPreview,
+    updateOf: SystemPluginUpdateOf,
+    installer: Installer,
+  ): Promise<SystemPluginSnapshot> {
+    const id = pending.manifest.id
+    const manifest = pending.manifest
+    // The old generation's face, read while its tree is still in place: the
+    // rollback puts back exactly this — definition, provenance, client bundle.
+    // A row whose manifest no longer parses can still be updated (ruling 3's
+    // repair path runs through here too); the rollback for it then cannot
+    // rebuild the definition and marks the row instead.
+    const oldRecord = this.#runtime.record(id)
+    const oldManifest = await parsePluginManifest(this.installedDir(id))
+    const wasEnabled = this.#runtime.isEnabled(id)
+    const aside = path.join(
+      this.#installRoot,
+      SUPERSEDED_DIR,
+      `${id}.${createHash('sha256').update(`${id}${String(Date.now())}`).digest('hex').slice(0, 8)}`,
+    )
+    let asideDone = false
+    let promoted: InstallResult | undefined
+    let swapped = false
+    try {
+      // 2. Stop the old generation first (R3): on Windows a directory holding
+      // a file an ESM import has touched may refuse the rename, and a running
+      // fiber would keep holding its lease. `disable` drains and disposes —
+      // the one honest way to wait for it to be actually stopped.
+      if (wasEnabled) await this.#runtime.disable(id)
+      // 3. The old tree steps aside (D6) — atomically, lock and all.
+      await fsp.mkdir(path.dirname(aside), { recursive: true })
+      await fsp.rename(this.installedDir(id), aside)
+      asideDone = true
+      // 4. Promote. The id's seat is empty now; `promote`'s own
+      // `already-installed` check passes and the claim machinery does the rest.
+      promoted = await installer.promote(pending.staged, id)
+      const newRecord: InstalledPluginRecord = {
+        source: 'git',
+        ...(pending.source.kind === 'git' && pending.source.remote !== undefined ? { remote: pending.source.remote } : {}),
+        ...(pending.source.kind === 'git'
+          ? { commit: promoted.resolvedCommit ?? pending.source.commit }
+          : {}),
+        treeHash: promoted.artifactSha256,
+        installedAt: new Date().toISOString(),
+      }
+      // 5. The browser bundle follows the manifest (D9): a new bundle
+      // overwrites, and a manifest that stopped declaring one must have the
+      // old copy removed — the asset face's `rev` hashes file bytes, so a
+      // surviving file would still be listed, served and loaded.
+      if (manifest.client === undefined) {
+        await fsp.rm(path.join(this.#clientAssetRoot, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+      } else {
+        await this.#publishClientBundle(id, path.join(promoted.targetPath, ...manifest.client.split('/')))
+      }
+      // 6. The catalog swap. Keeps `installed` / `enabled` / lifecycle state —
+      // "an update preserves `enabled`" happens in `replaceInstalled`.
+      await this.#runtime.replaceInstalled(
+        this.#lazyDefinition(manifest, path.join(promoted.targetPath, ...manifest.host.split('/')), newRecord.treeHash ?? ''),
+        newRecord,
+      )
+      swapped = true
+      // 7. The preference the row carried is honoured, exactly as a boot
+      // honours it: enable the new generation only if this row was enabled.
+      if (wasEnabled) await this.#runtime.enable(id)
+      // 8. Only now is the old generation deleted — until this point it was
+      // the rollback. Best effort twice over (R2: a recursive rm can be
+      // silently ineffective in this repository's Windows directories): the
+      // tree has already stepped aside, so a leftover costs disk, not
+      // correctness — it gets a log line naming the directory instead.
+      await fsp.rm(aside, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+      await fsp.stat(aside).then(
+        () => this.#log(`system plugin "${id}": the superseded tree at ${aside} could not be deleted; the update succeeded — remove the directory by hand`),
+        () => {},
+      )
+      return this.#runtime.snapshot()
+    } catch (error: unknown) {
+      // Read the typed failure before anything restores the row: it names
+      // whether the new generation failed to load or to activate (D8).
+      const typedFailure = this.#runtime.failure(id)
+      if (promoted !== undefined) {
+        // The new generation made it to the ground; move it out of the way so
+        // the old tree can come home.
+        const failedAside = `${aside}.failed`
+        await fsp.rename(this.installedDir(id), failedAside).catch(() => {})
+        await fsp.rm(failedAside, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+      }
+      if (asideDone) {
+        try {
+          await fsp.rename(aside, this.installedDir(id))
+        } catch (renameError: unknown) {
+          // The old tree could not be brought back. This is the one outcome
+          // with no graceful shape: the row is marked, and the message names
+          // where the old generation actually sits.
+          const reason = `更新失败，且旧目录未能回到 ${this.installedDir(id)}：现在在 ${aside}`
+            + ` / the update failed and the old tree could not be moved back to ${this.installedDir(id)}; it is at ${aside}`
+            + ` (${error instanceof Error ? error.message : String(error)}; rename said ${renameError instanceof Error ? renameError.message : String(renameError)})`
+          this.#runtime.markFailure(id, { state: 'install-failed', reason })
+          this.#log(`system plugin "${id}" ${reason}`)
+          throw new SystemPluginInstallError({ state: 'install-failed', reason }, 'internal')
+        }
+      }
+      if (!asideDone) {
+        // Nothing has moved yet — the disable was what failed, and the
+        // runtime's own `#setFailure` already named that on the row.
+        throw error instanceof AppError ? error : this.#stageFailure(error)
+      }
+      if (oldRecord === undefined) {
+        // The row vanished mid-transaction (a concurrent uninstall): there is
+        // no catalog row to roll back. The old tree is back in
+        // `installed/<id>/`; the next boot scan reconciles from disk.
+        throw new SystemPluginInstallError(
+          {
+            state: 'install-failed',
+            reason: `更新失败：目录行 "${id}" 在事务中途消失了；旧树已放回 ${this.installedDir(id)}`
+              + ` / the update failed: the catalog row "${id}" disappeared mid-transaction; the old tree is back at ${this.installedDir(id)}`,
+          },
+          'internal',
+        )
+      }
+      if (swapped) {
+        const restoredManifest = oldManifest.ok ? oldManifest.manifest : undefined
+        if (restoredManifest !== undefined) {
+          await this.#runtime.replaceInstalled(
+            this.#lazyDefinition(
+              restoredManifest,
+              path.join(this.installedDir(id), ...restoredManifest.host.split('/')),
+              oldRecord.treeHash ?? oldRecord.installedAt ?? id,
+            ),
+            oldRecord,
+          )
+          // The old manifest's bundle is what the asset face must serve again
+          // (the new generation may have overwritten it — or deleted it).
+          if (restoredManifest.client !== undefined) {
+            await this.#publishClientBundle(id, path.join(this.installedDir(id), ...restoredManifest.client.split('/')))
+          } else {
+            await fsp.rm(path.join(this.#clientAssetRoot, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
+          }
+        } else {
+          // The old manifest was already unreadable (D5 lets such a row be
+          // updated, so this can happen). The row keeps its provenance but
+          // carries a placeholder definition and a named failure — there is
+          // no definition to restore. The failure is marked *after* the
+          // swap, because a successful swap clears typed failures.
+          const reason = '更新失败并已回滚，但旧目录的清单不可读，无法恢复旧的插件定义'
+            + ' / the update was rolled back, but the old tree\'s manifest is unreadable, so the old definition could not be restored'
+          await this.#runtime.replaceInstalled(
+            this.#placeholderDefinition(id, { state: 'install-failed', reason }),
+            oldRecord,
+          )
+          this.#runtime.markFailure(id, { state: 'install-failed', reason })
+        }
+      }
+      // Whatever failed, the row ended up holding the old generation again —
+      // so the enabled preference it came in with is honoured again too.
+      if (wasEnabled) {
+        try {
+          await this.#runtime.enable(id)
+        } catch {
+          // The rollback's own enable failed: the row is `error` via the
+          // runtime's `#setFailure`, and the message says where the old tree
+          // is — but the old tree is back in place either way.
+          throw new SystemPluginInstallError(
+            {
+              state: 'activate-failed',
+              reason: `已回到旧代 ${updateOf.fromCommit}，但旧代启用失败；旧树在 ${this.installedDir(id)}`
+                + ` / rolled back to ${updateOf.fromCommit}, but the old generation failed to enable; its tree is at ${this.installedDir(id)}`,
+            },
+            'internal',
+          )
+        }
+      }
+      const state = error instanceof SystemPluginInstallError
+        ? error.failure.state
+        : typedFailure?.state ?? 'install-failed'
+      const reason = `${error instanceof Error ? error.message : String(error)}`
+        + ` — 已回到旧代 ${updateOf.fromCommit} / rolled back to the installed generation ${updateOf.fromCommit}`
+      throw new SystemPluginInstallError({ state, reason }, 'internal')
+    }
+  }
+
+  /** Confirms run one at a time; see `confirm`. */
+  #confirmQueue: Promise<void> = Promise.resolve()
+
+  #serializeConfirm<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#confirmQueue.then(operation, operation)
+    this.#confirmQueue = result.then(() => {}, () => {})
+    return result
   }
 
   /**
@@ -568,6 +938,10 @@ export class SystemPluginInstallService {
   }
 
   async #adoptRecorded(id: string, record: InstalledPluginRecord): Promise<void> {
+    // The import-URL generation for this row's definition: the recorded tree
+    // hash, or the lock's for a row that somehow predates the record key. Two
+    // generations of the same row must not share a URL (see `#lazyDefinition`).
+    let generation = record.treeHash ?? record.installedAt ?? id
     const root = record.source === 'dev'
       ? record.path
       : this.installedDir(id)
@@ -596,6 +970,7 @@ export class SystemPluginInstallService {
         })
       })
       const recorded = record.treeHash ?? lock.artifactSha256
+      generation = recorded
       if (current.sha256 !== recorded || lock.artifactSha256 !== recorded) {
         throw new SystemPluginInstallError({
           state: 'tampered',
@@ -633,7 +1008,7 @@ export class SystemPluginInstallService {
     }
     await this.#publishCopyBundles(id, root, manifest)
     this.#runtime.adoptDefinition(
-      this.#lazyDefinition(manifest, path.join(root, ...manifest.host.split('/'))),
+      this.#lazyDefinition(manifest, path.join(root, ...manifest.host.split('/')), generation),
       { installed: true, removable: true, permissions: [...manifest.permissions] },
     )
   }
@@ -659,8 +1034,20 @@ export class SystemPluginInstallService {
    * are named accordingly: anything up to and including the default export's
    * shape is `load-failed`, and anything the plugin's own `activate` throws is
    * `activate-failed`.
+   *
+   * `generation` rides in the import URL's query. Node's ESM registry keys on
+   * the URL *string*, and a probe on this tree (Node 24, recorded in
+   * `notes/packages/iris-app-service/DEVIATIONS.md` §81) showed that once a URL
+   * has been imported, changed bytes behind it are invisible — the same URL
+   * returns the cached module object, while the URL with a different query
+   * loads the new bytes. An update swaps the tree under the same
+   * `installed/<id>/<manifest.host>` path, so the generation (the install's
+   * tree hash) is what makes the first enable of the new generation execute
+   * the new bytes instead of silently reusing the old module. The stale module
+   * stays in memory — bounded, one per replaced generation per plugin — and
+   * that is the price of the update being observable.
    */
-  #lazyDefinition(manifest: SystemPluginManifest, hostPath: string): SystemPluginDefinition {
+  #lazyDefinition(manifest: SystemPluginManifest, hostPath: string, generation: string): SystemPluginDefinition {
     const runtime = this.#runtime
     return {
       id: manifest.id,
@@ -672,7 +1059,7 @@ export class SystemPluginInstallService {
       activate: async scope => {
         let loaded: { default?: unknown }
         try {
-          loaded = await import(pathToFileURL(hostPath).href) as { default?: unknown }
+          loaded = await import(`${pathToFileURL(hostPath).href}?gen=${generation}`) as { default?: unknown }
         } catch (error: unknown) {
           throw markAndThrow(runtime, manifest.id, {
             state: 'load-failed',
