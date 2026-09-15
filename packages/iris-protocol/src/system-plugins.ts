@@ -14,7 +14,7 @@
 export type SystemPluginSource = 'builtin' | 'git' | 'dev'
 
 /**
- * The six named ways a system plugin can fail to reach `enabled`.
+ * The seven named ways a system plugin row can carry a fault.
  *
  * Every one of them is a row the user can see and act on
  * (`docs/SYSTEM-PLUGIN-INSTALL.md` §1 goal 4); none of them is a crash, and
@@ -23,6 +23,14 @@ export type SystemPluginSource = 'builtin' | 'git' | 'dev'
  * promoted, `incompatible` and `tampered` before anything is imported, and
  * `load-failed` and `activate-failed` are the two halves of actually running
  * the plugin's own code.
+ *
+ * `hook-failed` is the seventh and the odd one out on two counts. It is not a
+ * stage of reaching `enabled` at all: it records that a *running* plugin's one
+ * contribution to a reply settlement — its variable write — threw or timed out,
+ * so it is the only state that rides on an `enabled: true, status: 'enabled'`
+ * row. And it is momentary by design, cleared by the plugin's own next
+ * successful write, where every other state stands until the user (or a fresh
+ * boot re-derivation) acts on it.
  */
 export type SystemPluginFailureState =
   | 'install-failed'
@@ -31,6 +39,7 @@ export type SystemPluginFailureState =
   | 'tampered'
   | 'load-failed'
   | 'activate-failed'
+  | 'hook-failed'
 
 /** Why a row is not runnable, in the shape the plugin center renders. */
 export interface SystemPluginFailure {
@@ -69,10 +78,14 @@ export interface SystemPluginProvenance {
  * `docs/SYSTEM-PLUGIN-INSTALL.md` §10). The nine that precede them, the
  * six-value `status` union and the free-text `error` are untouched, so an older
  * browser ignores the new keys and renders exactly what it rendered before, and
- * an older host's snapshot still parses here. `failure` is a *refinement* of
- * `status: 'error'`, never a replacement: a `tampered` or `incompatible` row is
- * `installed: true, enabled: false, status: 'error'`, and `failure.state` is
- * what lets the interface pick the right sentence.
+ * an older host's snapshot still parses here. `failure` refines the row's
+ * lifecycle state: for six of the seven states it is a *refinement* of
+ * `status: 'error'`, never a replacement — a `tampered` or `incompatible` row
+ * is `installed: true, enabled: false, status: 'error'`, and `failure.state` is
+ * what lets the interface pick the right sentence. The seventh, `hook-failed`,
+ * is the one exception: it rides on a healthy `enabled: true,
+ * status: 'enabled'` row, because a variable write that failed this turn says
+ * nothing about whether the plugin itself runs.
  */
 export interface SystemPluginView {
   id: string

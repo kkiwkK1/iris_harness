@@ -92,7 +92,7 @@
       "displayName": "Demo",               // 必填
       "description": "…",                  // 必填
       "capabilities": ["demo.state"],       // 可选，仅声明（插件提供什么）
-      "permissions": ["provide-capability", "register-rpc"],  // 可选，闭合词表（插件声明用什么）
+      "permissions": ["provide-capability", "register-rpc", "write-variables"],  // 可选，闭合词表（插件声明用什么；五个名字见 §12 裁决 4）
       "dependencies": ["tavern-helper"]     // 可选，其他插件 id
     }
   }
@@ -571,7 +571,11 @@ owner 已就下面五问裁决。五个问题按原样保留在后面，作为�
 4. **清单加 `permissions` 权限列表。** 闭合词表，宿主校验**拼写**并在同意页**展示**。它是
    **声明，不是宿主强制的边界**——系统插件是同权代码（§4 裁决 1），宿主不靠这张表挡任何
    东西；这句话必须同时出现在实现的文档注释里和同意页上，否则它读起来就是一个权限系统，
-   而那正是问题 4 指出的风险。`capabilities`（插件**提供**什么）仍是另一张自由文本表，两
+   而那正是问题 4 指出的风险。U2 把 `write-variables` 加进词表时沿用了同一前提、**没有设
+   闸**：runtime 在激活路径上拿不到 manifest（`SystemPluginDefinition` 无 `permissions`
+   字段），而且内置插件与被接纳的 ST 扩展行根本没有 manifest，设闸会让它们全部被拒；变
+   量 writer 的每一次覆盖经宿主仲裁并按 id 上报冲突，用户在报告视图里看得见是谁写的。前
+   提与将来一行闸门的改法记在 DEVIATIONS §82。`capabilities`（插件**提供**什么）仍是另一张自由文本表，两
    者不合并：一个说「我会用到什么」，一个说「我会给出什么」。
 5. **安装 id 与内置 id 撞车，在 confirm 阶段以 `install-failed`（id 已被占用）拒绝。** 暂
    不做 `shadowed` 状态：一个装得进去、占着磁盘、却永远不会被激活的行，是 §1 目标 4「失败

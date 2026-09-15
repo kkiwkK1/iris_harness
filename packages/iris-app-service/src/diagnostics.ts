@@ -73,6 +73,20 @@ export const WIRED_KINDS: readonly ReportKind[] = Object.entries(KIND_WIRED)
   .filter(([, wired]) => wired)
   .map(([kind]) => kind as ReportKind)
 
+const REPORT_KINDS: ReadonlySet<string> = new Set<string>(Object.keys(KIND_WIRED))
+
+/**
+ * Whether a plain string names a report kind.
+ *
+ * Exists for the one boundary where a kind name crosses from a side that
+ * cannot import this union — a plugin-facing contract type carrying a writer's
+ * `reportKind` — back into typed ground: an unrecognized spelling files under
+ * the generic `variables` kind rather than inventing a kind nobody wired.
+ */
+export function isReportKind(value: string): value is ReportKind {
+  return REPORT_KINDS.has(value)
+}
+
 /** One survived failure, as the debug page reads it. */
 export interface DebugReport {
   /** Whether a call went unserved, or was served with something to say. */

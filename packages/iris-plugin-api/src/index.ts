@@ -91,6 +91,95 @@ export interface ScopedPluginRevision {
   pluginRevision?: number
 }
 
+/**
+ * A message-layer variable table.
+ *
+ * `@iris/variables`' `Variables` restated here in the same shape for the same
+ * reason `ScopedRequestSchema` is: the contract package imports no `@iris`
+ * package at all (`tests/contract.test.ts`), so the one type exists twice,
+ * once per side of the dependency the tree forbids.
+ */
+export type PluginVariableTable = Record<string, unknown>
+
+/** One generation's kind, named and valued as the protocol's `chat.send` kind. */
+export type VariableWriteKind = 'send' | 'regenerate' | 'continue' | 'impersonate'
+
+/**
+ * Everything one settlement shows a variable writer. Constructed by the host,
+ * read-only, and not reused across settlements.
+ */
+export interface VariableWriteView {
+  readonly chatId: string
+  /** The turn the settled reply landed on. */
+  readonly turn: number
+  readonly kind: VariableWriteKind
+  /** Whether the generation ran to completion or was stopped. A stopped turn still settles the text it has. */
+  readonly reason: 'completed' | 'aborted'
+  /** The settlement text, past trim and the ST-compat rewrite — the text about to be stored. */
+  readonly text: string
+  /** This turn's message-layer table, as every writer's proposal finds it. */
+  readonly baseline: PluginVariableTable
+  /**
+   * A stored table from an earlier turn; `undefined` when that turn has no
+   * candidate to carry one. Writers that inherit state walk backwards through
+   * this — a bare `turn` number would not let them.
+   */
+  variablesAt(turn: number): PluginVariableTable | undefined
+  /** The table the card and its world books declare, before any turn. */
+  readonly declared: PluginVariableTable
+  /** Aborted when the settlement's budget for this writer runs out. Ignoring it does not save the writer; the host stops listening either way. */
+  readonly signal: AbortSignal
+}
+
+/** One writer's answer for one settlement. */
+export interface VariableWriteProposal {
+  /** The complete table this writer wants stored for the turn. */
+  variables: PluginVariableTable
+  /**
+   * Diagnostic lines the writer produced on the way. The host reports them
+   * under its own metadata — a chat and a character belong to the settlement,
+   * not to the activation, so the writer cannot fill them and only supplies
+   * the sentences.
+   */
+  readonly reports?: readonly string[]
+  /**
+   * Which report kind the lines belong to, as a **plain string** on purpose:
+   * the host's kind union is its own, and this package imports nothing to
+   * name it. The host checks the spelling against its union and files an
+   * unknown kind under its generic variables kind.
+   */
+  readonly reportKind?: string
+}
+
+/**
+ * One plugin's variable contribution, registered through its activation scope.
+ *
+ * The two methods answer two different questions, and both exist because two
+ * real writers disagree about the first: one baseline is the turn's own
+ * message table, the other is the nearest earlier turn's state tree walked
+ * backwards from `variablesAt` with `declared` as the floor. Only the writer
+ * knows which table its proposal is a delta against.
+ */
+export interface VariableWriter {
+  /** The table this writer's proposal is a delta from. */
+  baselineFor(view: VariableWriteView): PluginVariableTable
+  /** The proposal: a complete table, or `undefined` to write nothing this turn. */
+  propose(view: VariableWriteView): VariableWriteProposal | undefined
+    | Promise<VariableWriteProposal | undefined>
+}
+
+/** The variable-write face one activation owns. */
+export interface PluginVariableFace {
+  /**
+   * Register one variable writer; the returned disposer removes it and is
+   * idempotent. The host also removes it when this activation is disposed, so
+   * a plugin that ignores the disposer still cannot write past its fiber.
+   * Order across writers is activation order — dependencies before
+   * dependents, same depth by id — and a later writer's delta wins.
+   */
+  registerWriter(writer: VariableWriter): () => void
+}
+
 /** The lifetime passed to a registered implementation during activation. */
 export interface SystemPluginActivationScope {
   readonly context: Context
@@ -101,6 +190,12 @@ export interface SystemPluginActivationScope {
   provide<T>(name: string, value: T): () => void
   /** Read a capability from one of this definition's declared dependencies. */
   getDependency<T>(pluginId: string, name: string): T | undefined
+  /**
+   * The variable-write face this activation owns. Present from the batch that
+   * closes `docs/INFRASTRUCTURE-INTERFACES.md` §8's 「插件可写变量」 row; the
+   * parallel `storage` member, when it lands, slots before this one.
+   */
+  readonly variables: PluginVariableFace
   /**
    * Register one RPC method this activation owns.
    *

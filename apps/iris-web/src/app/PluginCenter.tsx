@@ -68,7 +68,7 @@ const SOURCE_KEYS: Record<SystemPluginSource, StringKey> = {
   dev: 'pluginCenterSourceDev',
 }
 
-/** What each of the six named failure states means, in one sentence. */
+/** What each of the seven named failure states means, in one sentence. */
 const FAILURE_KEYS: Record<SystemPluginFailureState, StringKey> = {
   'install-failed': 'pluginCenterFailureInstallFailed',
   'manifest-invalid': 'pluginCenterFailureManifestInvalid',
@@ -76,6 +76,7 @@ const FAILURE_KEYS: Record<SystemPluginFailureState, StringKey> = {
   tampered: 'pluginCenterFailureTampered',
   'load-failed': 'pluginCenterFailureLoadFailed',
   'activate-failed': 'pluginCenterFailureActivateFailed',
+  'hook-failed': 'pluginCenterFailureHookFailed',
 }
 
 /** What the reader can do about each of them. Separate from the meaning on purpose. */
@@ -86,6 +87,7 @@ const FAILURE_FIX_KEYS: Record<SystemPluginFailureState, StringKey> = {
   tampered: 'pluginCenterFailureFixTampered',
   'load-failed': 'pluginCenterFailureFixLoadFailed',
   'activate-failed': 'pluginCenterFailureFixActivateFailed',
+  'hook-failed': 'pluginCenterFailureFixHookFailed',
 }
 
 /** The uninstall sentence forks by source: `git` deletes the tree, `dev` never touches it. */

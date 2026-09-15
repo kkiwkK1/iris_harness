@@ -141,7 +141,7 @@ test('every failure state, every source badge and the consent page read in both 
   harness.setLanguage('en')
 
   const STATES: readonly SystemPluginFailureState[] = [
-    'install-failed', 'manifest-invalid', 'incompatible', 'tampered', 'load-failed', 'activate-failed',
+    'install-failed', 'manifest-invalid', 'incompatible', 'tampered', 'load-failed', 'activate-failed', 'hook-failed',
   ]
   const row = (state: SystemPluginFailureState, index: number): SystemPluginView => ({
     id: `pkg-${state}`,
@@ -151,8 +151,9 @@ test('every failure state, every source badge and the consent page read in both 
     apiVersion: 1,
     dependencies: [],
     installed: true,
-    enabled: false,
-    status: 'error',
+    // `hook-failed` is the one state that rides on a healthy enabled row (the
+    // plugin still runs); every other failure is `status: 'error'`.
+    ...state === 'hook-failed' ? { enabled: true, status: 'enabled' as const } : { enabled: false, status: 'error' as const },
     source: 'git',
     provenance: {
       remote: 'https://example.invalid/acme/pkg.git',
@@ -188,7 +189,7 @@ test('every failure state, every source badge and the consent page read in both 
 
   const english = harness.renderPluginCenter(wired.store)
 
-  // Each of the six is named, and each says what it means AND what to do — two
+  // Each of the seven is named, and each says what it means AND what to do — two
   // separate sentences, because "what happened" and "what now" are two
   // questions and a row that answers only the first is a dead end.
   const MEANING: Record<SystemPluginFailureState, RegExp> = {
@@ -198,6 +199,7 @@ test('every failure state, every source badge and the consent page read in both 
     tampered: /not the files Iris recorded/,
     'load-failed': /threw while Iris was loading it/,
     'activate-failed': /loaded, then threw while starting/,
+    'hook-failed': /The variable write failed or timed out this turn; the reply itself settled normally/,
   }
   const FIX: Record<SystemPluginFailureState, RegExp> = {
     'install-failed': /Uninstall this row, then install the package again/,
@@ -206,6 +208,7 @@ test('every failure state, every source badge and the consent page read in both 
     tampered: /Reinstall from the recorded remote and commit/,
     'load-failed': /Fix the file named above, then retry enable/,
     'activate-failed': /Iris rolled back everything it had registered/,
+    'hook-failed': /The plugin is still running; its next successful write clears this notice/,
   }
   for (const state of STATES) {
     assert.match(english, new RegExp(`data-plugin-failure="${state}"`), `${state} has no failure block`)
@@ -257,6 +260,7 @@ test('every failure state, every source badge and the consent page read in both 
     tampered: /与安装时 Iris 记录下来的不符/,
     'load-failed': /它还没开始运行/,
     'activate-failed': /但在启动时抛了错/,
+    'hook-failed': /变量写入失败或超时了，本轮回复已正常结算/,
   }
   for (const state of STATES) {
     assert.match(chinese, ZH[state], `${state} has no Chinese sentence`)
