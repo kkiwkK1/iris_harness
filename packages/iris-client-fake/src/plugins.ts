@@ -236,8 +236,11 @@ export class FakeSystemPlugins {
    * Promote a previewed package, if every echoed field agrees with the preview.
    *
    * Ruling 5 is modelled too: an id already in the catalog is refused rather
-   * than shadowed, which is what makes `plugin.confirmInstall` against
-   * `tavern-helper` a refusal here as well as on the host.
+   * than shadowed — but only for a *fresh install*. A preview carrying
+   * `updateOf` is a replacement of that row: the target must still be the git
+   * row the preview was minted from, and the new version and provenance land
+   * while `installed` / `enabled` / `status` stay exactly as they were, which
+   * is where "an update preserves `enabled`" lives on the fake side.
    */
   confirmInstall(params: { previewToken: string, id: string, commit: string | null, treeHash: string }): SystemPluginSnapshot {
     const preview = this.#previews.get(params.previewToken)
@@ -254,49 +257,126 @@ export class FakeSystemPlugins {
     if ((params.commit ?? null) !== (preview.commit ?? null)) {
       this.#refuse('invalid-request', `install-failed: the confirmation names commit ${String(params.commit)}, the preview staged ${String(preview.commit ?? null)}`)
     }
-    if (this.#plugins.has(params.id)) {
-      this.#refuse('invalid-request', `install-failed: id 已被占用 / the id "${params.id}" is already taken in this catalog`)
+    const updateOf = preview.updateOf
+    if (updateOf === undefined) {
+      if (this.#plugins.has(params.id)) {
+        this.#refuse('invalid-request', `install-failed: id 已被占用 / the id "${params.id}" is already taken in this catalog`)
+      }
+      const row: SystemPluginView = {
+        id: preview.id,
+        name: preview.displayName,
+        description: preview.description,
+        version: preview.version,
+        apiVersion: 1,
+        dependencies: [...preview.dependencies],
+        installed: true,
+        enabled: false,
+        status: 'disabled',
+        source: preview.source,
+        provenance: {
+          ...(preview.remote !== undefined ? { remote: preview.remote } : {}),
+          ...(preview.commit !== undefined ? { commit: preview.commit } : {}),
+          ...(preview.path !== undefined ? { path: preview.path } : {}),
+          treeHash: preview.treeHash,
+          installedAt: new Date().toISOString(),
+        },
+      }
+      this.#plugins.set(row.id, row)
+      this.#revision += 1
+      this.#emit(this.snapshot())
+      return this.snapshot()
     }
-    const row: SystemPluginView = {
-      id: preview.id,
+    const live = this.#require(updateOf.id)
+    if (live.source !== 'git') {
+      this.#refuse('invalid-request', `install-failed: the row this update replaces is gone: "${updateOf.id}" is no longer an installed git row`)
+    }
+    if (live.provenance?.commit !== updateOf.fromCommit || live.provenance?.treeHash !== updateOf.fromTreeHash) {
+      this.#refuse(
+        'invalid-request',
+        `install-failed: the row changed after the preview was shown: it now records ${String(live.provenance?.commit ?? 'no commit')}`,
+      )
+    }
+    const updated: SystemPluginView = {
+      ...live,
       name: preview.displayName,
       description: preview.description,
       version: preview.version,
-      apiVersion: 1,
       dependencies: [...preview.dependencies],
-      installed: true,
-      enabled: false,
-      status: 'disabled',
-      source: preview.source,
       provenance: {
         ...(preview.remote !== undefined ? { remote: preview.remote } : {}),
         ...(preview.commit !== undefined ? { commit: preview.commit } : {}),
-        ...(preview.path !== undefined ? { path: preview.path } : {}),
         treeHash: preview.treeHash,
         installedAt: new Date().toISOString(),
       },
     }
-    this.#plugins.set(row.id, row)
+    this.#plugins.set(updated.id, updated)
     this.#revision += 1
     this.#emit(this.snapshot())
     return this.snapshot()
   }
 
   /**
-   * Reserved and refused, on both sides of the wire.
+   * Stage the fake of an update preview for one installed `git` row.
    *
-   * The fake refuses for the same reason and with the same code the host does
-   * (`unsupported`), so a client that handles the refusal against this fake
-   * handles it against a real host. A fake that quietly succeeded here would be
-   * the single most misleading thing in this file: it would let a page ship an
-   * update button that works in every test and fails for every user.
+   * The same handshake the host models: the remote comes from the row's own
+   * provenance, the `treeHash` is the digest of `(remote, commit)` so the same
+   * request previews the same way twice, and the preview carries `updateOf` —
+   * the row this transaction replaces. Like the host's, this preview moves
+   * nothing until `confirmInstall`.
    */
-  update(id: string): never {
-    return this.#refuse(
-      'unsupported',
-      `plugin.update is reserved and not implemented (docs/SYSTEM-PLUGIN-INSTALL.md §12 ruling 2): to change "${id}"`
-      + ' to another commit, uninstall it and install the new commit through the full consent step',
-    )
+  update(id: string, commit: string): SystemPluginInstallPreview {
+    const plugin = this.#require(id)
+    if (plugin.source === 'dev') {
+      this.#refuse(
+        'unsupported',
+        `${plugin.name} is a dev plugin, loaded in place from its own directory — editing its files is the update;`
+        + ' there is no update transaction for it',
+      )
+    }
+    if (plugin.source === 'builtin' || plugin.source === undefined) {
+      this.#refuse(
+        'unsupported',
+        `${plugin.name} is builtin — it ships with this Iris build and updates with it; there is no update transaction for it`,
+      )
+    }
+    const provenance = plugin.provenance
+    if (provenance?.remote === undefined || provenance.commit === undefined || provenance.treeHash === undefined) {
+      this.#refuse(
+        'invalid-request',
+        `install-failed: the catalog row for "${id}" does not record a complete git provenance (remote, commit, treeHash), so there is nothing to update from`,
+      )
+    }
+    const digest = fakeDigest(`${provenance.remote} | ${commit}`)
+    const preview: SystemPluginInstallPreview = {
+      previewToken: `preview-${digest.slice(0, 16)}`,
+      id,
+      displayName: plugin.name,
+      description: plugin.description,
+      version: plugin.version,
+      apiVersion: '1.0',
+      compatible: true,
+      supportedApiVersions: '1.0–1.0',
+      source: 'git',
+      remote: provenance.remote,
+      commit,
+      treeHash: digest,
+      fileCount: 3,
+      sizeBytes: 2048,
+      capabilities: ['demo.state'],
+      permissions: ['provide-capability'],
+      dependencies: [],
+      hasClient: false,
+      warnings: commit === provenance.commit
+        ? ['与当前安装的是同一个 commit / the requested commit equals the one installed right now —'
+          + ' re-fetching it is the repair path for a tampered row']
+        : [],
+      // The row this transaction replaces. `confirmInstall` reads this, not
+      // the echo, to decide update-vs-fresh-install — the same rule the host
+      // follows.
+      updateOf: { id, fromCommit: provenance.commit, fromTreeHash: provenance.treeHash },
+    }
+    this.#previews.set(preview.previewToken, preview)
+    return preview
   }
 
   #require(id: string): SystemPluginView {
