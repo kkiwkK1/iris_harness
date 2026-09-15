@@ -235,8 +235,13 @@ test('every failure state, every source badge and the consent page read in both 
   // `git` rows and nowhere else, matched on the button's own attribute rather
   // than the `<article>`'s `data-plugin-source` (the same blunt-match trap the
   // source-badge test fell into before its mutation tightened it).
-  const updateButtons = english.match(/data-plugin-update="[^"]+"/g) ?? []
-  assert.equal(updateButtons.length, 6, 'an update entry appeared on a row that is not an installed git row')
+  const updateButtons: string[] = english.match(/data-plugin-update="[^"]+"/g) ?? []
+  // One entry per installed `git` row in the fixture — `STATES.length`, not a
+  // literal: the fixture grew a seventh state (`hook-failed`, U2) in the same
+  // week this line was written, and a pinned `6` reddened a correct page for
+  // the wrong reason. The loop below pins the other direction (every state
+  // has its entry), and the two `doesNotMatch` lines pin dev and builtin.
+  assert.equal(updateButtons.length, STATES.length, 'an update entry appeared on a row that is not an installed git row')
   for (const state of STATES) {
     assert.ok(updateButtons.includes(`data-plugin-update="pkg-${state}"`), `${state} (git, installed) offers no update entry`)
   }
