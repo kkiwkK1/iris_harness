@@ -10,7 +10,7 @@ import { parseChatFile } from '@iris/persistence'
 import type { IrisEvent } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
-import { ChatStore } from '../src/chats.ts'
+import { ChatStore, type SearchScanMeter } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
@@ -22,14 +22,17 @@ import { SettingsStore } from '../src/settings.ts'
  * (`chats.js:874`), and that is what the host does too. The properties that
  * matter are: a fragment deep in a long conversation is found AND located (the
  * chat and the floor), nothing is reported that is not really in a floor's
- * text — no hit invented from JSON keys, speaker names or dates — and the
- * scan **stays proportional to the bytes it reads**. The last two are measured
- * against a real 677-floor, 19 MiB conversation from the SillyTavern install,
- * not a fixture written by the same belief as the code.
- *
- * The proportionality bound replaced an absolute `elapsed < 1000`, which was a
- * measurement of one machine wearing a constant's clothes; see the note on the
- * 10 MiB test.
+ * text — no hit invented from JSON keys, speaker names or dates — and the scan
+ * **stays proportional to the bytes it reads**. The last is held as counts, not
+ * as a stopwatch: the scan reports the characters it folds and the lines it
+ * parses (`SearchScanMeter`, an out-param only tests pass), and the large
+ * scan's counts are bounded by the small scan's counts times the byte ratio.
+ * The bound used to be a ratio of wall clocks, and before that an absolute
+ * `elapsed < 1000` — each version a patch for a load shape the previous one
+ * had not survived, because a clock measures the machine as much as the code.
+ * The counts moved off the machine entirely; the history is on the 10 MiB
+ * test, and the ledger records what the change gave up (constant-factor
+ * regressions no longer have a witness) and why the trade is still right.
  */
 
 const CARD = JSON.stringify({
@@ -193,94 +196,27 @@ test('an empty query is refused, not answered with everything', async (t) => {
 })
 
 /**
- * How much slower than proportional a scan may be before it counts as
- * degraded.
+ * How much waste a proportional scan may show and still count as linear.
  *
- * A linear scan that got slower with size — an accidental `O(n²)` from
- * re-slicing, say — blows a 10× byte ratio out to ~100×, so a factor of 3
- * separates the failure this guards from the noise it must tolerate. Small
- * enough to catch the defect, wide enough that a loaded machine does not fail
- * a correct implementation.
+ * The bound is a ratio of **counts**, so there is no machine noise to
+ * tolerate: 1.0 would be exact if characters were bytes, and the tenth is
+ * left for the characters-vs-bytes difference (the fold sees characters; the
+ * file is UTF-8 with a JSON-escaped middle) and for header lines. What the
+ * old stopwatch slack (×3) existed to tolerate — a loaded machine moving one
+ * wall clock and not the other — has no purchase here: two scans of the same
+ * fixture in the same process count the same work whatever else the box is
+ * doing. **This is a tightening, not a loosening.** The quantity deleted is
+ * one the stopwatch never measured reliably; the replacing bound reds the
+ * quadratic degradation on the synthetic 40-vs-400-floor fixture alone
+ * (measured: re-folding every earlier line on each step lands ~100× the
+ * allowed count), which the wall-clock version could not separate from noise
+ * and honestly said so.
  */
-const SCAN_SLACK = 3
+const COUNT_SLACK = 1.1
 
-/**
- * How many times each side of the comparison is measured.
- *
- * **Five, and the number is the fix.** The bound used to rest on a *single*
- * baseline scan of about 8 ms. One sample of 8 ms is not a measurement of this
- * machine, it is a measurement of one 8 ms window: land it in a quiet slot
- * while the large scan lands in a busy one and the ratio is manufactured, with
- * no defect anywhere. That is not hypothetical — `352ms for 11.0× the bytes,
- * against 8ms baseline` on the synthetic case, and `622ms for 20.6× the bytes,
- * against 10ms baseline (allowed 600ms)` on the corpus case, both on code that
- * had not changed.
- *
- * Five is chosen for what the median of five survives: two arbitrarily bad
- * samples on either side. Three would survive one. Seven would survive three
- * and cost two more scans of a 10–19 MiB file, which is where the time in this
- * file actually goes. Anything even would have to average the middle pair,
- * which re-admits an outlier's magnitude.
- */
-const SCAN_ROUNDS = 5
-
-/** The middle sample, which is the point of taking several. */
-function median(samples: readonly number[]): number {
-  const sorted = [...samples].sort((left, right) => left - right)
-  // Odd by construction (`SCAN_ROUNDS`), so this is a real sample rather than
-  // the mean of two — an outlier can move a mean and cannot move a median.
-  return sorted[Math.floor(sorted.length / 2)] as number
-}
-
-/** One scan, timed. */
-async function timed(scan: () => Promise<void>): Promise<number> {
-  const started = performance.now()
-  await scan()
-  return performance.now() - started
-}
-
-/**
- * Measure the small and the large scan **against each other**, alternating.
- *
- * The invariant being held is a ratio, so the only thing that can corrupt it is
- * load that falls on one side and not the other. Measuring the baseline once,
- * up front, is exactly that shape: everything that happens later — another
- * suite starting, a browser being driven by the person running acceptance —
- * lands entirely on the large scan. Alternating small, large, small, large
- * makes any such load land on both sides in turn, so a slower machine moves
- * both medians and the ratio survives, which is the property the bound needs
- * and a single up-front baseline cannot provide.
- * @param small - performs one baseline scan.
- * @param big - performs one scan of the large corpus.
- * @returns each side's median and every sample, for the failure message.
- */
-async function alternatingMedians(
-  small: () => Promise<void>,
-  big: () => Promise<void>,
-): Promise<{ small: number, big: number, smalls: number[], bigs: number[] }> {
-  const smalls: number[] = []
-  const bigs: number[] = []
-  for (let round = 0; round < SCAN_ROUNDS; round += 1) {
-    smalls.push(await timed(small))
-    bigs.push(await timed(big))
-  }
-  // A loop that measured fewer rounds than it claims would produce a median of
-  // one sample and look identical from outside.
-  assert.equal(smalls.length, SCAN_ROUNDS, 'the baseline was not measured every round')
-  assert.equal(bigs.length, SCAN_ROUNDS, 'the large scan was not measured every round')
-  return { small: median(smalls), big: median(bigs), smalls, bigs }
-}
-
-/** The failure message for a scan that outgrew its bytes, with every sample in it. */
-function degraded(
-  measured: { small: number, big: number, smalls: number[], bigs: number[] },
-  ratio: number,
-  allowed: number,
-): string {
-  const show = (samples: readonly number[]): string => samples.map(value => value.toFixed(0)).join('/')
-  return `scan grew faster than its bytes: median ${measured.big.toFixed(0)}ms for ${ratio.toFixed(1)}× the bytes, `
-    + `against a median ${measured.small.toFixed(0)}ms baseline (allowed ${allowed.toFixed(0)}ms); `
-    + `baselines ${show(measured.smalls)}ms, large scans ${show(measured.bigs)}ms`
+/** The scan's work, zeroed. One meter per side of a comparison; never shared. */
+function emptyMeter(): SearchScanMeter {
+  return { foldedChars: 0, parsedLines: 0, scannedFiles: 0 }
 }
 
 /**
@@ -311,51 +247,31 @@ async function writeChat(dir: string, stem: string, floors: number, marker: stri
 /**
  * A 10 MiB-scale scan stays proportional to the bytes it reads.
  *
- * **The assertion used to be `elapsed < 1000`, and that was a measurement
- * wearing a constant's clothes** (§2 of `notes/METHODS.md`: a number with no
- * caliper). What it actually pinned was "this machine, unloaded, in 2026" —
- * so it went red at 1456 ms when a peer ran headless Chrome alongside it, on
- * an implementation that had not changed. A test that fails for something the
- * code did not do costs more than it protects, because the next red is read as
- * noise too.
+ * **This test's history is why the bound is a count.** It began as
+ * `elapsed < 1000`, went red at 1456 ms when a peer ran headless Chrome
+ * alongside it on unchanged code, and became a ratio of wall clocks — first
+ * against a single up-front baseline, then against alternating medians of
+ * five, each step a patch for a load shape the previous shape had not
+ * survived. The repair kept growing because the quantity was wrong: a wall
+ * clock measures the machine as much as the code, and no amount of medians
+ * changes that. What the invariant needs is a quantity only the code can
+ * move, which is what the scan now reports — {@link SearchScanMeter} — so
+ * this test reads the meter instead of a clock and needs one scan per side.
  *
- * The invariant worth holding is **"the scan does not degrade with size"**, and
- * that is a ratio, not a stopwatch: measure a small corpus in this same
- * process, then require the large one to cost no more than its share of bytes
- * times {@link SCAN_SLACK}. A uniformly slower machine moves both numbers and
- * the ratio survives, which is exactly the property an absolute bound lacks.
- *
- * The baseline carries a fixed per-call cost (listing the directory, opening
- * the store) that the ratio then credits to the large scan, so the bound is
- * **looser than pure linearity** — an error in the safe direction.
- *
- * **The two sides are measured alternately, in one round of five each**, and
- * that replaced a single up-front baseline scan of about 8 ms. See
- * {@link SCAN_ROUNDS}: with the baseline taken once, before the large file even
- * exists, every later disturbance falls on the large scan alone, and this test
- * went red at `352ms for 11.0× the bytes, against 8ms baseline` with nothing
- * wrong. Two profiles rather than one, because a search scans every chat it can
- * see: the baseline profile holds only the small file, so it can be re-measured
- * at any point in the round instead of only before the large one is written.
- *
- * **And this test on its own does not discriminate a degradation — measured,
- * not assumed.** Making the scan quadratic (re-folding every earlier line on
- * each step) leaves it green: `small=19.6ms big=311.1ms allowed=645.7ms`,
- * because at 40 against 400 floors the quadratic term inflates the *baseline*
- * about as much as the large scan, and neither is dominated by it. A warm-up
- * pass was tried and moved nothing (17.5ms). So this is a **smoke bound** —
- * it holds the shape and would catch an order-of-magnitude blowup — while the
- * test that actually has teeth is the 677-floor corpus one below, where the
- * same mutation fails loudly (`452ms against 115ms allowed`).
- *
- * The cost of that split is worth stating: **the corpus test is skipped when
- * the real chat is not on the machine**, so on a checkout without it, nothing
- * here would catch the scan degrading.
+ * **The honest version of the old test admitted it had no teeth here**: with
+ * the scan made quadratic (re-folding every earlier line on each step), the
+ * clock ratio stayed green — `small=19.6ms big=311.1ms allowed=645.7ms` —
+ * because at 40 against 400 floors the quadratic term inflates the baseline
+ * about as much as the large scan. The count bound has no such blind spot:
+ * the same mutation lands the large scan at roughly one hundred times the
+ * allowed folded characters, and reds this test on the synthetic fixture
+ * alone, no corpus required. Measured, not assumed — the mutation is in the
+ * ledger with its numbers.
  */
 test('a 10 MiB-scale chat scans in proportion to its bytes', async (t) => {
   // One profile holding the baseline alone, one holding the baseline and the
-  // large file. A search scans every chat in its profile, so this is what makes
-  // the two measurements interleavable at all.
+  // large file: a search scans every chat in its profile, so the small scan's
+  // meter must not include the large file's bytes.
   const baseline = await fixture(t)
   const scaled = await fixture(t)
 
@@ -365,31 +281,41 @@ test('a 10 MiB-scale chat scans in proportion to its bytes', async (t) => {
   // marker deep in the file so the scan has to earn the hit.
   const bigBytes = await writeChat(scaled.dir, 'weighted', 400, 'quinquireme-of-nineveh')
 
-  let located: { messageId: number } | undefined
-  let scans = 0
-  const measured = await alternatingMedians(
-    async () => {
-      const small = await baseline.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
-      assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
-      scans += 1
-    },
-    async () => {
-      const { hits } = await scaled.handlers['chat.search']({ query: 'quinquireme-of-nineveh' })
-      const hit = hits[0]
-      assert.ok(hit !== undefined, 'the large scan found nothing, so it was not scanning')
-      located = hit.matches[0]
-      scans += 1
-    },
-  )
-  assert.equal(scans, SCAN_ROUNDS * 2, 'a scan was skipped, so the medians are not over what they claim')
+  const smallMeter = emptyMeter()
+  const small = await baseline.chats.search('thalassocracy-of-tyre', { meter: smallMeter })
+  assert.equal(small.length, 1, 'the baseline scan must do real work to be a baseline')
+  const bigMeter = emptyMeter()
+  const big = await scaled.chats.search('quinquireme-of-nineveh', { meter: bigMeter })
+  assert.equal(big.length, 1, 'the large scan found nothing, so it was not scanning')
+  const located = big[0]?.matches[0]
   assert.equal(located?.messageId, 200)
+
+  // The meter was written at all. Without this line, a passthrough dropped
+  // between `search` and `searchChatText` leaves every count at zero and the
+  // assertions below green — the one way this test can lie about the scan.
+  assert.ok(smallMeter.foldedChars > 0,
+    'the baseline scan wrote nothing into its meter, so the counts below are all zero and prove nothing')
 
   // The large profile holds both files; the ratio is over total bytes for that
   // reason, not over the large file alone.
   const ratio = (smallBytes + bigBytes) / smallBytes
   assert.ok(ratio > 8, `the two corpora must differ enough to discriminate (ratio ${ratio.toFixed(1)})`)
-  const allowed = measured.small * ratio * SCAN_SLACK
-  assert.ok(measured.big <= allowed, degraded(measured, ratio, allowed))
+  assert.ok(
+    bigMeter.foldedChars <= smallMeter.foldedChars * ratio * COUNT_SLACK,
+    `the scan did not stay proportional to the bytes it read: folded ${String(bigMeter.foldedChars)} characters `
+    + `for ${ratio.toFixed(1)}× the bytes, against a baseline of ${String(smallMeter.foldedChars)} `
+    + `(allowed ${String(Math.floor(smallMeter.foldedChars * ratio * COUNT_SLACK))}) — `
+    + 'per-line work is being repeated, the quadratic shape the scan\'s docblock warns about',
+  )
+  // Each scanned file pays one header parse; each reported match pays one line
+  // parse. Anything more means lines are being parsed that the fold never
+  // flagged — the cheap gate that keeps a 19 MiB file at a handful of parses.
+  const bigMatches = big.reduce((sum, hit) => sum + hit.matches.length, 0)
+  assert.ok(
+    bigMeter.parsedLines <= bigMatches + bigMeter.scannedFiles,
+    `JSON.parse ran ${String(bigMeter.parsedLines)} times for ${String(bigMatches)} matches across `
+    + `${String(bigMeter.scannedFiles)} files — lines the fold never flagged are being parsed`,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -422,12 +348,9 @@ const LONG_CHAT = await findLongChat()
 test('the real 677-floor chat is found by a message fragment, located, and scans in proportion',
   { skip: LONG_CHAT === undefined && `no 677-floor chat under ${CHATS}; point IRIS_CORPUS at the SillyTavern install that has it` },
   async (t) => {
-    // Two profiles, so the baseline can be re-measured *between* the large
-    // scans instead of once before them: the baseline profile never receives
-    // the real file. This is the same change as on the 10 MiB test, and this
-    // test is why it is not optional — with one up-front baseline it went red
-    // at `622ms for 20.6× the bytes, against 10ms baseline (allowed 600ms)`
-    // under a second suite running alongside, on unchanged code.
+    // Two profiles, for the same reason as the synthetic test: the small
+    // scan's meter must not include the real file's bytes, so the baseline
+    // lives in a profile that never receives it.
     const baseline = await fixture(t)
     const fix = await fixture(t)
     const longChat = LONG_CHAT as string
@@ -467,20 +390,14 @@ test('the real 677-floor chat is found by a message fragment, located, and scans
     const gibberish = await fix.handlers['chat.search']({ query: 'zzz-nothing-real-zzz' })
     assert.deepEqual(gibberish.hits, [], 'the real file invents no hits either')
 
-    let hits: Awaited<ReturnType<Handlers['chat.search']>>['hits'] = []
-    let scans = 0
-    const measured = await alternatingMedians(
-      async () => {
-        const small = await baseline.handlers['chat.search']({ query: 'thalassocracy-of-tyre' })
-        assert.equal(small.hits.length, 1, 'the baseline scan must do real work to be a baseline')
-        scans += 1
-      },
-      async () => {
-        hits = (await fix.handlers['chat.search']({ query: fragment })).hits
-        scans += 1
-      },
-    )
-    assert.equal(scans, SCAN_ROUNDS * 2, 'a scan was skipped, so the medians are not over what they claim')
+    // The functional half goes through the RPC handler as before. The
+    // proportionality half reads the meter, through the same store method the
+    // handler calls — the meter is a measurement out-param, not a wire field.
+    const smallMeter = emptyMeter()
+    const small = await baseline.chats.search('thalassocracy-of-tyre', { meter: smallMeter })
+    assert.equal(small.length, 1, 'the baseline scan must do real work to be a baseline')
+    const bigMeter = emptyMeter()
+    const hits = await fix.chats.search(fragment, { meter: bigMeter })
 
     assert.equal(hits.length, 1)
     const hit = hits[0]
@@ -493,11 +410,24 @@ test('the real 677-floor chat is found by a message fragment, located, and scans
     )
     const located = hit.matches.find(match => match.messageId === floor)
     assert.ok(located?.snippet.includes(fragment), 'the snippet carries the fragment')
+
+    assert.ok(smallMeter.foldedChars > 0,
+      'the baseline scan wrote nothing into its meter, so the counts below are all zero and prove nothing')
     // The large profile holds the baseline file as well as the real one, so the
     // ratio is over the bytes that scan actually reads.
     const ratio = (smallBytes + bigBytes) / smallBytes
     assert.ok(ratio > 8, `the two corpora must differ enough to discriminate (ratio ${ratio.toFixed(1)})`)
-    const allowed = measured.small * ratio * SCAN_SLACK
-    assert.ok(measured.big <= allowed, degraded(measured, ratio, allowed))
+    assert.ok(
+      bigMeter.foldedChars <= smallMeter.foldedChars * ratio * COUNT_SLACK,
+      `the scan did not stay proportional to the bytes it read: folded ${String(bigMeter.foldedChars)} characters `
+      + `for ${ratio.toFixed(1)}× the bytes, against a baseline of ${String(smallMeter.foldedChars)} `
+      + `(allowed ${String(Math.floor(smallMeter.foldedChars * ratio * COUNT_SLACK))})`,
+    )
+    const bigMatches = hits.reduce((sum, row) => sum + row.matches.length, 0)
+    assert.ok(
+      bigMeter.parsedLines <= bigMatches + bigMeter.scannedFiles,
+      `JSON.parse ran ${String(bigMeter.parsedLines)} times for ${String(bigMatches)} matches across `
+      + `${String(bigMeter.scannedFiles)} files — lines the fold never flagged are being parsed`,
+    )
 })
 
