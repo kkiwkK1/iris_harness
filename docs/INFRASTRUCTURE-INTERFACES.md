@@ -120,7 +120,7 @@ capability 在实现中使用 `iris.system-plugin:<id>:<name>` 服务名。插�
 | `plugin.previewInstall` | `{ source: { kind:'git', remote, commit } \| { kind:'dev', path } }` | `SystemPluginInstallPreview`：把树装进 staging、审计、算哈希、读清单，**停在安装器既有的 `hashed` 阶段**；不 import 包里任何东西 |
 | `plugin.confirmInstall` | `{ previewToken, id, commit \| null, treeHash }` | `SystemPluginSnapshot`；每个字段都是 preview 的回带，逐条与**事务记录**比对（绝不重新拉取），任何一条不符即 `install-failed` 并丢弃整个事务 |
 | `plugin.cancelInstall` | `{ previewToken }` | `{ ok: true }`；删 staging。未知 token 不是错误 |
-| `plugin.update` | `{ id, commit }` | **预留未实现**（该文 §12 裁决 2）：宿主与 fake 都答 `unsupported`，消息点名裁决与「卸载后重装」这条替代路径 |
+| `plugin.update` | `{ id, commit }` | **已实现（2026-09-15 第二批 U1，该文 §5.4）**：`SystemPluginInstallPreview`，多带 `updateOf: { id, fromCommit, fromTreeHash }`——remote 从行上 provenance 读，`dev`/`builtin` 答 `unsupported`，未知 id 答 `not-found`；它自己**不换树**，同意步骤是既有的 `plugin.confirmInstall`（同一 id 的 confirm 视为更新，由服务端事务记录判定而不是回带）。请求形状与预留时一字不差 |
 
 `SystemPluginView` 因此多了三个**可选**字段，既有九个字段、六值 `status` 与 `error?: string` 一个没动：
 `source?: 'builtin'|'git'|'dev'`、`provenance?: { remote?, commit?, path?, treeHash?, installedAt? }`、
@@ -129,7 +129,8 @@ capability 在实现中使用 `iris.system-plugin:<id>:<name>` 服务名。插�
 `failure` 是对 `status: 'error'` 的**细化**而不是替代。
 
 宿主未配置安装路径（`AppServiceOptions.pluginInstaller` 缺席）时，前三个方法经 `requirePluginInstaller()`
-答 `unsupported`，`plugin.update` 照样答 `unsupported`（它与配置无关），而 `plugin.uninstall` 保持本轮
+答 `unsupported`，`plugin.update` 现在也走安装路径（它与配置的关系和 `previewInstall` 相同），未配置时同样
+答 `unsupported`，而 `plugin.uninstall` 保持本轮
 之前的行为一字不变。
 
 ST 兼容面另有五个方法，形状见 `packages/iris-protocol/src/rpc.ts:252` 起：
@@ -348,7 +349,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | `expandHelperMacros` 走 `registerMacroLike` | 未做：`packages/iris-app-service/src/entry.ts` 里仍是第二遍宏扫描（[PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §7 阶段 0 的遗留项） | 接线即可，等 `entry.ts` 不再被重写 |
 | 普查脚本改口径 | 未做 | 给普查一个不依赖文件位置的输入 |
 | 可发布契约包 | **已闭合（#91）**：`npm run pack:contracts -- --version <semver>` 把 `@iris/plugin-api`、`@iris/plugin-web-api`、`@iris/protocol` 打成 tarball（`scripts/pack-contracts.mjs`，`docs/PLUGIN-CONTRACT-PACKAGING.md`），仓库外消费者测试 `apps/iris/tests/contract-pack.test.ts`；版本策略 `1.0.0-alpha.N`，cordis 作 peer | —— |
-| 系统插件的包外安装路径 | **已闭合（PR-1/2/3 全部落地）**：一个 Node 系统插件包可以从插件中心的安装表单，经 `plugin.previewInstall` / `plugin.confirmInstall`，从 https git 远端（钉完整 commit）或本地 `dev` 目录装进某个 profile，走 §3 那四个方法与 §6 的 `system-plugins.json` v2；同意页显示 preview 的每一个字段并说明这是同权代码，确认回带的四个值全部读自 preview 对象；开机对 `git` 行重算 `hashTree`，不符即 `tampered` 且不激活，行上给「按记录的 remote + commit 重新安装」；六个失败状态在行上各有中英两句。**仍然开着的一件事**：(1) `plugin.update` 预留未实现（§12 裁决 2），更新路径是卸载后重装。原列的 (2)（userinfo 拒绝）与 (3)（§9 #5 子模块不变量的测试）已由 U6 关闭，证据见 app-service ledger §85。没有 npm 名/任意 tarball 的路，这是 §11 明确否决的 | —— |
+| 系统插件的包外安装路径 | **已闭合（PR-1/2/3 全部落地；第二批 U1、U6 收尾）**：一个 Node 系统插件包可以从插件中心的安装表单，经 `plugin.previewInstall` / `plugin.confirmInstall`，从 https git 远端（钉完整 commit）或本地 `dev` 目录装进某个 profile，走 §3 那四个方法与 §6 的 `system-plugins.json` v2；同意页显示 preview 的每一个字段并说明这是同权代码，确认回带的四个值全部读自 preview 对象；开机对 `git` 行重算 `hashTree`，不符即 `tampered` 且不激活，行上给「按记录的 remote + commit 重新安装」；六个失败状态在行上各有中英两句。已装 `git` 行可经 `plugin.update` → 同一张同意页 → `confirmInstall` 原位更新到新 commit（保留 `enabled`，失败回滚到旧代，该文 §5.4；U1，ledger §81）。原列的三件开着的事全部关闭：(1) `plugin.update` 由 U1 实现；(2)（userinfo 拒绝）与 (3)（§9 #5 子模块不变量的测试）由 U6 关闭，证据见 app-service ledger §85。没有 npm 名/任意 tarball 的路，这是 §11 明确否决的 | —— |
 | per-plugin 帧 CSP | **不需要**：bundle 与帧同源（`selfOrigin` 已在 `script-src` 里），没有第二个远端要开 | —— |
 | 信任模型的文档 | **已由实践确定、但未成文**：系统插件是与宿主同权的 Node 代码；ST 扩展代码跑在沙盒 iframe，卡片侧只经 tokened 成员代理触达。两条不同的线共用一个控制面 | 写进 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md)：同权插件的安装源约束（对照 [PLUGIN-FEASIBILITY](../notes/PLUGIN-FEASIBILITY.md) §8 问题 1 的「哈希锁定 vs 任意 git clone」） |
 

@@ -7689,6 +7689,175 @@ check this" has to come off the consent page. (e) A second host implementation
 reading `system-plugins.json`, which is when the closed version set stops being
 a local decision.
 
+---
+
+## 81. `plugin.update` is a real transaction: the same preview road, a confirm under the installed id, a rename-aside replacement, `enabled` kept, and a rollback to the old generation
+
+Second batch, U1 (2026-09-15). The construction notes were
+`iris-task-docs/notes/tasks/U1-plugin-update-transaction.md`; this section
+records what the code did with them. The ruling story lives in
+`docs/SYSTEM-PLUGIN-INSTALL.md` §12 — ruling 2 was reserved-then-refused, and
+is now implemented; that document keeps the refusal's reasoning beside the
+reversal.
+
+### Premises the tree corrected (the PR's first paragraph, as the task sheet required)
+
+1. The install service's class is `SystemPluginInstallService`
+   (`packages/iris-app-service/src/plugins/install.ts`), not the task sheet's
+   `PluginInstaller` — `pluginInstaller` is only the option name and the local
+   in `service.ts`.
+2. `plugin.update`'s declared response was `SystemPluginSnapshot`; this task
+   changed it to `SystemPluginInstallPreview` carrying `updateOf`. A snapshot
+   would mean the method had already moved the tree, which would make it a
+   consent path that bypasses the consent page. The request schema did not
+   change by one byte.
+3. The old tree must step aside **before** `promote`, not after:
+   `Installer.promote` reads the lock inside `installed/<id>/` and refuses
+   `already-installed`, and its rename into a non-empty target fails outright.
+   The task sheet's "promote, then move the old tree aside" is unbuildable as
+   written; the order is aside → promote → delete-last.
+4. The acceptance fixture is `buildGitFixture`
+   (`packages/iris-extension-installer/tests/fixtures/helpers.ts`) — a
+   working-tree repository that merely *names* its directory
+   `fixture-repo.git`, and it lives in the installer's test helpers, not in
+   `plugin-install.test.ts`. It needed no change.
+5. `plugin-center.test.ts`'s `doesNotMatch(/plugin\.update|check for
+   updates/i)` retired — pre-authorized by web ledger §99's own "what would
+   reopen this" note, and replaced with stricter assertions (see that ledger,
+   §100).
+
+### Decision: update-ness is read from the transaction record, never from the echo
+
+`PendingPreview.updateOf` is the one bit that turns a confirm into a
+replacement. A fresh-install preview of an occupied id carries only a
+*warning* (ruling 5's refusal stays at confirm by design), so an
+implementation that took "is this an update?" from the request would let a
+plain `previewInstall` followed by an update-claiming confirm walk straight
+past ruling 5. The mutation proves the guard has teeth: synthesizing
+`updateOf` from "`params.id` is already in the catalog" turns exactly
+"ruling 5 is not weakened" red.
+
+### Decision: the set-aside tree goes to `superseded/`, a sibling of `installed/`
+
+`recoverTargets` reads every entry of `installed/` as an extension id and
+deletes the ones without a legal lock. The set-aside tree travels with its
+lock, so inside `installed/` it would be neither cleaned nor
+visible-as-broken — it would *be* a second installed plugin. Under
+`<installRoot>/superseded/<id>.<8hex>/` the recovery scan never sees it, a
+human reading the tree knows what it is, and the rename stays atomic (same
+volume). The name is documented in `docs/SYSTEM-PLUGIN-INSTALL.md` §6.
+
+### The ESM cache probe (D7) — measured, then built
+
+A sixteen-line probe on this machine, Node v24.13.0: import a `.mjs`, rewrite
+it, import the same URL and a `?gen=2` URL.
+
+```
+same-url first  : generation-1
+same-url second : generation-1 (CACHED — same module object)
+query-url third : generation-2 (fresh)
+```
+
+The cache hits: after a file's content changes, `import()` of the same URL
+returns the old module object. Since an update swaps the tree under the same
+`installed/<id>/<manifest.host>` path, `#lazyDefinition` now imports
+`<file-url>?gen=<treeHash>`; the generation is the install's own tree hash,
+so the URL changes exactly when the bytes do. T7 is the assertion this stands
+on — its fixture's two commits ship *behaviorally different* `host.js` files
+(a `gen` marker in the provided capability), because `buildGitFixture`'s own
+second commit only rewrites `dist/index.js`, which no enable ever imports: a
+T7 built on that fixture would pass with the cache serving stale bytes, which
+is the exact silence the task sheet's R4 warned about. With the generation
+string removed, T7 goes red on the first run.
+
+### Decision: a successfully rolled-back row carries no `failure`
+
+`markFailure` sets `enabled: false, status: 'error'`, which contradicts
+"back to the old generation" when the old generation was enabled — and
+`#commit` clears `#failures` on every committed transition anyway, so a
+mark-then-continue order would not survive the rollback's own
+`replaceInstalled`. The failure's *name* travels in the thrown
+`SystemPluginInstallError` instead: `state` is the state that actually
+happened (`load-failed`/`activate-failed` read off the row before the
+rollback restores it, or the refused install's own state), and the reason
+ends with the generation the row went back to. Only a rollback that itself
+fails marks the row, and then the message names the directory the old tree
+sits in.
+
+### Decision: a typed failure retires with the definition it was a verdict about
+
+`replaceInstalled` clears the row's entry in `#failures`. Every one of the
+six states is a verdict about specific bytes; the tree it condemned was just
+re-fetched and re-hashed, and `enable`'s blocking check reads `#failures`
+*before* its own clearing — left in place, an old `tampered` would refuse the
+new generation the user just consented to. This is also what makes the
+task sheet's D5 real: `tampered` and `incompatible` rows can be updated, and
+updating one is the useful case. Boot already re-derives these verdicts from
+tree-plus-record, so clearing at swap matches boot semantics exactly.
+
+### Decision: confirms run one at a time
+
+`SystemPluginInstallService#confirm` serializes through its own queue. An
+update's replacement transaction renames the installed tree aside and back
+across several awaits; two interleaved confirms could each rename the other's
+tree. Plain installs share the gate — same take-from-`#pending`
+-then-surgery shape — which quietly closes the pre-existing
+install-vs-install race too. Preview, cancel, and every other lifecycle
+method are untouched; the runtime's own `#serialize` continues to cover its
+transitions.
+
+### Tests and their teeth
+
+Every mutation was applied singly and reverted; `git checkout` restored the
+tree between runs.
+
+| assertion | mutation | result |
+| --- | --- | --- |
+| T1 update refuses a dev row by name | dev/builtin source checks disabled | red |
+| T2 update refuses a builtin row / unknown id | the `record === undefined` branch disabled | red |
+| T3 preview carries `updateOf` | the return value's `updateOf` not set | red |
+| T4 update keeps `enabled` (end to end) | **as specified**: `#remember(id, record)` replaced by `#persisted.set(id, { ...record, installed: true, enabled: false })` | **green — recorded, not hidden.** The mutation is an identity under the method's own contract: `replaceInstalled` asserts the row is disabled at swap time, so the persisted row is `{ installed: true, enabled: false, ...record }` either way, and confirm's step 7 re-enables afterwards; no observation can tell the two spellings apart. The sharp form of the same claim is pinned where it can bite: the stored-file `deepEqual` in `system-plugins.test.ts` (whole-row shape) and the next row here. |
+| T4 (the mutation that matters) | confirm's step 7 (`wasEnabled → enable`) dropped | red (T4, T7, T8 with it) |
+| T5 no superseded residue, lock records the new commit | the step-8 `rm(aside)` pointed at a nonexistent sibling | red |
+| T6 promote failure leaves the old tree in place | the aside rename moved to *after* `promote` | red (the promote-failure test and every update test with it — `already-installed` replaced the whole transaction) |
+| T7 the new generation runs the new bytes | the `?gen=` query dropped from the import URL | red (T7 and T8 — exactly the silence the probe predicted) |
+| T8 failed enable rolls back to the enabled old generation | the rollback's rename-back dropped | red |
+| T9 stale echo refused before anything moves | the `treeHash` echo check moved to after the replacement transaction | red (the update *succeeded* and then refused; the row's commit assertion caught it) |
+| T10 row uninstalled mid-transaction | `live === undefined` removed from the target check | red (the named refusal became a raw rename failure) |
+| T11 row swapped mid-transaction | the `(commit, treeHash)` comparison disabled | red |
+| T12 ruling 5 not weakened | `updateOf` synthesized from "`params.id` is in the catalog" — the exact hole D2 forbids | red |
+| T13 a manifest that dropped `client` takes the old bundle down | the asset-directory `rm` disabled | red |
+| `replaceInstalled` refuses a builtin row | the `removable` check disabled | red |
+| fake: update keeps `enabled` | the fake's update branch writes `enabled: false` | red |
+| web: consent renders `updateOf` | the `updateOf` ConsentField unrendered | red (the key-set comparison — the structural assertion the task sheet counted on) |
+| web: the entry exists on git rows only | `updatable` forced false | red (count of `data-plugin-update` buttons: 6 expected, 0 seen) |
+| web: the confirm echoes the preview's own tree hash | the echo wired to `updateOf.fromTreeHash` | red (assertion on the recorded RPC params, per the web install test's house rule) |
+
+### What this round did not do
+
+- `SystemPluginRuntime.reload()` re-runs `definition.activate`, and for an
+  installed package that import is subject to the same ESM URL cache — as is
+  a `dev` row's reload after its files change. The D7 probe says the cache
+  hits; reload's semantics ("re-read the bytes") are therefore weaker than
+  its name on both paths. Fixing it is reload's own round; the generation
+  string in `#lazyDefinition` does not reach it, because reload does not
+  rebuild the definition.
+- The overlap with ruling 3 is deliberate and recorded rather than resolved:
+  a `tampered` row now has two exits (the reinstall button and the update
+  entry), both through full consent. Removing either was not this round's
+  call.
+- The live browser script's update section
+  (`apps/iris-web/tools/live-plugin-install-check.mjs`) was not extended; the
+  T-series in `plugin-install.test.ts` is the re-runnable acceptance and ran
+  as part of the gates.
+- Concurrent non-confirm lifecycle calls (an `uninstall` racing an update's
+  transaction) are exactly as serialized as they were before this round — the
+  new queue covers confirms with each other, not with every other method. The
+  pre-existing exposure is unchanged, and narrowing it belongs to the
+  runtime's serialization round.
+
+---
+
 ## 82. Variable proposals are collected by a registry, ordered by the dependency graph, and a writer's failure is no longer the plugin's failure
 
 U2 of the second infrastructure batch (`notes/INFRA-TASKS-2026-09-15.md`), branch
