@@ -2057,24 +2057,14 @@ export class IrisAppService {
         return { ok: true }
       },
       /**
-       * Reserved by §12 ruling 2, and refused.
-       *
-       * `unsupported` rather than a new `not-implemented` code: the protocol's
-       * `RpcError['code']` union has no such member, and the tree's convention
-       * for "this name exists and this build does not implement it" is already
-       * `unsupported` — it is what `parseRequest` answers for an unknown
-       * method (`packages/iris-protocol/src/rpc.ts:3024`) and what
-       * `requirePlugins` answers for an unconfigured control plane. Adding a
-       * seventh code so one handler could refuse in its own dialect would put
-       * a case in every client's error switch for a method that does nothing.
+       * The update transaction, U1 of the 2026-09-15 second batch
+       * (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4): stage the row's own remote at
+       * the requested commit and answer a preview carrying `updateOf`. This
+       * moves nothing — the consent step is the existing
+       * `plugin.confirmInstall`, whose echo confirms the replacement the same
+       * way it confirms a fresh install.
        */
-      'plugin.update': async ({ id }) => {
-        throw new AppError(
-          'unsupported',
-          `plugin.update is reserved and not implemented (docs/SYSTEM-PLUGIN-INSTALL.md §12 ruling 2): to change`
-          + ` "${id}" to another commit, uninstall it and install the new commit through the full consent step`,
-        )
-      },
+      'plugin.update': async ({ id, commit }) => await requirePluginInstaller().update({ id, commit }),
 
       // The ST-compat pilot's plane face. The arm/detach pair is the bridge's
       // whole liveness model; submit re-validates the revision so a stale
