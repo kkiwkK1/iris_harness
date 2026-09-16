@@ -8867,7 +8867,7 @@ PR-2 的三个可选字段同一条规则：旧的浏览器忽略它，旧的宿
 
 ---
 
-## 86b. 第三批偶发红：`scoped-regex` 的清理 `EBUSY`，与 `variable-writers` 的墙钟屏障
+## 90. 第三批偶发红：`scoped-regex` 的清理 `EBUSY`，与 `variable-writers` 的墙钟屏障
 
 Dated 2026-09-16 (owner task sheet W6, branch `dev/flaky-tests-batch-3`
 against `035094e`). §86 根治了 `chat-search` 与 `chat-integrity`；这是它点名的
