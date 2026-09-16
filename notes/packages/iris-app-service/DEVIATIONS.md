@@ -1214,6 +1214,8 @@ a user expects to fire, or a card whose scripts a user wants runnable only
 after a per-feature allow — then the tier gets its storage and the gate gets
 re-examined against the consent flow, in that order.
 
+> 复查（2026-09-17，e668785）：重开条件「一份带 `regex_scripts`、用户期望其触发的预设文件」已成立——证据 host §47 的实测（狐神抚带 40 条）与 host §53 的落地。决定已随之改变：预设层与 per-preset allow-list 都已实现（§53 记录；§47 保留为那次测量）。
+
 ## 20. A generation that goes silent is given up on; upstream waits for ever
 
 **Upstream has no timeout on a generation, on either side of its own wire, and
@@ -2153,6 +2155,8 @@ scan to be felt would make the uncapped reply the wrong shape — and the answer
 then is a host-side index invalidated on write, not a cap. A provider reporting
 a route per *block* rather than per request would make one `model` per record
 the wrong unit, the way the harness's `routes` array already anticipates.
+
+> 复查（2026-09-17，e668785）：重开条件「聊天文件记录 per-message 时刻」已成立——证据 a99c3db 与 host §67（每条回复行写 `gen_started`/`gen_finished`，每条用量记录带 `at`）。决定**尚未**重看：未带戳的旧历史仍走 undated 回退与计数，见 REVIEW-1 清单第 41 条。
 
 ## 29. Older history is replaced by a summary **at assembly**, not deleted; upstream's Summarize injects a summary and sends the history anyway
 
@@ -7483,6 +7487,8 @@ and its first line say so) — not a general one. This entry covers both sides o
 the seam because the new module lands here and because §77 already put the
 plugin-id question in this file.
 
+> 复查（2026-09-17，e668785）：重开条件 (b)「`SystemPluginActivationScope` 长出一个成员」已成立——证据 #104 与 host §83（scope 长出 `storage`，`PLUGIN_PERMISSIONS` 同批加 `plugin-storage`）；(c)「契约包变得可发布」也已成立——证据 #91（`pack:contracts`，`docs/PLUGIN-CONTRACT-PACKAGING.md`）。决定已随之改变（§83、§91 记录）。
+
 ---
 
 ## 80. A system plugin can be installed from outside the repository, and the catalog file learned to say where its bytes came from
@@ -7688,6 +7694,8 @@ an exception rather than an uninstall. (d) A capability registry, which is when
 check this" has to come off the consent page. (e) A second host implementation
 reading `system-plugins.json`, which is when the closed version set stops being
 a local decision.
+
+> 复查（2026-09-17，e668785）：重开条件 (c)「`plugin.update` 被建起来」已成立——证据 #106 与 host §81（U1 把更新做成真实事务：同一预览路、替换事务、回滚）。决定已随之改变（§81 记录）；(b) 早已就地划掉（§85）。
 
 ---
 
@@ -8377,6 +8385,8 @@ path (the republish-then-cleanup story assumes install/uninstall, not
 in-place generation swaps); or a second consumer of `StagedInstall` that
 would make carrying the audit result across `stage` cheaper than re-reading
 two small files.
+
+> 复查（2026-09-17，e668785）：重开条件 (b)「`plugin.update` 路径」已成立——证据 #106 与 host §81。决定**部分**重看：`#replaceRow` 只重发 client bundle，更新后到下一次启动前 `i18n/` 仍是旧字节（新清单不再声明 i18n 时也不删该目录），但 `scanInstalled`/`#adoptRecorded` 会在下次启动重发文案，所以是「滞后到下次启动」而不是永旧，见 REVIEW-1 清单第 5 条。
 
 ---
 

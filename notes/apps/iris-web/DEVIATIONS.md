@@ -1665,6 +1665,8 @@ for `body { font-family: "Ark Pixel 12px Prop latin", sans-serif; font-size: 8px
 
 **What would overturn it.** The stylesheet proxy landing. At that point a card's remote stylesheet loads with `style-src`/`font-src` still at `self`, this entry closes, and what replaces it is a note on what the proxy rewrites and what it does not.
 
+> 复查（2026-09-17，e668785）：重开条件「样式表代理落地」已成立——证据 fe45239（`rewriteStylesheetLinks`/`rewriteStylesheetUrls` 走 bundle 路由）与 §95.4、`notes/ROADMAP.md`。决定**部分**改变：代理只重写白名单内主机（`*.jsdelivr.net`、`raw.githubusercontent.com`），本节自己点名的 `fontsapi.zeoseven.com` 仍在白名单外被具名拒绝。
+
 ---
 
 ## 42. `Mvu` is predefined per script, not per frame, and is never backfilled
@@ -2597,6 +2599,8 @@ answer then is a host-side index with invalidation on write, not a cap — a
 summary of an unstated fraction of the corpus is not a summary. And a palette
 with six genuinely distinguishable hues in all three themes would retire the
 dash axis.
+
+> 复查（2026-09-17，e668785）：重开条件「宿主在聊天文件里记录 per-message 时刻」已成立——证据 a99c3db 与 host §67。决定**尚未**重看：新记录带 `at`，但未带戳的旧历史仍走重建与 `undatedTurns` 计数，见 REVIEW-1 清单第 115 条。
 
 ## 59. A capsule under the composer says how full the context window is, and what is filling it
 
@@ -3844,6 +3848,8 @@ delete」 cost is unchanged and has grown slightly sharper — deleting the row 
 use now means nothing generates until another is chosen, which the note after a
 delete says.
 
+> 复查（2026-09-17，e668785）：重开条件「宿主记录启动时的路由」已成立——证据 #624c4ce 与 host §60，本节已就地记「it did, hours later: host §60, entry 78」。决定已随之改变（§78、§79 记录）。
+
 ## 78. 「宿主环境」 is a selectable row, not an explained exception
 
 **Kind: completion of entry 77**, on the host work that entry named as the reason it
@@ -5028,6 +5034,8 @@ found are the missing `preset.get` arm and `getCharData`'s evidence card
 (人贩子物语), which is in neither corpus reachable from this tree — so that one
 name can be neither confirmed nor built here.
 
+> 复查（2026-09-17，e668785）：重开条件「预设库落地，带宿主侧臂与同步契约的裁决」已成立——证据 web §89（预设家族十八名）与 host §65。决定已随之改变：§89 按自己的数字推翻了本条对 `getPreset` 的拒绝。
+
 ## 86. The frame budget moves to 54 KiB and the gate to 18, because two branches spent the same headroom
 
 **Kind:** cost, recorded where it was paid.
@@ -5057,6 +5065,8 @@ frame back under 53 KiB with room to spare (the table would then get a row the
 other way, and the gate its frame back); or the two-branch shape recurring, which
 would argue for the seam itself (a `build:sandbox` run on the merge result, not on
 each branch) rather than for another kibibyte.
+
+> 复查（2026-09-17，e668785）：重开条件「一次 bootstrap 减重把预算拉回 53 KiB 以下」已成立——证据 2afa1f8 与 web §91（bootstrap 改为抓取，`FRAME_OVERHEAD_BYTES` 4 KiB、`FRAME_COUNT_LIMIT` 回到 20）。决定已随之改变（§91 记录）。
 
 ## 87. Tavern Helper's identity and message family is built — twenty from the snapshot, four over the wire, five answering the value upstream allows and saying why
 
@@ -6971,6 +6981,8 @@ Dated 2026-09-15. PR-3 of `docs/SYSTEM-PLUGIN-INSTALL.md` §10。PR-2 已经把�
 - **fake 长出一个真实的 preview 造型能力**（例如它开始读一个夹具包）：那时 `renderConsent` 那条路
   可以退回成 fake 驱动，而本节「没有加 seam」的理由也随之作废。
 
+> 复查（2026-09-17，e668785）：重开条件「裁决 2 被改口（`plugin.update` 真的实现）」已成立——证据 #106、host §81 与 web §100。决定已随之改变：那条否定断言按本节自己的安排退役（§100 记录）。
+
 ---
 
 ## 100. 插件中心长出更新入口：行上的「更新到…」、同意页的 `updateOf` 行、以及一条否定断言按它自己的安排退役
@@ -7248,6 +7260,8 @@ and no secret」把一层楼和预设正文送进真实一回合再抓序列化�
 给 `PromptItemExplanation` 加字段，面板展开后显示——那时 `data-control` 会多一个
 折叠三角，本条的定位符不动。 (c) 若某天宿主开始产出 `blank`/`trimmed`，字典里
 已有对应的两句，是补测试而不是改文案。
+
+> 复查（2026-09-17，e668785）：重开条件 (a)「面板长出消息视图」已成立——证据 web §104（M1 第二步落地）。决定**部分**改变：视图已落地，但 `Explanation` 仍收 `entry`，对 part 喂一个合成对象，而不是本节预测的「入参从行变成 part」。
 
 ## 104. 提示词面板长出「按消息」视图：同一份装配的另一个方向
 
