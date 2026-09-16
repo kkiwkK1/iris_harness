@@ -274,6 +274,48 @@ export function messageRows(itemization: PromptItemization): MessageRow[] {
 }
 
 /**
+ * The macro stage's line, or none: how many heads expanded and what it cost.
+ *
+ * The answer to a variable-driven preset's zero rows — "expanded 61 `setvar`,
+ * 1 250 → 0 characters" says the prompt did its job, where "empty" says
+ * nothing. Returns the shapes the panel interpolates rather than a sentence, so
+ * the copy stays in the dictionary where the bilingual audit can check it.
+ *
+ * Absent when the host did not trace the expansion, which is the same "not
+ * explained" state the other optional fields take.
+ * @param entry - the row or member to explain.
+ * @returns the head count, the most frequent head and its count, and the two
+ *   sizes, or null.
+ */
+export function macroNote(entry: Explained): { kinds: number, top: string, count: number, before: number, after: number } | null {
+  const macros = entry.explanation?.macros
+  if (macros === undefined) return null
+  const heads = Object.entries(macros.heads)
+  if (heads.length === 0) return null
+  // The **most frequent** head, not the first: a variable-driven prompt runs
+  // `setvar` sixty-one times and everything else once, and the count is the
+  // interesting half. Ties keep first-seen order, so the pick is deterministic.
+  let top = heads[0] as [string, number]
+  for (const head of heads) if (head[1] > top[1]) top = head
+  return { kinds: heads.length, top: top[0], count: top[1], before: macros.charsBefore, after: macros.charsAfter }
+}
+
+/**
+ * The regex stage's rule names, or none.
+ *
+ * Empty is a real answer — a rule chain ran and nothing matched — and the panel
+ * says so rather than staying silent, because "the host looked and no rule
+ * fired" is different from "the host did not look". Returns the names for the
+ * panel to join; the copy owns the wording.
+ * @param entry - the row or member to explain.
+ * @returns the rule names, or null when the host did not record.
+ */
+export function regexNote(entry: Explained): string[] | null {
+  const regex = entry.explanation?.regex
+  return regex === undefined ? null : regex.applied
+}
+
+/**
  * The entries of a split row worth showing under it, or none.
  *
  * A world-info depth bucket is **one** row here and several entries in the

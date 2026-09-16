@@ -8989,3 +8989,84 @@ against `035094e`). The frame and shell halves are §107 on
 ---
 
 ---
+
+---
+
+## 89. The macro and regex stages say what they did: `expandTraced`, an `onRule` observer, and the one row a prompt-direction rule can be recorded on
+
+**What changed.** M1 step 3 of `notes/tasks/M1-PROMPT-BUILD-REPORT.md`. Step 1
+answered "who wrote this and why is it zero", step 2 "where did it go". This adds
+the two transformations between authorship and assembly: **which macros
+expanded** (`macros.heads` with a count per head, plus `charsBefore` /
+`charsAfter`) and **which regex rules rewrote the text** (`regex.applied`). A
+variable-driven preset's 23 zero rows now read "expanded 61 `setvar`, 1 250 → 0
+characters" instead of "empty".
+
+**`expandTraced` beside `expand`, not a widened `expand`.** The manual's own
+shape: `@iris/macro` gains `expandTraced(text, context, options)` returning
+`{ trace, text }`, built on an optional `ExpandOptions.onMacro` the untraced call
+does not pass. The observer rides the engine's existing walk — it is called at
+the one place a resolver returns a value — so the two paths cannot drift and the
+untraced path pays nothing. **Called only for a resolved macro**: a name nothing
+implements comes back as `{{...}}` (the engine's contract) and is not reported,
+because "expanded" and "passed through" are different facts, and the second is
+already visible in the output. Heads are folded to lower case, keyed in
+first-seen order, so the object is deterministic.
+
+**The Tavern Helper tier reports too.** `expandHelperMacros` gained a third
+parameter and `TavernHelperCapability.expandMacros` a third argument, because the
+chat's composed expander runs ST's macros first and THEN Tavern Helper's
+(`entry.ts`'s `substitute`), and a trace that saw only the first family would
+miss `{{get_message_variable::…}}` — the one MVU cards actually use. Both tiers
+report into the same `heads` map, so the itemization does not have to know which
+ran.
+
+**`onRule` reports only rules that changed something.** `@iris/regex`'s
+`RunOptions` gained `onRule`, called after `runRegexScript`'s replace and only
+when `result !== text` — identity, exactly as `expandMacros` uses it for its fast
+path. A rule whose pattern matched nothing is not reported: "a rule fired" and "a
+rule was in the chain" are different facts, and reporting the second would list
+every enabled rule on every turn. The name is `scriptName` (the string the card
+editor shows), falling back to `id`, then `unnamed` — never an invented name.
+
+**The conversation row is the only honest home for a prompt-direction rule.**
+This is the collection point the manual's table gestured at and the code
+narrowed: preset contributions are not run through regex, and the only prompt
+content regex rewrites is the **conversation floors** (`#rawHistory` →
+`runScripts` with `isPrompt`). By the time `assemble` sees the history the text
+is already rewritten and the evidence is gone, so the caller collects the rule
+set and passes it as `AssembleInput.historyRules`; `project` attaches it to the
+`chatHistory` aggregate row. A **union over every floor**, not a per-floor list,
+for the same reason the conversation is one aggregate row at all. Absent means
+the caller recorded nothing; an empty array means it recorded and nothing fired —
+a distinction the panel renders as two different sentences.
+
+**Verified on real data.** The preview path was run against a real install's
+`爱衣.png` and a real preset: **23 rows, 11 zero, 7 carrying a macro trace, 5 of
+the zero rows among them, and 1 regex row**. The traced rows are exactly the
+shape the feature exists for — `随性而行文风` reports `setglobalvar ×1, 58 → 0`,
+`用户是user` reports `{user: 1, setglobalvar: 1}, 59 → 0` — where the panel used
+to say only 「空」. The probe was a temporary file, run and deleted; nothing of it
+is committed.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| `expandTraced` reports heads and the same text as `expandMacros` (`expand.test.ts`) | drop the `onMacro` call from the engine's resolve site | red → revert → green |
+| an unknown macro is not reported | report every parsed call, resolved or not | red → revert → green |
+| `onRule` reports only rules that rewrote the text (`engine.test.ts`) | call `onRule` unconditionally | red → revert → green |
+| a nameless rule reports its id, then `unnamed` | return `''` for a missing name | red → revert → green |
+| a macro-driven prompt reports `heads.setvar` and both sizes (`preset-macros.test.ts`) | drop the trace through `buildPrompt` | red → revert → green |
+| a prompt-direction rule is reported on the conversation row (`itemize.test.ts`) | drop the `historyRules` attachment in `project` | red → revert → green |
+| the golden byte test holds with `macros`/`regex` present (`assemble.test.ts`) | (same field, different assertion) | red → revert → green |
+
+### What would reopen this
+
+(a) A regex rule on a preset or card **contribution** — no such path exists
+today; the engine's `onRule` is ready for it, and the honest home would be the
+contribution's own `regex` rather than the aggregate row. (b) Per-floor rule
+names: the aggregate row cannot say which floor a rule hit, and giving it one row
+per floor is the split `AssembleResult.items` refuses. (c) `{{pick}}` /
+`{{random}}` reporting: a head is counted, not its *value*, so a reader cannot
+see which branch was taken — deliberately, since the value is content.

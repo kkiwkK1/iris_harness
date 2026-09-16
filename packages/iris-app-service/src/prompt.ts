@@ -301,8 +301,13 @@ export interface PromptInput {
    *
    * Optional because it needs a chat: a caller with only a card (a preview, a
    * test) still gets `{{char}}` and `{{user}}`.
+   *
+   * The `onMacro` option is how the macro stage's trace is collected: both this
+   * and the fallback below are handed one, so the itemization's report is the
+   * same whichever expander ran. It is an observation and cannot change the
+   * returned text, which is what keeps the report off the wire.
    */
-  substitute?: (text: string) => string
+  substitute?: (text: string, options?: { onMacro?: (head: string) => void }) => string
   /**
    * The conversation as macros see it, oldest first: `{{lastMessage}}` and the
    * floor-addressing family read this when no chat expander was supplied.
@@ -767,7 +772,9 @@ export function buildPrompt(input: PromptInput): PromptResult {
     ...(input.chat === undefined ? {} : { chat: input.chat }),
     outlet: key => outlets[key] ?? '',
   })
-  const expand = input.substitute ?? ((text: string): string => expandMacros(text, macros))
+  const expand = input.substitute
+    ?? ((text: string, options?: { onMacro?: (head: string) => void }): string =>
+      expandMacros(text, macros, options?.onMacro === undefined ? {} : { onMacro: options.onMacro }))
 
   const includeNames = input.includeNames ?? DEFAULT_WORLDBOOK_SETTINGS.includeNames
   const scan = activateEntries({
@@ -913,7 +920,19 @@ export function buildPrompt(input: PromptInput): PromptResult {
       // characters of `{{setvar}}` and no prose, so it counts to zero on every
       // turn and a reader deserves to be told that is why.
       const authored = contribution.text
-      const text = expand(authored)
+      // The macro stage's trace, collected through the expander's own
+      // observation. `substitute` may be the chat's composed expander (ST
+      // macros then Tavern Helper's) or `@iris/macro`'s plain one; both take
+      // the same `onMacro`, so the report is the same whichever ran. The heads
+      // are what turn "this row is empty" into "this row is 61 `setvar`".
+      const heads: Record<string, number> = {}
+      const onMacro = (head: string): void => { heads[head] = (heads[head] ?? 0) + 1 }
+      const text = input.substitute === undefined
+        ? expandMacros(authored, macros, { onMacro })
+        : input.substitute(authored, { onMacro })
+      const macros_ = Object.keys(heads).length === 0
+        ? {}
+        : { macros: { heads, charsBefore: authored.length, charsAfter: text.length } }
       const zeroReason = text.trim().length === 0 && authored.trim().length > 0
         ? { zeroReason: 'macros-only' as const }
         : {}
@@ -921,6 +940,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
         ...contribution,
         text,
         source: sourceOf(contribution.id, byIdentifier),
+        ...macros_,
         ...zeroReason,
       }
     })

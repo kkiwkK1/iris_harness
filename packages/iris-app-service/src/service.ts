@@ -5894,11 +5894,18 @@ export class IrisAppService {
     // overwriting it would replace the record of the turn the user is looking at.
     const turn = record ? entry.pending?.turn : undefined
     if (turn !== undefined) {
+      // Collected here rather than at the `buildPrompt` call above: the regex
+      // stage rewrites the floors the request carries, so its trace belongs to
+      // the assembly that read them. One set, reused for the history and the
+      // assemble call below, so the two cannot see different floors.
+      const historyRules = new Set<string>()
+      const history = this.#history(entry, session, projection, historyRules)
       const assembled = assemble({
         contributions,
-        history: this.#history(entry, session, projection),
+        history,
         budget: this.#budget(count, window, this.#reserveFor(settings)),
         cacheFriendly,
+        historyRules: [...historyRules],
       })
       // The first floor the budget kept is the one the dropped count names —
       // history entries map one-to-one onto chat-file lines. This is
@@ -6035,7 +6042,7 @@ export class IrisAppService {
     return {
       turn,
       entries: result.items.map((item) => {
-        const explanation = explanationOf(item.source, item.zeroReason, item.placement, item.stable)
+        const explanation = explanationOf(item.source, item.zeroReason, item.placement, item.stable, item.macros, item.regex)
         return {
           id: item.id,
           // The id is frequently a UUID; the label is what a person reads.
@@ -6055,7 +6062,7 @@ export class IrisAppService {
             ? {}
             : {
                 members: item.members.map((member) => {
-                  const memberExplanation = explanationOf(member.source, undefined, member.placement, member.stable)
+                  const memberExplanation = explanationOf(member.source, undefined, member.placement, member.stable, member.macros, member.regex)
                   return {
                     id: member.id,
                     label: member.label ?? member.id,
@@ -6107,13 +6114,19 @@ export class IrisAppService {
     const window = this.#resolveWindow(settings).context
     const worldbookSettings = this.#options.settings.worldbookSettings()
     const persona = await this.#activePersona()
+    // The regex trace, collected from the same floors the assembly will carry.
+    // One set feeds the `buildPrompt` history and the `assemble` history below,
+    // so the scan and the request see identical floors and the rules reported
+    // are the rules that produced them.
+    const historyRules = new Set<string>()
+    const history = this.#history(entry, entry.session, {}, historyRules)
     const built = buildPrompt({
       card: entry.card,
       ...entry.worldbook === undefined ? {} : { worldbook: entry.worldbook },
       preset: this.#activePreset,
       userName: names.user,
       characterName: names.character,
-      history: this.#history(entry, entry.session),
+      history,
       count,
       // Against the window this chat actually assembles under (a per-chat
       // override included), with `world_info_budget` and `world_info_budget_cap`
@@ -6146,9 +6159,10 @@ export class IrisAppService {
     const reserve = this.#reserveFor(settings)
     const result = assemble({
       contributions: markCachePhase(resolved, verdict),
-      history: this.#history(entry, entry.session),
+      history,
       budget: this.#budget(count, window, reserve),
       cacheFriendly: cacheFriendlyOf(settings),
+      historyRules: [...historyRules],
     })
     return this.#itemizationOf(result, entry.lastTurn + 1, true, window, reserve)
   }
@@ -6580,8 +6594,14 @@ export class IrisAppService {
    * @param projection - what the generation this is for must not be shown.
    * @returns history entries, oldest first.
    */
-  #history(entry: ChatEntry, session: Session, projection: HistoryProjection = {}): HistoryEntry[] {
-    return applyCompaction(this.#rawHistory(entry, session, projection), readCompaction(entry.header))
+  #history(
+    entry: ChatEntry,
+    session: Session,
+    projection: HistoryProjection = {},
+    /** Filled with the regex rules that rewrote the floors, first-seen order. */
+    rules?: Set<string>,
+  ): HistoryEntry[] {
+    return applyCompaction(this.#rawHistory(entry, session, projection, rules), readCompaction(entry.header))
   }
 
   /**
@@ -6604,7 +6624,13 @@ export class IrisAppService {
    * @param projection - what the generation this is for must not be shown.
    * @returns history entries, oldest first, every floor verbatim.
    */
-  #rawHistory(entry: ChatEntry, session: Session, projection: HistoryProjection = {}): HistoryEntry[] {
+  #rawHistory(
+    entry: ChatEntry,
+    session: Session,
+    projection: HistoryProjection = {},
+    /** Filled with the regex rules that rewrote the floors, first-seen order. */
+    rules?: Set<string>,
+  ): HistoryEntry[] {
     const names = entry.names
     const entries = historyFromSession(session, {
       characterName: names.character,
@@ -6619,6 +6645,11 @@ export class IrisAppService {
         isPrompt: true,
         depth: entries.length - 1 - index,
         substitute: entry.substitute,
+        // The regex stage's trace. A floor rewritten by a prompt-direction rule
+        // is the only place these fire, so this is where they are collected —
+        // by the time `assemble` sees the history, the text is already
+        // rewritten and the evidence is gone.
+        ...rules === undefined ? {} : { onRule: (name: string) => { rules.add(name) } },
       }),
     }))
   }
@@ -7389,6 +7420,8 @@ export class IrisAppService {
  * @param zeroReason - why the part is zero, when it is.
  * @param placement - which message it landed in, when the assembler placed it.
  * @param stable - whether it is inside the leading volatile-free run.
+ * @param macros - which macro heads expanded, when the builder traced them.
+ * @param regex - which regex rules rewrote the text, when the caller recorded them.
  * @returns the wire shape, or undefined when there is nothing to say.
  */
 function explanationOf(
@@ -7396,8 +7429,11 @@ function explanationOf(
   zeroReason?: Contribution['zeroReason'],
   placement?: AssembledPlacement,
   stable?: boolean,
+  macros?: Contribution['macros'],
+  regex?: Contribution['regex'],
 ): PromptItemExplanation | undefined {
-  if (source === undefined && zeroReason === undefined && placement === undefined) return undefined
+  if (source === undefined && zeroReason === undefined && placement === undefined
+    && macros === undefined && regex === undefined) return undefined
   return {
     // A zero reason without a source is still worth reporting, and the honest
     // owner of such a row is the host's own assembly. It does not happen today —
@@ -7407,6 +7443,8 @@ function explanationOf(
     ...zeroReason === undefined ? {} : { zeroReason },
     ...placement === undefined ? {} : { placement },
     ...stable === undefined ? {} : { stable },
+    ...macros === undefined ? {} : { macros },
+    ...regex === undefined ? {} : { regex },
   }
 }
 

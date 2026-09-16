@@ -36,7 +36,9 @@ import {
   contributing,
   discrepancy,
   itemizationMode,
+  macroNote,
   messageRows,
+  regexNote,
   rowsFor,
   sourceNoteKey,
   splitMembers,
@@ -509,25 +511,50 @@ function MessageView({ messages }: { messages: MessageRow[] }): ReactElement {
 }
 
 /**
- * Who wrote this row's bytes, and — on a zero row — why there are none.
+ * Who wrote this row's bytes, and — on a zero row — why there are none, and what
+ * the macro and regex stages did to it.
  *
  * One component for the row and its member sub-rows: the contract carries the
  * same `PromptItemExplanation` on both, and a second renderer would be a second
- * place for the copy to drift. `sourceNoteKey` and `zeroReasonKey` hold the
- * decisions (which kind maps to which sentence, and that a reason is only shown
- * on a zero) as pure functions, so this stays layout.
+ * place for the copy to drift. `sourceNoteKey`, `zeroReasonKey`, `macroNote` and
+ * `regexNote` hold the decisions as pure functions, so this stays layout.
  * @param props.entry - the row or member to explain.
  * @returns the explanation lines, or null when the host did not explain it.
  */
 function Explanation({ entry }: { entry: Explained }): ReactElement | null {
   const source = sourceNoteKey(entry)
   const reason = zeroReasonKey(entry)
-  if (source === null && reason === null) return null
+  const macros = macroNote(entry)
+  const regex = regexNote(entry)
+  if (source === null && reason === null && macros === null && regex === null) return null
   return (
     <span className="iris-prompt__explain" data-control="prompt-explained">
       {source === null ? null : <span className="iris-meta">{t(source.key as StringKey, { name: source.name })}</span>}
       {reason === null ? null : (
         <span className="iris-prompt__zero-reason">{t(reason as StringKey)}</span>
+      )}
+      {macros === null ? null : (
+        <span className="iris-meta">
+          {t('promptMacros', {
+            kinds: macros.kinds,
+            top: macros.top,
+            count: macros.count,
+            before: macros.before.toLocaleString(),
+            after: macros.after.toLocaleString(),
+          })}
+        </span>
+      )}
+      {/*
+        The regex stage, and **both states say something**: a chain that ran and
+        changed nothing is not the same fact as a host that did not record, and
+        an empty line would read as the first when it might be the second.
+      */}
+      {regex === null ? null : (
+        <span className="iris-meta">
+          {regex.length === 0
+            ? t('promptRegexNone')
+            : t('promptRegex', { rules: regex.join(', ') })}
+        </span>
       )}
     </span>
   )

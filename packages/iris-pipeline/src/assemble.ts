@@ -889,7 +889,7 @@ export function assemble(input: AssembleInput): AssembleResult {
   // One pass fills both the per-part account and the per-message reverse index,
   // so they cannot disagree about which message a part went to. Same `kept`,
   // same `messages` the request carries.
-  const account = project(contributions, kept, messages, system, count, cacheFriendly)
+  const account = project(contributions, kept, messages, system, count, cacheFriendly, input.historyRules)
 
   return {
     system,
@@ -979,6 +979,7 @@ function stableBoundary(
  * @param system - the rendered system prompt ("" when there is none).
  * @param count - the token counter.
  * @param cacheFriendly - whether the reorder ran, so a moved row can say so.
+ * @param historyRules - the regex rules that rewrote the conversation, by name.
  * @returns one row per contribution plus the conversation aggregate, and the
  *   request's own message list with its parts.
  */
@@ -989,6 +990,7 @@ export function project(
   system: string,
   count: TokenCounter,
   cacheFriendly = false,
+  historyRules?: readonly string[],
 ): { items: AssembledItem[], messageSlots: AssembledMessageSlot[] } {
   const boundary = stableBoundary(contributions, messages, cacheFriendly)
   const segments = systemSegments(contributions, cacheFriendly)
@@ -1062,6 +1064,8 @@ export function project(
       ...member.label === undefined ? {} : { label: member.label },
       tokens: count(member.text),
       ...member.source === undefined ? {} : { source: member.source },
+      ...member.macros === undefined ? {} : { macros: member.macros },
+      ...member.regex === undefined ? {} : { regex: member.regex },
       ...memberPlacement(member, split?.placement, placementOf),
       ...phases[index] === 'defer' ? { deferred: true } : {},
       ...phases[index] === 'promote' ? { promoted: true } : {},
@@ -1079,6 +1083,8 @@ export function project(
       kind: contribution.placement.kind,
       tokens: count(contribution.text),
       ...contribution.source === undefined ? {} : { source: contribution.source },
+      ...contribution.macros === undefined ? {} : { macros: contribution.macros },
+      ...contribution.regex === undefined ? {} : { regex: contribution.regex },
       ...contribution.placement.kind === 'depth'
         ? { depth: contribution.placement.depth, role: contribution.placement.role }
         : {},
@@ -1128,6 +1134,7 @@ export function project(
     // is exactly that, so a reader expanding the row is told "the conversation"
     // and not led to look for a preset item that does not exist.
     source: { kind: 'history', id: 'chatHistory' },
+    ...historyRules === undefined ? {} : { regex: { applied: [...historyRules] } },
   })
   return { items, messageSlots: slots }
 }

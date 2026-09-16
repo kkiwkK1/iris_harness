@@ -26,6 +26,7 @@ export type {
   AssembleResult,
   Budget,
   Contribution,
+  ContributionMacros,
   ContributionMember,
   ContributionSource,
   ContributionZeroReason,

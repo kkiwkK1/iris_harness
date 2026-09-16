@@ -116,6 +116,7 @@ export type {
   PromptItemEntry,
   PromptItemExplanation,
   PromptItemization,
+  PromptItemMacros,
   PromptItemMember,
   PromptItemPlacement,
   PromptItemSource,

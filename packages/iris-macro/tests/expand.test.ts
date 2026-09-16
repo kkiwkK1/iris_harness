@@ -7,6 +7,7 @@ import {
   toRegexSubstitute,
   createMemoryVariableStore,
   expandMacros,
+  expandTraced,
   MacroRegistry,
   type MacroContextInput,
 } from '../src/index.ts'
@@ -202,4 +203,70 @@ test('toRegexSubstitute hands the regex engine the shape it asks for', () => {
 
   assert.equal(substitute('{{char}}'), 'Seraphina', 'no hook means verbatim expansion')
   assert.equal(substitute('{{char}}', { postProcess: value => value.toUpperCase() }), 'SERAPHINA')
+})
+
+/**
+ * The traced sibling: same walk, same bytes, plus a report of which heads ran.
+ *
+ * The whole point is that turning the trace on moves nothing, so every case
+ * here asserts the text as well as the heads. `{{setvar}}` is the macro the
+ * measured corpus leans on — a variable-driven preset resolves it sixty-one
+ * times in one prompt — so the count is what a reader needs, not a list.
+ */
+test('expandTraced reports the heads it resolved, and the same text as expandMacros', () => {
+  const registry = createMacroRegistry()
+  const variables = createMemoryVariableStore()
+  const context = createMacroContext({ char: 'Seraphina', user: 'Alex', variables })
+  const text = '{{setvar::style::gothic}}{{setvar::tone::dark}}Style is [{{getvar::style}}], {{char}}.'
+
+  const plain = expandMacros(text, context, { registry })
+  const { trace, text: traced } = expandTraced(text, context, { registry })
+
+  assert.equal(traced, plain, 'the trace must not move a byte')
+  assert.deepEqual(trace.heads, { setvar: 2, getvar: 1, char: 1 })
+  assert.equal(trace.charsBefore, text.length)
+  assert.equal(trace.charsAfter, traced.length)
+  assert.equal(trace.text, text, 'the report carries the input, for a caller that wants to hash it')
+})
+
+test('a head nothing implements is not reported as expanded', () => {
+  const registry = createMacroRegistry()
+  const context = createMacroContext({ char: 'Seraphina', user: 'Alex' })
+  const text = '{{char}} and {{notAMacro::x}}'
+
+  const { trace, text: expanded } = expandTraced(text, context, { registry })
+
+  // The unknown macro survives verbatim — the engine's own contract — and it is
+  // **not** in the report: "a resolver claimed this" and "it passed through"
+  // are different facts, and counting the second would tell a reader a macro ran
+  // where none did.
+  assert.equal(expanded, 'Seraphina and {{notAMacro::x}}')
+  assert.deepEqual(trace.heads, { char: 1 })
+})
+
+test('nested expansions are counted once each, and the heads are lower-cased', () => {
+  const registry = createMacroRegistry()
+  const variables = createMemoryVariableStore()
+  const context = createMacroContext({ char: 'Seraphina', user: 'Alex', variables })
+  // `{{GETVAR::x}}` upper-cased, and a `{{user}}` inside another macro's
+  // argument — both resolved by the same walk, both reported.
+  const text = '{{setvar::x::{{USER}}}}{{GETVAR::x}}'
+
+  const { trace, text: expanded } = expandTraced(text, context, { registry })
+
+  // `setvar` stores and emits nothing; the nested `{{USER}}` is resolved by the
+  // same walk and counted. `getvar` then reads the stored name back.
+  assert.equal(expanded, 'Alex')
+  assert.deepEqual(trace.heads, { setvar: 1, user: 1, getvar: 1 })
+})
+
+test('a clean prompt reports no heads at all, which is not the same as not tracing', () => {
+  const registry = createMacroRegistry()
+  const context = createMacroContext({ char: 'Seraphina', user: 'Alex' })
+
+  const { trace, text: expanded } = expandTraced('Just prose.', context, { registry })
+
+  assert.equal(expanded, 'Just prose.')
+  assert.deepEqual(trace.heads, {})
+  assert.equal(trace.charsBefore, trace.charsAfter)
 })

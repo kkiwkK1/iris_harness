@@ -15,15 +15,15 @@ import { expandHelperMacros, type MacroSources } from '@iris/compat-tavernhelper
 export interface TavernHelperCapability {
   /** Activation revision that owns this object. */
   readonly revision: number
-  /** Expand Tavern Helper's variable-macro family. */
-  expandMacros(text: string, sources: MacroSources): string
+  /** Expand Tavern Helper's variable-macro family. `onMacro` observes heads. */
+  expandMacros(text: string, sources: MacroSources, onMacro?: (head: string) => void): string
 }
 
 /** Build one activation's Tavern Helper capability. */
 export function createTavernHelperCapability(revision: number): TavernHelperCapability {
   return {
     revision,
-    expandMacros: (text, sources) => expandHelperMacros(text, sources),
+    expandMacros: (text, sources, onMacro) => expandHelperMacros(text, sources, onMacro),
   }
 }
 

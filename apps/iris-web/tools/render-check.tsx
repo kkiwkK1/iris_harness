@@ -38,7 +38,7 @@ import { bookFigures } from '../src/app/character-facts.ts'
 import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView, SystemPluginInstallPreview } from '@iris/protocol'
-import { contributing, discrepancy, messageRows, rowsFor } from '../src/app/itemization.ts'
+import { contributing, discrepancy, macroNote, messageRows, regexNote, rowsFor } from '../src/app/itemization.ts'
 import { pressureLevel } from '../src/app/context-occupancy.ts'
 import { ringDash } from '../src/app/composer-bar.ts'
 import { ContextCard } from '../src/app/ContextMeter.tsx'
@@ -1689,6 +1689,21 @@ async function main(): Promise<void> {
     'the fixture should carry a conversation floor for the message view to name')
   assert.ok(viewed.some(message => message.stable) && viewed.some(message => !message.stable),
     'the fixture should carry both a cached and an uncached message, or the prefix wording is untested')
+
+  // The macro stage, at the scale a variable-driven preset has: a row that
+  // expands sixty-one `setvar` calls and writes nothing. A fixture without it
+  // would leave the panel's macro line drawn against no data.
+  const macroRow = breakdown.entries.find(entry => entry.explanation?.macros !== undefined)
+  assert.ok(macroRow !== undefined, 'the fixture must carry a traced macro row')
+  const macro = macroNote(macroRow)
+  assert.equal(macro?.top, 'setvar')
+  assert.equal(macro?.count, 61)
+  assert.equal(macro?.after, 0, 'the traced row is the all-macros one, which renders to nothing')
+  // The regex stage on the conversation row, which is the only row a
+  // prompt-direction rule can be recorded on.
+  const regexRow = breakdown.entries.find(entry => entry.explanation?.regex !== undefined)
+  assert.ok(regexRow !== undefined, 'the fixture must carry a recorded regex row')
+  assert.ok((regexNote(regexRow)?.length ?? 0) > 0, 'the recorded rule should have fired, not be an empty list')
 
   // -------------------------------------------------------- connections
   // The property this panel exists for: a stored display name is a snapshot and

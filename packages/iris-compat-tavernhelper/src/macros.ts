@@ -158,9 +158,16 @@ const FORMAT = new RegExp(`^(.*?)\{\{format_(${SCOPES})_variable::(.*?)\}\}`, 'g
  * at its macro length instead of its value's.
  * @param text - the text to expand, after the ordinary ST macros have run.
  * @param sources - the trees and the block formatter.
+ * @param onMacro - called once per resolved macro with its head
+ *   (`get_message_variable`, `format_chat_variable`, …). An observation only —
+ *   it cannot change the returned string.
  * @returns the text with both macro families substituted.
  */
-export function expandHelperMacros(text: string, sources: MacroSources): string {
+export function expandHelperMacros(
+  text: string,
+  sources: MacroSources,
+  onMacro?: (head: string) => void,
+): string {
   const read = (scope: MacroScope, path: string): unknown => {
     // `undefined` here means no store, which is not the same as a store holding
     // nothing — and the two are indistinguishable once both have become `null`.
@@ -169,6 +176,7 @@ export function expandHelperMacros(text: string, sources: MacroSources): string 
   }
 
   const withGet = text.replace(GET, (_match, scope: string, path: string) => {
+    onMacro?.(`get_${scope}_variable`)
     const value = read(scope as MacroScope, path)
     // A string goes in raw; everything else is compact JSON, which is what
     // `get_` means as against `format_`.
@@ -176,6 +184,7 @@ export function expandHelperMacros(text: string, sources: MacroSources): string 
   })
 
   return withGet.replace(FORMAT, (_match, prefix: string, scope: string, path: string) => {
+    onMacro?.(`format_${scope}_variable`)
     const block = formatYamlBlock(read(scope as MacroScope, path))
     // Every newline is padded to sit under the macro's own column. Upstream
     // uses the prefix's length, so a block after `状态: ` lines up under it and

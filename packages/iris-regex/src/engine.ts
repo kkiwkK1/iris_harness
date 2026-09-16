@@ -29,6 +29,21 @@ import {
 export interface RunOptions extends RegexParams {
   /** Macro expander. Omitted means patterns and replacements are used verbatim. */
   substitute?: MacroSubstitute
+  /**
+   * Called once per script that actually **rewrote** the text, with the
+   * script's display name.
+   *
+   * An observation, not an input — it cannot change the returned string, which
+   * is what lets the itemization turn it on without moving a byte. Called only
+   * for a rule that matched: a script that ran and changed nothing is not
+   * reported, because "a rule fired" and "a rule was in the chain" are
+   * different facts and the second is already visible in the editor.
+   *
+   * The name is `comment` when the script has one — the string upstream's own
+   * editor shows — falling back to the script's id, which is frequently a UUID
+   * and the reason the fallback is second.
+   */
+  onRule?: (name: string) => void
 }
 
 /** A script together with who owns it, for ordering. */
@@ -120,6 +135,24 @@ function trim(value: string, script: RegexScript, options: RunOptions): string {
   return result
 }
 
+/**
+ * The name to report a rule under: its `scriptName`, else its `id`.
+ *
+ * `scriptName` is what the card's own editor shows and what a reader
+ * recognises; `id` is frequently a UUID, which is why it is the fallback and
+ * not the first choice. Both absent leaves the macro's own spelling, which is
+ * uninformative but never wrong — an unnamed rule reported as `unnamed` would
+ * be a name this host invented.
+ * @param script - the rule.
+ * @returns its display name.
+ */
+function ruleName(script: RegexScript): string {
+  const named = script.scriptName
+  if (typeof named === 'string' && named.trim().length > 0) return named
+  const id = script.id
+  return typeof id === 'string' && id.length > 0 ? id : 'unnamed'
+}
+
 /** Matches `$0`, `$12` or `$<name>` in a replacement string. */
 const GROUP_REFERENCE = /\$(\d+)|\$<([^>]+)>/g
 
@@ -141,7 +174,7 @@ export function runRegexScript(script: RegexScript, text: string, options: RunOp
   const pattern = regexFromString(findPattern(script, options.substitute))
   if (pattern === undefined) return text
 
-  return text.replace(pattern, (...args: unknown[]) => {
+  const result = text.replace(pattern, (...args: unknown[]) => {
     const whole = args[0] as string
     // A replace callback ends with (offset, string) and, when the pattern has
     // named groups, a groups object after them.
@@ -164,6 +197,12 @@ export function runRegexScript(script: RegexScript, text: string, options: RunOp
 
     return options.substitute === undefined ? filled : options.substitute(filled)
   })
+  // Reported after the replace, and only when it changed something. A rule whose
+  // pattern had no match leaves `result === text`, which is the same string a
+  // rule-less call returns — so the check is on identity, exactly as
+  // `expandMacros` uses it.
+  if (result !== text) options.onRule?.(ruleName(script))
+  return result
 }
 
 /**
