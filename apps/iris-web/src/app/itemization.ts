@@ -15,7 +15,17 @@
  * @module iris-web/app/itemization
  */
 
-import type { PromptItemEntry, PromptItemization, PromptItemMember } from '@iris/protocol'
+import type { PromptItemEntry, PromptItemExplanation, PromptItemization, PromptItemMember, PromptItemSource } from '@iris/protocol'
+
+/**
+ * The part of a row both the row and its members carry.
+ *
+ * An explanation hangs on a row and on each of its members with the same shape,
+ * so the two readers below take this rather than `PromptItemEntry` — a member is
+ * not an entry (no `kind`, no placement) and duplicating the functions for it
+ * would be a second place for the copy to drift.
+ */
+type Explained = { tokens: number, explanation?: PromptItemExplanation }
 
 /** How the rows are ordered. */
 export type ItemOrder = 'size' | 'assembly'
@@ -101,6 +111,64 @@ export function rowsFor(
   }
 
   return rows.map(({ entry, share, origin }) => ({ entry, share, origin }))
+}
+
+/**
+ * The sentence a zero row owes its reader, as an i18n key, or none.
+ *
+ * `tokens === 0` is where the panel used to stop, and it is exactly where the
+ * question starts: 23 of 38 rows on one measured conversation were zero, from
+ * three different causes that lead a reader to three different places. The
+ * contract now carries the cause; this turns it into a word.
+ *
+ * **Rendered only beside a zero.** A `zeroReason` on a row that carries text is
+ * a host contradiction rather than a thing to display, and the safe reading of
+ * that contradiction is the one the numbers already support. Returning `null`
+ * for "not explained" is deliberate: an old host's record has no reason, and a
+ * sentence invented for it would claim a cause nobody measured.
+ * @param entry - one itemization row.
+ * @returns an i18n key, or null when there is nothing to say.
+ */
+export function zeroReasonKey(entry: Explained): string | null {
+  if (entry.tokens !== 0) return null
+  switch (entry.explanation?.zeroReason) {
+    case 'macros-only': return 'promptZeroMacrosOnly'
+    case 'marker-unfilled': return 'promptZeroMarkerUnfilled'
+    case 'blank': return 'promptZeroBlank'
+    case 'trimmed': return 'promptZeroTrimmed'
+    case 'dropped-by-budget': return 'promptZeroDropped'
+    default: return null
+  }
+}
+
+/**
+ * What wrote a row's bytes, as an i18n key and its one slot, or none.
+ *
+ * The other half of the explanation: a zero row says *why* it is empty and the
+ * source says *whose* emptiness it is — a card's `scenario` field or a world
+ * book's — which is the field a reader then goes and fills.
+ *
+ * The kinds are a closed set, so a `Record` rather than a `switch`: a sixth
+ * kind added to the contract reddens the compiler here, which is where the copy
+ * decision belongs.
+ * @param entry - one itemization row.
+ * @returns the key and its `{name}` slot, or null when not explained.
+ */
+export function sourceNoteKey(entry: Explained): { key: string, name: string } | null {
+  const source = entry.explanation?.source
+  if (source === undefined) return null
+  const keys: Record<PromptItemSource['kind'], string> = {
+    preset: 'promptSourcePreset',
+    card: 'promptSourceCard',
+    worldbook: 'promptSourceWorldbook',
+    history: 'promptSourceHistory',
+    script: 'promptSourceScript',
+    host: 'promptSourceHost',
+  }
+  const key = keys[source.kind]
+  // The label when the author gave one, the id otherwise — the id is often a
+  // UUID (29 of a real preset's 41), so the label is what a person reads.
+  return { key, name: source.label ?? source.id }
 }
 
 /**

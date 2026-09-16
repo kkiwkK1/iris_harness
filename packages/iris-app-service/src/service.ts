@@ -25,7 +25,7 @@ import { evaluateBatch } from '@iris/compat-prompt-template'
 import { StCompatBridge, applyGenerateResultToContributions, bridgeMessagesFromContributions, contributionsHaveTemplates, validateReplyResult } from '@iris/compat-st-extension'
 import type { StBridgeContext, StBridgeResult } from '@iris/compat-st-extension'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, SystemPluginSnapshot, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemExplanation, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, SystemPluginSnapshot, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -5984,32 +5984,40 @@ export class IrisAppService {
   ): PromptItemization {
     return {
       turn,
-      entries: result.items.map(item => ({
-        id: item.id,
-        // The id is frequently a UUID; the label is what a person reads.
-        label: item.label ?? item.id,
-        kind: item.kind,
-        tokens: item.tokens,
-        ...item.depth === undefined ? {} : { depth: item.depth },
-        ...item.role === undefined || item.role === 'system' ? {} : { role: item.role },
-        ...item.deferred === true ? { deferred: true } : {},
-        ...item.promoted === true ? { promoted: true } : {},
-        // The entries a split depth bucket is the join of, each with where the
-        // reorder sent it. Present only when the reorder read them, which is
-        // the same condition the placement used — so the panel can never show a
-        // split the request did not make.
-        ...item.members === undefined
-          ? {}
-          : {
-              members: item.members.map(member => ({
-                id: member.id,
-                label: member.label ?? member.id,
-                tokens: member.tokens,
-                ...member.deferred === true ? { deferred: true } : {},
-                ...member.promoted === true ? { promoted: true } : {},
-              })),
-            },
-      })),
+      entries: result.items.map((item) => {
+        const explanation = explanationOf(item.source, item.zeroReason)
+        return {
+          id: item.id,
+          // The id is frequently a UUID; the label is what a person reads.
+          label: item.label ?? item.id,
+          kind: item.kind,
+          tokens: item.tokens,
+          ...item.depth === undefined ? {} : { depth: item.depth },
+          ...item.role === undefined || item.role === 'system' ? {} : { role: item.role },
+          ...item.deferred === true ? { deferred: true } : {},
+          ...item.promoted === true ? { promoted: true } : {},
+          ...explanation === undefined ? {} : { explanation },
+          // The entries a split depth bucket is the join of, each with where the
+          // reorder sent it. Present only when the reorder read them, which is
+          // the same condition the placement used — so the panel can never show a
+          // split the request did not make.
+          ...item.members === undefined
+            ? {}
+            : {
+                members: item.members.map((member) => {
+                  const memberExplanation = explanationOf(member.source)
+                  return {
+                    id: member.id,
+                    label: member.label ?? member.id,
+                    tokens: member.tokens,
+                    ...memberExplanation === undefined ? {} : { explanation: memberExplanation },
+                    ...member.deferred === true ? { deferred: true } : {},
+                    ...member.promoted === true ? { promoted: true } : {},
+                  }
+                }),
+              },
+        }
+      }),
       tokens: result.tokens,
       stablePrefixTokens: result.stablePrefixTokens,
       budget: {
@@ -7302,6 +7310,40 @@ export class IrisAppService {
 }
 
 /**
+ * Turn the pipeline's per-part provenance into the wire's explanation.
+ *
+ * One small translation rather than a type shared across the boundary, because
+ * the two types serve different readers: the pipeline's is a field on an object
+ * the assembler builds, and this is a field on the contract both halves are
+ * written against. The vocabularies are identical by construction, so the
+ * function is a copy with the zero-reason folded in — and it is the **only**
+ * place the two are joined, so a part that gains a source but no reason (the
+ * ordinary case) and one that gains both (a zero row) both come out through one
+ * call.
+ *
+ * Returns `undefined` when there is nothing to say — an old contribution built
+ * without provenance — because the contract's `explanation` is optional and
+ * "not explained" is a state a surface has to render as itself.
+ * @param source - the pipeline's provenance, when it has one.
+ * @param zeroReason - why the part is zero, when it is.
+ * @returns the wire shape, or undefined when both are absent.
+ */
+function explanationOf(
+  source: Contribution['source'],
+  zeroReason?: Contribution['zeroReason'],
+): PromptItemExplanation | undefined {
+  if (source === undefined && zeroReason === undefined) return undefined
+  return {
+    // A zero reason without a source is still worth reporting, and the honest
+    // owner of such a row is the host's own assembly. It does not happen today —
+    // both reasons this host emits come with a source — but the fallback keeps
+    // the wire shape total rather than making the callers guard.
+    source: source ?? { kind: 'host', id: '' },
+    ...zeroReason === undefined ? {} : { zeroReason },
+  }
+}
+
+/**
  * Where the preset put its main prompt, which is what a script's `before` and
  * `after` injections are placed relative to.
  *
@@ -7466,6 +7508,10 @@ export function injectedContributions(entry: ChatEntry, preset: readonly Contrib
     contributions.push({
       id: `script.${key}`,
       label: `Script injection (${key})`,
+      // A card's own script registered this, so `script` is the right author and
+      // the key is its name. The injected value is not part of the report — the
+      // key identifies it and the text stays in the host's session.
+      source: { kind: 'script', id: key },
       placement,
       // Expanded here, at assembly, against the chat's own expander — the same
       // projection every other contribution gets from `buildPrompt`. Measured on

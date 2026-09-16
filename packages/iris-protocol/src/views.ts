@@ -1179,6 +1179,80 @@ export interface ScriptContext {
  */
 export type ScriptPromptPosition = 'before' | 'after' | 'at-depth' | 'none'
 
+/**
+ * Where one prompt part's text came from.
+ *
+ * The panel's other half: `tokens` says how much a part cost, and this says who
+ * paid it. A marker's row belongs to whoever the host filled it from — the card
+ * for `charDescription`, a book for `worldInfoBefore` — so a reader looking at
+ * an empty slot is told which field to go and fill rather than left to guess
+ * from the label.
+ *
+ * The vocabulary is the same closed set the pipeline carries
+ * (`@iris/pipeline`'s `ContributionSource`), spelled out here because the wire
+ * is the contract and the pipeline's type is an implementation detail of the
+ * host. `id` is the author's own stable name for it.
+ */
+export interface PromptItemSource {
+  kind: 'preset' | 'card' | 'worldbook' | 'history' | 'script' | 'host'
+  id: string
+  label?: string
+}
+
+/**
+ * Why a part rendered to nothing.
+ *
+ * `tokens: 0` on a real preset is routine rather than a defect — measured on an
+ * open conversation, 23 of 38 rows were zero — and the three ordinary causes
+ * send a reader to three different places. Naming the cause is the whole
+ * feature: "empty" beside a row is a fact, and "empty because the preset sets
+ * variables and writes no prose" is an answer.
+ *
+ * - `macros-only` — the authored text was non-blank and expanded to nothing.
+ *   A variable-driven preset's whole mechanism: `{{setvar::…}}` only stores.
+ * - `marker-unfilled` — the slot was offered and the host had nothing to put in
+ *   it. The card's `scenario` is blank, no world info fired.
+ * - `blank` — the item's own content was empty to begin with. Deliberately **not
+ *   produced** by this host today (see the note on
+ *   {@link PromptItemEntry.explanation}); reserved so a surface that renders it
+ *   and a host that one day emits it agree.
+ * - `trimmed` / `dropped-by-budget` — the text existed and did not reach the
+ *   request. Reserved for the budget report; not produced yet.
+ */
+export type PromptItemZeroReason
+  = | 'macros-only'
+    | 'marker-unfilled'
+    | 'blank'
+    | 'trimmed'
+    | 'dropped-by-budget'
+
+/**
+ * Why one prompt part is the size it is.
+ *
+ * The first slice of the explainable-prompt feature: enough to say **where a
+ * part came from** and **why it is zero**, which is the question the assembly
+ * panel gets opened to answer. Deliberately additive and entirely optional —
+ * the fields for the macro, regex, placement and stability stages land on this
+ * same object in later rounds and stay optional when they do, so an old host's
+ * record parses in a new shell and a new host's record is ignored field by field
+ * by an old shell.
+ *
+ * **No prose.** A report carries hashes, sources and reasons; the text itself
+ * stays in the host's own session (see `PromptLayout`). That is why there is no
+ * `text` field to forget to strip, and why a `debug.reports` line drawn from
+ * this shape cannot leak a conversation.
+ */
+export interface PromptItemExplanation {
+  /** Who wrote this part. */
+  source: PromptItemSource
+  /**
+   * Why this part is zero, when it is. Absent on a part that carries text, so
+   * a surface can read presence as the answer and never has to cross-check
+   * `tokens`.
+   */
+  zeroReason?: PromptItemZeroReason
+}
+
 /** One part of an assembled prompt, and what it cost. */
 export interface PromptItemEntry {
   /**
@@ -1245,6 +1319,18 @@ export interface PromptItemEntry {
    * Absent when the host did not split this row — with the setting off, always.
    */
   members?: PromptItemMember[]
+  /**
+   * Why this row is what it is, when the host explains it.
+   *
+   * Present on every row a host that supports the feature emits — including a
+   * zero-row, whose reason is the point — and absent from an older host's
+   * record. A surface must render absence as "not explained" rather than as a
+   * reason of its own.
+   *
+   * The panel's rule, matching {@link PromptItemZeroReason}'s: an explained row
+   * shows its source, and a zero row shows its reason beside the word "empty".
+   */
+  explanation?: PromptItemExplanation
 }
 
 /** One entry inside a split prompt row, and what it cost. */
@@ -1260,6 +1346,16 @@ export interface PromptItemMember {
   /** What to show a person — the entry's own `comment`, or its book and uid. */
   label: string
   tokens: number
+  /**
+   * Why this member is what it is, when the host explains it.
+   *
+   * The same shape the row above carries, so a surface renders one explanation
+   * component for both. A world-info entry inside a depth bucket is a part in
+   * its own right — it is the unit the divergence report already names — and
+   * the row's own explanation says "world info" while this one can say which
+   * book.
+   */
+  explanation?: PromptItemExplanation
   /** True when the reorder sent this member after the conversation. */
   deferred?: boolean
   /** True when the reorder sent this member ahead of the conversation. */

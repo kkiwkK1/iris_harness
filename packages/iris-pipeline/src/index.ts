@@ -24,6 +24,8 @@ export type {
   Budget,
   Contribution,
   ContributionMember,
+  ContributionSource,
+  ContributionZeroReason,
   HistoryEntry,
   Overflow,
   PipelineMessage,

@@ -7187,3 +7187,52 @@ it is on the status object now, so the temptation exists; the comparison that
 makes sense is manifest-vs-catalog (already made in the hook), never
 rev-vs-hash. (b) A fourth quantity joining the row — the `<dl>` is getting
 long; if it grows again the facts should re-group rather than append.
+
+## 103. 装配面板不再只写「空」：每一行说明是谁写的字节、为什么这一行是 0
+
+**改了什么。** `notes/tasks/M1-PROMPT-BUILD-REPORT.md` 的第一步（web 半）。
+面板此前只有「多少钱」；对实测的那个对话，38 行里 23 行是 0，全部渲染成同一个
+「空」，而它们背后是三个不同的原因：变量驱动型预设（条目全是 `{{setvar}}`，正文
+由后面的 `{{getvar}}` 读出来）、本轮没人填的 marker 槽位、预设作者留白的条目。三
+个原因把读者带向三个不同的去处，一句「空」一个也带不到。
+
+行上现在多一块解释：**来源**（是谁写的字节——预设条目、卡字段、世界书、脚本注入、
+宿主或对话本身）与 **0 的原因**（本轮宿主实际产出的两种：`macros-only` 与
+`marker-unfilled`）。同一行和它展开后的每个 member 用同一个组件渲染，因为契约里
+两者带的是同一种 `PromptItemExplanation`。
+
+**决定放在纯函数里，文案在字典里。** `zeroReasonKey(entry)` 与
+`sourceNoteKey(entry)` 在 `src/app/itemization.ts` 里：前者只对 `tokens === 0` 的
+行给出句子（有正文却带 reason 是宿主自相矛盾，按数字可信的那一边渲染：什么都不说），
+后者把来源 kind 映射到一句「卡：scenario」；kind 是闭集，用 `Record` 而不是
+`switch`，于是第六种 kind 出现时是编译错误而非空 span。面板只做排版。
+
+**没有正文，也没有密钥。** 报告只带来源名与原因；正文留在宿主的会话里
+（`LayoutPart.text` 不上契约），所以从这条形状画出的 `debug.reports` 不会把对话
+带进诊断包。两个方向都有测试钉住：宿主侧「the explanation carries no prompt text
+and no secret」把一层楼和预设正文送进真实一回合再抓序列化的解释串；web 侧
+`i18n` 审计保证两列占位符一致。
+
+**旧记录不装作有解释。** `explanation` 是可选字段：老宿主的记录里它不出现，而
+「没解释」必须渲染成它自己，不能编一句没人量过的话——`zeroReasonKey` 与
+`sourceNoteKey` 对这种行都返回 `null`。
+
+### 牙齿
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| `zeroReasonKey` 对三种原因给出三句不同的 key（`prompt-explanation.test.ts`） | 把三种都映射到同一个 key | 红 → 恢复 → 绿 |
+| 非 0 行不给原因（`tokens !== 0` 守卫） | 删掉守卫 | 红 → 恢复 → 绿 |
+| 每个 kind 都有来源 key | 去掉 `Record` 里的一行 | 编译红（不是运行期空 span） |
+| 两列字典都有这批键、`{name}` 占位一致 | 只加到一个字典 | 红（`i18n.test.ts` 的列一致性） |
+| `iris-prompt__explain` / `iris-prompt__zero-reason` 有规则且被渲染 | 删掉 CSS 规则或删掉渲染 | 红（声明的两个方向都查） |
+| `data-control="prompt-explained"` 定位符 | 换掉属性或值 | 红 |
+| 渲染夹具每行都有解释、且 0 行的原因不唯一（`render-check.tsx`） | 把夹具的两行 0 改成同一个原因 | 红 |
+
+### What would reopen this
+
+(a) 面板长出「消息视图」（手册第二步）：同一块解释要跟着 part 走，届时
+`Explanation` 的入参从「行」变成「part」，纯函数不变。 (b) 宏与 regex 阶段（第三步）
+给 `PromptItemExplanation` 加字段，面板展开后显示——那时 `data-control` 会多一个
+折叠三角，本条的定位符不动。 (c) 若某天宿主开始产出 `blank`/`trimmed`，字典里
+已有对应的两句，是补测试而不是改文案。

@@ -1622,6 +1622,22 @@ async function main(): Promise<void> {
     breakdown.entries.some(entry => /^[0-9a-f]{8}-/.test(entry.id) && !/^[0-9a-f]{8}-/.test(entry.label)),
     'the fixture should carry a UUID-identified prompt, since 29 of 41 real ones are',
   )
+  // Every row explains itself, and the zeros are told apart. The feature's whole
+  // point is that 23-of-38 empty rows are not all the same fact; a fixture whose
+  // zeros shared one reason would let the panel pass while saying nothing.
+  assert.ok(
+    breakdown.entries.every(entry => entry.explanation !== undefined),
+    'an explained host sends a reason for every row, so the fixture must too',
+  )
+  const zeroReasons = breakdown.entries
+    .filter(entry => entry.tokens === 0)
+    .map(entry => entry.explanation?.zeroReason)
+  assert.ok(zeroReasons.length >= 2, 'the fixture should carry at least two zero rows')
+  for (const reason of zeroReasons) assert.ok(reason !== undefined, 'a zero row with no reason teaches nothing')
+  assert.ok(
+    new Set(zeroReasons).size >= 2,
+    'the fixture\'s zero rows must carry different reasons, or the panel never has to tell them apart',
+  )
 
   // -------------------------------------------------------- connections
   // The property this panel exists for: a stored display name is a snapshot and

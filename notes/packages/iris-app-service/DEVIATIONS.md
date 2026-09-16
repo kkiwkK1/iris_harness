@@ -8611,3 +8611,95 @@ its own named surface, not a dedup in the buffer. (c) A git version that
 materializes a gitlink differently than empty-or-absent (§85b) — the two
 flaky-test fixes and the fixture share one CI, so one version change can
 touch both.
+
+## 87. The itemization says why a row is empty: a projection of provenance, not a second assembler
+
+**What changed.** M1 step 1 of `notes/tasks/M1-PROMPT-BUILD-REPORT.md`. The
+assembly panel could already say how much each part cost. Measured on an open
+conversation (爱衣-20260909-001924, preset `[主预设] V19.5 狐神抚 · 毓忻`), **23
+of its 38 rows cost 0 tokens**, and all 23 rendered as one identical 「空」. Three
+causes were behind them, and the answer to "is this normal" is yes in all three:
+a variable-driven preset whose entries are all `{{setvar}}` and no prose (the
+prose lands later through `{{getvar}}`), four markers this card keeps blank
+(`description` / `personality` / `scenario` / `mes_example`), and a preset custom
+marker with no host filler. SillyTavern shows the same zeros — it counts after
+`substituteParams` (`public/scripts/PromptManager.js:1283`).
+
+The row now carries an optional `explanation` (`{ source, zeroReason }`), and the
+two reasons this host actually produces are `macros-only` and `marker-unfilled`.
+A zero row and a nonzero row can finally be told apart in the panel, and two
+different zeros can too.
+
+**Why this is a projection and not a second compiler.** `Contribution` gained an
+optional `source`; `itemize` copies it (and the optional `zeroReason`) onto
+`AssembledItem`; `#itemizationOf` folds it into the wire shape. Nothing here
+reads a contribution to decide what to send — the assembler only ever *reads*
+these fields to fill the report, so the bytes are unchanged. The golden test
+(`packages/iris-pipeline/tests/assemble.test.ts`, "provenance metadata changes no
+assembled byte") pins that: the same contributions, bare and wearing the exact
+metadata, assemble to equal `system` / `messages` / `tokens` /
+`stablePrefixTokens`, and the report is still produced.
+
+**Where the two reasons are decided, and why not in the assembler.**
+`packages/iris-app-service/src/prompt.ts` still only has one place that knows
+both halves — the authored text and the expanded text — because that is where
+`expand` is called. So:
+
+- **`macros-only`** is set at the moment of expansion: `authored.trim().length >
+  0 && expanded.trim().length === 0`. This is precisely the case the report
+  describes as latent: `resolvePreset` drops an item whose **pre-expansion**
+  content is empty (`chat-completion.ts`, `if (text.trim().length === 0)
+  continue`), so a preset row of `{{setvar::…}}` is non-empty as authored, enters
+  the contributions, and only becomes empty here. It is why the row count is
+  unchanged (still 38) while the reason appears.
+- **`marker-unfilled`** is set on the rows `emptyMarkerRows` synthesises — the
+  slot was offered and nothing filled it. `sourceOf` names the author (card,
+  world book, persona, or the preset itself), so a reader is pointed at the field
+  to fill rather than left to guess from the label.
+
+**The `blank` case is deliberately not rowed, and that is a decision under test.**
+A preset item whose own `content` is empty is dropped by `resolvePreset` and
+produces no row at all; the same holds for the many enabled-but-empty prompts of
+a real preset. The report's §4 step 1 says so, and the test "a preset prompt
+whose content is empty still produces no row" fails if the decision is reversed.
+`PromptItemZeroReason` carries `blank`, `trimmed` and `dropped-by-budget` in the
+vocabulary for the budget round, but this host does not emit them yet.
+
+**Metadata, never bytes.** The explanation carries a source name, a reason, and
+nothing else. The text stays in the host's session (`LayoutPart.text` is not on
+the contract), so a `debug.reports` line drawn from this shape cannot leak a
+conversation — pinned by "the explanation carries no prompt text and no secret",
+which sends a floor and the preset's prose through a real turn and greps the
+serialised explanations for both.
+
+**Verified on real data.** The preview path (`#previewItemization`, the same one
+function, not a second one) was run against a real install's `爱衣.png` and a real
+preset: **23 rows, 11 zero, 5 `macros-only`, 6 `marker-unfilled`, and 0 unexplained
+zeros**. The report's 38-row / 23-zero example used
+`[主预设] V19.5 狐神抚 · 毓忻`; that preset is not in this machine's install, so the
+row count differs — but the property the manual's acceptance asks for (every zero
+row carries a reason, and both reasons appear) holds. The probe was a temporary
+file, run and deleted; nothing of it is committed.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| `init` (all-macros) is `macros-only` (`itemize.test.ts`) | force the `authored.trim().length > 0` guard false | red → revert → green |
+| `scenario` zero row is `marker-unfilled` | delete `zeroReason: 'marker-unfilled'` from `emptyMarkerRows` | red → revert → green |
+| `scenario`'s source is the card, `worldInfoBefore`'s the book | make `sourceOf` return `preset` for every marker | red → revert → green |
+| the golden byte test fails if provenance drops the source *or* the report (`assemble.test.ts`) | remove the `source` copy from `itemize`'s output | red → revert → green |
+| `zeroReasonKey` returns `null` for a nonzero row (`prompt-explanation.test.ts`) | delete the `tokens !== 0` guard | red → revert → green |
+| the no-leak scan finds none of `gothic` / `A SECRET FLOOR` / `Style is` | add a `text` field to `PromptItemExplanation` and fill it | red (the scan is not vacuous — the same test also asserts an explanation exists) |
+
+### What would reopen this
+
+(a) A second path that assembles a request without `@iris/app-service/prompt.ts`
+— the ST-compat bridge's expansion mutates contributions in place, and a
+contribution it rewrites to empty would carry no `macros-only`, which is a gap
+worth a row only if a real preset hits it. (b) The budget round's `trimmed` /
+`dropped-by-budget`: those are decided in the pipeline's `trimHistory`, a
+different layer, and the vocabulary is already reserved for it. (c) A source
+that is genuinely mixed — `dialogueExamples` today is `emTop`/`emBottom` world
+book around the card's `mes_example`, and is tagged `card` because that is the
+field a reader goes looking for; if that becomes misleading a sixth kind is owed.

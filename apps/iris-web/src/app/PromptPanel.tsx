@@ -16,6 +16,11 @@
  *   imported the preset recognises the row.
  * - **Nothing merged into an "other".** The rubble is thin but it is real, and a
  *   panel whose job is accounting must not round away the parts it finds small.
+ * - **Every row says why.** A part that cost nothing reads as "empty", and the
+ *   three ordinary reasons a real preset produces — a prompt that is only
+ *   `{{setvar}}` macros, a marker slot this turn filled with nothing, a preset
+ *   item left blank — lead a reader to three different places. The host sends
+ *   the reason; this panel renders it.
  *
  * @module iris-web/app/PromptPanel
  */
@@ -23,7 +28,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptDivergence, PromptDivergenceItem, PromptItemization } from '@iris/protocol'
+import type { PromptDivergence, PromptDivergenceItem, PromptItemEntry, PromptItemMember, PromptItemization } from '@iris/protocol'
 
 import { useIrisActions } from '../client/provider.tsx'
 import {
@@ -32,7 +37,9 @@ import {
   discrepancy,
   itemizationMode,
   rowsFor,
+  sourceNoteKey,
   splitMembers,
+  zeroReasonKey,
   type ItemOrder,
 } from './itemization.ts'
 import {
@@ -308,9 +315,15 @@ function Breakdown({
             </span>
             {/*
               A zero-token part reads as "empty", not as "0". They are common — 14
-              of one real preset's 53 — and a reader looking for one is asking why
-              their X did not get through. Seeing it present and empty answers
-              that; seeing `0` invites them to wonder if the count is broken.
+              of one real preset's 53, 23 of 38 on a measured conversation — and a
+              reader looking for one is asking why their X did not get through.
+              Seeing it present and empty answers that; seeing `0` invites them to
+              wonder if the count is broken.
+
+              The word alone is where the panel used to stop. The reason under it
+              is the answer: three ordinary causes — a variable-only preset
+              prompt, a slot nothing filled, a preset item left blank — used to
+              render as one identical "empty".
             */}
             <span className="iris-prompt__share iris-meta">
               {row.entry.tokens === 0 ? '' : percent(row.share)}
@@ -318,6 +331,13 @@ function Breakdown({
             <span className={`iris-prompt__tokens${row.entry.tokens === 0 ? ' iris-prompt__tokens--empty' : ''}`}>
               {row.entry.tokens === 0 ? t('tokenEmpty') : row.entry.tokens.toLocaleString()}
             </span>
+            {/*
+              Why this row is what it is, when the host explains it: who wrote
+              the bytes, and (on a zero row) why there are none. Absent from an
+              older host's record, and rendered as nothing then — a sentence
+              invented for that state would claim a cause nobody measured.
+            */}
+            <Explanation entry={row.entry} />
             {/*
               The entries a split row is the join of, when they did not all go
               the same way. A world-info depth bucket is one row here and
@@ -373,6 +393,9 @@ function Breakdown({
                         <span className="iris-prompt__tokens">
                           {member.tokens === 0 ? t('tokenEmpty') : member.tokens.toLocaleString()}
                         </span>
+                        {/* A member carries the same explanation shape the row
+                            does, so one component renders both. */}
+                        <Explanation entry={member} />
                       </li>
                     ))}
                   </ul>
@@ -381,6 +404,31 @@ function Breakdown({
         ))}
       </ul>
     </div>
+  )
+}
+
+/**
+ * Who wrote this row's bytes, and — on a zero row — why there are none.
+ *
+ * One component for the row and its member sub-rows: the contract carries the
+ * same `PromptItemExplanation` on both, and a second renderer would be a second
+ * place for the copy to drift. `sourceNoteKey` and `zeroReasonKey` hold the
+ * decisions (which kind maps to which sentence, and that a reason is only shown
+ * on a zero) as pure functions, so this stays layout.
+ * @param props.entry - the row or member to explain.
+ * @returns the explanation lines, or null when the host did not explain it.
+ */
+function Explanation({ entry }: { entry: PromptItemEntry | PromptItemMember }): ReactElement | null {
+  const source = sourceNoteKey(entry)
+  const reason = zeroReasonKey(entry)
+  if (source === null && reason === null) return null
+  return (
+    <span className="iris-prompt__explain" data-control="prompt-explained">
+      {source === null ? null : <span className="iris-meta">{t(source.key as StringKey, { name: source.name })}</span>}
+      {reason === null ? null : (
+        <span className="iris-prompt__zero-reason">{t(reason as StringKey)}</span>
+      )}
+    </span>
   )
 }
 

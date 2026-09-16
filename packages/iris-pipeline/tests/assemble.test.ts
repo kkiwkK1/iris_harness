@@ -157,3 +157,57 @@ test('speaker names survive assembly', () => {
 
   assert.equal(result.messages[0]?.name, 'Aria')
 })
+
+/**
+ * The explanation feature must not move a single byte.
+ *
+ * The iron rule the whole feature rests on: the report is a **projection** of an
+ * assembly that already happened, so turning provenance on cannot change what the
+ * model reads. The guarantee has teeth only if it is checked at the seam where
+ * provenance enters — a contribution's optional `source` / `zeroReason` — rather
+ * than trusted. If a future edit lets those fields reach `renderSystem`, a
+ * placement or a token count, this reddens.
+ *
+ * The same contributions are assembled twice: once bare, once wearing the exact
+ * metadata the prompt builder attaches. `system`, `messages`, `tokens` and
+ * `stablePrefixTokens` must be equal, and — the part a shape comparison could
+ * miss — the **itemization must still be produced** the second time, so a
+ * mutation that "fixed" the byte equality by dropping the report would fail here
+ * for the other reason.
+ */
+test('provenance metadata changes no assembled byte', () => {
+  const bare: Contribution[] = [
+    { id: 'main', placement: { kind: 'system', order: 10 }, text: 'You are Aria.' },
+    { id: 'scenario', placement: { kind: 'system', order: 20 }, text: 'A map shop.' },
+    // A row that renders to nothing, so the zero path is exercised too.
+    { id: 'init', placement: { kind: 'system', order: 30 }, text: '' },
+    { id: 'atDepth', placement: { kind: 'depth', depth: 1, role: 'system', order: 0 }, text: 'NOTE' },
+  ]
+  const explained: Contribution[] = bare.map((contribution) => ({
+    ...contribution,
+    source: contribution.id === 'atDepth'
+      ? { kind: 'script', id: 'atDepth' }
+      : { kind: 'preset', id: contribution.id },
+    ...contribution.id === 'init' ? { zeroReason: 'macros-only' as const } : {},
+  }))
+
+  const history = conversation(4)
+  const plain = assemble({ contributions: bare, history, budget: roomy })
+  const traced = assemble({ contributions: explained, history, budget: roomy })
+
+  assert.equal(traced.system, plain.system)
+  assert.deepEqual(traced.messages, plain.messages)
+  assert.equal(traced.tokens, plain.tokens)
+  assert.equal(traced.stablePrefixTokens, plain.stablePrefixTokens)
+  assert.deepEqual(traced.overflow, plain.overflow)
+  // The report still exists and carries the metadata — otherwise the equality
+  // above would be satisfied by provenance having been dropped on the floor.
+  // Sliced to the contributions' length because `itemize` appends one aggregate
+  // row for the conversation, which has a source of its own and no counterpart
+  // in the input list.
+  assert.deepEqual(
+    traced.items.slice(0, explained.length).map(item => item.source),
+    explained.map(contribution => contribution.source),
+  )
+  assert.equal(traced.items.find(item => item.id === 'init')?.zeroReason, 'macros-only')
+})

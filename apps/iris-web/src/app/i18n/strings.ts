@@ -1153,6 +1153,28 @@ export const en = {
   overBudget: 'over budget',
   tokenEmpty: 'empty',
   /**
+   * Why a part rendered to nothing, said in a sentence the reader can act on.
+   * `tokens === 0` is where the panel used to stop; these are the answers it
+   * now has. One per `PromptItemZeroReason` the host can produce, plus the two
+   * reserved for the budget report.
+   */
+  promptZeroMacrosOnly: 'only macros — nothing to send once they expand',
+  promptZeroMarkerUnfilled: 'nothing filled this slot this turn',
+  promptZeroBlank: 'left blank in the preset',
+  promptZeroTrimmed: 'trimmed to fit the budget',
+  promptZeroDropped: 'dropped by the budget',
+  /**
+   * Who wrote a part's bytes. `{name}` is the preset item, card field or book.
+   * Beside the reason, it answers "whose emptiness is this" — the field a
+   * reader then goes and fills.
+   */
+  promptSourcePreset: 'preset: {name}',
+  promptSourceCard: 'card: {name}',
+  promptSourceWorldbook: 'world info: {name}',
+  promptSourceHistory: 'the conversation',
+  promptSourceScript: 'script: {name}',
+  promptSourceHost: 'host: {name}',
+  /**
    * A row the cache-friendly order moved. `{n}` / `{total}` are the position it
    * holds in the preset's own order, which is where the reader put it and where
    * they will look for it.
@@ -2765,6 +2787,25 @@ export const zh: Record<StringKey, string> = {
   droppedToFit: '为装下这些，已丢弃更早的 {n} 条消息',
   overBudget: '超出预算',
   tokenEmpty: '空',
+  /**
+   * 一段为什么渲染成空。这里是面板原来停下、而问题刚刚开始的地方：实测一
+   * 个对话 38 行里 23 行为 0，三个原因要把读者带到三个不同的去处。
+   */
+  promptZeroMacrosOnly: '只有宏 —— 展开后没有正文可发',
+  promptZeroMarkerUnfilled: '本轮没有内容填进这个槽位',
+  promptZeroBlank: '预设里留白',
+  promptZeroTrimmed: '为装进预算被截断',
+  promptZeroDropped: '被预算丢弃',
+  /**
+   * 一段的字节是谁写的。{name} 是预设条目、卡字段或世界书的条目名。与原因并
+   * 排，回答「这份空是谁的」—— 读者接着就能去填那个字段。
+   */
+  promptSourcePreset: '预设：{name}',
+  promptSourceCard: '角色卡：{name}',
+  promptSourceWorldbook: '世界书：{name}',
+  promptSourceHistory: '对话本身',
+  promptSourceScript: '脚本：{name}',
+  promptSourceHost: '宿主：{name}',
   promptDeferred: '已后移（缓存友好）',
   promptPromoted: '已前移（缓存友好）',
   promptDeferredWhere: '原位置第 {n} / {total} 条',

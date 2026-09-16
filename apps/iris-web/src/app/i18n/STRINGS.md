@@ -79,7 +79,8 @@
 | `store.ts` 通知 | 保存完成、备份导出两句 | `wiSaved wiBackupExported` |
 
 规模：任务 I 收口时词典 `en` 约 **320 条**（含复数/变体拆分）。这个数只描述那一刻——下面每一节
-都在往上加，2026-09-16 读到的是 **`en` 1195 条、`zh` 1195 条**（`Object.keys(en).length`）。
+都在往上加，2026-09-16 读到的是 **`en` 1195 条、`zh` 1195 条**（`Object.keys(en).length`）；
+同日 M1 第一步（装配面板解释）再加 11 条，读到 **1206 / 1206**。
 **不要把这个数抄进任何断言**：`i18n.test.ts` 钉的是两栏逐键对应这条性质，不是条数。
 
 ## 二、刻意不翻译（及理由）
@@ -555,3 +556,20 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 于是 `i18n.test.ts` 如今是这条规则的**消费者**，留在它自己文件里的只有消费者自己的事实：
 `NEUTRAL` 名单（哪些行是数字格式与单位）与 `dictionary` 这个失败前缀。每条测试还各自带一对
 **故意做坏的**输入，所以哪天规则从 `@iris/text` 脱钩，即使真词典是干净的，这里也会红。
+
+## 装配面板的可解释性（2026-09-16，M1 第一步）
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `PromptPanel.tsx` 的 `Explanation` | 0 token 行的原因：三种宿主会产出的（宏展开后为空、槽位没人填、预设留白）加两种预算轮预留的（截断、被丢弃） | `promptZeroMacrosOnly promptZeroMarkerUnfilled promptZeroBlank promptZeroTrimmed promptZeroDropped` |
+| 同上，来源一行 | 这段字节是谁写的。五种带 `{name}` 槽位（预设条目 / 卡字段 / 世界书 / 脚本 / 宿主），对话那句是固定短语 | `promptSourcePreset promptSourceCard promptSourceWorldbook promptSourceHistory promptSourceScript promptSourceHost` |
+
+**`promptSourceHistory` 刻意没有 `{name}`。** 对话这一行的作者是「对话本身」，它没有一个
+比这更具体的名字；给它一个槽位会让面板不得不塞进一个 `chatHistory` 之类的机器名。其余五条
+的 `{name}` 由 `sourceNoteKey` 填：有标签用标签，否则用 id——预设的 id 常常是 UUID
+（实测一份真实预设 41 个条目里 29 个如此），所以标签才是给人读的那半。
+
+**原因为什么只在 0 行出现。** `zeroReasonKey` 对 `tokens !== 0` 的行返回 `null`：有正文却
+带原因，是宿主自相矛盾，而按数字可信的那一边渲染是本面板一贯的取舍。老宿主的记录没有
+`explanation`，`sourceNoteKey` 与 `zeroReasonKey` 都返回 `null`，面板什么都不说而不是编一句
+没人量过的话。

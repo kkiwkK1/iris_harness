@@ -223,7 +223,7 @@ ST 兼容面另有五个方法，形状见 `requestSchemas` 的 `stCompat.*` 与
 | persona | 4 | list, get, set, delete |
 | plugin | 10 | list, install, uninstall, enable, disable, reload, previewInstall, confirmInstall, cancelInstall, update |
 | preset | 12 | list, select, view, setEnabled, move, upsertPrompt, removePrompt, save, delete, read, import, importFile |
-| prompt | 2 | itemize, divergence |
+| prompt | 2 | itemize（响应带解释，见下）, divergence |
 | regex | 11 | list, set, scopedList, setScopedAllowed, setScopedEnabled, presetList, setPresetAllowed, setPresetEnabled, tavernList, tavernReplace, tavernFormat |
 | script | 32 | getVariables, setVariables, swipeTo, slash, list, setEnabled, setDocumentGrant, setScriptsAllowed, fetch, context, saveMetadata, createChatMessages, deleteChatMessages, getPreset, evalTemplate, replaceScriptButtons, saveChat, setExtensionPrompt, runEnded, body, setExtensionSettings, generateRaw, setChatMessages, generate, getCharacter, chatHistoryBrief, chatHistoryDetail, rotateChatMessages, createOrReplacePreset, deletePreset, renamePreset, loadPreset |
 | scriptLibrary | 5 | list, read, save, delete, setEnabled |
@@ -237,6 +237,8 @@ ST 兼容面另有五个方法，形状见 `requestSchemas` 的 `stCompat.*` 与
 `service.ts` 的 `guardTavernHelper` 是当前脚本方法所有权清单：脚本执行入口总是检查 TH；与原生 UI 共用的 worldbook 写口仅对带帧 fence 的调用做 TH 检查。授权管理和 `script.runEnded` 清理入口保持可达。未来拆 schema/handler 时必须一起迁移这层语义。
 
 `Handlers` 仍是**全量**映射（`packages/iris-app-service/src/service.ts:287`），不是 `Partial`：注释写明这是刻意保留——线上可以缺方法（插件方法走注册表，未注册者答 `unsupported`），但「本次构建自己声称实现的方法」必须全量，静态词表里少一个 handler 是编译错误而不是静默拒绝；能力搬进插件时，方法名从静态词表移入注册表，`RpcMethod` 与这张表同步收缩。
+
+**`prompt.itemize` 的响应带解释**（M1 第一步，2026-09-16）。`PromptItemEntry` / `PromptItemMember` 各多一个**可选**字段 `explanation?: { source, zeroReason? }`：`source` 说明这段字节是谁写的（`preset` / `card` / `worldbook` / `history` / `script` / `host` 六种 kind 加一个 id），`zeroReason` 只在 `tokens === 0` 时出现，写明为什么是 0。今天宿主实际产出两种原因：`macros-only`（原文非空、宏展开后为空——变量驱动型预设的常规形状）与 `marker-unfilled`（槽位被提供、本轮没有内容填进去）。`blank` / `trimmed` / `dropped-by-budget` 在词表里预留给预算那一轮，宿主暂不产出；预设作者留白的条目**不产生行**（与 `emptyMarkerRows` 的取舍一致）。字段全部可选，旧宿主的记录新前端能解析、新宿主的记录旧前端逐字段忽略。报告只带来源名与原因，不带正文——正文留在宿主会话里（`LayoutPart.text` 不上契约）。
 
 ## 5. 浏览器契约、资产面、成员合并与 UI 插槽
 
