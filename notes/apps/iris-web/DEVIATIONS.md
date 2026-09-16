@@ -7132,6 +7132,18 @@ plumbing one); or a plugin wanting parametric interpolation in the catalog
 row — today rows render copy raw, slots and all, and filling them needs data
 the row does not have.
 
+### 后记（owner task W2，2026-09-16）：实机脚本的夹具计数不再是字面量
+
+`live-plugin-i18n-check.mjs` 第 168 行的同意页断言写死
+`/4 条 · en\/zh|4 strings · en\/zh/`，假定夹具恰好 2 键 × 2 语言。协调人用 3
+键夹具跑时这一步 FAIL，而**产品是对的**——页面显示「6 strings」，正是
+`preview.i18n.keys` 的和。脚本量具与产品对不上，错在量具。现改为启动时读夹具
+自己的 `i18n/en.json`、`i18n/zh.json`，`count = Object.keys(en).length +
+Object.keys(zh).length`，断言页面数字等于它；并在 Chrome 启动前先比较两份键
+集合，不等就报出是哪两个集合（宿主本来就会拒，量具应先说清）。常量
+`fixtureCopy` 的 docblock 写明这是量具不是测试，牙齿是「给夹具加一个键再跑，
+期望数字跟着变」——旧的字面量在 3 键夹具上会把正确页判红。
+
 ---
 
 ## 102. The plugin center's browser-asset row shows the three quantities it always had, under labels that say what each is

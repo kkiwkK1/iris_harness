@@ -18,10 +18,18 @@
  *   - <devPackageDir> is a directory with `package.json` (`iris.plugin` block,
  *     `id` `demo-copy`), `host.js`, `i18n/en.json`, `i18n/zh.json`;
  *   - CHROME_PATH overrides the binary lookup.
+ *
+ * The consent copy count this script expects is read from the fixture's own
+ * `i18n/en.json` + `i18n/zh.json` (keys in both columns), never hardcoded: a
+ * fixture that grows a third key must move this step's expected number with it,
+ * because the page's `6 strings` is the correct answer there. The two key sets
+ * are compared before Chrome starts, so a fixture the host would refuse is
+ * named here first. Teeth for a caliper: add a key to both fixture files and
+ * rerun — the step's expected count follows; a literal would FAIL a correct page.
  * @module iris-web/tools/live-plugin-i18n-check
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -46,6 +54,40 @@ if (chromePath === undefined) {
 }
 
 const PLUGIN_ID = 'demo-copy'
+
+/*
+ * The expected copy count is **derived from the fixture**, not written down.
+ *
+ * The consent page shows `{count} strings · en/zh`, where `count` is the audit's
+ * count of the two files' keys. A literal here would assume the fixture is 2
+ * keys × 2 languages: a coordinator running a 3-key fixture got a correct page
+ * ("6 strings") and a FAILing step, the caliper disagreeing with the product.
+ * So the number the page must show is computed from the same two files the
+ * host reads, and the two key sets are compared up front — a mismatch is what
+ * the host itself would refuse, and a caliper should name it before the page
+ * does.
+ *
+ * Teeth (this is a caliper, not a test): add a key to the fixture's two files
+ * and the step's expected number moves with it; if the script still asserted a
+ * literal, that run would FAIL against a correct page.
+ */
+const fixtureCopy = (() => {
+  const read = language => {
+    const file = join(devDir, 'i18n', `${language}.json`)
+    if (!existsSync(file)) throw new Error(`fixture is missing ${file}`)
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${file} is not a flat object`)
+    return parsed
+  }
+  const en = read('en')
+  const zh = read('zh')
+  const enKeys = Object.keys(en).sort()
+  const zhKeys = Object.keys(zh).sort()
+  if (JSON.stringify(enKeys) !== JSON.stringify(zhKeys)) {
+    throw new Error(`fixture copy key sets differ: en has [${enKeys.join(', ')}], zh has [${zhKeys.join(', ')}]`)
+  }
+  return { count: enKeys.length + zhKeys.length, keys: enKeys }
+})()
 const devFilesBefore = readdirSync(devDir).sort()
 const profile = mkdtempSync(join(tmpdir(), 'iris-plugin-i18n-check-'))
 const cdpPort = 9833 + Math.floor(Math.random() * 100)
@@ -165,7 +207,10 @@ try {
   const fields = await evaluate(`[...document.querySelectorAll('[data-consent-field]')].map(el => el.dataset.consentField)`)
   step('consent.i18nFieldOnPage', fields, fields.includes('i18n'))
   const copyText = await evaluate(`(document.querySelector('[data-consent-field="i18n"]') || {}).textContent || ''`)
-  step('consent.copySentence', copyText, /4 条 · en\/zh|4 strings · en\/zh/.test(copyText))
+  // The count is the fixture's own (see `fixtureCopy`): a 2-key fixture shows
+  // 4, a 3-key fixture shows 6, and this step follows either.
+  step('consent.copyCountExpected', { count: fixtureCopy.count, keys: fixtureCopy.keys }, true)
+  step('consent.copySentence', copyText, new RegExp(`${String(fixtureCopy.count)} 条 · en\\/zh|${String(fixtureCopy.count)} strings · en\\/zh`).test(copyText))
   await shot('02-consent-i18n.png')
 
   // ---- 3. confirm → row present, dev --------------------------------------
