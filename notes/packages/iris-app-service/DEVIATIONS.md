@@ -8942,7 +8942,7 @@ against `035094e`). §86 根治了 `chat-search` 与 `chat-integrity`；这是�
 ## 91. 卡脚本的 `console.*` 进诊断面（宿主半）：`script.report` 与 `card-console` 这个 kind
 
 Dated 2026-09-16 (owner task sheet W7, branch `dev/sandbox-console-capture`
-against `035094e`). The frame and shell halves are §105 on
+against `035094e`). The frame and shell halves are §107 on
 `notes/apps/iris-web`; this is the host's.
 
 ### 一个方法，一个新 kind
