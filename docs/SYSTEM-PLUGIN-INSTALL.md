@@ -420,6 +420,17 @@ closure at the boot revision」钉住（它的两条 `deepEqual` 一条有 `sour
 卸载时**整行移除**（不是 `installed: false`），因为树已经没了、id 也必须腾出来给重装；内置行与
 ST 接纳进来的行的卸载语义**一个字没改**（`SystemPluginRuntime` 里以 `removable` 区分）。
 
+**W5 补充（可选「连数据一起删」）**：卸载默认**保留** `<profile>/plugin-data/<id>/`（§12 裁决 1）。
+`plugin.uninstall` 新增可选 `removeData?: boolean`，默认 `false`，旧客户端发 `{ id }` 行为零变化；
+为 `true` 时宿主在卸载事务里删除该插件的私有数据目录，用的是与安装树同一套**改名让开再尽力删**
+（本机 Node 在仓库目录内递归删除会静默无效，见 `scripts/pack-contracts.mjs` 的 clear 段与 §5.4 的
+`superseded/`），删不掉时按名上报 `reportStoreProblem`，**行仍卸载成功**。内置插件**不做特例**——它们没
+有 `source` 记录，但同样声明全部权限、同样能拿到 `scope.storage`（`#permissionsOf` 对内置行返回
+`ALL_PLUGIN_PERMISSIONS`），所以 `removeData` 直接删 `plugin-data/<id>/`，不看 `record`。实测（2026-09-16）：
+两个内置插件今天都没有调用 `scope.storage`，所以 8787 上它们的 `plugin-data` 目录不存在，这句话目前
+是空操作；带 `removeData` 卸载一个从未写过数据的插件只是确认目录不存在。UI 侧的复选框数量来自行的
+可选字段 `dataFootprint?: { files, bytes }`（`plugin.list` 每次测量），无数据的行不显示复选框。
+
 ---
 
 ## 7. 加载与激活

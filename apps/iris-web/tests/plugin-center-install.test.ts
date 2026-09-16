@@ -310,6 +310,119 @@ test('the install form, the consent page and the tampered reinstall, driven by c
   assert.ok(page.find('[data-plugin-consent="git"]') !== null, 'the reinstall skipped the consent page')
 })
 
+test('W5: the uninstall data checkbox is per row, default-off, and only sends `removeData` when ticked', async t => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' })
+  const previous = {
+    fetch: globalThis.fetch,
+    navigator: (globalThis as Record<string, unknown>)['navigator'],
+  }
+  dom.window.localStorage.setItem('iris.language', 'en')
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    localStorage: dom.window.localStorage,
+    matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  })
+  Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true, writable: true })
+  globalThis.fetch = (() => new Promise(() => {})) as typeof fetch
+
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })
+  const client = createFakeClient({ chunkDelayMs: 0 })
+  const calls: RecordedCall[] = []
+  const recorder = {
+    call: async (method: string, params: unknown) => {
+      const entry: RecordedCall = { method, params }
+      calls.push(entry)
+      entry.result = await (client as unknown as { call: (m: string, p: unknown) => Promise<unknown> }).call(method, params)
+      return entry.result
+    },
+    subscribe: (listener: Parameters<IrisClient['subscribe']>[0]) => client.subscribe(listener),
+    get connected() { return client.connected },
+    onConnectionChange: (listener: Parameters<IrisClient['onConnectionChange']>[0]) => client.onConnectionChange(listener),
+  } as unknown as IrisClient
+  const wired = createIrisStore(recorder, { transport: 'fake', origin: 'plugin remove-data test' })
+  await wired.store.getState().boot()
+  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as {
+    mountPluginCenter: (store: typeof wired.store, container: Element) => Promise<{
+      html: () => string
+      find: (selector: string) => Element | null
+      click: (selector: string) => Promise<void>
+      settle: (work?: () => void) => Promise<void>
+      unmount: () => Promise<void>
+    }>
+  }
+  const page = await harness.mountPluginCenter(wired.store, dom.window.document.getElementById('root')!)
+  t.after(async () => {
+    await page.unmount()
+    wired.dispose()
+    client.dispose()
+    await server.close()
+    globalThis.fetch = previous.fetch
+    Object.defineProperty(globalThis, 'navigator', { value: previous.navigator, configurable: true, writable: true })
+    delete (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT
+    dom.window.close()
+  })
+
+  // Seat the footprint on one real bundled row, `mvu` — the one with no
+  // dependents, so its uninstall button is actually clickable. `tavern-helper`
+  // stays footprint-free, so the "only where there is something to delete"
+  // claim is asserted against two rows the page renders.
+  const current = wired.store.getState().systemPlugins
+  assert.ok(current !== undefined)
+  await page.settle(() => {
+    wired.store.setState({
+      systemPlugins: {
+        revision: current.revision + 1,
+        plugins: current.plugins.map(plugin => plugin.id === 'mvu'
+          ? { ...plugin, enabled: false, status: 'disabled' as const, dataFootprint: { files: 3, bytes: 2048 } }
+          : plugin),
+      },
+    })
+  })
+
+  const checkbox = page.find('[data-plugin-remove-data="mvu"] input[type="checkbox"]') as HTMLInputElement | null
+  assert.ok(checkbox !== null, 'a plugin with data has no "delete its data too" checkbox')
+  assert.equal(checkbox.checked, false, 'the checkbox is not default-off')
+  assert.match(page.html(), /Also delete the data it stored \(3 files, 2 kB\)/, 'the checkbox does not name the cost it would pay')
+  assert.equal(page.find('[data-plugin-remove-data="tavern-helper"]'), null, 'a plugin with no data grew a checkbox that would delete nothing')
+
+  // Untouched: the uninstall is the old spelling `{ id }` exactly.
+  const beforeDefault = calls.length
+  // Find and click the uninstall button on that row.
+  const row = page.find('[data-plugin-id="mvu"]')!
+  const uninstall = [...row.querySelectorAll('button')].find(button => /^Uninstall$/u.test((button.textContent ?? '').trim()))
+  assert.ok(uninstall !== undefined, 'the row has no uninstall button')
+  await page.settle(() => { (uninstall as HTMLButtonElement).click() })
+  const defaultCall = calls.slice(beforeDefault).find(row => row.method === 'plugin.uninstall')
+  assert.deepEqual(defaultCall?.params, { id: 'mvu' }, 'an unticked checkbox still sent `removeData`')
+
+  // Tick it on a fresh copy of the row and the flag is sent. The fake's
+  // uninstall left `mvu` uninstalled, so the row is reseated first.
+  const current2 = wired.store.getState().systemPlugins
+  assert.ok(current2 !== undefined)
+  await page.settle(() => {
+    wired.store.setState({
+      systemPlugins: {
+        revision: current2.revision + 1,
+        plugins: current2.plugins.map(plugin => plugin.id === 'mvu'
+          ? { ...plugin, installed: true, enabled: false, status: 'disabled' as const, dataFootprint: { files: 3, bytes: 2048 } }
+          : plugin),
+      },
+    })
+  })
+  const checkbox2 = page.find('[data-plugin-remove-data="mvu"] input[type="checkbox"]') as HTMLInputElement
+  await page.settle(() => { checkbox2.click() })
+  const beforeTicked = calls.length
+  const row2 = page.find('[data-plugin-id="mvu"]')!
+  const uninstall2 = [...row2.querySelectorAll('button')].find(button => /^Uninstall$/u.test((button.textContent ?? '').trim()))!
+  await page.settle(() => { (uninstall2 as HTMLButtonElement).click() })
+  const tickedCall = calls.slice(beforeTicked).find(row => row.method === 'plugin.uninstall')
+  assert.deepEqual(tickedCall?.params, { id: 'mvu', removeData: true }, 'a ticked checkbox did not send `removeData: true`')
+})
+
 test('the client-side shape check answers the four commit spellings the wire refuses', async t => {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })

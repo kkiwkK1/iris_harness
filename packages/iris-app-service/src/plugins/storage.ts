@@ -26,7 +26,8 @@
  * @module @iris/app-service/plugins/storage
  */
 
-import { mkdir, readdir, stat, unlink } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { dirname, join, resolve, sep } from 'node:path'
 
 import { isValidExtensionId } from '@iris/extension-installer'
@@ -182,6 +183,83 @@ export class PluginDataStore {
   }
 
   #closed = false
+
+  /**
+   * How much one plugin has stored: file count and total bytes of its key
+   * files.
+   *
+   * The same walk `#usageOf` does, but always read from disk rather than from
+   * the byte counter — a footprint is a *display* read, and a stale counter
+   * would let the uninstall checkbox promise a number the deletion then does
+   * not match. Counts only files whose stem is a legal key, the same filter
+   * `keys()` applies, so a quarantine file is not offered as data. Absent
+   * directory reads as the zero footprint **and** `files: 0`, which the caller
+   * uses to decide whether to show the checkbox at all.
+   * @param pluginId - the plugin's catalog id.
+   * @returns the file count and byte total.
+   */
+  async footprint(pluginId: string): Promise<{ files: number, bytes: number }> {
+    const dir = this.#dirFor(pluginId)
+    const entries = await readdir(dir).catch(() => [] as string[])
+    let files = 0
+    let bytes = 0
+    for (const entry of entries) {
+      if (!entry.endsWith('.json')) continue
+      const key = entry.slice(0, -'.json'.length)
+      if (!isValidExtensionId(key)) continue
+      const info = await stat(join(dir, entry)).catch(() => undefined)
+      if (info === undefined || !info.isFile()) continue
+      files += 1
+      bytes += info.size
+    }
+    return { files, bytes }
+  }
+
+  /**
+   * Delete one plugin's whole data directory, as the opt-in half of an
+   * uninstall (owner task W5).
+   *
+   * **Rename aside, then delete, and report by name if the delete did not
+   * take.** This is `scripts/pack-contracts.mjs`'s clear段 and the installer's
+   * own superseded-tree handling applied to data: on this repository's Windows
+   * a recursive delete inside the repo directory has been measured to fail
+   * *silently*, so the move is what makes the directory's disappearance true
+   * even when the bytes linger, and the post-condition check is what keeps a
+   * silent failure from reading as success. The caller decides what a failure
+   * means for the row; this method's answer says what actually happened rather
+   * than throwing, because the row's uninstall has already succeeded and must
+   * not be torn back down over user data.
+   *
+   * The byte counter for this plugin is dropped either way: its directory is
+   * gone from the plugin's point of view, and a fresh activation that re-creates
+   * it seeds from disk on first use (`#usageOf`).
+   * @param pluginId - the plugin's catalog id.
+   * @returns whether the directory is gone, and a sentence naming the leftover
+   *   when it is not.
+   */
+  async remove(pluginId: string): Promise<{ removed: true } | { removed: false, leftover: string, reason: string }> {
+    this.#usage.delete(pluginId)
+    const dir = this.#dirFor(pluginId)
+    const present = await stat(dir).catch(() => undefined)
+    if (present === undefined) return { removed: true }
+    const aside = `${dir}.removing-${createHash('sha256').update(`${pluginId}${String(this.#now().getTime())}`).digest('hex').slice(0, 8)}`
+    let reason = ''
+    try {
+      await rename(dir, aside)
+    } catch (error: unknown) {
+      reason = error instanceof Error ? error.message : String(error)
+      return { removed: false, leftover: dir, reason }
+    }
+    await rm(aside, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error: unknown) => {
+      reason = error instanceof Error ? error.message : String(error)
+    })
+    // The post-condition, not the call's return: the same lesson the pack
+    // script's clear step records. `rm` resolving is not the same as the
+    // directory being gone, and only one of the two is the user's question.
+    const leftover = await stat(aside).catch(() => undefined)
+    if (leftover !== undefined) return { removed: false, leftover: aside, reason: reason === '' ? 'the directory could not be deleted' : reason }
+    return { removed: true }
+  }
 
   #assertOpen(): void {
     if (this.#closed) {

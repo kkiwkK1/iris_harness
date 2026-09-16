@@ -481,3 +481,133 @@ test('T7: uninstall removes the plugin and not one byte of its data', async (t) 
   assert.deepEqual(after, before, 'uninstall did not touch one byte of the data directory')
   assert.equal(runtime.snapshot().plugins.some(plugin => plugin.id === 'demo-plugin'), false)
 })
+
+// ---------------------------------------------------------------------------
+// W5: uninstall with `removeData` — opt-in, rename-aside, best effort
+// ---------------------------------------------------------------------------
+
+/**
+ * The one fixture both W5 tests drive: a dev plugin that writes one key, and
+ * the runtime + installer around it.
+ *
+ * A function rather than a shared `before`, because the two tests want
+ * different seams on the runtime (`removeData` injected in W5b) while sharing
+ * everything else. Each call gets its own temporary profile, so the two never
+ * share a catalog or a data directory.
+ */
+async function demoPluginHarness(
+  t: TestContext,
+  options: { removeData?: (pluginId: string) => Promise<{ removed: true } | { removed: false, leftover: string, reason: string }> } = {},
+): Promise<{ runtime: SystemPluginRuntime, installer: SystemPluginInstallService, dataDir: string, pluginDir: string, errors: Error[] }> {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-storage-removedata-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const errors: Error[] = []
+  const runtime = new SystemPluginRuntime({
+    context: new Context(),
+    file: join(dir, 'system-plugins.json'),
+    definitions: [],
+    defaultEnabled: [],
+    pluginDataRoot: join(dir, 'plugin-data'),
+    onError: error => { errors.push(error) },
+    ...(options.removeData === undefined ? {} : { removeData: options.removeData }),
+  })
+  await runtime.initialize()
+  t.after(async () => { await runtime.dispose() })
+  const installer = new SystemPluginInstallService({
+    runtime,
+    installRoot: join(dir, 'system-plugins'),
+    clientAssetRoot: join(dir, 'assets', 'system-plugins'),
+  })
+  await installer.scanInstalled()
+
+  const pluginDir = join(dir, 'dev-tree')
+  await writeTree(pluginDir, new Map<string, string>([
+    ['package.json', `${JSON.stringify({
+      name: 'iris-plugin-demo', version: '1.0.0', type: 'module',
+      iris: {
+        plugin: {
+          id: 'demo-plugin', apiVersion: 1, host: 'host.js',
+          displayName: 'Demo Plugin', description: 'A storage fixture plugin.',
+          capabilities: ['demo.state'], permissions: ['plugin-storage'], dependencies: [],
+        },
+      },
+    }, null, 2)}\n`],
+    ['host.js', [
+      'export default {',
+      `  id: 'demo-plugin',`,
+      `  name: 'Demo Plugin',`,
+      `  description: 'A storage fixture plugin.',`,
+      `  version: '1.0.0',`,
+      `  apiVersion: 1,`,
+      `  dependencies: [],`,
+      `  async activate(scope) {`,
+      `    await scope.storage.set('counter', { n: 1 })`,
+      `    return () => {}`,
+      `  },`,
+      `}`,
+      '',
+    ].join('\n')],
+  ]))
+  const preview = await installer.preview({ kind: 'dev', path: pluginDir })
+  await installer.confirm({ previewToken: preview.previewToken, id: preview.id, commit: preview.commit ?? null, treeHash: preview.treeHash })
+  await runtime.enable('demo-plugin')
+  return { runtime, installer, dataDir: join(dir, 'plugin-data', 'demo-plugin'), pluginDir, errors }
+}
+
+test('W5a: `removeData: true` deletes the data and the row; the default keeps both', async (t) => {
+  const { runtime, installer, dataDir, pluginDir } = await demoPluginHarness(t)
+  assert.ok((await stat(dataDir)).isDirectory(), 'the fixture plugin did not write its data')
+
+  // The footprint the page reads is measured by the `plugin.list` handler's
+  // own `refreshFootprints`. Until that runs, `snapshot()` carries none.
+  assert.equal(runtime.snapshot().plugins.find(plugin => plugin.id === 'demo-plugin')?.dataFootprint, undefined,
+    'a footprint appeared without a measurement')
+  await runtime.refreshFootprints()
+  const counterBytes = (await stat(join(dataDir, 'counter.json'))).size
+  assert.deepEqual(runtime.snapshot().plugins.find(plugin => plugin.id === 'demo-plugin')?.dataFootprint,
+    { files: 1, bytes: counterBytes },
+    'a plugin with data has no dataFootprint to offer the checkbox')
+
+  // Default: the data stays. T7 already holds this; this asserts the same fact
+  // through the *new* parameter's absence — the old spelling must be untouched.
+  await installer.uninstall('demo-plugin')
+  assert.ok((await stat(dataDir)).isDirectory(), 'uninstall without `removeData` deleted the data')
+
+  // Reinstall, then remove the data on the way out. The dev tree is still on
+  // disk (uninstall never touches a dev directory), so the same preview road
+  // stages it again.
+  const preview = await installer.preview({ kind: 'dev', path: pluginDir })
+  await installer.confirm({ previewToken: preview.previewToken, id: preview.id, commit: preview.commit ?? null, treeHash: preview.treeHash })
+  await runtime.enable('demo-plugin')
+  assert.ok((await stat(dataDir)).isDirectory(), 'the reinstall did not re-create the data')
+
+  await runtime.refreshFootprints()
+  assert.ok(runtime.snapshot().plugins.find(plugin => plugin.id === 'demo-plugin')?.dataFootprint !== undefined,
+    'the re-created data did not appear in the footprint')
+  await installer.uninstall('demo-plugin', { removeData: true })
+  await assert.rejects(stat(dataDir), { code: 'ENOENT' }, '`removeData: true` left the data directory behind')
+  assert.equal(runtime.snapshot().plugins.some(plugin => plugin.id === 'demo-plugin'), false,
+    'the row survived its own uninstall')
+})
+
+test('W5b: a removal that fails is named through the diagnostics channel, and the uninstall still succeeds', async (t) => {
+  // The failure is injected at the runtime's own seam rather than simulated by
+  // a read-only bit: on Windows a read-only directory is still deletable, and
+  // on POSIX it is the *parent* that must refuse, so no portable fixture
+  // produces this. What is asserted is the *contract* — the row leaves, the
+  // outcome is a discriminated union with `removed: false`, and the leftover
+  // reaches `onError` (production: `reportStoreProblem`).
+  const leftover = join(tmpdir(), 'iris-plugin-data-leftover')
+  const { runtime, installer, errors } = await demoPluginHarness(t, {
+    removeData: async () => ({ removed: false, leftover, reason: 'injected: the directory could not be deleted' }),
+  })
+
+  await installer.uninstall('demo-plugin', { removeData: true })
+  assert.equal(runtime.snapshot().plugins.some(plugin => plugin.id === 'demo-plugin'), false,
+    'a data-removal failure tore down the uninstall itself')
+  assert.equal(errors.length, 1, 'the leftover was not reported on the diagnostics channel')
+  assert.match(errors[0]!.message, /could not be deleted/u, 'the report does not say what failed')
+  assert.ok(errors[0]!.message.includes(leftover), 'the report does not name the leftover path')
+  assert.match(errors[0]!.message, /the uninstall succeeded/u, 'the report does not say the row still left')
+})
+

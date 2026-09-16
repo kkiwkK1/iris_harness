@@ -1762,6 +1762,12 @@ export const en = {
   pluginCenterProvenanceInstalledAt: 'Installed',
   pluginCenterUninstallGit: 'Uninstalling deletes the installed tree from this profile. The same bytes can be fetched again from the remote and commit above.',
   pluginCenterUninstallDev: 'Uninstalling removes the catalog row only. Your development directory is never touched.',
+  /**
+   * W5: the opt-in "delete its data too" checkbox. `{files}` and `{size}` come
+   * from the host's own measurement (`dataFootprint`), so the sentence names a
+   * count the user can hold the host to. Both languages keep the two slots.
+   */
+  pluginCenterRemoveData: 'Also delete the data it stored ({files} files, {size})',
 
   pluginCenterFailureTitle: 'Cannot run:',
   pluginCenterFailureField: 'Field: {field}',
@@ -3178,6 +3184,8 @@ export const zh: Record<StringKey, string> = {
   pluginCenterProvenanceInstalledAt: '安装于',
   pluginCenterUninstallGit: '卸载会从这个 profile 里删掉安装树。同样的字节可以按上面的远端与 commit 再拉一次。',
   pluginCenterUninstallDev: '卸载只移除目录里的这一行，你的开发目录绝不会被碰。',
+  /** W5：可选的「连数据一起删」复选框，数字来自宿主自己的 `dataFootprint`。 */
+  pluginCenterRemoveData: '同时删除它存的数据（{files} 个文件，{size}）',
 
   pluginCenterFailureTitle: '无法运行：',
   pluginCenterFailureField: '字段：{field}',

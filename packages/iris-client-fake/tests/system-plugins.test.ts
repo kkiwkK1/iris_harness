@@ -140,3 +140,34 @@ test('a non-builtin id seats a catalog row, types and runs without a cast', () =
     (error: unknown) => (error as { code?: string }).code === 'not-found',
   )
 })
+
+test('W5: the fake uninstall drops a row\'s dataFootprint only when `removeData` is set', async () => {
+  const client = testClient()
+  // A bundled row, reseated with a footprint the page would have shown. The
+  // fake derives the footprint from nothing (it has no disk), so the row is
+  // what carries it — exactly as the wire row does.
+  const withData: SystemPluginView = {
+    id: 'demo-data',
+    name: 'Demo Data',
+    description: 'Seated with a private-store footprint.',
+    version: '0.1.0',
+    apiVersion: 1,
+    dependencies: [],
+    installed: true,
+    enabled: false,
+    status: 'disabled',
+    dataFootprint: { files: 3, bytes: 2048 },
+  }
+  const fake = new FakeSystemPlugins(
+    (_snapshot: SystemPluginSnapshot) => {},
+    code => { throw new FakeRpcError(code, 'refused') },
+    [withData],
+  )
+  assert.deepEqual(fake.snapshot().plugins[0]?.dataFootprint, { files: 3, bytes: 2048 })
+  assert.deepEqual(fake.uninstall('demo-data').plugins[0]?.dataFootprint, { files: 3, bytes: 2048 },
+    'a plain uninstall changed the footprint the row reports')
+  fake.install('demo-data')
+  assert.deepEqual(fake.uninstall('demo-data', { removeData: true }).plugins[0]?.dataFootprint, undefined,
+    '`removeData: true` left the footprint on the row')
+  client.dispose()
+})

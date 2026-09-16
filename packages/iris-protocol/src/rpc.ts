@@ -266,7 +266,18 @@ const PLUGIN_TREE_HASH = z.string().regex(/^[0-9a-f]{64}$/u)
 export const requestSchemas = {
   'plugin.list': z.object({}),
   'plugin.install': z.object({ id: z.string().min(1).max(200) }),
-  'plugin.uninstall': z.object({ id: z.string().min(1).max(200) }),
+  'plugin.uninstall': z.object({
+    id: z.string().min(1).max(200),
+    /**
+     * Delete the plugin's private data directory as part of the uninstall
+     * (owner task W5). Absent or `false` keeps today's behaviour exactly —
+     * §12 ruling 1's "uninstall keeps `plugin-data`" — so an older client,
+     * which sends only `{ id }`, is unaffected. The host deletes
+     * `<profile>/plugin-data/<id>/` rename-aside, best effort; a deletion it
+     * could not finish is reported by name and does **not** fail the row.
+     */
+    removeData: z.boolean().optional(),
+  }),
   'plugin.enable': z.object({ id: z.string().min(1).max(200) }),
   'plugin.disable': z.object({ id: z.string().min(1).max(200) }),
   'plugin.reload': z.object({ id: z.string().min(1).max(200) }),

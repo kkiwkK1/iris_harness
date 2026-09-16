@@ -8787,3 +8787,78 @@ merged. (b) Per-floor tokens: the conversation is one aggregate row by contract,
 so a floor's cost in the message view is its message's, not its own — splitting
 it is the same "UI hypothetical into the assembler" the aggregate row exists to
 refuse.
+
+---
+
+---
+
+## 87. 卸载插件时可选「连数据一起删」：`plugin.uninstall` 的 `removeData`、`dataFootprint` 读数、以及内置插件不是特例
+
+Dated 2026-09-16 (owner task sheet W5, branch
+`dev/plugin-uninstall-remove-data` against `035094e`). Two ledgers: this one
+for the app-service half, §104 on `notes/apps/iris-web` for the shell half.
+
+### 协议与默认
+
+`plugin.uninstall` 的请求形状从 `{ id }` 长出可选 `removeData?: boolean`，
+默认 `false`。旧客户端发 `{ id }`，解析结果与昨天逐字节相同——这是「默认
+false」的全部意义。快照行长出可选 `dataFootprint?: { files, bytes }`，与
+PR-2 的三个可选字段同一条规则：旧的浏览器忽略它，旧的宿主快照在它缺席时
+照常解析。两条都是**追加式**，`method-names.test.ts` 只钉方法名的形状，
+加字段不动它（137 个静态键一个没变）。
+
+### `removeData` 删什么，以及为什么内置不是特例
+
+为真时删除 `<profile>/plugin-data/<id>/`，**在目录行移除之前**。判断不看
+`record`：内置插件没有 `record`（它们不是被安装进来的包），但 `#permissionsOf`
+对内置行返回 `ALL_PLUGIN_PERMISSIONS`，所以它们同样拿得到 `scope.storage`，
+同样可能有 `plugin-data/<id>/`。实测（2026-09-16）：两个内置插件今天都**没有**
+调用 `scope.storage`，所以 8787 上它们的 `plugin-data` 目录不存在，带
+`removeData` 卸载它们只是确认「目录不存在」；但把删除挂在 `record` 上会在
+第一个用起存储的内置插件上静默失效，所以这里按 id 删，不按来源。
+
+删除用**改名让开再尽力删**（`PluginDataStore.remove`）：本机 Node 在仓库目录
+内递归删除会**静默无效**（`scripts/pack-contracts.mjs` 的 clear 段与
+`docs/PLUGIN-CONTRACT-PACKAGING.md` §9 记录过），所以先 `rename` 到
+`<dir>.removing-<8hex>`，再 `rm`，最后**读一次目录是否还在**——`rm` 解决不等于
+目录消失，只有后者是用户的问题。删不掉时 `remove` **返回**一个
+`{ removed: false, leftover, reason }` 而不抛，运行时的 `removeDataFor` 把它
+经 `#report`（生产：`reportStoreProblem`）报一条**具名**诊断，**行仍卸载成功**。
+
+### 测试接缝
+
+`SystemPluginRuntimeOptions.removeData` 是一个新接缝，形状照抄
+`writePreferences`：真实的删除失败是环境事实（Windows 留着句柄、POSIX 要
+父目录不可写），没有可移植的夹具能稳定造出它，所以注入结果。生产不带这个
+参数，永远走真 store。没有这个接缝，W5b 那条「删不掉也要成功、且具名上报」
+的断言只能靠运气红。
+
+### 数据读数
+
+`plugin.list` 处理器在答之前调 `runtime.refreshFootprints()`：对每个目录行
+`stat` 一遍键文件，把结果放进 `#footprints` 缓存，`snapshot()` 只读缓存
+（它必须在每次转换和每次广播里同步跑）。所以一次 `set` 与下一次 `plugin.list`
+之间的写入**不**反映在读数里，直到下一次列表——这是诚实的上限：这个数字只
+用来让复选框说出它要删多少，用户看的正是他刚打开或刷新的那一页。`plugin.list`
+之外的转换从缓存答，不多花一次 walk。文件计数只算 stem 合法的 `.json`（与
+`keys()` 同一过滤器），隔离文件与临时文件不算数据。
+
+### 牙齿
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| W5a：`uninstall(id, { removeData: true })` 后 `plugin-data/<id>` `ENOENT`、行也消失 | 把安装服务里的 `if (options.removeData === true) await this.#runtime.removeDataFor(id)` 改成 `if (false) …` | 红（W5a「`removeData: true` left the data directory behind」+ W5b「leftover was not reported」）→ 复原绿 |
+| W5a：默认卸载后数据目录**仍在** | 把默认从 false 改成 true | 红 → 绿 |
+| W5a：未测量时行上无 `dataFootprint`，`refreshFootprints()` 后才有，且等于 `counter.json` 的实际字节 | 在 `snapshot()` 里给缺席的 footprint 填 `{ files: 0, bytes: 0 }` | 红（「a footprint appeared without a measurement」）→ 绿 |
+| W5b：注入 `{ removed: false, leftover, reason }` 后行仍卸载成功、`onError` 恰好一条、正文含 leftover 与「the uninstall succeeded」 | 删掉 `removeDataFor` 里 `if (!outcome.removed) { … #report … }` 分支 | 红（「the leftover was not reported on the diagnostics channel」）→ 绿 |
+| fake：`uninstall(id)` 保留 `dataFootprint`，`uninstall(id, { removeData: true })` 去掉它 | fake 的 `if (options.removeData === true)` 分支删掉 | 红 → 绿 |
+| T7（未改）：默认卸载不碰数据一个字节 | ——（W5 的默认正是它） | 常绿 |
+
+### What would reopen this
+
+(a) 一个真的想「删安装树以外的东西」的第二个数据根——那时 `removeData` 是一个
+布尔，装不下第二个目标，需要一个显式的列表而不是加第二个布尔。(b) 内置插件
+开始用 `scope.storage`——删除路径已经按 id 走，不需要改，但 `dataFootprint`
+会第一次在两个内置行上出现，值得在实机上确认一次。(c) 一个「删不掉」的目录
+需要一个比诊断面更强的处置（重试、开机清理）——今天它只是被具名报告，用户
+自己删；`superseded/` 的安装树也是同一个立场。

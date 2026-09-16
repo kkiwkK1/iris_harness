@@ -435,8 +435,10 @@ class InMemoryClient implements FakeClient {
       case 'plugin.install':
         return this.#systemPlugins.install((params as RpcRequest<'plugin.install'>).id)
 
-      case 'plugin.uninstall':
-        return this.#systemPlugins.uninstall((params as RpcRequest<'plugin.uninstall'>).id)
+      case 'plugin.uninstall': {
+        const uninstall = params as RpcRequest<'plugin.uninstall'>
+        return this.#systemPlugins.uninstall(uninstall.id, uninstall.removeData === true ? { removeData: true } : {})
+      }
 
       case 'plugin.enable':
         return this.#systemPlugins.enable((params as RpcRequest<'plugin.enable'>).id)

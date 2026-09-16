@@ -809,7 +809,7 @@ export interface IrisActions {
   /** Replace the plugin projection from an explicit host read. */
   refreshSystemPlugins(): Promise<SystemPluginOperationResult>
   installSystemPlugin(id: string): Promise<SystemPluginOperationResult>
-  uninstallSystemPlugin(id: string): Promise<SystemPluginOperationResult>
+  uninstallSystemPlugin(id: string, removeData?: boolean): Promise<SystemPluginOperationResult>
   enableSystemPlugin(id: string): Promise<SystemPluginOperationResult>
   /** The ST-compat plane's arm/detach/submit/settings face (pilot). */
   stCompatAttach(extensionId: string, pluginRevision: number, chatId?: string): Promise<void>
@@ -1789,8 +1789,16 @@ export function createIrisStore(
         return requestSystemPluginSnapshot(async () => client.call('plugin.install', { id }))
       },
 
-      async uninstallSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
-        return requestSystemPluginSnapshot(async () => client.call('plugin.uninstall', { id }))
+      async uninstallSystemPlugin(id: string, removeData?: boolean): Promise<SystemPluginOperationResult> {
+        // `removeData` is omitted rather than sent as `false` when the user did
+        // not ask: the wire distinguishes absent from `false` today only by
+        // bytes, but a round trip that always sends the false spelling would
+        // make "this client knows about the option" indistinguishable from
+        // "this user asked for the default". The older spelling `{ id }` is
+        // exactly what a client that predates W5 sends, so it costs nothing to
+        // keep sending it.
+        return requestSystemPluginSnapshot(async () => client.call('plugin.uninstall',
+          removeData === true ? { id, removeData: true } : { id }))
       },
 
       async enableSystemPlugin(id: string): Promise<SystemPluginOperationResult> {
