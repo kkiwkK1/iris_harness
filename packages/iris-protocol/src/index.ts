@@ -122,6 +122,7 @@ export type {
   PromptItemSource,
   PromptItemZeroReason,
   PromptMessageSlot,
+  PromptOverflow,
   ReasoningEffort,
   RegexScriptView,
   ScopedRegexView,

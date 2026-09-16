@@ -414,6 +414,29 @@ export interface Overflow {
   /** History entries dropped from the oldest end. */
   droppedHistory: number
   /**
+   * Tokens those dropped entries held, counted once where they were dropped.
+   *
+   * **Taken from the trim itself, not counted again by the caller.** The trim
+   * already walks every entry to decide what fits, so it is the one place that
+   * knows both which entries went and what they cost; a caller re-summing them
+   * would be a second derivation of a figure this pass already had, and the two
+   * could disagree the moment a `count` implementation was not a pure function
+   * of its text. Zero when nothing was dropped, which is the honest reading of
+   * a request that fit.
+   */
+  droppedTokens: number
+  /**
+   * The ids of the dropped entries, oldest first — a floor's `history.N`, when
+   * the caller gave its entries ids at all.
+   *
+   * The ids rather than only a count, because "which floors went" is what a
+   * reader needs to line the report up against the conversation they can see.
+   * A `HistoryEntry` without an id contributes no entry here rather than a
+   * fabricated one, so a caller that minted no ids gets a shorter list — the
+   * count beside it stays truthful either way.
+   */
+  droppedIds: string[]
+  /**
    * True when the non-negotiable part — system sections, depth injections and
    * pinned history — already exceeds the budget. The request is still returned
    * so the caller can decide; refusing to build it would just move the failure.

@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
 import type { PromptItemEntry, PromptItemization, PromptItemMember } from '@iris/protocol'
-import { macroNote, messageRows, regexNote, sourceNoteKey, zeroReasonKey } from '../src/app/itemization.ts'
+import { macroNote, messageRows, overflowNote, regexNote, sourceNoteKey, zeroReasonKey } from '../src/app/itemization.ts'
 import { DICTIONARIES, en, type StringKey } from '../src/app/i18n/strings.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -231,6 +231,57 @@ test('the macro and regex copy exists in both dictionaries with matching slots',
   assert.ok(en.promptRegex.includes('{rules}'), 'promptRegex lost {rules}')
   // `promptRegexNone` is a fixed phrase — no slots to fill.
   assert.equal(en.promptRegexNone.includes('{'), false)
+})
+
+test('the overflow line prefers the reported weight and falls back to the count', () => {
+  // A host that reported the richer object: the line carries both numbers.
+  assert.deepEqual(
+    overflowNote({ ...itemization(), droppedHistory: 3, overflow: { droppedFloors: 3, droppedTokens: 1_842 } }),
+    { floors: 3, tokens: 1_842 },
+  )
+  // An older host that reported only the count.
+  assert.deepEqual(overflowNote({ ...itemization(), droppedHistory: 2 }), { floors: 2 })
+  // The richer object's count is the same number, so either source agrees.
+  assert.deepEqual(
+    overflowNote({ ...itemization(), droppedHistory: 3, overflow: { droppedFloors: 3, droppedTokens: 10 } })?.floors,
+    3,
+  )
+
+  // Nothing dropped shows nothing, so the ordinary state gets no line.
+  assert.equal(overflowNote({ ...itemization(), droppedHistory: 0 }), null)
+  assert.equal(
+    overflowNote({ ...itemization(), droppedHistory: 0, overflow: { droppedFloors: 0, droppedTokens: 0 } }),
+    null,
+  )
+})
+
+test('the overflow copy exists in both dictionaries with matching slots', () => {
+  for (const key of ['promptOverflow', 'droppedToFit'] as StringKey[]) {
+    const english = (en as Record<string, string>)[key]
+    assert.ok(english !== undefined && english !== '', `${key} is missing from en`)
+    for (const [language, dictionary] of Object.entries(DICTIONARIES)) {
+      const value = (dictionary as Record<string, string>)[key]
+      assert.ok(value !== undefined && value !== '', `${key} is missing from ${language}`)
+    }
+  }
+  for (const token of ['{floors}', '{tokens}']) {
+    assert.ok(en.promptOverflow.includes(token), `promptOverflow lost ${token}`)
+  }
+  assert.ok(en.droppedToFit.includes('{n}'), 'droppedToFit lost its {n} slot')
+})
+
+test('the message view carries the same divergence marks the row view does', () => {
+  const panel = readFileSync(join(HERE, '..', 'src', 'app', 'PromptPanel.tsx'), 'utf8')
+
+  // One comparison, two listings of the request: the message view resolves each
+  // part by the same id the row view does, so a part the comparison names is
+  // marked in both. A message view without the marks would silently disagree
+  // with the table beside it about which part changed.
+  assert.ok(panel.includes('compared={compared}'), 'the message view is not handed the comparison')
+  // `MessageView` renders an `ItemMark` for a part the comparison names.
+  const messageView = panel.slice(panel.indexOf('function MessageView'), panel.indexOf('function Explanation'))
+  assert.ok(messageView.includes('ItemMark'), 'the message view never renders a divergence mark')
+  assert.ok(messageView.includes('compared.get(part.id)'), 'the mark is not looked up by part id')
 })
 
 /**

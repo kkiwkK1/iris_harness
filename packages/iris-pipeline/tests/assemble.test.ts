@@ -297,3 +297,40 @@ test('the message list marks parts stable up to the first volatile one', () => {
   })
   assert.equal(clean.messageSlots.every(slot => slot.stable), true)
 })
+
+/**
+ * The overflow figures come off the trim, not off a second sum.
+ *
+ * `droppedHistory` says how many floors went; `droppedTokens` and `droppedIds`
+ * say what they weighed and which they were. All three describe **the same
+ * cut** — a request that fit reports zero of each, and a trimmed one reports a
+ * count, a weight and a list that agree with the entries the trim actually
+ * took.
+ */
+test('a trim reports the floors it dropped, their ids and their weight', () => {
+  const history: HistoryEntry[] = Array.from({ length: 8 }, (_unused, index) => ({
+    role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+    text: `m${String(index)}`,
+    id: `history.${String(index)}`,
+  }))
+  // Room for three one-token floors and nothing else.
+  const tight = { context: 3, reserve: 0, count: countWords, trimBlockFloors: 0 }
+  const trimmed = assemble({ contributions: [], history, budget: tight })
+
+  assert.equal(trimmed.overflow.droppedHistory, 5)
+  assert.equal(trimmed.overflow.droppedTokens, 5, 'one token per floor')
+  assert.deepEqual(trimmed.overflow.droppedIds, ['history.0', 'history.1', 'history.2', 'history.3', 'history.4'])
+  // The ids name exactly what the kept conversation lost: the floors still in
+  // the request are the other three, ending at the newest one.
+  assert.deepEqual(
+    trimmed.messages.filter(message => message.id?.startsWith('history.')).map(message => message.id),
+    ['history.5', 'history.6', 'history.7'],
+  )
+
+  // A request that fits reports nothing dropped — zero, not absent — so a
+  // surface can tell "nothing was cut" from "the host did not report".
+  const roomyResult = assemble({ contributions: [], history, budget: roomy })
+  assert.equal(roomyResult.overflow.droppedHistory, 0)
+  assert.equal(roomyResult.overflow.droppedTokens, 0)
+  assert.deepEqual(roomyResult.overflow.droppedIds, [])
+})

@@ -9070,3 +9070,68 @@ names: the aggregate row cannot say which floor a rule hit, and giving it one ro
 per floor is the split `AssembleResult.items` refuses. (c) `{{pick}}` /
 `{{random}}` reporting: a head is counted, not its *value*, so a reader cannot
 see which branch was taken — deliberately, since the value is content.
+
+## 93. The itemization reports what the budget cut, and the trim is where those numbers come from
+
+**What changed.** M1 step 4 of `notes/tasks/M1-PROMPT-BUILD-REPORT.md`. The
+report already said what each part was and where it went; this adds the one
+number a trimmed request is opened to find — **what the budget gave up**.
+`PromptItemization.overflow?: PromptOverflow` carries `droppedFloors`,
+`droppedTokens` and (when the host minted ids) `droppedIds`, the last being the
+`history.N` names a surface can line up against the conversation it is looking
+at.
+
+**The numbers come off the trim, not off a second sum.** The manual's own
+instruction, and it is the difference between one answer and two: `trimHistory`
+already walks every entry to decide what fits, so it is the one place that knows
+which entries went, what they were called and what they weighed. It now returns
+all three — `{ kept, dropped, droppedTokens, droppedEntries }` — and `assemble`
+carries them into `Overflow` unchanged. A caller re-summing the dropped span
+would be computing a figure this pass already had, and the two would disagree the
+moment a `count` implementation was not a pure function of its text.
+
+**Both branches of the trim report.** `selectHistory` (upstream's exact cut) and
+`dropOldest` (the quantised block cut) each build the dropped list in the same
+walk that decided the survivors, so the count, the identities and the weight
+cannot disagree. A pinned floor is excluded from all three exactly as it is
+excluded from the drop — it was never one of `droppedHistory`'s, so it is not one
+of `droppedTokens`' or `droppedIds`' either.
+
+**An entry with no id contributes no id, but still its weight.** The id list is
+`flatMap` over the dropped entries' `id`, so a caller that minted none gets a
+shorter list rather than a fabricated name, and the count beside it stays
+truthful. That is the shape `historyFromSession` never hits — it always mints
+`history.N` — but a preview built from a hand-made history can.
+
+**The protocol keeps the old count and adds the new object.** `droppedHistory`
+predates this and is what `{{firstIncludedMessageId}}` and the panel already
+read; `overflow.droppedFloors` is the same number from the same trim call, so a
+surface reading either agrees with one reading the other. The object is optional
+because a host that predates step 4 sends only the count — read as "not
+reported", where `droppedHistory: 0` is the field that says "nothing was cut".
+
+**Verified on real data.** The preview path was run against a real install's
+`爱衣.png` and a real preset with the window narrowed until the trimmer engaged:
+**3 floors dropped, 8 tokens, ids `['history.1', 'history.2', 'history.3']`** —
+the count, the weight and the identities all describing the same cut. The probe
+was a temporary file, run and deleted; nothing of it is committed.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| a trim reports the dropped floors, their ids and their weight (`assemble.test.ts`) | zero `droppedTokens` in `trimHistory`'s return | red → revert → green |
+| the same test's id list | empty `assembled.overflow.droppedIds` | red → revert → green |
+| the trim reports which floors and what they cost (`trim-block.test.ts`) | drop the `droppedTokens +=` accumulation in `dropOldest` | red → revert → green |
+| an entry with no id contributes no identity (`trim-block.test.ts`) | fabricate an id for an entry that has none | red → revert → green |
+| a trimmed assembly reports the dropped floors on the wire (`itemize.test.ts`) | drop the `overflow` object from `#itemizationOf` | red → revert → green |
+| the overflow line prefers the reported weight (`prompt-explanation.test.ts`, web) | read only `droppedHistory` and never the object | red → revert → green |
+
+### What would reopen this
+
+(a) A caller that wants the dropped floors' **text** — the report carries ids and
+weights, never prose, and the ids address floors in the conversation the surface
+already has. (b) Compaction: a compacted conversation's dropped floors are inside
+a summary, not the trim, so this figure deliberately excludes them — the summary
+is pinned, and `#firstIncludedMessageId` documents the offset. A future "what did
+compaction cost" belongs beside this and not inside it.
