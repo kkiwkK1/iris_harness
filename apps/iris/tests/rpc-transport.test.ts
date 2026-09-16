@@ -326,6 +326,13 @@ const PROBES: Record<string, unknown> = {
   'prompt.divergence': { chatId: 'no-such-chat' },
   'script.slash': { chatId: 'no-such-chat', command: '/send hi|/trigger' },
   'script.runEnded': { chatId: 'no-such-chat', runId: 'probe-run' },
+  // W7's card-console forward. The probe host keeps a diagnostics buffer, so
+  // this one reaches a **success** path — but only after the chat check, which
+  // a missing chat fails. That proves the registration and cannot echo probe
+  // text into any real profile's buffer.
+  'script.report': {
+    chatId: 'no-such-chat', at: 0, level: 'log', message: 'probe — reachability only',
+  },
   'script.getVariables': { chatId: 'no-such-chat', scope: 'chat' },
   'script.setVariables': { chatId: 'no-such-chat', scope: 'chat', op: 'replace', variables: {} },
   'script.swipeTo': { chatId: 'no-such-chat', messageId: 0, swipeIndex: 0 },

@@ -8843,6 +8843,37 @@ PR-2 的三个可选字段同一条规则：旧的浏览器忽略它，旧的宿
 之外的转换从缓存答，不多花一次 walk。文件计数只算 stem 合法的 `.json`（与
 `keys()` 同一过滤器），隔离文件与临时文件不算数据。
 
+---
+
+---
+
+## 88. 卡脚本的 `console.*` 进诊断面（宿主半）：`script.report` 与 `card-console` 这个 kind
+
+Dated 2026-09-16 (owner task sheet W7, branch `dev/sandbox-console-capture`
+against `035094e`). The frame and shell halves are §105 on
+`notes/apps/iris-web`; this is the host's.
+
+### 一个方法，一个新 kind
+
+线协议新增 `script.report`（静态表 137 → 138）：`chatId` / `at` / `level` /
+`message` / `scriptId?` / `characterId?`。`ReportKind` 新增 `card-console`，
+`KIND_WIRED` 里为 `true`——kind 在 union 里而不在这张表里，在页面上读作「没人
+在看」，正是这张表存在的理由。
+
+**grade 不在请求里。** 一条 console 调用永远不是 fault——`console.error` 是卡
+自己选的字，不是宿主拒了一次调用——所以宿主一律记 `note`，调用方无法说成别的。
+`level` 在请求上（给读线上报文的人），但宿主不据此改判，也不把它当第二份级别
+去和正文里的 `warn:` 前缀较劲：正文是帧序列化时就已经成形的，宿主只存。
+
+**`at` 走 `ReportContext` 新增的可选字段。** 只有这一个站点传它，理由写在
+`ReportContext.at` 的 docblock：消息跨了一层帧边界和一次往返，`Date.now()` 记
+的是到达而不是打印，一批一起到的行会读成同时。
+
+**这个 arm 直接调 `diagnostics.record`，不调 `#report`。** `#report` 会顺带推
+`irreversible` 广播并发一条 `onError` 日志——一条 `console.log` 两样都不是；走
+`#report` 会让卡自己的打印进宿主 stderr。`chatId` 必须能 `chats.open`：一条归不
+到任何会话的 console 行没人能处理，这是这个 arm 唯一的拒绝。
+
 ### 牙齿
 
 | 断言 | 让它变红的改动 | 结果 |
@@ -8943,3 +8974,18 @@ against `035094e`). §86 根治了 `chat-search` 与 `chat-integrity`；这是�
 「广播这一下同步、且早于释放租约」。(c) 结算真改成并行 writer（今天是串行，见
 §82 的裁决）——那时 `inPropose` 会大于 1，`=== 1` 要改成 `>= 1` 并说明为什么并行
 是被裁决允许的。
+
+---
+
+| `script.report` 的回答 `kind === 'card-console'`、`grade === 'note'`、`at === 帧钟`，且 `debug.reports` 里同一条 | 把 `grade` 改成 `'fault'` | 红（「a console call was filed as a fault」）→ 复原绿 |
+| 缺 chat 的 `script.report` 以 `not-found` 拒 | 去掉 `chats.open(chatId)` | 红 → 绿 |
+| `page.kinds` 含 `card-console` | 把 `KIND_WIRED['card-console']` 改成 `false` | 红（diagnostics.test「every kind … declares」+「card-console is collected but not declared」）→ 绿 |
+| `rpc-transport` 的 `script.report` 探针（reachability） | 从 `index.ts` 删掉那行 register | 红（transport 报 no handler）→ 绿 |
+
+### What would reopen this
+
+(a) 一个卡想给 console 行分级别的通道（`console.table`、`console.group`）——今天
+是四个平铺的 level，加结构需要一个能带嵌套的正文形状，而不是再加一个 level。
+(b) 一个「把某张卡的 console 静音」的用户开关——那是设置面，不是报告面。
+(c) 把 console 行写进日志文件——今天刻意不写（缓冲不落盘），要写就得先回答
+「卡打印的敏感内容进谁的盘」。

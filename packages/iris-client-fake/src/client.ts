@@ -20,6 +20,7 @@ import {
   type ChatSearchHit,
   type ChatSearchMatch,
   type ChatSummary,
+  type DebugReport,
   type GenerationSettings,
   type IrisClient,
   type IrisEvent,
@@ -250,6 +251,19 @@ class InMemoryClient implements FakeClient {
     ),
   }
   #globalSettings: GenerationSettings
+  /**
+   * The diagnostic buffer this fake fills only from what it was **told**.
+   *
+   * `debug.reports`'s docblock below explains why the fake seeds no invented
+   * failures: a report says the host went wrong, and the fake has no host. W7's
+   * `script.report` is the one arm that is not that — the caller tells the host
+   * what a card printed, so retaining it is not the fake inventing a failure but
+   * the fake remembering what its own caller said. `debug.reports` then reads it
+   * back, which is the loop the shell's console capture is written against and
+   * the loop a fixture must be able to exercise end to end.
+   */
+  readonly #diagnosticReports: DebugReport[] = []
+  #nextReportSeq = 1
   #listeners = new Set<(event: IrisEvent) => void>()
   #connectionListeners = new Set<(connected: boolean) => void>()
   #streams = new Map<string, Streaming>()
@@ -1737,7 +1751,12 @@ class InMemoryClient implements FakeClient {
          * stay distinguishable.
          */
         void params
-        return { reports: [], dropped: 0, oldest: 0, kinds: [] }
+        return {
+          reports: this.#diagnosticReports.map(report => ({ ...report })),
+          dropped: 0,
+          oldest: this.#diagnosticReports[0]?.seq ?? 0,
+          kinds: [...new Set(this.#diagnosticReports.map(report => report.kind))],
+        }
       }
 
       /*
@@ -1780,6 +1799,31 @@ class InMemoryClient implements FakeClient {
       // preset per file); a fake has no filesystem to keep them in, so a seeded
       // page refuses rather than answering from an imaginary library — the same
       // honesty `storage.*` is refused with.
+      /**
+       * One card-console line, recorded so `debug.reports` reads it back.
+       *
+       * The fake files it exactly as the host does: kind `card-console`, grade
+       * `note`, the frame's own `at`. Nothing about it is invented, and nothing
+       * is refused — the shape is the whole contract here, and a fake that
+       * dropped it would let a page ship with the forward wired to nothing.
+       */
+      case 'script.report': {
+        const report = params as RpcRequest<'script.report'>
+        const record: DebugReport = {
+          seq: this.#nextReportSeq,
+          at: report.at,
+          kind: 'card-console',
+          grade: 'note',
+          chatId: report.chatId,
+          message: report.message,
+          ...report.scriptId === undefined ? {} : { scriptId: report.scriptId },
+          ...report.characterId === undefined ? {} : { characterId: report.characterId },
+        }
+        this.#nextReportSeq += 1
+        this.#diagnosticReports.push(record)
+        return { report: { ...record } }
+      }
+
       case 'script.runEnded':
       // Chat files are host-side; a fake has no store to copy them into or
       // out of, so the migration arms refuse rather than pretend.

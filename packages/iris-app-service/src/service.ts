@@ -4027,6 +4027,45 @@ export class IrisAppService {
         return {}
       },
 
+      /**
+       * One card-script `console.*` line, on its way to the diagnostics buffer
+       * (W7).
+       *
+       * The frame captured it and the shell forwarded it; the host only files
+       * it. **Always a note**, and the request schema cannot say otherwise: a
+       * `console.error` is the card's own chosen word, not a call this host
+       * refused, and a grade the caller could choose would let a card dress
+       * itself as a host fault. The chat must exist — a console line attributed
+       * to a conversation that does not is a line nobody can act on — and that
+       * is the only refusal here.
+       *
+       * `at` comes from the frame's own clock (see `ReportContext.at`), so a
+       * burst that crossed one message boundary does not read as simultaneous.
+       * @returns the record as stored, so the shell can see its `seq`.
+       */
+      'script.report': async ({ chatId, at, level, message, scriptId, characterId }) => {
+        await chats.open(chatId)
+        const diagnostics = this.#options.diagnostics
+        if (diagnostics === undefined) {
+          throw new AppError('unsupported', 'this host retains no diagnostic reports')
+        }
+        const record: ReportContext = {
+          kind: 'card-console',
+          grade: 'note',
+          chatId,
+          at,
+          ...scriptId === undefined ? {} : { scriptId },
+          ...characterId === undefined ? {} : { characterId },
+        }
+        // Recorded directly rather than through `#report`, because `#report`
+        // also pushes an `irreversible` broadcast and an `onError` log line —
+        // neither of which a card's console output is. A `console.log` is not a
+        // host error and must not reach the host's stderr. The `level` is part
+        // of the message the frame already shaped, so it is not re-read here;
+        // it is on the request for a reader of the wire, not for this arm.
+        return { report: diagnostics.record(record, message) }
+      },
+
       'script.runEnded': async ({ chatId, runId }) => {
         const entry = await chats.open(chatId)
         const known = entry.hasScriptRun(runId)

@@ -967,6 +967,20 @@ export interface IrisActions {
    */
   dismissCleanupOffer(): void
   withdrawReportsFor(scriptId: string): void
+  /**
+   * File one card-script `console.*` line with the host (owner task W7).
+   *
+   * The last hop of `frame → shell → host`: the frame captured and serialized
+   * it, this forwards it to `script.report`, and the host's `DiagnosticBuffer`
+   * holds it under kind `card-console`. Not awaited by the frame's own path — a
+   * console call must not wait on a round trip — so a failure here is filed as
+   * a card report on the shell, where the reader is looking anyway.
+   * @param level - which console method the card called.
+   * @param message - the bounded summary the frame produced.
+   * @param at - the frame's clock, in epoch milliseconds.
+   * @param scriptId - the last `run` message's id, when the frame knew one.
+   */
+  reportCardConsole(level: 'log' | 'info' | 'warn' | 'error', message: string, at: number, scriptId: string | undefined): Promise<void>
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
   /**
@@ -2661,6 +2675,39 @@ export function createIrisStore(
             ? undefined
             : { runId: `${chatId}:${String(generation)}`, chatId },
         })
+      },
+
+      async reportCardConsole(level, message, at, scriptId): Promise<void> {
+        const chatId = get().chatId
+        // A console line outside a conversation has nowhere to be attributed —
+        // the host refuses a report naming a chat that does not exist, and the
+        // frame's card only runs inside one. Silently dropped rather than filed
+        // under the wrong chat, and the frame never waits on this anyway.
+        if (chatId === undefined) return
+        try {
+          await client.call('script.report', {
+            chatId,
+            level,
+            message,
+            at,
+            ...scriptId === undefined ? {} : { scriptId },
+          })
+        } catch (error: unknown) {
+          /*
+           * Reported on the **shell's** card-report list, not thrown.
+           *
+           * The frame cannot see this failure and must not be made to wait for
+           * it, so a swallowed error would make "the host did not record the
+           * card's console lines" indistinguishable from "the card printed
+           * nothing". One named line in the panel where the reader is already
+           * looking is the honest direction, and it is bounded by the store's
+           * own per-fact dedupe.
+           */
+          get().addCardReport(
+            `a card's console output could not be filed with the host: ${error instanceof Error ? error.message : String(error)}`,
+            { grade: 'fault', channel: 'card-console' },
+          )
+        }
       },
 
       async endCardRun(): Promise<void> {

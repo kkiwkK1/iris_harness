@@ -28,6 +28,17 @@ export type ReportKind =
   | 'variables'
   | 'storage'
   | 'host'
+  /**
+   * A card script's own `console.*` output, captured in the frame and forwarded
+   * through the shell (owner task W7).
+   *
+   * Its own kind rather than folded into `script`: the other `script` reports
+   * are the host telling a card what the host did with it, while this is the
+   * card telling whoever is reading. A reader looking for "what did the card
+   * print" is not looking for "what did the host refuse", and the two share
+   * nothing but the word script.
+   */
+  | 'card-console'
 
 /**
  * Whether each kind has a report site behind it.
@@ -56,6 +67,10 @@ const KIND_WIRED: Record<ReportKind, boolean> = {
   // and a reader looking for one is not looking for the other.
   storage: true,
   host: true,
+  // W7. Wired by `script.report`, whose only caller is the shell's console
+  // capture. `true` for the same reason as the rest: a kind in the union and
+  // not here reads to the page as "nobody is looking".
+  'card-console': true,
 }
 
 /**
@@ -140,6 +155,16 @@ export interface ReportContext {
    * is what the report is about; this is what it costs.
    */
   irreversible?: true
+  /**
+   * When the thing being reported happened, when that is not now.
+   *
+   * Only one site supplies it: a card-console report stamped in the **frame**,
+   * because the message crossed a frame boundary and a round trip — so
+   * `Date.now()` here would stamp the arrival rather than the print, and a
+   * burst that arrived together would read as simultaneous when it was not.
+   * Absent means now, which is every other site.
+   */
+  at?: number
 }
 
 /**
@@ -219,7 +244,7 @@ export class DiagnosticBuffer {
   record(context: ReportContext, message: string, stack?: string): DebugReport {
     const report: DebugReport = {
       seq: this.#next,
-      at: Date.now(),
+      at: context.at ?? Date.now(),
       kind: context.kind,
       grade: context.grade,
       message,

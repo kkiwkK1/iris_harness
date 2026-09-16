@@ -283,6 +283,20 @@ export type FromFrame =
    * on screen, with no way back for the reader. Nothing is expected in reply.
    */
   | { iris: string, type: 'popup:done', id: string }
+  /**
+   * A card script called `console.log/info/warn/error` (owner task W7).
+   *
+   * Its own message rather than a `note`, because a note is the shell's word
+   * for something the frame observed and this is the card's own output — two
+   * different voices in one list would be attributed to the wrong one. It is
+   * also the only message whose text is bounded *frame-side*: the serializer
+   * (`console-capture.ts`) cuts depth, entries and characters before this is
+   * posted, so the ceiling holds even for a card logging a 10 MB string.
+   *
+   * `at` is the frame's clock: the message crosses a boundary and a round trip,
+   * so a host stamp would say when it arrived rather than when it printed.
+   */
+  | { iris: string, type: 'console', level: 'log' | 'info' | 'warn' | 'error', message: string, at: number, scriptId: string | undefined }
   /** The card's content changed height; the shell sizes the frame to it. */
   | { iris: string, type: 'height', pixels: number }
   /**
@@ -737,6 +751,25 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       // page cannot scroll past, which is a denial of the interface by a card
       // that may only have a bug.
       return { iris: token, type: 'height', pixels: Math.min(Math.round(pixels), 20_000) }
+    }
+    case 'console': {
+      const level = message['level']
+      const text = message['message']
+      const at = message['at']
+      if (level !== 'log' && level !== 'info' && level !== 'warn' && level !== 'error') return undefined
+      if (typeof text !== 'string' || typeof at !== 'number' || !Number.isFinite(at)) return undefined
+      return {
+        iris: token,
+        type: 'console',
+        level,
+        // Bounded here too, belt-and-braces with the serializer: `message` is
+        // card-controlled and reaches the wire and then the host's buffer, and
+        // the serializer's own ceiling is a frame-side implementation detail a
+        // forged message does not have to honour.
+        message: text.slice(0, 4_000),
+        at,
+        scriptId: stringOrUndefined(message['scriptId']),
+      }
     }
     case 'winevent': {
       const event = message['event']
