@@ -124,11 +124,12 @@
 | [st-compat/PILOT-REPORT.md](st-compat/PILOT-REPORT.md) | ST 扩展兼容试点联合验收：UC-1/2/3、故障与 revision 隔离、卸载、ST 1.18.0 同输入对照 | 2026-09-14 | `dev/st-compat-pilot` @ `065cc02`，ST-Prompt-Template `f9a07da` |
 | [PLUGIN-INSTALL-ACCEPTANCE-2026-09-15.md](PLUGIN-INSTALL-ACCEPTANCE-2026-09-15.md) | 系统插件安装路径的浏览器验收（真 Chrome + CDP，装—同意—启用—卸载走完） | 2026-09-15 | `dev/plugin-install-center`（`main` `1066381` + PR-3 工作树） |
 
-## 五、任务单（1）
+## 五、任务单（2）
 
 | 文件 | 内容 | 写于 | 状态 |
 | --- | --- | --- | --- |
 | [INFRA-TASKS-2026-09-15.md](INFRA-TASKS-2026-09-15.md) | 基建第二批六项（U1–U6）的派工单：分支、预留 ledger 号、牙齿要求、门禁 | 2026-09-15（基线 `e03adbb`） | 六项全部落地（PR #101–#106）；施工文档按决定留在未合入的分支 `dev/infra-task-docs-batch-2` |
+| [INFRA-TASKS-2026-09-16-upstream-tracking.md](INFRA-TASKS-2026-09-16-upstream-tracking.md) | 上游兼容面跟踪两项（V1 内置插件显示兼容目标而非 0.0.0；V2 按钉死 commit 抓上游 JS-Slash-Runner / MagVarUpdate 源码做 API 面差分，CI 只报告不阻断） | 2026-09-16 | 有效 |
 
 ## 六、法务（1）
 
