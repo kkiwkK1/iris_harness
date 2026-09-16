@@ -77,10 +77,12 @@ face, generation-pipeline hooks and an open `ScriptContext` do not. Which is
 which is maintained in one place only — `docs/INFRASTRUCTURE-INTERFACES.md` §8 —
 and this file does not keep a second copy.
 
-The third-party extension design that named them, `docs/EXTENSIONS.md`, **is
-not on `main`.** It lives only on the unmerged `origin/dev/feat-extension-system`
-branch, so a reader here cannot open it and nothing in this repository's
-document checks covers it. What survives the branch is the shared vocabulary,
+The third-party extension design that named them, `docs/EXTENSIONS.md`, was
+never on `main`; it lived on the `dev/feat-extension-system` branch, which was
+retired on 2026-09-16, and the document is kept as a record at
+[notes/archive/EXTENSIONS.md](../notes/archive/EXTENSIONS.md) together with its
+ruling, [notes/archive/EXTENSION-SYSTEM-RULING.md](../notes/archive/EXTENSION-SYSTEM-RULING.md).
+It is history, not a contract: the plugin platform (#88) superseded it. What survives the branch is the shared vocabulary,
 which is kept here rather than cited: one control plane, whether the
 implementation shipped with Iris or arrived from outside; and one versioning
 device, the `apiVersion` on a `SystemPluginDefinition`, which a breaking change
