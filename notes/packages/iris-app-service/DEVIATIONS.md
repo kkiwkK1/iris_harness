@@ -8792,7 +8792,7 @@ refuse.
 
 ---
 
-## 87. 卸载插件时可选「连数据一起删」：`plugin.uninstall` 的 `removeData`、`dataFootprint` 读数、以及内置插件不是特例
+## 89. 卸载插件时可选「连数据一起删」：`plugin.uninstall` 的 `removeData`、`dataFootprint` 读数、以及内置插件不是特例
 
 Dated 2026-09-16 (owner task sheet W5, branch
 `dev/plugin-uninstall-remove-data` against `035094e`). Two ledgers: this one

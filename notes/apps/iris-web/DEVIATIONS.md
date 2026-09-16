@@ -7313,7 +7313,7 @@ zh 列含中文，键两列都有。
 
 ---
 
-## 104. 卸载行旁的「同时删除它存的数据」复选框：默认不勾、只显示在真有数据的行、勾了才传 `removeData`
+## 106. 卸载行旁的「同时删除它存的数据」复选框：默认不勾、只显示在真有数据的行、勾了才传 `removeData`
 
 Dated 2026-09-16 (owner task sheet W5, branch
 `dev/plugin-uninstall-remove-data` against `035094e`). The host half of this
