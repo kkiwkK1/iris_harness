@@ -933,6 +933,7 @@ export function itemize(
       id: member.id,
       ...member.label === undefined ? {} : { label: member.label },
       tokens: count(member.text),
+      ...member.source === undefined ? {} : { source: member.source },
       ...phases[index] === 'defer' ? { deferred: true } : {},
       ...phases[index] === 'promote' ? { promoted: true } : {},
     }))
@@ -941,9 +942,15 @@ export function itemize(
       ...contribution.label === undefined ? {} : { label: contribution.label },
       kind: contribution.placement.kind,
       tokens: count(contribution.text),
+      ...contribution.source === undefined ? {} : { source: contribution.source },
       ...contribution.placement.kind === 'depth'
         ? { depth: contribution.placement.depth, role: contribution.placement.role }
         : {},
+      // Why this rendered to nothing, when the builder knew. Set on a row whose
+      // authored text expanded to empty (`macros-only`) or whose marker slot the
+      // host could not fill (`marker-unfilled`) — the two facts the panel used
+      // to render as one identical «empty».
+      ...contribution.zeroReason === undefined ? {} : { zeroReason: contribution.zeroReason },
       // Reported even for a section that rendered empty and therefore was not
       // actually emitted: the row exists to answer "where did my text go", and
       // an empty volatile section is still classified volatile, which is the
@@ -973,6 +980,11 @@ export function itemize(
     label: 'Chat History',
     kind: 'history',
     tokens: kept.reduce((total, entry) => total + count(entry.text), 0),
+    // The conversation's own author is nobody in the preset or the card, and the
+    // row is the assembler's aggregate rather than one history line's. `history`
+    // is exactly that, so a reader expanding the row is told "the conversation"
+    // and not led to look for a preset item that does not exist.
+    source: { kind: 'history', id: 'chatHistory' },
   })
   return items
 }

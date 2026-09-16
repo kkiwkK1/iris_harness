@@ -131,16 +131,72 @@ export interface ContributionMember {
   label?: string
   /** The member's text, as rendered. */
   text: string
+  /** Where this member's text came from; see {@link ContributionSource}. */
+  source?: ContributionSource
   /** Whether this member's text is expected to differ next turn; see {@link Contribution.volatile}. */
   volatile?: boolean
   /** Whether this member has been observed unchanged for long enough to promote; see {@link Contribution.settled}. */
   settled?: boolean
 }
 
+/**
+ * Where a contribution's text came from.
+ *
+ * Carried so the itemization can say *what put this here* as well as how much
+ * it cost — the two questions the panel exists to answer. The vocabulary is
+ * closed and small on purpose: it is the set of things this host can name as a
+ * prompt's author, and a sixth value invented later is a change to the contract
+ * rather than to a string.
+ *
+ * `id` is the contribution's own stable identity, repeated rather than implied
+ * because a marker's text and the slot it landed in have different owners (a
+ * `charDescription` row's bytes are the card's, not the preset's).
+ */
+export interface ContributionSource {
+  /** Which of the prompt's authors produced this text. */
+  kind: 'preset' | 'card' | 'worldbook' | 'history' | 'script' | 'host'
+  /** The author's own name for it, stable across turns. */
+  id: string
+  /** What to call it when showing it to a person, when that differs from `id`. */
+  label?: string
+}
+
+/**
+ * Why a contribution rendered to nothing, when it did.
+ *
+ * Only meaningful on a zero-token row, and the reason the itemization is worth
+ * more than its numbers: `tokens: 0` on a real preset is routine and the three
+ * ordinary causes lead a reader to three different places. See
+ * `@iris/app-service`'s itemization for which of these this host produces and
+ * which it deliberately does not.
+ */
+export type ContributionZeroReason
+  = | 'macros-only'
+    | 'marker-unfilled'
+    | 'blank'
+    | 'trimmed'
+    | 'dropped-by-budget'
+
 /** One piece of text contributed to the prompt. */
 export interface Contribution {
   /** Stable identity, for diagnostics and for the itemization view. */
   id: string
+  /**
+   * Where the text came from; see {@link ContributionSource}.
+   *
+   * **Metadata, never prompt bytes.** The assembler reads it only to fill the
+   * itemization, so two contributions differing in this field alone assemble to
+   * the identical request — which is the property the golden test pins.
+   */
+  source?: ContributionSource
+  /**
+   * Why this rendered to nothing; see {@link ContributionZeroReason}.
+   *
+   * Set by the prompt builder at the moment it knows, which is the only moment
+   * it is knowable: an authored text that expanded to nothing is a different
+   * fact from a slot nothing filled, and the assembler cannot tell them apart.
+   */
+  zeroReason?: ContributionZeroReason
   /**
    * What to call this when showing it to a person.
    *
@@ -325,6 +381,10 @@ export interface AssembledItem {
   tokens: number
   depth?: number
   role?: Role
+  /** Where this part's text came from; see {@link ContributionSource}. */
+  source?: ContributionSource
+  /** Why this part rendered to nothing, on the rows where that happened. */
+  zeroReason?: ContributionZeroReason
   /**
    * True when {@link AssembleInput.cacheFriendly} moved this system section
    * out of the system prompt and into the volatile segment.
@@ -368,6 +428,8 @@ export interface AssembledMember {
   id: string
   label?: string
   tokens: number
+  /** Where this member's text came from; see {@link ContributionSource}. */
+  source?: ContributionSource
   /** True when the reorder sent this member after the conversation. */
   deferred?: boolean
   /** True when the reorder sent this member ahead of the conversation. */

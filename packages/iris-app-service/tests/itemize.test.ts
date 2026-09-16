@@ -55,7 +55,7 @@ interface Fixture {
   settled: () => Promise<void>
 }
 
-async function fixture(t: TestContext, inputTokens?: number): Promise<Fixture> {
+async function fixture(t: TestContext, inputTokens?: number, preset?: ChatCompletionPreset): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-itemize-'))
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
@@ -74,6 +74,7 @@ async function fixture(t: TestContext, inputTokens?: number): Promise<Fixture> {
     settings,
     broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
     userName: 'Traveller',
+    ...preset === undefined ? {} : { preset },
   }).handlers()
 
   return {
@@ -259,4 +260,146 @@ test('a slot this generation never offered is not zeroed', async (t) => {
   assert.ok(itemization.entries.some(entry => entry.id === 'dialogueExamples'))
   assert.equal(itemization.entries.some(entry => entry.id === 'nsfw'), false)
   assert.equal(itemization.entries.some(entry => entry.id === 'enhanceDefinitions'), false)
+})
+
+/**
+ * A variable-driven preset: one prompt sets a variable and writes no prose, a
+ * later one reads it back.
+ *
+ * The measured shape this reproduces is the user's own `[主预设] V19.5 狐神抚 ·
+ * 毓忻`, where 初始化 is 61 `{{setvar}}` calls and nothing else — the whole
+ * mechanism behind the 23 zero rows in the assembly panel. Written here rather
+ * than read from disk so the rule does not depend on a preset being installed.
+ */
+const SETVAR_PRESET: ChatCompletionPreset = {
+  prompts: [
+    { identifier: 'init', name: '初始化', role: 'system', content: '{{setvar::style::gothic}}', enabled: true },
+    { identifier: 'read', name: '开始', role: 'system', content: 'Style is [{{getvar::style}}].', enabled: true },
+  ],
+  prompt_order: [{
+    character_id: 100001,
+    order: [{ identifier: 'init', enabled: true }, { identifier: 'read', enabled: true }],
+  }],
+}
+
+test('a preset prompt that is all macros is told apart from a slot nothing filled', async (t) => {
+  const fix = await fixture(t, undefined, SETVAR_PRESET)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  // `初始化` is non-empty as authored and empty once expanded — the two facts
+  // the panel could not tell apart. Left unexplained, both render as a bare
+  // "empty" and the reader has no way to know this one is *working as
+  // designed* while the other means their card field is blank.
+  const init = itemization.entries.find(entry => entry.id === 'init')
+  assert.ok(init !== undefined, `no init row among ${itemization.entries.map(e => e.id).join(', ')}`)
+  assert.equal(init.tokens, 0, 'the setvar prompt is supposed to render to nothing')
+  assert.equal(init.explanation?.zeroReason, 'macros-only')
+  assert.deepEqual(init.explanation?.source, { kind: 'preset', id: 'init' })
+
+  // The reading prompt proves the macro engine ran: the text is there, so the
+  // zero above is an expansion result and not a dropped contribution.
+  const read = itemization.entries.find(entry => entry.id === 'read')
+  assert.ok(read !== undefined && read.tokens > 0)
+  assert.equal(read.explanation?.zeroReason, undefined, 'a part with text carries no zero reason')
+})
+
+test('an unfilled marker is told apart from a macros-only row', async (t) => {
+  const fix = await fixture(t)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  // `scenario` is a marker this card leaves blank: the slot was offered and the
+  // host had nothing to fill it with. Its reason is `marker-unfilled`, and its
+  // source names the card — the two together are what send a reader to the
+  // right field instead of to the preset.
+  const scenario = itemization.entries.find(entry => entry.id === 'scenario')
+  assert.ok(scenario !== undefined, 'scenario should be zeroed rather than absent')
+  assert.equal(scenario.tokens, 0)
+  assert.equal(scenario.explanation?.zeroReason, 'marker-unfilled')
+  assert.deepEqual(scenario.explanation?.source, { kind: 'card', id: 'scenario' })
+
+  // And the two reasons really are distinct — the assertion the panel's copy
+  // leans on. A world-info slot is unfilled by a book, a setvar prompt by the
+  // preset; telling them apart is the feature.
+  const worldInfo = itemization.entries.find(entry => entry.id === 'worldInfoBefore')
+  assert.equal(worldInfo?.explanation?.source.kind, 'worldbook')
+})
+
+test('a preset prompt whose content is empty still produces no row', async (t) => {
+  // A preset author's blank line is not the same fact as a marker nobody
+  // filled, and this host deliberately does not row it: a real preset has
+  // dozens of them and each would say nothing about the turn. This pins the
+  // decision so the next person to "complete" the explanation feature cannot
+  // add the rows without seeing this turn red.
+  const preset: ChatCompletionPreset = {
+    prompts: [
+      { identifier: 'main', name: 'Main', role: 'system', content: 'Speak.', enabled: true },
+      { identifier: 'blank', name: 'Left blank', role: 'system', content: '', enabled: true },
+    ],
+    prompt_order: [{
+      character_id: 100001,
+      order: [{ identifier: 'main', enabled: true }, { identifier: 'blank', enabled: true }],
+    }],
+  }
+  const fix = await fixture(t, undefined, preset)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  assert.equal(
+    itemization.entries.some(entry => entry.id === 'blank'),
+    false,
+    'a blank preset item grew a row; the no-`blank`-rows decision was reversed without a test change',
+  )
+})
+
+test('the explanation is deterministic: the same state itemizes to the same report', async (t) => {
+  // The assembly is pure and a preview re-runs it from scratch, so two asks
+  // about the same unchanged conversation must agree in full — explanations,
+  // sources and reasons included. This is the itemization-side twin of
+  // `assembly-determinism.test.ts`'s byte comparison: a report that jittered
+  // between reads (a Set iterated differently, a label picked off a Map) would
+  // make the panel's expander flicker and would make any future "changed since
+  // last turn" comparison meaningless.
+  const fix = await fixture(t, undefined, SETVAR_PRESET)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  const first = await fix.handlers['prompt.itemize']({ chatId })
+  const second = await fix.handlers['prompt.itemize']({ chatId })
+
+  assert.deepEqual(second.itemization, first.itemization)
+  // And the report is not trivially empty of explanations, or the equality
+  // above would hold for a shape that carries nothing.
+  assert.ok(first.itemization.entries.some(entry => entry.explanation !== undefined))
+})
+
+test('the explanation carries no prompt text and no secret', async (t) => {
+  // The rule the whole feature is allowed to exist under: a report carries
+  // hashes, sources and reasons, never the bytes. The host's own `LayoutPart`
+  // text stays in the session, and `debug.reports` is drawn from this shape — so
+  // a `text` field leaking into an explanation would put a conversation into a
+  // diagnostics bundle. Serialised and searched as one string, because the leak
+  // could be nested anywhere in the explanation object.
+  const fix = await fixture(t, undefined, SETVAR_PRESET)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  await fix.handlers['chat.send']({ chatId: created.view.chatId, text: 'A SECRET FLOOR' })
+  await fix.settled()
+
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+  const explanations = JSON.stringify(
+    itemization.entries.map(entry => ({ row: entry.explanation, members: entry.members?.map(m => m.explanation) })),
+  )
+
+  // The setvar preset's own prose (`Style is [gothic].`) and the user's floor
+  // are both in the request; neither may appear in an explanation.
+  for (const secret of ['gothic', 'A SECRET FLOOR', 'Style is']) {
+    assert.equal(
+      explanations.includes(secret),
+      false,
+      `"${secret}" reached the explanation report; the report must carry hashes, sources and reasons only`,
+    )
+  }
+  // And there are explanations to have leaked, so the scan is not vacuous.
+  assert.ok(itemization.entries.some(entry => entry.explanation !== undefined))
 })

@@ -2874,6 +2874,28 @@
   font-style: italic;
 }
 
+/* Why a row is what it is: who wrote its bytes, and on a zero row why there are
+   none. On its own line under the label — where the divergence mark and the
+   deferred badge already live — because it is prose and the four columns above
+   are figures. The reason takes the warning colour, the source stays quiet: the
+   reason is the answer and the source is the pointer to where to fix it. */
+.iris-prompt__explain {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 2px;
+  font-size: 10.5px;
+}
+
+.iris-prompt__member .iris-prompt__explain {
+  grid-column: 1 / -1;
+}
+
+.iris-prompt__zero-reason {
+  color: var(--iris-warn);
+}
+
 /* -------------------------------------------- against the previous request */
 
 /* Set apart by a rule rather than by a heading weight: the block above it is

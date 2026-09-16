@@ -86,21 +86,41 @@ export const FAKE_CHAT_BUDGET: ChatBudget = {
 
 /** The entries, in assembly order rather than sorted — sorting is the UI's business. */
 const ENTRIES: readonly PromptItemEntry[] = [
-  { id: 'main', label: 'Main Prompt', kind: 'system', tokens: 148 },
-  { id: '881044e5-cbef-4a1c-9b3d-2f0e6a7c5d31', label: '开始设定', kind: 'system', tokens: 96 },
-  { id: 'charDescription', label: 'Char Description', kind: 'system', tokens: 233 },
-  { id: 'charPersonality', label: 'Char Personality', kind: 'system', tokens: 61 },
-  { id: 'scenario', label: 'Scenario', kind: 'system', tokens: 74 },
-  { id: 'c7f2b1a4-9e83-4d52-b6a0-1c4e8f3a7b95', label: '写作模式（二选一）', kind: 'system', tokens: 118 },
-  { id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', label: '写作模式（二选一）', kind: 'system', tokens: 102 },
-  { id: 'worldInfoBefore', label: 'World Info (before)', kind: 'system', tokens: 1920 },
-  { id: 'worldInfoAfter', label: 'World Info (after)', kind: 'system', tokens: 37 },
-  { id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式', kind: 'depth', tokens: 84, depth: 0, role: 'system' },
-  { id: 'authorsNote', label: "Author's Note", kind: 'depth', tokens: 29, depth: 2, role: 'system' },
-  // Parsed, enabled, and contributing nothing. The case a reader goes looking for.
-  { id: 'nsfw', label: 'Auxiliary Prompt', kind: 'system', tokens: 0 },
-  { id: 'e4a7c209-6b31-4f85-a0d2-3c9e7b1a5f68', label: '开场引导', kind: 'system', tokens: 0 },
-  { id: 'chatHistory', label: 'Chat History', kind: 'history', tokens: 27 },
+  { id: 'main', label: 'Main Prompt', kind: 'system', tokens: 148, explanation: { source: { kind: 'preset', id: 'main' } } },
+  { id: '881044e5-cbef-4a1c-9b3d-2f0e6a7c5d31', label: '开始设定', kind: 'system', tokens: 96, explanation: { source: { kind: 'preset', id: '881044e5-cbef-4a1c-9b3d-2f0e6a7c5d31', label: '开始设定' } } },
+  { id: 'charDescription', label: 'Char Description', kind: 'system', tokens: 233, explanation: { source: { kind: 'card', id: 'charDescription', label: 'description' } } },
+  { id: 'charPersonality', label: 'Char Personality', kind: 'system', tokens: 61, explanation: { source: { kind: 'card', id: 'charPersonality', label: 'personality' } } },
+  { id: 'scenario', label: 'Scenario', kind: 'system', tokens: 74, explanation: { source: { kind: 'card', id: 'scenario', label: 'scenario' } } },
+  { id: 'c7f2b1a4-9e83-4d52-b6a0-1c4e8f3a7b95', label: '写作模式（二选一）', kind: 'system', tokens: 118, explanation: { source: { kind: 'preset', id: 'c7f2b1a4-9e83-4d52-b6a0-1c4e8f3a7b95', label: '写作模式（二选一）' } } },
+  { id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', label: '写作模式（二选一）', kind: 'system', tokens: 102, explanation: { source: { kind: 'preset', id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', label: '写作模式（二选一）' } } },
+  { id: 'worldInfoBefore', label: 'World Info (before)', kind: 'system', tokens: 1920, explanation: { source: { kind: 'worldbook', id: 'worldInfoBefore', label: 'atlas' } } },
+  { id: 'worldInfoAfter', label: 'World Info (after)', kind: 'system', tokens: 37, explanation: { source: { kind: 'worldbook', id: 'worldInfoAfter', label: 'atlas' } } },
+  { id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式', kind: 'depth', tokens: 84, depth: 0, role: 'system', explanation: { source: { kind: 'preset', id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式' } } },
+  { id: 'authorsNote', label: "Author's Note", kind: 'depth', tokens: 29, depth: 2, role: 'system', explanation: { source: { kind: 'worldbook', id: 'worldInfo.authorNote' } } },
+  // Parsed, enabled, and contributing nothing. The case a reader goes looking for,
+  // carrying the two reasons the product actually produces: a preset prompt whose
+  // text is all macros, and a marker slot nothing filled. The pair is deliberate —
+  // a fixture with one zero cannot show that the panel tells the causes apart,
+  // and `blank` / `trimmed` are reserved reasons the host does not emit yet, so a
+  // fixture carrying one would teach a design against a shape nothing produces.
+  {
+    id: 'nsfw',
+    label: 'Auxiliary Prompt',
+    kind: 'system',
+    tokens: 0,
+    explanation: { source: { kind: 'preset', id: 'nsfw', label: 'Auxiliary Prompt' }, zeroReason: 'macros-only' },
+  },
+  {
+    id: 'e4a7c209-6b31-4f85-a0d2-3c9e7b1a5f68',
+    label: '开场引导',
+    kind: 'system',
+    tokens: 0,
+    explanation: {
+      source: { kind: 'card', id: 'first_mes', label: 'first_mes' },
+      zeroReason: 'marker-unfilled',
+    },
+  },
+  { id: 'chatHistory', label: 'Chat History', kind: 'history', tokens: 27, explanation: { source: { kind: 'history', id: 'chatHistory' } } },
 ]
 
 /**

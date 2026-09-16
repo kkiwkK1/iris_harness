@@ -35,6 +35,7 @@ import { createMacroContext, expandMacros, type MacroMessage } from '@iris/macro
 import type {
   Contribution,
   ContributionMember,
+  ContributionSource,
   HistoryEntry,
   Role,
   TokenCounter,
@@ -121,6 +122,57 @@ const DEFAULT_PERSONALITY_FORMAT = '{{personality}}'
 function formatOf(preset: ChatCompletionPreset, key: string, fallback: string): string {
   const value = preset[key]
   return typeof value === 'string' && value.length > 0 ? value : fallback
+}
+
+/**
+ * Which author's bytes fill one marker slot.
+ *
+ * A marker is a slot the **host** fills from live data, so its row's text rarely
+ * belongs to the preset that ordered it — `charDescription` costs the card its
+ * tokens, `worldInfoBefore` the world book's. The itemization renders this so a
+ * reader asking "where did this come from" is answered by the row itself rather
+ * than by guessing from the label.
+ *
+ * A preset prompt that is **not** a marker is the preset's own text, which is
+ * why the map is consulted only for markers. Anything not named here is a slot
+ * this host did not fill, and `host` is the honest label for that: the row's
+ * owner is the assembly, not a card or a book.
+ *
+ * `dialogueExamples` is genuinely mixed — `emTop`/`emBottom` world-book buckets
+ * around the card's own `mes_example` — and is tagged `card` because that is the
+ * field a reader goes looking for when the slot is empty; the mixed case is
+ * noted here rather than invented a sixth kind for.
+ */
+const MARKER_SOURCE: Record<string, ContributionSource['kind']> = {
+  worldInfoBefore: 'worldbook',
+  worldInfoAfter: 'worldbook',
+  charDescription: 'card',
+  charPersonality: 'card',
+  scenario: 'card',
+  dialogueExamples: 'card',
+  personaDescription: 'host',
+}
+
+/**
+ * The author of one resolved contribution, for the itemization's explanation.
+ *
+ * Markers are filled by the host from elsewhere (see {@link MARKER_SOURCE}); a
+ * plain prompt is the preset's own `content`. The identifier is the id, which is
+ * what the preset, the card and the book address it by, and is stable across
+ * turns — the property the panel's "why is this here" answer depends on.
+ * @param identifier - the resolved contribution's id.
+ * @param byIdentifier - the preset's own items, for marker-ness.
+ * @returns the source record.
+ */
+function sourceOf(
+  identifier: string,
+  byIdentifier: ReadonlyMap<string, PromptItem>,
+): ContributionSource {
+  const item = byIdentifier.get(identifier)
+  if (item?.marker === true) {
+    return { kind: MARKER_SOURCE[identifier] ?? 'host', id: identifier }
+  }
+  return { kind: 'preset', id: identifier }
 }
 
 /**
@@ -459,6 +511,10 @@ function bucketMembers(bucketId: string, entries: readonly PreparedEntry[]): Con
       ? entry.comment
       : `${entry.world} #${String(entry.uid)}`,
     text: entry.content,
+    // The entry's own book, so a reader expanding the bucket sees which book
+    // each line came from — uids collide across books constantly (this is the
+    // same reason the id carries the world).
+    source: { kind: 'worldbook' as const, id: `${entry.world}.${String(entry.uid)}` },
   }))
 }
 
@@ -625,6 +681,16 @@ function emptyMarkerRows(
     rows.push({
       id: identifier,
       ...item.name === undefined ? {} : { label: item.name },
+      // A marker's row belongs to whoever the host fills it from — the card for
+      // `charDescription`, a book for `worldInfoBefore` — and this is the row a
+      // reader finds when the answer is "nothing": naming the author is what
+      // turns "empty" into "your card's Scenario field is blank".
+      source: sourceOf(identifier, byIdentifier),
+      // The one reason on this path, and the one the row exists for: the slot
+      // was offered and nothing filled it. Distinct from `macros-only` on
+      // purpose — "nobody wrote anything" and "what was written expanded to
+      // nothing" lead a reader to two different places.
+      zeroReason: 'marker-unfilled',
       // `order` is unobservable for a row with no text — `renderSystem` drops
       // empty text before it sorts, and the itemization renders array order —
       // so this is a placement the type demands rather than a decision.
@@ -797,7 +863,12 @@ export function buildPrompt(input: PromptInput): PromptResult {
     if (sources.some(text => text !== undefined && isEntropic(text))) entropic.add(id)
   }
 
-  const contributions = resolvePreset(preset, resolveOptions)
+  // The preset's own items, keyed the way `resolvePreset` addresses them, so a
+  // resolved contribution can be told apart as a marker or a plain prompt and
+  // get its source from the right author (see `sourceOf`).
+  const byIdentifier = new Map(preset.prompts.map(item => [item.identifier, item]))
+
+  const contributions: Contribution[] = resolvePreset(preset, resolveOptions)
     .map((contribution) => {
       // Two sources per row, and both are needed. A **marker**'s own text is
       // already the filled value (world info, expanded during the scan), so
@@ -805,7 +876,22 @@ export function buildPrompt(input: PromptInput): PromptResult {
       // preset's `content`, still unexpanded at this point. Passing both means
       // one call covers markers and prompts without asking which this is.
       noteEntropic(contribution.id, contribution.text, markerSources[contribution.id])
-      return { ...contribution, text: expand(contribution.text) }
+      // Held before expanding, because "rendered to nothing" and "was already
+      // nothing" are different facts and the expanded text cannot tell them
+      // apart. A variable-driven preset is the ordinary case: `初始化` is 1 250
+      // characters of `{{setvar}}` and no prose, so it counts to zero on every
+      // turn and a reader deserves to be told that is why.
+      const authored = contribution.text
+      const text = expand(authored)
+      const zeroReason = text.trim().length === 0 && authored.trim().length > 0
+        ? { zeroReason: 'macros-only' as const }
+        : {}
+      return {
+        ...contribution,
+        text,
+        source: sourceOf(contribution.id, byIdentifier),
+        ...zeroReason,
+      }
     })
 
   // The slots that were there and had nothing to put in them, as zeroes.
@@ -820,6 +906,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
     contributions.push({
       id: 'worldInfo.authorNote',
       label: 'World Info (author’s note)',
+      source: { kind: 'worldbook', id: 'worldInfo.authorNote' },
       placement: { kind: 'system', order: 900 },
       text: joinEntries(authorNote),
     })
@@ -855,12 +942,11 @@ export function buildPrompt(input: PromptInput): PromptResult {
       // `worldInfo.depth.0.0` tells a user nothing about what is in it — this is
       // routinely the largest single part of the prompt.
       label: `World Info (depth ${String(bucket.depth)})`,
+      // A bucket is world info however deep it sits; the entry-level identity is
+      // on the members below, which carry their own sources.
+      source: { kind: 'worldbook', id: bucketId },
       placement: { kind: 'depth', depth: bucket.depth, role: roleOf(bucket.role), order: 0 },
       text,
-      // The entries this text is the join of. The contribution stays one row
-      // and one message; the members are what let the classifier and the
-      // reorder work at the granularity the loss actually has. Nothing reads
-      // them with cache-friendly assembly off.
       members,
     })
   }
@@ -875,6 +961,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
     contributions.push({
       id: 'persona.depthPrompt',
       label: 'Persona Description',
+      source: { kind: 'host', id: 'persona.depthPrompt' },
       placement: { kind: 'depth', depth: input.persona.depth, role: input.persona.role, order: 1 },
       text: expand(input.persona.description),
     })
@@ -887,6 +974,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
     contributions.push({
       id: 'card.depthPrompt',
       label: 'Character’s Note',
+      source: { kind: 'card', id: 'card.depthPrompt' },
       // A card's depth prompt names its role in words, unlike a world-info
       // entry, which uses the numeric `promptRole` enum.
       placement: { kind: 'depth', depth: depthPrompt.depth, role: depthPrompt.role, order: 1 },
