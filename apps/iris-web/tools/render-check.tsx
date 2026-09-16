@@ -234,6 +234,26 @@ async function main(): Promise<void> {
   assert.ok(rev !== undefined, 'the content-rev cell carries no data-asset-rev stamp')
   assert.match(rev, /^[0-9a-f]{12}$/, 'the content-rev cell does not carry a twelve-hex rev')
   assert.notEqual(rev, '7', 'the content-rev cell shows the catalog revision — the quantity confusion this row exists to end')
+  // W1: a builtin's `undeclared` is not a fault, so the three cells collapse to
+  // one sentence. Driven directly for the same reason as the stale row above —
+  // the fake catalog does not stamp `source`, so a live SSR never reaches this
+  // branch even though the real host does.
+  const builtinAsset: PluginBrowserAssetStatus = {
+    phase: 'undeclared', expectedRevision: 3, manifestRevision: 3, actualRevision: undefined,
+    error: undefined, loadedAt: undefined,
+  }
+  const builtinRow = renderToString(
+    <AssetStatus plugin={{ ...staleRowPlugin, source: 'builtin' }} asset={builtinAsset} lang="en" onRetry={() => {}} />,
+  )
+  assert.match(builtinRow, /data-plugin-builtin-asset-note/, 'a builtin with no browser bundle does not say so in words')
+  assert.doesNotMatch(builtinRow, /Never/, 'a builtin with no browser bundle still shows "Never"')
+  // The same asset phase on a third-party row keeps the cells: that absence is
+  // real information about a plugin that was supposed to ship a bundle.
+  const thirdPartyRow = renderToString(
+    <AssetStatus plugin={staleRowPlugin} asset={builtinAsset} lang="en" onRetry={() => {}} />,
+  )
+  assert.match(thirdPartyRow, /Browser asset/, 'a third-party undeclared row lost its browser-asset cells')
+  assert.match(thirdPartyRow, /Never/, 'a third-party undeclared row no longer says it was never loaded')
   assert.match(pluginCenter, /Catalog revision/, 'the catalog revision fact is missing')
   assert.match(pluginCenter, /Last loaded/, 'the last-successful-load fact is missing')
   assert.match(pluginCenter, /Disable MVU first/, 'TavernHelper actions do not explain the enabled dependent')

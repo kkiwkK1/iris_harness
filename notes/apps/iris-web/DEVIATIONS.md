@@ -7274,6 +7274,41 @@ part：能在 entries 或 members 里找到的得到它的标签、kind 与 expl
 walk 的结果。一个在变更之后的消息把它所有的 part 一起带出去，因为缓存服务的是整段
 字节。
 
+---
+
+---
+
+## 103. 内置插件的「浏览器资产」一栏说人话：`undeclared` 且 `source === 'builtin'` 时三格换一句话
+
+Dated 2026-09-16 (owner task sheet W1, branch
+`dev/plugin-center-builtin-asset-copy` against `035094e`). Web-only; the host
+half of the asset surface is untouched.
+
+**现状与实测**。内置两行（TavernHelper、MVU）不带 `client.js`，它们的帧侧
+成员打在**核心成员包**里，所以聚合清单 `{"revision":4,"plugins":{}}` 对它们
+是**正确的**——实测 8787 上清单空到没有任何 plugin 行。但 `AssetStatus` 把
+这正确的事实渲染成三格「浏览器资产：未声明 / 资产内容 rev：无 / 最近成功加载：
+从未」，读起来像故障。表达差，不是数据差。
+
+**改法**。`AssetStatus` 里加一个布尔：`plugin.source === 'builtin' &&
+asset.phase === 'undeclared'`。为真时不再渲染那五格
+（`pluginCenterBrowserAsset` 起的那部分），改渲染一句
+`pluginCenterBuiltinAssetNote`：「内置插件的帧侧成员随核心成员包加载，没有
+独立的浏览器包。」（en 同义）。宿主运行时那一格仍在——它仍然回答「这个行
+现在跑不跑」。句子自己带 `data-plugin-builtin-asset-note` 戳，测试按行切片
+读它，不靠整页模糊匹配。
+
+**边界**。只有**显式** `source: 'builtin'` 走这一支。`source` 在线上是可
+选的——缺席的意思是「这个宿主对这行的字节来源没有记录」——所以缺席不做
+假设。第三方行（`git`/`dev`）即使同样是 `undeclared` 也保留五格：对它们，
+「没有清单行」是**真信息**，正是这一栏存在的理由。判据是 `phase ===
+'undeclared'`，所以一个真的在加载/加载好/降级的 builtin 行（理论上不该有，
+但形状上可能）仍显示它真实的相位，不被这句话糊掉。
+
+**文案两语**。`pluginCenterBuiltinAssetNote` 进 `en`/`zh` 两列，`i18n.test.ts`
+的三条（zh 含中文、两列槽位一致、用到的键存在）自然覆盖——这句话没有槽位，
+zh 列含中文，键两列都有。
+
 ### 牙齿
 
 | 断言 | 让它变红的改动 | 结果 |
@@ -7293,3 +7328,19 @@ walk 的结果。一个在变更之后的消息把它所有的 part 一起带出
 在 `assemble` **之后**合并消息，所以 `messages[]` 描述的是 squash 前的列表；要看提供方
 自己的消息边界需要驱动器的 `PromptLayout`，那是另一份契约（带正文、骑在
 `GenerateOptions` 上），两者刻意不合并。
+
+---
+
+| 内置两行（`pkg-builtin`、`pkg-builtin-two`）的**行内切片**出现 `data-plugin-builtin-asset-note` 与那句话、且不含 `Never` / `Browser asset`（`plugin-center.test.ts`） | 删掉 `source === 'builtin'` 条件（`builtinNote = asset.phase === 'undeclared'`） | 红：第三方 `pkg-install-failed`（`git`、`undeclared`）被套上同一句话，`doesNotMatch(/data-plugin-builtin-asset-note/)` 与「仍显示三格」两条断言同时红（实测 fail 2，两测试都红）→ 复原绿 |
+| 一个 `git` 且 `undeclared` 的行仍出现 `Browser asset` 与 `Never`（同上） | 同上（同一变异，反向断言） | 红 → 绿 |
+| 中文渲染里这句话出现**恰好两次**（两个内置行） | 只给 en 列加键（zh 缺键 → i18n 审计先红）或只改一行 | 红 → 绿 |
+| `render-check.tsx` 直接驱动导出的 `AssetStatus`：`source: 'builtin'` + `undeclared` → 句子且无 `Never`；同一 asset 换第三方行 → 三格仍在 | 删条件 / 删句子 | 红 → 绿 |
+
+### What would reopen this
+
+(a) 内置插件开始自带 `client.js`——那时 `undeclared` 不再是它们的常态，这一支
+应当随 `phase` 自然退出，而不是被删；判据是相位，不是身份，所以它会自己退。
+(b) 线上快照给每个内置行盖上 `source`（今天只有 v1→v2 迁移和注册过的内置
+id 会盖，虚拟目录里缺席）——那会让这句话在更多行上出现，是预期方向。
+(c) 第三方插件的「真缺失」也需要更明确的文案——那是另一栏的事，不是把
+这句话扩大到所有 `undeclared`，那正是这次变异要防的错。

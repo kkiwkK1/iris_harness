@@ -970,15 +970,30 @@ export function AssetStatus({ plugin, asset, lang, onRetry }: {
   const assetId = `iris-plugin-asset-${safeId(plugin.id)}`
   const assetErrorId = `iris-plugin-asset-error-${safeId(plugin.id)}`
   const loadedAt = asset.loadedAt === undefined ? undefined : new Date(asset.loadedAt).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US')
+  /*
+   * A builtin ships no browser bundle of its own: its frame-side members are
+   * compiled into the core member bundle, so the aggregate manifest listing no
+   * row for it is the correct, permanent answer — not a fault. Without this
+   * branch the row reads "Not declared / None / None / None / Never", which
+   * reads as breakage. The sentence is the honest reading; every non-builtin
+   * row (and every builtin whose assets are actually loading, loaded or
+   * degraded) keeps the cells, because for those the absence of a row *is*
+   * information. `source` is optional on the wire — absent means "this host has
+   * no provenance for this row" — so only an explicit `builtin` takes it.
+   */
+  const builtinNote = plugin.source === 'builtin' && asset.phase === 'undeclared'
   return <div className={`iris-plugin__asset iris-plugin__asset--${asset.phase}`} id={assetId} data-plugin-asset-phase={asset.phase}>
     <dl className="iris-plugin__asset-facts">
       <div><dt>{translate(lang, 'pluginCenterHostRuntime')}</dt><dd>{translate(lang, STATUS_KEYS[plugin.status])}</dd></div>
-      <div><dt>{translate(lang, 'pluginCenterBrowserAsset')}</dt><dd className="iris-plugin__asset-phase">{translate(lang, PHASE_KEYS[asset.phase])}</dd></div>
-      <div><dt>{translate(lang, 'pluginCenterExpectedRevision')}</dt><dd>{asset.expectedRevision === undefined ? translate(lang, 'pluginCenterNone') : String(asset.expectedRevision)}</dd></div>
-      <div><dt>{translate(lang, 'pluginCenterManifestRevision')}</dt><dd>{asset.manifestRevision === undefined ? translate(lang, 'pluginCenterNone') : String(asset.manifestRevision)}</dd></div>
-      <div><dt>{translate(lang, 'pluginCenterActualRevision')}</dt><dd data-asset-rev={asset.actualRevision}>{asset.actualRevision ?? translate(lang, 'pluginCenterNone')}</dd></div>
-      <div><dt>{translate(lang, 'pluginCenterLastLoaded')}</dt><dd>{loadedAt ?? translate(lang, 'pluginCenterLastLoadedNever')}</dd></div>
+      {builtinNote ? null : <>
+        <div><dt>{translate(lang, 'pluginCenterBrowserAsset')}</dt><dd className="iris-plugin__asset-phase">{translate(lang, PHASE_KEYS[asset.phase])}</dd></div>
+        <div><dt>{translate(lang, 'pluginCenterExpectedRevision')}</dt><dd>{asset.expectedRevision === undefined ? translate(lang, 'pluginCenterNone') : String(asset.expectedRevision)}</dd></div>
+        <div><dt>{translate(lang, 'pluginCenterManifestRevision')}</dt><dd>{asset.manifestRevision === undefined ? translate(lang, 'pluginCenterNone') : String(asset.manifestRevision)}</dd></div>
+        <div><dt>{translate(lang, 'pluginCenterActualRevision')}</dt><dd data-asset-rev={asset.actualRevision}>{asset.actualRevision ?? translate(lang, 'pluginCenterNone')}</dd></div>
+        <div><dt>{translate(lang, 'pluginCenterLastLoaded')}</dt><dd>{loadedAt ?? translate(lang, 'pluginCenterLastLoadedNever')}</dd></div>
+      </>}
     </dl>
+    {builtinNote ? <p className="iris-plugin__asset-builtin" data-plugin-builtin-asset-note>{translate(lang, 'pluginCenterBuiltinAssetNote')}</p> : null}
     {degraded && asset.error !== undefined ? <div className="iris-plugin__asset-failure">
       <p className="iris-plugin__asset-error" role="alert" id={assetErrorId}>
         <strong>{translate(lang, 'pluginCenterAssetErrorTitle')}</strong> {translate(lang, ASSET_ERROR_KEYS[asset.error.kind])} {asset.error.message}

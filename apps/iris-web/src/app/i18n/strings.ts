@@ -1659,6 +1659,10 @@ export const en = {
   pluginCenterActualRevision: 'Asset content rev',
   pluginCenterLastLoaded: 'Last loaded',
   pluginCenterLastLoadedNever: 'Never',
+  // A builtin ships no browser bundle of its own: its frame members ride the
+  // core member bundle. Said in words instead of three cells reading
+  // "Not declared / None / Never", which read as a fault.
+  pluginCenterBuiltinAssetNote: "A builtin plugin's frame members load with the core member bundle; there is no separate browser bundle.",
   pluginCenterAssetErrorTitle: 'Browser asset problem:',
   pluginCenterAssetErrorFix: 'The host plugin stays enabled; fix the browser asset, then retry. Ordinary cards keep running meanwhile.',
   pluginCenterAssetRetry: 'Retry asset load',
@@ -3087,6 +3091,8 @@ export const zh: Record<StringKey, string> = {
   pluginCenterActualRevision: '资产内容 rev',
   pluginCenterLastLoaded: '最近成功加载',
   pluginCenterLastLoadedNever: '从未',
+  /** 内置插件没有独立的浏览器包：帧侧成员随核心成员包加载。 */
+  pluginCenterBuiltinAssetNote: '内置插件的帧侧成员随核心成员包加载，没有独立的浏览器包。',
   pluginCenterAssetErrorTitle: '浏览器资产故障：',
   pluginCenterAssetErrorFix: '宿主插件保持启用；请修复浏览器资产后重试，期间普通卡片照常运行。',
   pluginCenterAssetRetry: '重试资产加载',
