@@ -8703,3 +8703,87 @@ different layer, and the vocabulary is already reserved for it. (c) A source
 that is genuinely mixed — `dialogueExamples` today is `emTop`/`emBottom` world
 book around the card's `mes_example`, and is tagged `card` because that is the
 field a reader goes looking for; if that becomes misleading a sixth kind is owed.
+
+## 88. The itemization says where each part went, and the request says which parts it holds
+
+**What changed.** M1 step 2 of `notes/tasks/M1-PROMPT-BUILD-REPORT.md`. Step 1
+answered "who wrote this byte and why is it zero"; this answers "which message
+did it land in, and is it inside the cached prefix". A part now carries
+`explanation.placement` (`messageIndex` / `role` / `depth`) and
+`explanation.stable`, and `PromptItemization.messages` is the reverse index —
+one row per final message with its `partIds`, `tokens` and `stable`.
+
+**One pass, two directions — that is the whole design.** `@iris/pipeline`'s
+`assemble` used to call `itemize`, which re-derived the request from the
+contributions to know where things went. That is a second derivation, and it is
+exactly the double-track the manual's iron rule forbids. Now `assemble` builds
+the request once and calls `project(contributions, kept, messages, system,
+count, cacheFriendly)`, which walks the **same** `messages` array the provider
+is about to read and fills both `items` and `messageSlots`. `itemize` remains as
+a thin standalone entry point that builds the request the same way
+(`injectAtDepth` + `renderSystem`) and delegates to `project`, so a caller
+holding only contributions still gets a consistent account.
+
+A part is located by construction, never by searching the assembled text: the
+message's own `id` (or its `parts` for a split bucket) is the datum the
+divergence report already trusted, and `project` turns it into an id → message
+map. Two contributions sharing a line — routine, since the MVU boilerplate is
+copied between world books — would defeat any textual search, and this cannot
+degrade to one.
+
+**`stable` is the prefix boundary at part granularity.** `stablePrefixTokens`
+and the per-message verdicts now come from one function, `stableBoundary`, which
+walks the system sections and then the messages and stops at the first volatile
+one. Two walks would eventually disagree about the same request, and the panel
+would show a row inside the prefix that the number beside it says is outside.
+The walk distinguishes "the run ended inside the system prompt" (everything
+after, including every message, is unservable) from "the run reached the
+messages and ended at index N", which is a distinction the byte count alone
+cannot carry and the message list needs.
+
+**A bucket's own row carries no placement, for the same reason it carries no
+single moved mark.** Its members went to different messages and no one index is
+true of the row; the members carry their own. The conversation's aggregate row
+carries neither `placement` nor `stable` — its floors are separate messages, and
+a single bit could only mean "every floor is cached" or "some floor is", which a
+reader cannot tell apart.
+
+**A custom marker is the preset's, not the card's.** Step 1's `sourceOf` let an
+identifier the marker table did not name fall through to a card default. The
+measured corpus has the counterexample: a real preset carries a
+`搜索内容注入` / `搜索结束` marker pair for a search extension to fill, and this
+host has no filler — so those rows claimed the card wrote bytes it has never
+seen. `HOST_MARKERS` (read off the table, so a marker added there is known here
+by construction) draws the line: a host-filled marker gets its author, and a
+marker outside that set is `preset` — the preset declared the slot — keeping the
+`marker-unfilled` reason and the preset's own name as the label.
+
+**Verified on real data.** The preview path was run against a real install's
+`爱衣.png` and a real preset after a real turn: **23 rows, 6 messages, 9 placed,
+0 mismatched, 2 floors, 3 stable messages**. The zero every-direction count is
+the property the round trip exists for, and it held against the host's own
+assembly rather than a fixture. The probe was a temporary file, run and deleted;
+nothing of it is committed.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| every placed part resolves both ways (`itemize.test.ts`) | drop the id → message map in `project` | red → revert → green |
+| a row is stable exactly when its message is (`itemize.test.ts`) | (see the pipeline test below — the host fixture has no volatile part, so this one is a weak net by itself and says so) | green alone |
+| the message list marks parts stable up to the first volatile one (`assemble.test.ts`) | force `stable: true` on every slot | red → revert → green |
+| a message's own `partIds` name its parts | empty the message loop's `partIds` | red → revert → green |
+| a custom marker this host cannot fill is attributed to the preset (`itemize.test.ts`) | make `sourceOf` fall through to a card default again | red → revert → green |
+| the fake's two views agree (`prompt-explanation.test.ts`, web) | move a fixture entry's `placement.messageIndex` without moving the message | red → revert → green |
+
+### What would reopen this
+
+(a) A second message list — the driver's `squashSystemRuns` merges messages and
+`layoutOf` records the wire, both *after* `assemble`, so `messageSlots` describes
+the pre-squash list. A panel that wanted to show the provider's own message
+boundaries would need the driver's layout, which is a different contract (it
+carries text and rides on `GenerateOptions`); the two are deliberately not
+merged. (b) Per-floor tokens: the conversation is one aggregate row by contract,
+so a floor's cost in the message view is its message's, not its own — splitting
+it is the same "UI hypothetical into the assembler" the aggregate row exists to
+refuse.

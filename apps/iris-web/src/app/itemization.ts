@@ -15,7 +15,7 @@
  * @module iris-web/app/itemization
  */
 
-import type { PromptItemEntry, PromptItemExplanation, PromptItemization, PromptItemMember, PromptItemSource } from '@iris/protocol'
+import type { PromptItemEntry, PromptItemExplanation, PromptItemization, PromptItemMember, PromptItemSource, PromptMessageSlot } from '@iris/protocol'
 
 /**
  * The part of a row both the row and its members carry.
@@ -25,7 +25,7 @@ import type { PromptItemEntry, PromptItemExplanation, PromptItemization, PromptI
  * not an entry (no `kind`, no placement) and duplicating the functions for it
  * would be a second place for the copy to drift.
  */
-type Explained = { tokens: number, explanation?: PromptItemExplanation }
+export type Explained = { tokens: number, explanation?: PromptItemExplanation }
 
 /** How the rows are ordered. */
 export type ItemOrder = 'size' | 'assembly'
@@ -169,6 +169,108 @@ export function sourceNoteKey(entry: Explained): { key: string, name: string } |
   // The label when the author gave one, the id otherwise — the id is often a
   // UUID (29 of a real preset's 41), so the label is what a person reads.
   return { key, name: source.label ?? source.id }
+}
+
+/**
+ * One part inside a message, as the message view needs it.
+ *
+ * Resolved from a row or a member where the host explained one, and from a
+ * floor's own id where the part is a conversation line — the conversation is an
+ * aggregate row by contract, so its floors have no entry to look up and their
+ * number is the whole of what is knowable here.
+ */
+export interface MessagePart {
+  id: string
+  /** What to show: the entry's label, or `floor 6` for a conversation line. */
+  label: string
+  kind: PromptItemEntry['kind']
+  /** What this part costs, when the host names it — absent for a floor. */
+  tokens?: number
+  explanation?: PromptItemExplanation
+  /**
+   * True when this part is a conversation floor rather than an assembly item.
+   *
+   * A floor has no label of its own and no per-floor token in this contract, so
+   * a surface renders its number and takes the message's own cost as the answer.
+   */
+  floor: boolean
+}
+
+/** One final message, with its parts resolved to something renderable. */
+export interface MessageRow {
+  index: number
+  role: string
+  tokens: number
+  stable: boolean
+  parts: MessagePart[]
+}
+
+/**
+ * The request read as messages, rather than as contributions.
+ *
+ * The same assembly seen the other way round: `entries` is a table of parts that
+ * says which message each went to, and this is the list of messages that says
+ * which parts each holds. Both are on the contract, and they come from the one
+ * pass that built the request, so a reader can switch between the two views
+ * without either re-deriving the other.
+ *
+ * Parts are resolved against the entries and their members. A part no entry
+ * names is a conversation floor (`history.N`), which the itemization folds into
+ * one aggregate row on purpose — its number is all this view can honestly say
+ * about it.
+ *
+ * Returns an empty list for a host that does not send `messages` — an older
+ * record — so a caller renders nothing rather than a message list with no
+ * provenance in it.
+ * @param itemization - the host's answer.
+ * @returns one row per final message, in the request's own order.
+ */
+export function messageRows(itemization: PromptItemization): MessageRow[] {
+  const known = new Map<string, { part: Omit<MessagePart, 'floor'> }>()
+  for (const entry of itemization.entries) {
+    known.set(entry.id, {
+      part: {
+        id: entry.id,
+        label: entry.label,
+        kind: entry.kind,
+        tokens: entry.tokens,
+        ...entry.explanation === undefined ? {} : { explanation: entry.explanation },
+      },
+    })
+    for (const member of entry.members ?? []) {
+      known.set(member.id, {
+        part: {
+          id: member.id,
+          label: member.label,
+          // A member rides inside its bucket's placement, so it shares the
+          // bucket's kind — a world-info entry at depth 0 is a depth part.
+          kind: entry.kind,
+          tokens: member.tokens,
+          ...member.explanation === undefined ? {} : { explanation: member.explanation },
+        },
+      })
+    }
+  }
+
+  return (itemization.messages ?? []).map((slot: PromptMessageSlot) => ({
+    index: slot.index,
+    role: slot.role,
+    tokens: slot.tokens,
+    stable: slot.stable,
+    parts: slot.partIds.map((id) => {
+      const entry = known.get(id)
+      if (entry !== undefined) return { ...entry.part, floor: false }
+      // A floor. `history.6` is the host's id; the number after the dot is the
+      // only human-readable form of it, and the divergence module already
+      // prints floors the same way.
+      return {
+        id,
+        label: id.startsWith('history.') ? `floor ${id.slice('history.'.length)}` : id,
+        kind: 'history' as const,
+        floor: true,
+      }
+    }),
+  }))
 }
 
 /**

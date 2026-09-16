@@ -38,7 +38,7 @@ import { bookFigures } from '../src/app/character-facts.ts'
 import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView, SystemPluginInstallPreview } from '@iris/protocol'
-import { contributing, discrepancy, rowsFor } from '../src/app/itemization.ts'
+import { contributing, discrepancy, messageRows, rowsFor } from '../src/app/itemization.ts'
 import { pressureLevel } from '../src/app/context-occupancy.ts'
 import { ringDash } from '../src/app/composer-bar.ts'
 import { ContextCard } from '../src/app/ContextMeter.tsx'
@@ -1638,6 +1638,37 @@ async function main(): Promise<void> {
     new Set(zeroReasons).size >= 2,
     'the fixture\'s zero rows must carry different reasons, or the panel never has to tell them apart',
   )
+  // The message view is a second view of the same request, and the fake has to
+  // carry both or the tab would open onto nothing. The round trip is asserted
+  // here as well as on the host side: a fixture that drifted from itself would
+  // show a request the host cannot assemble.
+  const messageSlots = breakdown.messages
+  assert.ok(messageSlots !== undefined && messageSlots.length >= 2, 'the fixture must carry the reverse index')
+  const namedBy = new Map<string, number>()
+  for (const slot of messageSlots) for (const id of slot.partIds) namedBy.set(id, slot.index)
+  let placedInFixture = 0
+  for (const entry of breakdown.entries) {
+    const at = entry.explanation?.placement
+    if (at === undefined) continue
+    placedInFixture += 1
+    assert.equal(namedBy.get(entry.id), at.messageIndex,
+      `${entry.id} disagrees between the fixture's two views`)
+  }
+  assert.ok(placedInFixture >= 2, 'the fixture must place parts for the message view to show')
+  // A part with no placement is in no message — the zero rows, which must not be
+  // given an invented one.
+  for (const entry of breakdown.entries) {
+    if (entry.explanation?.placement !== undefined) continue
+    assert.equal(namedBy.has(entry.id), false, `${entry.id} has no placement but a message names it`)
+  }
+  // The message view's own resolver produces a row per message, with the system
+  // prompt's parts resolved to their entries and a floor labelled as a floor.
+  const viewed = messageRows(breakdown)
+  assert.equal(viewed.length, messageSlots.length)
+  assert.ok(viewed.some(message => message.parts.some(part => part.floor)),
+    'the fixture should carry a conversation floor for the message view to name')
+  assert.ok(viewed.some(message => message.stable) && viewed.some(message => !message.stable),
+    'the fixture should carry both a cached and an uncached message, or the prefix wording is untested')
 
   // -------------------------------------------------------- connections
   // The property this panel exists for: a stored display name is a snapshot and

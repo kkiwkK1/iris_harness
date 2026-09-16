@@ -247,6 +247,42 @@ test('a marker slot that had nothing to put in it appears as a zero, not as an a
   assert.equal(ids.filter(id => id === 'worldInfoBefore').length, 1)
 })
 
+test('a custom marker this host cannot fill is attributed to the preset, not the card', async (t) => {
+  // The measured shape: a real preset carries a `搜索内容注入` / `搜索结束` pair —
+  // markers a search extension fills. This host has no filler, so the rows are
+  // zero, and the question "whose row is this" has a right answer: the preset
+  // declared the slot, no card field was ever read. Falling through to a card
+  // default sent a reader to look at a field the preset never touched.
+  const preset: ChatCompletionPreset = {
+    prompts: [
+      { identifier: 'main', name: 'Main', role: 'system', content: 'Speak.', enabled: true },
+      { identifier: 'searchInjection', name: '搜索内容注入', role: 'system', marker: true, enabled: true },
+      { identifier: 'searchEnd', name: '搜索结束', role: 'system', content: '{{setvar::search::done}}', enabled: true },
+    ],
+    prompt_order: [{
+      character_id: 100001,
+      order: [
+        { identifier: 'main', enabled: true },
+        { identifier: 'searchInjection', enabled: true },
+        { identifier: 'searchEnd', enabled: true },
+      ],
+    }],
+  }
+  const fix = await fixture(t, undefined, preset)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  const injection = itemization.entries.find(entry => entry.id === 'searchInjection')
+  assert.ok(injection !== undefined, 'a preset marker with no host filler must still get a row')
+  assert.equal(injection.tokens, 0)
+  assert.equal(injection.explanation?.zeroReason, 'marker-unfilled')
+  // **The fix.** Not `card` — the preset declared this marker and no card field
+  // backs it — and the label is the preset's own name for the slot, so a reader
+  // recognises the row.
+  assert.equal(injection.explanation?.source.kind, 'preset')
+  assert.equal(injection.explanation?.source.label, '搜索内容注入')
+})
+
 test('a slot this generation never offered is not zeroed', async (t) => {
   const fix = await fixture(t)
   const created = await fix.handlers['chat.create']({ characterId: 'aria' })
@@ -372,6 +408,122 @@ test('the explanation is deterministic: the same state itemizes to the same repo
   // And the report is not trivially empty of explanations, or the equality
   // above would hold for a shape that carries nothing.
   assert.ok(first.itemization.entries.some(entry => entry.explanation !== undefined))
+})
+
+/**
+ * Every part can be found from the request, and every part's placement can be
+ * found from the request's other direction.
+ *
+ * Two maps are built in one assembly pass: each part says which message it went
+ * to (`explanation.placement.messageIndex`), and each message says which parts
+ * it holds (`messages[].partIds`). They are two views of the same fact, so the
+ * test is a **round trip**: for every placed part, its message names it; for
+ * every message part, the part knows its message. A single direction would pass
+ * with a broken reverse index and say nothing about the panel's message view.
+ *
+ * Counts are lower bounds, not pins — one real preset's rows are not this test's
+ * subject. The floor is that both directions actually saw something, so a
+ * mutation that empties either side cannot pass by having nothing to check.
+ */
+test('every placed part resolves both ways between the rows and the messages', async (t) => {
+  const fix = await fixture(t)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  const messages = itemization.messages
+  assert.ok(messages !== undefined, 'the host must send the reverse index')
+  assert.ok(messages.length >= 2, `expected a system prompt and a conversation, got ${String(messages.length)}`)
+
+  /** part id → the message indices that name it. */
+  const namedBy = new Map<string, number[]>()
+  for (const message of messages) {
+    for (const id of message.partIds) {
+      const list = namedBy.get(id) ?? []
+      list.push(message.index)
+      namedBy.set(id, list)
+    }
+  }
+
+  // Forward: a part that says it went to message N is named by message N.
+  let placed = 0
+  for (const entry of itemization.entries) {
+    const at = entry.explanation?.placement
+    if (at === undefined) continue
+    placed += 1
+    assert.ok(
+      namedBy.get(entry.id)?.includes(at.messageIndex) === true,
+      `${entry.id} claims message ${String(at.messageIndex)} but no message names it`,
+    )
+  }
+  // Reverse: a message part that is an assembly item knows its own placement.
+  const byId = new Map(itemization.entries.map(entry => [entry.id, entry]))
+  let attributed = 0
+  for (const message of messages) {
+    for (const id of message.partIds) {
+      const entry = byId.get(id)
+      if (entry === undefined) continue // a floor
+      attributed += 1
+      assert.equal(
+        entry.explanation?.placement?.messageIndex,
+        message.index,
+        `${id} is named by message ${String(message.index)} but claims another`,
+      )
+    }
+  }
+
+  // The floors are in the other direction only — the conversation is one
+  // aggregate row, so no entry names a floor — and that is the asymmetry this
+  // test exists to make explicit rather than to paper over.
+  const floors = messages.flatMap(message => message.partIds).filter(id => id.startsWith('history.'))
+  assert.ok(floors.length > 0, 'the fixture should have a conversation floor for the reverse index to name')
+
+  // Both directions saw real work, so neither could have passed empty.
+  assert.ok(placed >= 2, `only ${String(placed)} placed parts; the forward check is not exercising anything`)
+  assert.ok(attributed >= 2, `only ${String(attributed)} attributed message parts; the reverse check is vacuous`)
+
+  // And the counts agree where they must: every placed part is named somewhere,
+  // so the two directions see the same population apart from the floors.
+  assert.equal(
+    messages.flatMap(message => message.partIds).filter(id => byId.has(id)).length,
+    placed,
+    'the two directions disagree about how many parts were placed',
+  )
+})
+
+/**
+ * The stable flag agrees with the boundary the number reports.
+ *
+ * A row is `stable` when it is inside the leading volatile-free run, and
+ * `stablePrefixTokens` is the size of that run. The two are computed by one walk
+ * so they cannot disagree, and this pins the agreement on a case where the run
+ * really does stop in the middle — a volatile depth injection — rather than on
+ * one where everything is stable and any rule would pass.
+ */
+test('a row is stable exactly when it sits before the first volatile part', async (t) => {
+  const fix = await fixture(t)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  await fix.handlers['chat.send']({ chatId: created.view.chatId, text: 'Hi.' })
+  await fix.settled()
+
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId: created.view.chatId })
+  const messages = itemization.messages ?? []
+  // Every message's own verdict is present, and a stable one never follows an
+  // unstable one — the run is a prefix, which is what makes a single token
+  // count for it meaningful.
+  let seenUnstable = false
+  for (const message of messages) {
+    if (!message.stable) seenUnstable = true
+    else assert.equal(seenUnstable, false, `message ${String(message.index)} is stable but follows an unstable one`)
+  }
+
+  // A part's own `stable` matches the message it is in, for every part that
+  // reports both.
+  for (const entry of itemization.entries) {
+    const at = entry.explanation?.placement
+    if (at === undefined || entry.explanation?.stable === undefined) continue
+    const message = messages.find(slot => slot.index === at.messageIndex)
+    assert.equal(entry.explanation.stable, message?.stable, `${entry.id} disagrees with its message about the prefix`)
+  }
 })
 
 test('the explanation carries no prompt text and no secret', async (t) => {

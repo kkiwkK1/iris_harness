@@ -19,7 +19,7 @@
 import { BlockAssembler, createAssistantMessage, createUserMessage, isHarnessError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { appendCandidate, selectCandidate, selectedCandidate, SwipeError, type Candidate } from '@iris/chat'
-import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
+import { assemble, DEFAULT_TRIM_BLOCK_FLOORS, type AssembledPlacement, type AssembleResult, type Contribution, type HistoryEntry } from '@iris/pipeline'
 import { computeBudget, type LorebookEntry } from '@iris/lorebook'
 import { evaluateBatch } from '@iris/compat-prompt-template'
 import { StCompatBridge, applyGenerateResultToContributions, bridgeMessagesFromContributions, contributionsHaveTemplates, validateReplyResult } from '@iris/compat-st-extension'
@@ -5985,7 +5985,7 @@ export class IrisAppService {
     return {
       turn,
       entries: result.items.map((item) => {
-        const explanation = explanationOf(item.source, item.zeroReason)
+        const explanation = explanationOf(item.source, item.zeroReason, item.placement, item.stable)
         return {
           id: item.id,
           // The id is frequently a UUID; the label is what a person reads.
@@ -6005,7 +6005,7 @@ export class IrisAppService {
             ? {}
             : {
                 members: item.members.map((member) => {
-                  const memberExplanation = explanationOf(member.source)
+                  const memberExplanation = explanationOf(member.source, undefined, member.placement, member.stable)
                   return {
                     id: member.id,
                     label: member.label ?? member.id,
@@ -6027,6 +6027,17 @@ export class IrisAppService {
       droppedHistory: result.overflow.droppedHistory,
       overBudget: result.overflow.overBudget,
       preview,
+      // The reverse index, one entry per final message. `partIds` is passed
+      // through as the assembler wrote it: an empty list means "the assembler
+      // did not place this message", which a surface reads as unattributed
+      // rather than filling in a guess.
+      messages: result.messageSlots.map(slot => ({
+        index: slot.index,
+        role: slot.role,
+        tokens: slot.tokens,
+        stable: slot.stable,
+        partIds: [...slot.partIds],
+      })),
     }
   }
 
@@ -7326,13 +7337,17 @@ export class IrisAppService {
  * "not explained" is a state a surface has to render as itself.
  * @param source - the pipeline's provenance, when it has one.
  * @param zeroReason - why the part is zero, when it is.
- * @returns the wire shape, or undefined when both are absent.
+ * @param placement - which message it landed in, when the assembler placed it.
+ * @param stable - whether it is inside the leading volatile-free run.
+ * @returns the wire shape, or undefined when there is nothing to say.
  */
 function explanationOf(
   source: Contribution['source'],
   zeroReason?: Contribution['zeroReason'],
+  placement?: AssembledPlacement,
+  stable?: boolean,
 ): PromptItemExplanation | undefined {
-  if (source === undefined && zeroReason === undefined) return undefined
+  if (source === undefined && zeroReason === undefined && placement === undefined) return undefined
   return {
     // A zero reason without a source is still worth reporting, and the honest
     // owner of such a row is the host's own assembly. It does not happen today —
@@ -7340,6 +7355,8 @@ function explanationOf(
     // the wire shape total rather than making the callers guard.
     source: source ?? { kind: 'host', id: '' },
     ...zeroReason === undefined ? {} : { zeroReason },
+    ...placement === undefined ? {} : { placement },
+    ...stable === undefined ? {} : { stable },
   }
 }
 

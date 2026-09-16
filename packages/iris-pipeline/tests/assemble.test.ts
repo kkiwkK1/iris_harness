@@ -211,3 +211,63 @@ test('provenance metadata changes no assembled byte', () => {
   )
   assert.equal(traced.items.find(item => item.id === 'init')?.zeroReason, 'macros-only')
 })
+
+/**
+ * The reverse index marks a part stable exactly when it sits before the first
+ * volatile one — and the boundary really does move.
+ *
+ * A hand-crafted assembly, so the volatile part is *known*: a system section
+ * marked volatile makes everything from it on unservable, which is what the
+ * prefix cache does and what the message view has to show. `stablePrefixTokens`
+ * and the per-message verdicts come from one walk, and this pins that they agree
+ * on a request where the walk actually stops in the middle.
+ */
+test('the message list marks parts stable up to the first volatile one', () => {
+  const contributions: Contribution[] = [
+    { id: 'a', placement: { kind: 'system', order: 10 }, text: 'A' },
+    { id: 'b', placement: { kind: 'system', order: 20 }, text: 'B', volatile: true },
+    { id: 'c', placement: { kind: 'system', order: 30 }, text: 'C' },
+    { id: 'd0', placement: { kind: 'depth', depth: 0, role: 'system' }, text: 'D0' },
+  ]
+  const result = assemble({ contributions, history: conversation(2), budget: roomy })
+
+  // The system prompt is one message and it is not stable — a volatile section
+  // is inside it, so no part of it can be served.
+  const [system, ...rest] = result.messageSlots
+  assert.equal(system?.index, 0)
+  assert.equal(system?.stable, false)
+  assert.deepEqual(system?.partIds, ['a', 'b', 'c'])
+  // And everything after it is outside the run too, including the depth-0
+  // injection before the reply: one changed byte costs everything behind it.
+  assert.equal(rest.every(slot => slot.stable === false), true)
+  // The depth-0 injection is its own message and names itself — the reverse
+  // index's per-message half, which is what the message view reads.
+  const injected = result.messageSlots.find(slot => slot.partIds.includes('d0'))
+  assert.ok(injected !== undefined, 'the depth injection should be named by a message')
+  assert.deepEqual(injected.partIds, ['d0'])
+  // The conversation's floors are named too, when the caller gave them ids —
+  // `historyFromSession` always does, and this is what the message view shows
+  // as "floor 0".
+  const withIds = assemble({
+    contributions,
+    history: conversation(2).map((entry, index) => ({ ...entry, id: `history.${String(index)}` })),
+    budget: roomy,
+  })
+  assert.equal(withIds.messageSlots.some(slot => slot.partIds.includes('history.0')), true)
+
+  // The row's own verdict agrees with its message's, for every placed part.
+  for (const item of result.items) {
+    if (item.placement === undefined) continue
+    assert.equal(item.stable, result.messageSlots[item.placement.messageIndex]?.stable,
+      `${item.id} disagrees with its message about the prefix`)
+  }
+
+  // Now with nothing volatile, the same request is stable throughout — the
+  // boundary is read from the classifications, never invented.
+  const clean = assemble({
+    contributions: contributions.map(({ volatile: _v, ...rest }) => rest),
+    history: conversation(2),
+    budget: roomy,
+  })
+  assert.equal(clean.messageSlots.every(slot => slot.stable), true)
+})

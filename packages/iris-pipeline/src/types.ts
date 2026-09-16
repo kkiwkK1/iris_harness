@@ -373,6 +373,49 @@ export interface Overflow {
   overBudget: boolean
 }
 
+/** Where one assembled part ended up, in the request the model reads. */
+export interface AssembledPlacement {
+  /**
+   * Which message it landed in — an index into
+   * {@link AssembleResult.messageSlots}.
+   *
+   * Index 0 is the system prompt when there is one (every system section lands
+   * there); the conversation and the depth injections follow. That is the same
+   * numbering `@iris/turn`'s `PromptLayout` uses for the wire, so a reader can
+   * line a row up with the request it describes.
+   */
+  messageIndex: number
+  /** The role the assembly gave that message. */
+  role: Role
+  /** For a depth placement, how many floors from the end it sits. */
+  depth?: number
+}
+
+/** One final message of an assembled request, and the parts it holds. */
+export interface AssembledMessageSlot {
+  /** Position in the message list; 0 is the system prompt when there is one. */
+  index: number
+  role: Role
+  /** What this message costs. */
+  tokens: number
+  /**
+   * Whether every part in it is inside the leading volatile-free run.
+   *
+   * A message and its parts share one verdict, because a cache serves whole
+   * bytes: a message that is not in the prefix takes its parts with it.
+   */
+  stable: boolean
+  /**
+   * The ids of the parts inside, in order — a contribution's, a member's, or
+   * a floor's `history.N`.
+   *
+   * The reverse index the panel's message view is built from. Empty for a
+   * message the assembler did not place; absent parts mean "unattributed"
+   * rather than an error, the same reading {@link PipelineMessage.id} takes.
+   */
+  partIds: string[]
+}
+
 /** One part of an assembled request, with what it cost. */
 export interface AssembledItem {
   id: string
@@ -381,10 +424,32 @@ export interface AssembledItem {
   tokens: number
   depth?: number
   role?: Role
-  /** Where this part's text came from; see {@link ContributionSource}. */
+  /** Where this row's text came from; see {@link ContributionSource}. */
   source?: ContributionSource
-  /** Why this part rendered to nothing, on the rows where that happened. */
+  /** Why this row rendered to nothing, on the rows where that happened. */
   zeroReason?: ContributionZeroReason
+  /**
+   * Which message of the assembled request this row landed in.
+   *
+   * Absent when the row rendered to nothing (there is no message to name) and
+   * when a split bucket's own row no longer sits in one place — the members
+   * carry their own placements then, exactly as they carry their own
+   * deferred/promoted marks. Present for every row that put bytes in the
+   * request, which is the property the panel's "message" view reads and the
+   * round-trip coverage test counts.
+   */
+  placement?: AssembledPlacement
+  /**
+   * Whether this row is inside the request's leading volatile-free run — the
+   * part of the request a prefix cache could serve on the next turn.
+   *
+   * The same boundary {@link AssembleResult.stablePrefixTokens} reports, at
+   * part granularity: a row is stable when it sits before the first volatile
+   * section or message. Omitted rather than false when the row has no
+   * placement, so a reader never shows "not in the prefix" for text that is
+   * not in the request at all.
+   */
+  stable?: boolean
   /**
    * True when {@link AssembleInput.cacheFriendly} moved this system section
    * out of the system prompt and into the volatile segment.
@@ -430,6 +495,10 @@ export interface AssembledMember {
   tokens: number
   /** Where this member's text came from; see {@link ContributionSource}. */
   source?: ContributionSource
+  /** Where in the assembled request this member ended up; see {@link AssembledPlacement}. */
+  placement?: AssembledPlacement
+  /** Whether this member is inside the cache-friendly stable prefix. */
+  stable?: boolean
   /** True when the reorder sent this member after the conversation. */
   deferred?: boolean
   /** True when the reorder sent this member ahead of the conversation. */
@@ -497,4 +566,13 @@ export interface AssembleResult {
    * put a UI's hypothetical need into the assembler.
    */
   items: AssembledItem[]
+  /**
+   * The request's own message list, each message with the parts inside it.
+   *
+   * The reverse of {@link AssembledItem.placement}: where the itemization lists
+   * parts and says which message each landed in, this lists messages and says
+   * which parts each holds. Both are derived in the one pass that builds the
+   * request, so they cannot disagree about where a part went.
+   */
+  messageSlots: AssembledMessageSlot[]
 }

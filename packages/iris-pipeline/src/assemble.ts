@@ -25,6 +25,8 @@
 import type {
   AssembledItem,
   AssembledMember,
+  AssembledMessageSlot,
+  AssembledPlacement,
   AssembleInput,
   AssembleResult,
   Contribution,
@@ -817,21 +819,11 @@ function stablePrefixTokens(
   cacheFriendly: boolean,
   count: TokenCounter,
 ): number {
-  const kept = systemOrder(contributions).filter(item => !moves(item, cacheFriendly))
-  const sections: string[] = []
-  for (const item of kept) {
-    const text = item.text.trim()
-    if (text.length === 0) continue
-    // An empty section is not a boundary: it contributes no bytes, so a
-    // volatile one that rendered to nothing cannot break anything.
-    if (item.volatile === true) return count(sections.join(SYSTEM_JOIN))
-    sections.push(text)
-  }
-
+  const { sections, messageLimit } = stableBoundary(contributions, messages, cacheFriendly)
   let total = count(sections.join(SYSTEM_JOIN))
-  for (const message of messages) {
-    if (message.volatile === true) break
-    total += count(message.text)
+  for (let index = 0; index < messageLimit; index += 1) {
+    const message = messages[index]
+    if (message !== undefined) total += count(message.text)
   }
   return total
 }
@@ -894,6 +886,10 @@ export function assemble(input: AssembleInput): AssembleResult {
   const messages = injectAtDepth(kept, contributions, cacheFriendly)
 
   const tokens = count(system) + messages.reduce((total, message) => total + count(message.text), 0)
+  // One pass fills both the per-part account and the per-message reverse index,
+  // so they cannot disagree about which message a part went to. Same `kept`,
+  // same `messages` the request carries.
+  const account = project(contributions, kept, messages, system, count, cacheFriendly)
 
   return {
     system,
@@ -902,28 +898,160 @@ export function assemble(input: AssembleInput): AssembleResult {
     tokens,
     stablePrefixTokens: stablePrefixTokens(contributions, messages, cacheFriendly, count),
     overflow: { droppedHistory: dropped, overBudget: available < 0 },
-    items: itemize(contributions, kept, count, cacheFriendly),
+    items: account.items,
+    messageSlots: account.messageSlots,
   }
 }
 
 /**
- * Attribute the assembled tokens to the parts that produced them.
+ * Where the leading volatile-free run ends, as one walk both readers share.
+ *
+ * A prefix cache serves whole bytes: one changed byte costs everything behind
+ * it. So the run is the system prompt's sections in render order, then the
+ * messages, stopping at the first volatile one — and the two readers below must
+ * agree on exactly where that is. `stablePrefixTokens` charges the bytes up to
+ * the boundary; {@link projections} marks each part against it. Two walks would
+ * eventually disagree about the same request, and the panel would then show a
+ * row inside the prefix that the number beside it says is outside.
+ *
+ * `sectionLimit` is how many system sections are stable and non-empty — the
+ * sections before the first volatile one. `messageLimit` is the first message
+ * index that is volatile, or the whole list when none is.
+ * @param contributions - every contribution.
+ * @param messages - the assembled conversation.
+ * @param cacheFriendly - whether the reorder moved the volatile sections out.
+ * @returns the two cut points, and the stable system text they cover.
+ */
+function stableBoundary(
+  contributions: readonly Contribution[],
+  messages: readonly PipelineMessage[],
+  cacheFriendly: boolean,
+): { sections: string[], sectionLimit: number, messageLimit: number } {
+  const kept = systemOrder(contributions).filter(item => !moves(item, cacheFriendly))
+  const sections: string[] = []
+  let sectionLimit = 0
+  // Whether the walk stopped *inside* the system prompt. When it did, the
+  // whole message list is behind the boundary and none of it is stable — a
+  // fact the caller must not lose, because "the run ended at the system
+  // prompt" and "the run ended at message 0" are the same number only by
+  // accident of when the first message happened to be volatile.
+  let broke = false
+  for (const item of kept) {
+    const text = item.text.trim()
+    if (text.length === 0) continue
+    // An empty section is not a boundary: it contributes no bytes, so a
+    // volatile one that rendered to nothing cannot break anything.
+    if (item.volatile === true) { broke = true; break }
+    sections.push(text)
+    sectionLimit += 1
+  }
+
+  if (broke) return { sections, sectionLimit, messageLimit: 0 }
+  let messageLimit = messages.length
+  for (const [index, message] of messages.entries()) {
+    if (message.volatile === true) { messageLimit = index; break }
+  }
+  return { sections, sectionLimit, messageLimit }
+}
+
+/**
+ * Attribute the assembled tokens to the parts that produced them, and record
+ * which message each part landed in.
  *
  * Counted from the contributions rather than from the rendered request, so a
  * part that contributed nothing still appears with a zero — a user looking for
  * why a section is missing is better served by a zero than by an absence.
+ *
+ * **One pass produces both directions.** `messages` is the request the model is
+ * about to read; the items say which message each part went to, and the
+ * returned `messageSlots` say which parts each message holds. Deriving them
+ * together is what makes them unable to disagree: a second pass that re-derived
+ * one of the two from the other's shape would eventually name a different
+ * message for the same part.
+ *
+ * Placement rides on the same datum the divergence report already trusted — a
+ * message's `id` (and, for a split bucket, its `parts`) — so a part is located
+ * by construction rather than by searching the assembled text, which two
+ * contributions sharing a line make a guess.
  * @param contributions - the parts offered.
  * @param kept - the history that survived the budget.
+ * @param messages - the assembled conversation, exactly as the request carries it.
+ * @param system - the rendered system prompt ("" when there is none).
  * @param count - the token counter.
  * @param cacheFriendly - whether the reorder ran, so a moved row can say so.
- * @returns one row per contribution, plus one aggregate row for the conversation.
+ * @returns one row per contribution plus the conversation aggregate, and the
+ *   request's own message list with its parts.
  */
-export function itemize(
+export function project(
   contributions: readonly Contribution[],
   kept: readonly HistoryEntry[],
+  messages: readonly PipelineMessage[],
+  system: string,
   count: TokenCounter,
   cacheFriendly = false,
-): AssembledItem[] {
+): { items: AssembledItem[], messageSlots: AssembledMessageSlot[] } {
+  const boundary = stableBoundary(contributions, messages, cacheFriendly)
+  const segments = systemSegments(contributions, cacheFriendly)
+  // The system prompt is one message at the front when any section survived;
+  // with none, every later message shifts up by one and the indices have to
+  // follow, or the panel's "message 3" names the wrong one.
+  const hasSystem = system.length > 0
+  const systemStable = boundary.sectionLimit === segments.length
+
+  const slots: AssembledMessageSlot[] = []
+  if (hasSystem) {
+    slots.push({
+      index: 0,
+      role: 'system',
+      tokens: count(system),
+      stable: systemStable,
+      partIds: segments.map(segment => segment.id),
+    })
+  }
+  for (const message of messages) {
+    const partIds = message.parts !== undefined && message.parts.length > 0
+      ? message.parts.map(part => part.id)
+      : message.id === undefined ? [] : [message.id]
+    // Whether this message is inside the leading volatile-free run. Walked
+    // rather than read off `message.volatile`, because a message can sit after
+    // a volatile one and still not be volatile itself — everything behind the
+    // first changed byte is unservable whatever its own text does.
+    const index = slots.length
+    slots.push({
+      index,
+      role: message.role,
+      tokens: count(message.text),
+      stable: index < boundary.messageLimit + (hasSystem ? 1 : 0),
+      partIds,
+    })
+  }
+
+  /** Which message each part id landed in, by construction. */
+  const messageOfPart = new Map<string, number>()
+  for (const slot of slots) for (const id of slot.partIds) messageOfPart.set(id, slot.index)
+
+  /**
+   * Where one id went, and whether it is in the prefix.
+   *
+   * The two travel together because both come from the same slot: a part is in
+   * the leading volatile-free run exactly when the message holding it is, never
+   * by a rule of its own.
+   */
+  const placementOf = (id: string, depth?: number): { placement: AssembledPlacement, stable: boolean } | undefined => {
+    const index = messageOfPart.get(id)
+    if (index === undefined) return undefined
+    const slot = slots[index]
+    if (slot === undefined) return undefined
+    return {
+      placement: {
+        messageIndex: slot.index,
+        role: slot.role,
+        ...depth === undefined ? {} : { depth },
+      },
+      stable: slot.stable,
+    }
+  }
+
   const items: AssembledItem[] = contributions.map((contribution) => {
     const split = splitOf(contribution, cacheFriendly)
     const phases = split?.members.map(member => memberPhase(member, split.placement)) ?? []
@@ -934,9 +1062,17 @@ export function itemize(
       ...member.label === undefined ? {} : { label: member.label },
       tokens: count(member.text),
       ...member.source === undefined ? {} : { source: member.source },
+      ...memberPlacement(member, split?.placement, placementOf),
       ...phases[index] === 'defer' ? { deferred: true } : {},
       ...phases[index] === 'promote' ? { promoted: true } : {},
     }))
+    // A split bucket's own row carries no placement, for the same reason it
+    // carries no single deferred/promoted mark: its members went to different
+    // messages and no one index is true of the row. The members say where each
+    // entry went, which is the whole point of having split it.
+    const whole = split === undefined && contribution.text.trim().length > 0
+    const depth = contribution.placement.kind === 'depth' ? contribution.placement.depth : undefined
+    const located = whole ? placementOf(contribution.id, depth) : undefined
     return {
       id: contribution.id,
       ...contribution.label === undefined ? {} : { label: contribution.label },
@@ -951,6 +1087,7 @@ export function itemize(
       // host could not fill (`marker-unfilled`) — the two facts the panel used
       // to render as one identical «empty».
       ...contribution.zeroReason === undefined ? {} : { zeroReason: contribution.zeroReason },
+      ...located === undefined ? {} : { placement: located.placement, stable: located.stable },
       // Reported even for a section that rendered empty and therefore was not
       // actually emitted: the row exists to answer "where did my text go", and
       // an empty volatile section is still classified volatile, which is the
@@ -975,6 +1112,12 @@ export function itemize(
     }
   })
 
+  // The conversation is one aggregate row by contract (`AssembleResult.items`
+  // says why), so it carries no `placement` and no `stable`: its floors are
+  // separate messages with separate verdicts, and that per-floor truth lives in
+  // `messageSlots`. A single bit on the aggregate could only mean "every floor
+  // is cached" or "some floor is", and a reader would not know which — so it
+  // says nothing and the view reads the floors.
   items.push({
     id: 'chatHistory',
     label: 'Chat History',
@@ -986,5 +1129,51 @@ export function itemize(
     // and not led to look for a preset item that does not exist.
     source: { kind: 'history', id: 'chatHistory' },
   })
-  return items
+  return { items, messageSlots: slots }
+}
+
+/**
+ * Where a split bucket's member went, and whether it is in the prefix.
+ *
+ * A member that rendered to nothing is absent from the request and gets
+ * neither: claiming a message for text that puts no bytes anywhere is the one
+ * answer the placement map must not invent.
+ * @param member - the entry inside the bucket.
+ * @param placement - the bucket's own depth placement, for the `depth` field.
+ * @param find - the id → placement map built from the message list.
+ * @returns the two fields, each omitted when it has nothing to say.
+ */
+function memberPlacement(
+  member: ContributionMember,
+  placement: Extract<Placement, { kind: 'depth' }> | undefined,
+  find: (id: string, depth?: number) => { placement: AssembledPlacement, stable: boolean } | undefined,
+): { placement?: AssembledPlacement, stable?: boolean } {
+  if (member.text.trim().length === 0) return {}
+  const found = find(member.id, placement?.depth)
+  return found === undefined ? {} : { placement: found.placement, stable: found.stable }
+}
+
+/**
+ * Attribute the assembled tokens to the parts that produced them.
+ *
+ * The standalone entry point, kept for callers that hold contributions and a
+ * history but not the assembled request — a test, or a reader. It builds the
+ * request the same way {@link assemble} does (`injectAtDepth`, with the same
+ * `cacheFriendly`) and delegates to {@link project}, so it can never disagree
+ * with the host's own account about where a part went.
+ * @param contributions - the parts offered.
+ * @param kept - the history that survived the budget.
+ * @param count - the token counter.
+ * @param cacheFriendly - whether the reorder ran, so a moved row can say so.
+ * @returns one row per contribution, plus one aggregate row for the conversation.
+ */
+export function itemize(
+  contributions: readonly Contribution[],
+  kept: readonly HistoryEntry[],
+  count: TokenCounter,
+  cacheFriendly = false,
+): AssembledItem[] {
+  const messages = injectAtDepth(kept, contributions, cacheFriendly)
+  const system = renderSystem(contributions, cacheFriendly)
+  return project(contributions, kept, messages, system, count, cacheFriendly).items
 }

@@ -7236,3 +7236,48 @@ and no secret」把一层楼和预设正文送进真实一回合再抓序列化�
 给 `PromptItemExplanation` 加字段，面板展开后显示——那时 `data-control` 会多一个
 折叠三角，本条的定位符不动。 (c) 若某天宿主开始产出 `blank`/`trimmed`，字典里
 已有对应的两句，是补测试而不是改文案。
+
+## 104. 提示词面板长出「按消息」视图：同一份装配的另一个方向
+
+**改了什么。** M1 第二步的 web 半。面板原来只有「按部分」一张表——每行是一个
+contribution，说它花了多少 token。现在顶部多一个切换：**按消息**列出这条请求真正
+发出的每一条消息（第几条、什么角色、多少 token、是否在缓存前缀里），每条展开显示它
+由哪些 part 组成。两个视图是**同一次装配**的两个方向：`entries[].explanation.placement`
+说每个 part 进了哪条消息，`messages[].partIds` 说每条消息装了哪些 part，宿主在一趟里
+把两者一起算出来，所以不可能互相矛盾。
+
+**为什么只读一个字段不够。** 面板原来要回答「什么在吃我的上下文」，按大小排的表是
+对的；但「实际发出去的是什么、按什么顺序」是另一个问题，而一张 contribution 顺序
+的表答不了——depth 注入在表里是一行，在请求里是回复前的最后一条消息。两个形状答一个
+问题的两面，所以做成切换而不是并排：读者挑形状，不是同时看两份。
+
+**纯函数持有决定。** `messageRows(itemization)` 把消息的 `partIds` 解析成可渲染的
+part：能在 entries 或 members 里找到的得到它的标签、kind 与 explanation；找不到的是
+对话楼层（`history.N`），渲染成「第 N 层」——对话按契约是**一条聚合行**，所以楼层没有
+可查的 entry，它的编号就是这里能诚实说的全部。返回空数组表示旧宿主没发 `messages`，
+切换根本不出现（一个打开就空的标签页会被读成缺陷，而不是旧宿主）。
+
+**`stable` 的措辞不是一个词两个意思。** 消息头上的「已在缓存前缀 / 在变更之后」来自
+消息自己的 `stable`，与行视图里那个 per-part 判断同源——都是 `stableBoundary` 一次
+walk 的结果。一个在变更之后的消息把它所有的 part 一起带出去，因为缓存服务的是整段
+字节。
+
+### 牙齿
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| `messageRows` 保序解析一条多 part 消息（`prompt-explanation.test.ts`） | 把 `partIds` 反转 | 红 → 恢复 → 绿 |
+| 楼层渲染成「第 N 层」且标 `floor` | 把楼层的分支去掉，只返回 id | 红 → 恢复 → 绿 |
+| 两个方向各自可读（漂移可见） | 让 `messageRows` 从 `placement` 反推消息 | 红（漂移不再可见） |
+| 面板的两个视图切换在 `messages` 缺席时不渲染 | 去掉 `messages.length === 0` 守卫 | 红 |
+| `iris-prompt__messages` 等类有规则且被渲染 | 删掉 CSS 规则 | 红 |
+| `data-control="prompt-messages"` 定位符 | 换掉属性值 | 红 |
+| 渲染夹具两视图一致、且同时有已缓存与未缓存消息（`render-check.tsx`） | 把夹具的 `stable` 全置 true | 红 |
+
+### What would reopen this
+
+(a) 消息视图要显示每层的 token：对话是一条聚合行，楼层只有所属消息的成本——拆开它就
+是「把 UI 的假设塞进装配器」，正是聚合行存在的原因。 (b) 宿主驱动器的 `squashSystemRuns`
+在 `assemble` **之后**合并消息，所以 `messages[]` 描述的是 squash 前的列表；要看提供方
+自己的消息边界需要驱动器的 `PromptLayout`，那是另一份契约（带正文、骑在
+`GenerateOptions` 上），两者刻意不合并。
