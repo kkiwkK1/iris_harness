@@ -2896,6 +2896,40 @@
   color: var(--iris-warn);
 }
 
+/* ------------------------------------------------------------ by message */
+
+/* The request read as a list of messages. A block per message, each with its
+   own head and its parts indented under it — the same disclosure the row view
+   uses for a split bucket, so the two views read alike. */
+.iris-prompt__messages {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.iris-prompt__message {
+  margin: 0 0 8px;
+  padding-bottom: 8px;
+  border-bottom: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-prompt__message-head {
+  display: grid;
+  grid-template-columns: 5.4em minmax(0, 1fr) auto 4.6em;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.iris-prompt__kind--message {
+  text-align: right;
+}
+
+.iris-prompt__message-empty {
+  margin: 4px 0 0 5.4em;
+  font-style: italic;
+}
+
 /* -------------------------------------------- against the previous request */
 
 /* Set apart by a rule rather than by a heading weight: the block above it is

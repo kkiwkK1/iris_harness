@@ -142,6 +142,16 @@ function formatOf(preset: ChatCompletionPreset, key: string, fallback: string): 
  * around the card's own `mes_example` — and is tagged `card` because that is the
  * field a reader goes looking for when the slot is empty; the mixed case is
  * noted here rather than invented a sixth kind for.
+ *
+ * **A marker this table does not name is a preset's own custom marker**, not a
+ * card field. A preset may declare any identifier as a marker (SillyTavern's
+ * prompt manager fills the ones it knows and leaves the rest empty), and the
+ * measured corpus has exactly this shape: a preset carrying a `搜索内容注入` /
+ * `搜索结束` pair for a search extension to fill, which this host has no filler
+ * for. Left to fall through to a card default, those rows claimed the card
+ * wrote bytes it has never seen. `preset` is the honest owner — the preset
+ * declared the slot — and the empty reason a reader needs is the same one a
+ * known-but-unfilled marker gets.
  */
 const MARKER_SOURCE: Record<string, ContributionSource['kind']> = {
   worldInfoBefore: 'worldbook',
@@ -154,12 +164,31 @@ const MARKER_SOURCE: Record<string, ContributionSource['kind']> = {
 }
 
 /**
+ * Markers this host has a filler for — the ones {@link MARKER_SOURCE} names.
+ *
+ * Read off the table rather than listed a second time, so a marker added there
+ * is a known marker here by construction. The distinction it draws is the one
+ * `sourceOf` needs: a marker in this set was filled by the host from live data
+ * (or was offered and had nothing to fill it), while a marker outside it is a
+ * slot the *preset* declared and nothing in this host ever fills — a search
+ * extension's slot, in the measured case.
+ */
+const HOST_MARKERS: ReadonlySet<string> = new Set(Object.keys(MARKER_SOURCE))
+
+/**
  * The author of one resolved contribution, for the itemization's explanation.
  *
  * Markers are filled by the host from elsewhere (see {@link MARKER_SOURCE}); a
  * plain prompt is the preset's own `content`. The identifier is the id, which is
  * what the preset, the card and the book address it by, and is stable across
  * turns — the property the panel's "why is this here" answer depends on.
+ *
+ * **A marker this host does not fill is still the preset's.** The identifier is
+ * declared in the preset's `prompts` list with `marker: true`, and no card or
+ * book ever wrote it — the preset asked for a slot only some other tool fills.
+ * Tagging it `preset` sends a reader to the preset to find the slot, which is
+ * where the answer is; tagging it with a card default sent them to a card field
+ * the preset never touched.
  * @param identifier - the resolved contribution's id.
  * @param byIdentifier - the preset's own items, for marker-ness.
  * @returns the source record.
@@ -170,7 +199,9 @@ function sourceOf(
 ): ContributionSource {
   const item = byIdentifier.get(identifier)
   if (item?.marker === true) {
-    return { kind: MARKER_SOURCE[identifier] ?? 'host', id: identifier }
+    return HOST_MARKERS.has(identifier)
+      ? { kind: MARKER_SOURCE[identifier] ?? 'host', id: identifier }
+      : { kind: 'preset', id: identifier, ...item.name === undefined ? {} : { label: item.name } }
   }
   return { kind: 'preset', id: identifier }
 }

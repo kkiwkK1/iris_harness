@@ -10,6 +10,7 @@ export {
   injectAtDepth,
   itemize,
   MEMBER_JOIN,
+  project,
   renderSystem,
   SYSTEM_JOIN,
   systemSegments,
@@ -19,6 +20,8 @@ export {
 export type {
   AssembledItem,
   AssembledMember,
+  AssembledMessageSlot,
+  AssembledPlacement,
   AssembleInput,
   AssembleResult,
   Budget,

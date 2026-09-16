@@ -1174,6 +1174,15 @@ export const en = {
   promptSourceHistory: 'the conversation',
   promptSourceScript: 'script: {name}',
   promptSourceHost: 'host: {name}',
+  /** The row/message view switch, and the message view's own words. */
+  promptViewTabRows: 'By part',
+  promptViewTabMessages: 'By message',
+  promptViewAria: 'How to read the request',
+  promptMessageHeading: 'Message {n}',
+  promptMessageStable: 'cached prefix',
+  promptMessageUnstable: 'past the change',
+  promptMessageEmpty: 'no assembly part attributed to this message',
+  promptMessageFloor: 'floor {n}',
   /**
    * A row the cache-friendly order moved. `{n}` / `{total}` are the position it
    * holds in the preset's own order, which is where the reader put it and where
@@ -2806,6 +2815,15 @@ export const zh: Record<StringKey, string> = {
   promptSourceHistory: '对话本身',
   promptSourceScript: '脚本：{name}',
   promptSourceHost: '宿主：{name}',
+  /** 行视图 / 消息视图切换，与消息视图自己的文案。 */
+  promptViewTabRows: '按部分',
+  promptViewTabMessages: '按消息',
+  promptViewAria: '怎么看这条请求',
+  promptMessageHeading: '消息 {n}',
+  promptMessageStable: '已在缓存前缀',
+  promptMessageUnstable: '在变更之后',
+  promptMessageEmpty: '这条消息没有可归属的装配部分',
+  promptMessageFloor: '第 {n} 层',
   promptDeferred: '已后移（缓存友好）',
   promptPromoted: '已前移（缓存友好）',
   promptDeferredWhere: '原位置第 {n} / {total} 条',

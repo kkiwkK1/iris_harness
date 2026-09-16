@@ -1251,6 +1251,76 @@ export interface PromptItemExplanation {
    * `tokens`.
    */
   zeroReason?: PromptItemZeroReason
+  /**
+   * Which message of the request this part landed in.
+   *
+   * Present on every part that put bytes in the request, including each member
+   * of a split depth bucket — the row that is a bucket carries none, for the
+   * same reason it carries no single moved mark, and its members say where each
+   * entry went. `messageIndex` counts messages the way the provider receives
+   * them: 0 is the system prompt when there is one, the conversation and the
+   * depth injections follow.
+   */
+  placement?: PromptItemPlacement
+  /**
+   * Whether this part is inside the request's leading volatile-free run — the
+   * part a prefix cache could serve on the next turn.
+   *
+   * The same boundary `stablePrefixTokens` reports, at part granularity.
+   * Absent rather than false when the part has no placement, so a surface never
+   * says "not cached" about text that was not in the request.
+   */
+  stable?: boolean
+}
+
+/**
+ * Which message of an assembled request one part ended up in.
+ *
+ * The answer to "where did this go", which is the second half of the panel's
+ * row — the first being who wrote it. A part is located by construction (the
+ * assembler knew which message it emitted) rather than by searching the
+ * assembled text, which two contributions sharing a line make a guess.
+ */
+export interface PromptItemPlacement {
+  /**
+   * Position in the request's message list.
+   *
+   * 0 is the system prompt when one exists; every system-placed section is
+   * folded into it, so those parts share index 0. The index is the same one
+   * {@link PromptItemization.messages} uses, so the row and the message view
+   * point at each other.
+   */
+  messageIndex: number
+  /** The role the assembly gave that message. */
+  role: ViewRole
+  /** For a depth placement, how many floors from the end it sat. */
+  depth?: number
+}
+
+/**
+ * One final message of the request, and the parts it holds.
+ *
+ * The reverse index: where {@link PromptItemEntry.explanation} says which
+ * message a part went to, this says which parts a message holds. Built in the
+ * same pass, so the two directions cannot disagree.
+ */
+export interface PromptMessageSlot {
+  /** Position in the message list; 0 is the system prompt when there is one. */
+  index: number
+  role: ViewRole
+  /** What this message costs. */
+  tokens: number
+  /** Whether every part in it is inside the leading volatile-free run. */
+  stable: boolean
+  /**
+   * The ids of the parts inside, in order — a contribution's, a member's, or a
+   * floor's `history.N`.
+   *
+   * Empty for a message the assembler did not place — a caller's own tail —
+   * which reads as "unattributed" rather than as an error, the same rule
+   * `PromptItemEntry` follows for an id with no explanation.
+   */
+  partIds: string[]
 }
 
 /** One part of an assembled prompt, and what it cost. */
@@ -1421,6 +1491,16 @@ export interface PromptItemization {
    * how it would assemble now" is useful, and a blank panel is not.
    */
   preview: boolean
+  /**
+   * The request's own message list, each message with the parts it holds.
+   *
+   * The reverse of each entry's {@link PromptItemExplanation.placement}, and
+   * present exactly when the host explains its rows — an older host omits it,
+   * and a surface falls back to the flat table. Included on a preview as well
+   * as a record, because it describes the request a preview is a prediction
+   * of, which is the same shape.
+   */
+  messages?: PromptMessageSlot[]
 }
 
 /** What happened to one assembly part between two requests. */

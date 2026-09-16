@@ -33,6 +33,7 @@ import type {
   PromptDivergenceItem,
   PromptItemEntry,
   PromptItemization,
+  PromptMessageSlot,
 } from '@iris/protocol'
 
 /**
@@ -86,23 +87,28 @@ export const FAKE_CHAT_BUDGET: ChatBudget = {
 
 /** The entries, in assembly order rather than sorted — sorting is the UI's business. */
 const ENTRIES: readonly PromptItemEntry[] = [
-  { id: 'main', label: 'Main Prompt', kind: 'system', tokens: 148, explanation: { source: { kind: 'preset', id: 'main' } } },
-  { id: '881044e5-cbef-4a1c-9b3d-2f0e6a7c5d31', label: '开始设定', kind: 'system', tokens: 96, explanation: { source: { kind: 'preset', id: '881044e5-cbef-4a1c-9b3d-2f0e6a7c5d31', label: '开始设定' } } },
-  { id: 'charDescription', label: 'Char Description', kind: 'system', tokens: 233, explanation: { source: { kind: 'card', id: 'charDescription', label: 'description' } } },
-  { id: 'charPersonality', label: 'Char Personality', kind: 'system', tokens: 61, explanation: { source: { kind: 'card', id: 'charPersonality', label: 'personality' } } },
-  { id: 'scenario', label: 'Scenario', kind: 'system', tokens: 74, explanation: { source: { kind: 'card', id: 'scenario', label: 'scenario' } } },
-  { id: 'c7f2b1a4-9e83-4d52-b6a0-1c4e8f3a7b95', label: '写作模式（二选一）', kind: 'system', tokens: 118, explanation: { source: { kind: 'preset', id: 'c7f2b1a4-9e83-4d52-b6a0-1c4e8f3a7b95', label: '写作模式（二选一）' } } },
-  { id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', label: '写作模式（二选一）', kind: 'system', tokens: 102, explanation: { source: { kind: 'preset', id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', label: '写作模式（二选一）' } } },
-  { id: 'worldInfoBefore', label: 'World Info (before)', kind: 'system', tokens: 1920, explanation: { source: { kind: 'worldbook', id: 'worldInfoBefore', label: 'atlas' } } },
-  { id: 'worldInfoAfter', label: 'World Info (after)', kind: 'system', tokens: 37, explanation: { source: { kind: 'worldbook', id: 'worldInfoAfter', label: 'atlas' } } },
-  { id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式', kind: 'depth', tokens: 84, depth: 0, role: 'system', explanation: { source: { kind: 'preset', id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式' } } },
-  { id: 'authorsNote', label: "Author's Note", kind: 'depth', tokens: 29, depth: 2, role: 'system', explanation: { source: { kind: 'worldbook', id: 'worldInfo.authorNote' } } },
+  { id: 'main', label: 'Main Prompt', kind: 'system', tokens: 148, explanation: { source: { kind: 'preset', id: 'main' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: '881044e5-cbef-4a1c-9b3d-2f0e6a7c5d31', label: '开始设定', kind: 'system', tokens: 96, explanation: { source: { kind: 'preset', id: '881044e5-cbef-4a1c-9b3d-2f0e6a7c5d31', label: '开始设定' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: 'charDescription', label: 'Char Description', kind: 'system', tokens: 233, explanation: { source: { kind: 'card', id: 'charDescription', label: 'description' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: 'charPersonality', label: 'Char Personality', kind: 'system', tokens: 61, explanation: { source: { kind: 'card', id: 'charPersonality', label: 'personality' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: 'scenario', label: 'Scenario', kind: 'system', tokens: 74, explanation: { source: { kind: 'card', id: 'scenario', label: 'scenario' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: 'c7f2b1a4-9e83-4d52-b6a0-1c4e8f3a7b95', label: '写作模式（二选一）', kind: 'system', tokens: 118, explanation: { source: { kind: 'preset', id: 'c7f2b1a4-9e83-4d52-b6a0-1c4e8f3a7b95', label: '写作模式（二选一）' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', label: '写作模式（二选一）', kind: 'system', tokens: 102, explanation: { source: { kind: 'preset', id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', label: '写作模式（二选一）' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: 'worldInfoBefore', label: 'World Info (before)', kind: 'system', tokens: 1920, explanation: { source: { kind: 'worldbook', id: 'worldInfoBefore', label: 'atlas' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  { id: 'worldInfoAfter', label: 'World Info (after)', kind: 'system', tokens: 37, explanation: { source: { kind: 'worldbook', id: 'worldInfoAfter', label: 'atlas' }, placement: { messageIndex: 0, role: 'system' }, stable: true } },
+  // A depth-0 injection rides its own message, which is what the message view
+  // is for: in the flat table it is one row, and in the request it is the last
+  // thing before the reply.
+  { id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式', kind: 'depth', tokens: 84, depth: 0, role: 'system', explanation: { source: { kind: 'preset', id: 'd5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23', label: '状态栏格式' }, placement: { messageIndex: 4, role: 'system', depth: 0 }, stable: false } },
+  { id: 'authorsNote', label: "Author's Note", kind: 'depth', tokens: 29, depth: 2, role: 'system', explanation: { source: { kind: 'worldbook', id: 'worldInfo.authorNote' }, placement: { messageIndex: 1, role: 'system', depth: 2 }, stable: true } },
   // Parsed, enabled, and contributing nothing. The case a reader goes looking for,
   // carrying the two reasons the product actually produces: a preset prompt whose
   // text is all macros, and a marker slot nothing filled. The pair is deliberate —
   // a fixture with one zero cannot show that the panel tells the causes apart,
   // and `blank` / `trimmed` are reserved reasons the host does not emit yet, so a
   // fixture carrying one would teach a design against a shape nothing produces.
+  // **No placement**: a row that put no bytes in the request has no message to
+  // name, which is exactly the case a message view must not invent one for.
   {
     id: 'nsfw',
     label: 'Auxiliary Prompt',
@@ -121,6 +127,35 @@ const ENTRIES: readonly PromptItemEntry[] = [
     },
   },
   { id: 'chatHistory', label: 'Chat History', kind: 'history', tokens: 27, explanation: { source: { kind: 'history', id: 'chatHistory' } } },
+]
+
+/**
+ * The request the fixture describes, as messages.
+ *
+ * Written out rather than derived, because the point of a fixture is to be a
+ * shape the product can produce and not a shape a second algorithm produces: the
+ * host derives both views from one assembly pass, and this reproduces the result
+ * of that pass. The entries' placements above name these indices, and the test
+ * that reads both (`prompt-explanation.test.ts`) checks the two directions agree
+ * — so a fixture that drifted from itself would redden there.
+ *
+ * `partIds` is the whole point: message 2 is the conversation's newest floor and
+ * message 3 is the depth-0 injection, so the view shows "the transcript, then
+ * the status bar" rather than one undifferentiated prompt.
+ */
+const MESSAGES: readonly PromptMessageSlot[] = [
+  {
+    index: 0,
+    role: 'system',
+    tokens: ENTRIES.filter(entry => entry.explanation?.placement?.messageIndex === 0)
+      .reduce((sum, entry) => sum + entry.tokens, 0),
+    stable: true,
+    partIds: ENTRIES.filter(entry => entry.explanation?.placement?.messageIndex === 0).map(entry => entry.id),
+  },
+  { index: 1, role: 'system', tokens: 29, stable: true, partIds: ['authorsNote'] },
+  { index: 2, role: 'user', tokens: 15, stable: true, partIds: ['history.0'] },
+  { index: 3, role: 'assistant', tokens: 12, stable: false, partIds: ['history.1'] },
+  { index: 4, role: 'system', tokens: 84, stable: false, partIds: ['d5b8c3a1-2f47-4e69-9a05-8b6d1c4f7e23'] },
 ]
 
 /**
@@ -159,6 +194,7 @@ export function fakeItemization(turn: number, preview: boolean): PromptItemizati
     droppedHistory: preview ? 0 : 3,
     overBudget: false,
     preview,
+    messages: MESSAGES.map(slot => ({ ...slot, partIds: [...slot.partIds] })),
   }
 }
 

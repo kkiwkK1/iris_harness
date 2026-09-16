@@ -80,7 +80,8 @@
 
 规模：任务 I 收口时词典 `en` 约 **320 条**（含复数/变体拆分）。这个数只描述那一刻——下面每一节
 都在往上加，2026-09-16 读到的是 **`en` 1195 条、`zh` 1195 条**（`Object.keys(en).length`）；
-同日 M1 第一步（装配面板解释）再加 11 条，读到 **1206 / 1206**。
+同日 M1 第一步（装配面板解释）再加 11 条，读到 **1206 / 1206**；
+第二步（按消息视图）再加 8 条，读到 **1214 / 1214**。
 **不要把这个数抄进任何断言**：`i18n.test.ts` 钉的是两栏逐键对应这条性质，不是条数。
 
 ## 二、刻意不翻译（及理由）
@@ -573,3 +574,17 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 带原因，是宿主自相矛盾，而按数字可信的那一边渲染是本面板一贯的取舍。老宿主的记录没有
 `explanation`，`sourceNoteKey` 与 `zeroReasonKey` 都返回 `null`，面板什么都不说而不是编一句
 没人量过的话。
+
+## 装配面板的「按消息」视图（2026-09-16，M1 第二步）
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `PromptPanel.tsx` 的视图切换 | 行视图/消息视图两个胶囊与分组 aria | `promptViewTabRows promptViewTabMessages promptViewAria` |
+| `PromptPanel.tsx` 的 `MessageView` | 消息头（第几条、已在缓存前缀/在变更之后）、空消息提示、楼层句 | `promptMessageHeading promptMessageStable promptMessageUnstable promptMessageEmpty promptMessageFloor` |
+
+**`promptMessageHeading` 用 `{n}` 且从 1 数。** 契约里的 `index` 从 0 开始（0 是 system
+提示词），但「消息 0」会让读者以为漏了一条；`+1` 在组件里做，字典只说「消息 {n}」。
+
+**`promptMessageFloor` 的 `{n}` 是 `history.N` 的 N 本身。** 对话按契约是一条聚合行，
+所以楼层没有可查的 entry；它的编号就是消息视图能诚实说的全部。与 `divergenceFloor`
+同一个意思，两条键各自存在于各自的模块，因为一个是分离报告的一个是装配面板的。

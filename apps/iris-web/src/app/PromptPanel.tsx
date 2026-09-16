@@ -28,7 +28,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptDivergence, PromptDivergenceItem, PromptItemEntry, PromptItemMember, PromptItemization } from '@iris/protocol'
+import type { PromptDivergence, PromptDivergenceItem, PromptItemization } from '@iris/protocol'
 
 import { useIrisActions } from '../client/provider.tsx'
 import {
@@ -36,11 +36,14 @@ import {
   contributing,
   discrepancy,
   itemizationMode,
+  messageRows,
   rowsFor,
   sourceNoteKey,
   splitMembers,
   zeroReasonKey,
+  type Explained,
   type ItemOrder,
+  type MessageRow,
 } from './itemization.ts'
 import {
   cacheCeiling,
@@ -173,6 +176,8 @@ function Breakdown({
   const use = budgetUse(itemization)
   const mismatch = discrepancy(itemization)
   const mode = itemizationMode(itemization, requestedTurn)
+  const [view, setView] = useState<'rows' | 'messages'>('rows')
+  const messages = messageRows(itemization)
   // The parent subscribed to the language; these words follow it.
   useLanguage()
 
@@ -229,6 +234,38 @@ function Breakdown({
       </div>
 
       <div className="iris-prompt__controls">
+        {/*
+          The same request read the other way round: by part (a table that says
+          which message each went to) or by message (a list that says which
+          parts each holds). Both come from the host's one assembly pass, so
+          switching between them cannot show two different requests.
+
+          Only offered when the host sends `messages` — an older record has no
+          reverse index, and a tab that opened an empty view would read as a
+          defect rather than as an old host.
+        */}
+        {messages.length === 0 ? null : (
+          <div className="iris-choice" role="group" aria-label={t('promptViewAria')}>
+            <button
+              type="button"
+              className="iris-choice__option"
+              aria-pressed={view === 'rows'}
+              data-control="prompt-view-rows"
+              onClick={() => setView('rows')}
+            >
+              {t('promptViewTabRows')}
+            </button>
+            <button
+              type="button"
+              className="iris-choice__option"
+              aria-pressed={view === 'messages'}
+              data-control="prompt-view-messages"
+              onClick={() => setView('messages')}
+            >
+              {t('promptViewTabMessages')}
+            </button>
+          </div>
+        )}
         <div className="iris-choice" role="group" aria-label={t('rowOrderAria')}>
           <button
             type="button"
@@ -257,6 +294,9 @@ function Breakdown({
 
       {divergence === undefined ? null : <Divergence divergence={divergence} />}
 
+      {view === 'messages'
+        ? <MessageView messages={messages} />
+        : (
       <ul className="iris-prompt__rows">
         {rows.map(row => (
           <li
@@ -403,7 +443,68 @@ function Breakdown({
           </li>
         ))}
       </ul>
+        )}
     </div>
+  )
+}
+
+/**
+ * The request as a list of messages, each with the parts it holds.
+ *
+ * The reverse of the table above, and the same request: a reader who asks "what
+ * actually goes out, in what order" gets a straight answer here, and a reader
+ * asking "what is eating my context" keeps the size-ordered table. The two are
+ * offered as a switch rather than side by side because they answer one question
+ * with two shapes and a reader picks the shape, not both at once.
+ *
+ * A message's parts hang under it as the row view's members do, so the same
+ * explanation renders in both — who wrote the part and, on a zero, why there is
+ * nothing. A floor says its number and nothing more: the contract folds the
+ * conversation into one aggregate row, so a floor has no entry to look up.
+ * @param props.messages - the rows from `messageRows`.
+ * @returns the message list.
+ */
+function MessageView({ messages }: { messages: MessageRow[] }): ReactElement {
+  return (
+    <ul className="iris-prompt__messages" data-control="prompt-messages">
+      {messages.map(message => (
+        <li className="iris-prompt__message" key={message.index}>
+          <div className="iris-prompt__message-head">
+            <span className="iris-prompt__kind iris-prompt__kind--message">
+              {t('promptMessageHeading', { n: message.index + 1 })}
+            </span>
+            <span className="iris-prompt__label">{message.role}</span>
+            <span className={message.stable ? 'iris-meta' : 'iris-prompt__zero-reason'}>
+              {t(message.stable ? 'promptMessageStable' : 'promptMessageUnstable')}
+            </span>
+            <span className="iris-prompt__tokens">{message.tokens.toLocaleString()}</span>
+          </div>
+          {message.parts.length === 0
+            ? <p className="iris-prompt__message-empty iris-meta">{t('promptMessageEmpty')}</p>
+            : (
+                <ul className="iris-prompt__members">
+                  {message.parts.map(part => (
+                    <li className="iris-prompt__member" key={part.id}>
+                      <span className="iris-prompt__label" title={part.id}>
+                        {part.floor
+                          ? t('promptMessageFloor', { n: part.label.replace(/^floor /u, '') })
+                          : part.label}
+                        {part.kind === 'depth' && part.explanation?.placement?.depth !== undefined
+                          ? <span className="iris-meta"> @{part.explanation.placement.depth}</span>
+                          : null}
+                      </span>
+                      {/* The same explanation the row view renders, so one
+                          component holds the copy for both. */}
+                      {part.explanation === undefined
+                        ? null
+                        : <Explanation entry={{ tokens: 0, explanation: part.explanation }} />}
+                    </li>
+                  ))}
+                </ul>
+              )}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -418,7 +519,7 @@ function Breakdown({
  * @param props.entry - the row or member to explain.
  * @returns the explanation lines, or null when the host did not explain it.
  */
-function Explanation({ entry }: { entry: PromptItemEntry | PromptItemMember }): ReactElement | null {
+function Explanation({ entry }: { entry: Explained }): ReactElement | null {
   const source = sourceNoteKey(entry)
   const reason = zeroReasonKey(entry)
   if (source === null && reason === null) return null
