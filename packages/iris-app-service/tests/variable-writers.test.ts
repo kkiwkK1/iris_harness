@@ -55,10 +55,31 @@ interface ThirdControl {
   /** The gate a `gate` propose waits on; the test swaps it in and resolves it. */
   gate: Promise<void> | undefined
   release: (() => void) | undefined
+  /**
+   * Resolved the moment a `gate` propose is **inside** its await.
+   *
+   * The barrier the disable test waits on, instead of a wall clock.
+   * `setTimeout(5)` assumed the settlement had reached the writer within 5 ms;
+   * under parallel load it sometimes had not, the disable then raced a propose
+   * that had not started, and whether the writer was "frozen into the turn" —
+   * the thing the test is about — was decided by scheduler luck. This promise is
+   * resolved by the code under observation, so the test cannot get ahead of it.
+   * A plain promise and not a function: a caller that could resolve it would be
+   * resolving its own barrier, which is how the first draft of this seam
+   * silently tested nothing.
+   */
+  entered: Promise<void>
+  /** How many `gate` proposes are parked in their await right now. */
+  inPropose: number
 }
 
 function thirdControl(behavior: ThirdBehavior): ThirdControl {
-  return { behavior, seen: [], gate: undefined, release: undefined }
+  let enter!: () => void
+  const entered = new Promise<void>(resolve => { enter = resolve })
+  const control = { behavior, seen: [], gate: undefined, release: undefined, inPropose: 0, entered } as ThirdControl
+  // The propose calls this; the test only awaits `control.entered`.
+  ;(control as ThirdControl & { signalEntered: () => void }).signalEntered = enter
+  return control
 }
 
 /** The third writer's proposal: its patch folded into the baseline's `stat_data`. */
@@ -79,6 +100,20 @@ interface Fixture {
   counts: Counts
   reports: string[]
   third: ThirdControl
+  /**
+   * A mutable slot run synchronously inside the `stream.end` (or
+   * `stream.error`) broadcast.
+   *
+   * The settlement's terminal event fires **before** it releases the plugin
+   * leases, so this is the one observation point where "the disable has not
+   * completed yet" is deterministic rather than a race with the settle tail.
+   * `settle()` resolves on that broadcast, and by the time the caller resumes
+   * the lease may already have been released and the disable resolved — which
+   * is exactly the flake the mid-propose test used to have. A holder object
+   * rather than a settable property, so assigning it does not clash with the
+   * destructured `fixture` return.
+   */
+  endHook: { run: (() => void) | undefined }
   settle(): Promise<void>
 }
 
@@ -92,7 +127,7 @@ interface FixtureOptions {
 
 async function fixture(t: TestContext, options: FixtureOptions = {}): Promise<Fixture> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-variable-writers-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -140,7 +175,15 @@ async function fixture(t: TestContext, options: FixtureOptions = {}): Promise<Fi
             if (behavior.kind === 'hang') return new Promise(() => {})
             if (behavior.kind === 'gate') {
               const gate = control.gate ?? Promise.resolve()
-              return gate.then(() => ({ variables: withThirdValue(view, thirdValue) }))
+              // Signal entry **before** awaiting, and count the park: the test's
+              // `await entered` therefore proves `inPropose === 1`, i.e. that
+              // the disable really does land while a propose is in flight.
+              control.inPropose += 1
+              ;(control as ThirdControl & { signalEntered: () => void }).signalEntered()
+              return gate.then(
+                () => { control.inPropose -= 1; return { variables: withThirdValue(view, thirdValue) } },
+                error => { control.inPropose -= 1; throw error },
+              )
             }
             return { variables: withThirdValue(view, thirdValue) }
           },
@@ -168,6 +211,7 @@ async function fixture(t: TestContext, options: FixtureOptions = {}): Promise<Fi
   const reports: string[] = []
   let ends = 0
   let awaited = 0
+  const endHook: { run: (() => void) | undefined } = { run: undefined }
   let handlers: Handlers
   const stream: StreamFn = async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
     const text = '<UpdateVariable>probe</UpdateVariable>'
@@ -189,6 +233,10 @@ async function fixture(t: TestContext, options: FixtureOptions = {}): Promise<Fi
     broadcast(event: IrisEvent) {
       if (event.type === 'stream.end' || event.type === 'stream.error') {
         if (event.type === 'stream.error') reports.push(JSON.stringify(event))
+        // Read whatever the test parked here **before** anything downstream of
+        // the terminal event runs: this handler is synchronous and the leases
+        // are released in the settle `finally`, after this broadcast returns.
+        endHook.run?.()
         ends += 1
         return
       }
@@ -216,7 +264,7 @@ async function fixture(t: TestContext, options: FixtureOptions = {}): Promise<Fi
   }).handlers()
   await handlers['stCompat.plane.attach']({ extensionId: 'prompt-template', pluginRevision: 1 })
   return {
-    handlers, chats, plugins, counts, reports, third,
+    handlers, chats, plugins, counts, reports, third, endHook,
     settle: async () => {
       awaited += 1
       while (ends < awaited) await new Promise(resolve => setTimeout(resolve, 1))
@@ -300,20 +348,49 @@ test('a disable issued mid-propose does not tear the turn it lands in', async (t
     third: thirdControl({ kind: 'gate' }),
     thirdValue: { shared: 3 },
   })
+  /*
+   * The gate is set **before** the turn starts, so the writer's first propose
+   * is the one that parks — there is no window where a propose could run
+   * against the default resolved gate and make "the disable lands mid-propose"
+   * untrue. Awaiting `entered()` then waits on a signal the code under
+   * observation emits from inside that propose, not on a clock: the old
+   * `setTimeout(5)` assumed settlement had reached the writer within 5 ms,
+   * which under parallel load it sometimes had not.
+   */
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.third.gate = gate
   const created = await f.handlers['chat.create']({ characterId: 'aria' })
   const chatId = created.view.chatId
   await f.handlers['chat.send']({ chatId, text: 'go' })
 
-  // Park the writer inside its own propose, then fire the disable. The
-  // writer's lease is held by the generation, so the disable cannot complete —
-  // and must not — until settlement releases it. The participant set was
-  // frozen at snapshot; this turn keeps the proposal, and the next turn does
-  // not have the writer at all.
-  let release!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
-  f.third.gate = gate
-  await new Promise(resolve => setTimeout(resolve, 5))
+  // Parked inside propose now: the writer's lease is held by the generation,
+  // so the disable cannot complete — and must not — until settlement releases
+  // it. The participant set was frozen at snapshot; this turn keeps the
+  // proposal, and the next turn does not have the writer at all.
+  await f.third.entered
+  // The positive control: `entered()` resolving means the writer is *inside*
+  // its propose right now, so the disable below lands on a parked propose and
+  // not on a turn that has not reached it yet. A lying or wall-clock barrier
+  // cannot say this — the count is incremented by the code under observation
+  // immediately before its await.
+  assert.equal(f.third.inPropose, 1, 'the barrier fired while no propose was parked, so the disable would race the turn')
   const disabling = f.plugins.disable('third-writer')
+  /*
+   * The mid-turn observation is taken **inside the `stream.end` broadcast**, not
+   * after `settle()` resumes.
+   *
+   * `settle()` resolves when it sees that broadcast, but `#settle` keeps going
+   * past it — `#announceChats`, the settle `finally`, the lease release — so by
+   * the time the awaiting caller gets its turn the disable may already have
+   * resolved. Asserting `disabled === false` out there was a race the scheduler
+   * sometimes lost (the CI red this task is about). The `endHook` fires
+   * synchronously from the broadcast handler, before the settle tail, where
+   * "the disable has not completed yet" is true by construction: the writer's
+   * lease is still held.
+   */
+  let disabledWhenEnded: boolean | undefined
+  f.endHook.run = () => { disabledWhenEnded = disabled }
   let disabled = false
   void disabling.then(() => { disabled = true })
   release()
@@ -322,9 +399,9 @@ test('a disable issued mid-propose does not tear the turn it lands in', async (t
   const variables = await f.handlers['script.getVariables']({ chatId, scope: 'message', messageId: 'latest' })
   assert.equal((variables.variables['stat_data'] as Record<string, unknown>)['shared'], 3,
     'a writer frozen into the settlement lost its proposal to a mid-turn disable')
-  assert.equal(disabled, false, 'the disable completed while the writer still held its lease')
+  assert.equal(disabledWhenEnded, false, 'the disable completed before the terminal event, while the writer still held its lease')
   await disabling
-  assert.equal(disabled, true)
+  assert.equal(disabled, true, 'the disable never completed after the settlement released the lease')
 
   const next = await oneTurn(f)
   assert.equal((next.variables['stat_data'] as Record<string, unknown>)['shared'], 2,
@@ -458,7 +535,7 @@ test('the MVU writer returns its engine reports under the mvu kind', async () =>
 
 test('an aborted partial settles through MVU and never through the bridge', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-variable-writers-abort-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -556,7 +633,7 @@ test('an aborted partial settles through MVU and never through the bridge', asyn
 
 test('a service composed without a plugin runtime still writes MVU variables', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'iris-variable-writers-legacy-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

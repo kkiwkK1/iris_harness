@@ -8862,3 +8862,84 @@ PR-2 的三个可选字段同一条规则：旧的浏览器忽略它，旧的宿
 会第一次在两个内置行上出现，值得在实机上确认一次。(c) 一个「删不掉」的目录
 需要一个比诊断面更强的处置（重试、开机清理）——今天它只是被具名报告，用户
 自己删；`superseded/` 的安装树也是同一个立场。
+
+---
+
+---
+
+## 86b. 第三批偶发红：`scoped-regex` 的清理 `EBUSY`，与 `variable-writers` 的墙钟屏障
+
+Dated 2026-09-16 (owner task sheet W6, branch `dev/flaky-tests-batch-3`
+against `035094e`). §86 根治了 `chat-search` 与 `chat-integrity`；这是它点名的
+「还剩两条」，方法与 §86 相同 —— 先确定性地复现，再修原因。
+
+### 一、`scoped-regex.test.ts`「an open conversation is re-announced when the tier is refused」
+
+**不是竞态，是清理**。任务单说它在「三支门禁并行时红一次」、并提到 U1 报告过
+同文件在 Windows 临时目录上遇过 EBUSY。确认了：那个 5 ms 屏障与断言的逻辑本身
+从来没错过——错的是 `t.after` 里的 `rm(dir, { recursive: true, force: true })`，
+它在 Windows 上对 `chats/` 撞到 `EBUSY: resource busy or locked` 或
+`ENOTEMPTY: directory not empty`（宿主对刚写过的 chat 文件还留着一个句柄），
+**在每一条断言都通过之后**把整个文件判红。这就是它长得像「断言偶发」的原因。
+
+**确定性复现**：把该文件开 24 个并发进程各跑一遍，7/24 失败，失败行全是
+`EBUSY`/`ENOTEMPTY`，且每次都发生在 `# Subtest: …` 之后——测试体已经过了。
+
+**修法**：`t.after` 的 `rm` 补上 `maxRetries: 8, retryDelay: 100`，与
+`card-storage.test.ts:52`、`service.test.ts:134` 等二十来处已经在用的同一模式
+（那里记录过一次完整的事故）。**没有放宽任何断言**：与 §86 同一立场——这是
+夹具的清理，不是判据。改完 60 个并发进程 0 失败。
+
+### 二、`variable-writers.test.ts`「a disable issued mid-propose does not tear the turn it lands in」
+
+**竞态的两方**：`#settle` 的尾巴（`#announceChats` → settle `finally` →
+`releasePluginLeases`）与测试的观察点。
+
+**谁先谁后**：测试用 `await f.settle()` 等终态事件，而 `settle()` 数的是
+`stream.end` 广播（事件循环里的一次 `setTimeout(1)` 轮询）。但 `#settle` 在
+广播 `stream.end` **之后**还继续跑：`await this.#announceChats()`（一次目录
+读）然后再释放插件租约。于是 `await f.settle()` 恢复时，那条
+`f.plugins.disable('third-writer')` **可能已经完成**——旧断言
+`assert.equal(disabled, false, …)` 就在这个窗口里，负载一重就翻。
+
+**旧屏障的第二个毛病**：`await new Promise(resolve => setTimeout(resolve, 5))`
+假定结算在 5 ms 内已经走到 writer 的 propose；并行负载下有时还没有，于是
+「disable 落在 propose 进行中」这件事本身由调度器掷骰子决定，而不是由测试
+确定——这正好是任务单要的「找出第二条路径或竞态的来源」。
+
+**修法（修的是夹具屏障，不是产品）**：
+
+1. **观察点搬进 `stream.end` 的广播处理器**。夹具新增 `endHook`，在
+   broadcast 回调里**同步**跑一次；终态事件一定早于 settle 尾巴，所以
+   「disable 尚未完成」在这里是构造上为真，不是抢到的。断言改成
+   `disabledWhenEnded === false`。
+2. **屏障由被观察的代码发出，不由时钟发**。`thirdControl` 的 gate 分支在
+   `await` 之前 resolve 一个 `entered` promise 并把 `inPropose` 加一；测试
+   `await f.third.entered` 之后断言 `inPropose === 1`。这条**阳性对照**让
+   「屏障撒谎」（提前 resolve、没真的停在 propose 里）当场变红——初版接缝
+   正是这么撒谎的（`entered()` 既当信号又当等待，测试 resolve 了自己的屏障），
+   被这条断言抓住。
+3. gate 在 `chat.send` **之前**设好，所以第一次 propose 就是要停的那次，没有
+   「propose 先跑过一次默认 gate」的窗口。
+
+**没有放宽任何数字**：`shared === 3`、`disabledWhenEnded === false`、
+`disabled === true`、下一轮 `shared === 2` 全在，且 `disabled` 的观察从
+「settle 之后什么时候」变成一个确定时刻。
+
+### 牙齿（按任务单：修好后把旧屏障 + deferred 压入当变异跑）
+
+| 断言 | 变异 | 结果 |
+| --- | --- | --- |
+| `scoped-regex` 清理不带 `maxRetries` | 去掉 `maxRetries`/`retryDelay` | **24 并发 7 红**（EBUSY/ENOTEMPTY，全在断言之后）；补回后 60 并发 0 红 |
+| W6b 阳性对照 `inPropose === 1` | 让 `signalEntered()` 在 `inPropose += 1` **之前**发（屏障撒谎，propose 没真停） | 红（「the barrier fired while no propose was parked」），确定性 |
+| W6b 的「propose 被冻结进本轮」 | 结算循环里按名丢掉 `third-writer` 的提案（`registered.pluginId === 'third-writer' → continue`） | 红（「a writer frozen into the settlement lost its proposal」） |
+| W6b 的「disable 未在终态事件前完成」 | 旧屏障（`settle()` 后读 `disabled`）+ 夹具在 `settle()` 里压入一个 30 ms 的 deferred | 红（「the disable completed while the writer still held its lease」），确定性 —— 这正是任务单点名的组合 |
+
+### What would reopen this
+
+(a) `scoped-regex` 再长出一类写文件的新夹具——清理模式要跟着带上 `maxRetries`，
+`card-storage.test.ts` 那段注释就是给下一个人的。(b) `#settle` 的终态事件再往前
+挪（在 `stream.end` 之前放别的东西），`endHook` 要跟着挪到那时候——它靠的就是
+「广播这一下同步、且早于释放租约」。(c) 结算真改成并行 writer（今天是串行，见
+§82 的裁决）——那时 `inPropose` 会大于 1，`=== 1` 要改成 `>= 1` 并说明为什么并行
+是被裁决允许的。
