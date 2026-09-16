@@ -198,8 +198,16 @@ export function fakeItemization(turn: number, preview: boolean): PromptItemizati
     // where they match exactly would hide the case the field exists for.
     ...(preview ? {} : { actualTokens: tokens + 46 }),
     budget: { ...FAKE_BUDGET },
-    droppedHistory: preview ? 0 : 3,
+    // A cut, whether or not this is a preview. A preview assembles against the
+    // real window, so it trims exactly as a real turn would — the old
+    // `preview ? 0 : 3` claimed a preview never overflows, which is not true of
+    // the host and left the panel's overflow line unexercised in the one path
+    // the render check drives.
+    droppedHistory: 3,
     overBudget: false,
+    // The richer record, and the three figures describe one cut: three floors, a
+    // real weight and their ids.
+    overflow: { droppedFloors: 3, droppedTokens: 1_842, droppedIds: ['history.0', 'history.1', 'history.2'] },
     preview,
     messages: MESSAGES.map(slot => ({ ...slot, partIds: [...slot.partIds] })),
   }

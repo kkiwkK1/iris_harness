@@ -1150,6 +1150,13 @@ export const en = {
   orderLargest: 'Largest first',
   orderAssembly: 'In assembly order',
   droppedToFit: '{n} earlier messages dropped to fit',
+  /**
+   * The richer overflow line: how many floors the budget cut and what they
+   * weighed. Shown when the host reported an `overflow` object; the plain
+   * `droppedToFit` above is the fallback for a record that carries only the
+   * count.
+   */
+  promptOverflow: '{floors} earlier messages dropped to fit ({tokens} tokens)',
   overBudget: 'over budget',
   tokenEmpty: 'empty',
   /**
@@ -2813,6 +2820,8 @@ export const zh: Record<StringKey, string> = {
   orderLargest: '从大到小',
   orderAssembly: '按装配顺序',
   droppedToFit: '为装下这些，已丢弃更早的 {n} 条消息',
+  /** 更完整的 overflow 行：裁掉几条楼层、共多少 token。 */
+  promptOverflow: '为装下这些，已丢弃更早的 {floors} 条消息（{tokens} token）',
   overBudget: '超出预算',
   tokenEmpty: '空',
   /**

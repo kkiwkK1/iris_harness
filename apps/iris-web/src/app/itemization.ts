@@ -316,6 +316,32 @@ export function regexNote(entry: Explained): string[] | null {
 }
 
 /**
+ * What the budget cut, or none.
+ *
+ * `droppedHistory` is the count the panel has always shown; `overflow` adds
+ * which floors and what they weighed. The two are the same cut from one trim
+ * call, so this reads the richer object where a host sent one and falls back to
+ * the bare count where it did not — never doubling the count into the fallback,
+ * which would make an older host's record look like it reported a weight it
+ * never measured.
+ *
+ * Returns null for a request that fit, so the panel shows nothing rather than a
+ * zero line: "nothing was dropped" is the ordinary state and does not need a
+ * sentence.
+ * @param itemization - the host's answer.
+ * @returns the dropped floor count and token weight, or null when nothing went.
+ */
+export function overflowNote(itemization: PromptItemization): { floors: number, tokens?: number } | null {
+  const overflow = itemization.overflow
+  // The richer object is preferred where it exists; its count is the same number
+  // as the bare field by construction, and reading it here means a host that one
+  // day drops the bare field keeps working.
+  const floors = overflow?.droppedFloors ?? itemization.droppedHistory
+  if (floors === 0) return null
+  return { floors, ...overflow === undefined ? {} : { tokens: overflow.droppedTokens } }
+}
+
+/**
  * The entries of a split row worth showing under it, or none.
  *
  * A world-info depth bucket is **one** row here and several entries in the

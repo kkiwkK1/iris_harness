@@ -38,7 +38,7 @@ import { bookFigures } from '../src/app/character-facts.ts'
 import { modelMenu } from '../src/app/model-menu.ts'
 import { DEFAULT_WINDOW } from '../src/app/reading-window.ts'
 import type { MessageView, SystemPluginInstallPreview } from '@iris/protocol'
-import { contributing, discrepancy, macroNote, messageRows, regexNote, rowsFor } from '../src/app/itemization.ts'
+import { contributing, discrepancy, macroNote, messageRows, overflowNote, regexNote, rowsFor } from '../src/app/itemization.ts'
 import { pressureLevel } from '../src/app/context-occupancy.ts'
 import { ringDash } from '../src/app/composer-bar.ts'
 import { ContextCard } from '../src/app/ContextMeter.tsx'
@@ -1704,6 +1704,12 @@ async function main(): Promise<void> {
   const regexRow = breakdown.entries.find(entry => entry.explanation?.regex !== undefined)
   assert.ok(regexRow !== undefined, 'the fixture must carry a recorded regex row')
   assert.ok((regexNote(regexRow)?.length ?? 0) > 0, 'the recorded rule should have fired, not be an empty list')
+  // The budget's record: three floors with a real weight, so the panel's
+  // overflow line has both numbers to print.
+  const overflow = overflowNote(breakdown)
+  assert.ok(overflow !== undefined, 'the fixture should carry a trimmed record')
+  assert.equal(overflow?.floors, 3)
+  assert.ok((overflow?.tokens ?? 0) > 0, 'the fixture must carry a token weight, not just a count')
 
   // -------------------------------------------------------- connections
   // The property this panel exists for: a stored display name is a snapshot and

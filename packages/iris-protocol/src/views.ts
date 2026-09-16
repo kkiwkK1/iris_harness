@@ -1517,6 +1517,15 @@ export interface PromptItemization {
   droppedHistory: number
   overBudget: boolean
   /**
+   * What the budget cut: the dropped floors, their ids and their weight.
+   *
+   * The richer counterpart of {@link droppedHistory}, which is the same count in
+   * a field that predates this. Absent from an older host's record, which a
+   * surface reads as "not reported" rather than as "nothing was dropped"
+   * ({@link droppedHistory} is the field that says the latter).
+   */
+  overflow?: PromptOverflow
+  /**
    * True when this is how the NEXT request would assemble, rather than a record
    * of one already sent.
    *
@@ -1536,6 +1545,32 @@ export interface PromptItemization {
    * of, which is the same shape.
    */
   messages?: PromptMessageSlot[]
+}
+
+/**
+ * What the budget cut, as its own record.
+ *
+ * The manual's shape: the dropped floors' **count, identities and weight** in
+ * one optional place. {@link PromptItemization.droppedHistory} predates this and
+ * is kept for the callers that already read it; the count here is the same number
+ * by construction — both come from the one trim call, so a surface that reads
+ * either agrees with a surface that reads the other.
+ */
+export interface PromptOverflow {
+  /** Trimmable floors dropped from the oldest end; the same count as `droppedHistory`. */
+  droppedFloors: number
+  /**
+   * The ids of those floors, oldest first — `history.N` as the divergence
+   * report and the message view name them.
+   *
+   * The ids rather than a count, because "which floors" is what a reader needs
+   * to line this up against the conversation they can see. Absent when the host
+   * recorded no identities — a weaker report than an empty list, which would say
+   * it looked and found none.
+   */
+  droppedIds?: string[]
+  /** What those dropped floors cost, in tokens. */
+  droppedTokens: number
 }
 
 /** What happened to one assembly part between two requests. */

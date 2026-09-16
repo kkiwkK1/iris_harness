@@ -641,3 +641,50 @@ test('a prompt-direction regex on a floor is reported on the conversation row', 
   const stored = opened.view.messages.map(message => message.text).join('\n')
   assert.ok(stored.includes('<UpdateVariable>'), 'a prompt-only rule must leave the stored message alone')
 })
+
+/**
+ * The budget's own record: which floors the trim took and what they cost.
+ *
+ * The figures come off the one trim call that made the cut — the pipeline
+ * reports them beside the count it always reported — so this checks the wire
+ * carries them, not that a second sum agrees. A window narrow enough to force
+ * a trim is the precondition; without it every number here is zero and the
+ * assertions pass against a host that never reports anything.
+ */
+test('a trimmed assembly reports the dropped floors and their weight', async (t) => {
+  const fix = await fixture(t)
+  const created = await fix.handlers['chat.create']({ characterId: 'aria' })
+  const chatId = created.view.chatId
+
+  // Several floors, so there is something to drop, and a window small enough
+  // that they cannot all fit. The card's greeting is the first floor.
+  await fix.handlers['chat.send']({ chatId, text: 'First.' })
+  await fix.settled()
+  await fix.handlers['chat.send']({ chatId, text: 'Second.' })
+  await fix.settled()
+  await fix.handlers['settings.set']({ chatId, settings: { contextWindow: 64 } })
+
+  const { itemization } = await fix.handlers['prompt.itemize']({ chatId })
+
+  assert.ok(itemization.droppedHistory > 0, 'the fixture no longer trims, so this test measures nothing')
+  assert.ok(itemization.overflow !== undefined, 'the host must report what the trim cut')
+  // The count, the ids and the weight all describe the same cut.
+  assert.equal(itemization.overflow.droppedFloors, itemization.droppedHistory)
+  assert.ok(itemization.overflow.droppedTokens > 0, 'the dropped floors held text, so their weight is nonzero')
+  assert.equal(
+    itemization.overflow.droppedIds?.length,
+    itemization.droppedHistory,
+    'every dropped floor was identified, since the host mints floor ids',
+  )
+  // The ids are floors, named the way the divergence report names them.
+  for (const id of itemization.overflow.droppedIds ?? []) {
+    assert.match(id, /^history\.\d+$/u, `${id} is not a floor id`)
+  }
+
+  // A request that fits says so with zeros rather than by staying silent.
+  const roomy = await fixture(t)
+  const other = await roomy.handlers['chat.create']({ characterId: 'aria' })
+  const roomyItemization = (await roomy.handlers['prompt.itemize']({ chatId: other.view.chatId })).itemization
+  assert.equal(roomyItemization.droppedHistory, 0)
+  assert.deepEqual(roomyItemization.overflow, { droppedFloors: 0, droppedTokens: 0 })
+})

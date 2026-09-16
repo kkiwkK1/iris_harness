@@ -6083,6 +6083,15 @@ export class IrisAppService {
       },
       droppedHistory: result.overflow.droppedHistory,
       overBudget: result.overflow.overBudget,
+      // Which floors the budget cut and what they cost — the trim's own figures,
+      // passed through rather than re-derived here. The count is repeated from
+      // `droppedHistory` above because the manual's shape puts the three facts
+      // together; both come from the one trim call, so they cannot disagree.
+      overflow: {
+        droppedFloors: result.overflow.droppedHistory,
+        droppedTokens: result.overflow.droppedTokens,
+        ...result.overflow.droppedIds.length === 0 ? {} : { droppedIds: [...result.overflow.droppedIds] },
+      },
       preview,
       // The reverse index, one entry per final message. `partIds` is passed
       // through as the assembler wrote it: an empty list means "the assembler

@@ -38,6 +38,7 @@ import {
   itemizationMode,
   macroNote,
   messageRows,
+  overflowNote,
   regexNote,
   rowsFor,
   sourceNoteKey,
@@ -178,6 +179,7 @@ function Breakdown({
   const use = budgetUse(itemization)
   const mismatch = discrepancy(itemization)
   const mode = itemizationMode(itemization, requestedTurn)
+  const overflow = overflowNote(itemization)
   const [view, setView] = useState<'rows' | 'messages'>('rows')
   const messages = messageRows(itemization)
   // The parent subscribed to the language; these words follow it.
@@ -286,9 +288,14 @@ function Breakdown({
             {t('orderAssembly')}
           </button>
         </div>
-        {itemization.droppedHistory === 0 ? null : (
+        {overflow === null ? null : (
           <span className="iris-meta">
-            {t('droppedToFit', { n: itemization.droppedHistory })}
+            {overflow.tokens === undefined
+              ? t('droppedToFit', { n: overflow.floors })
+              : t('promptOverflow', {
+                  floors: overflow.floors,
+                  tokens: overflow.tokens.toLocaleString(),
+                })}
           </span>
         )}
         {itemization.overBudget ? <span className="iris-prompt__over">{t('overBudget')}</span> : null}
@@ -297,7 +304,7 @@ function Breakdown({
       {divergence === undefined ? null : <Divergence divergence={divergence} />}
 
       {view === 'messages'
-        ? <MessageView messages={messages} />
+        ? <MessageView messages={messages} compared={compared} />
         : (
       <ul className="iris-prompt__rows">
         {rows.map(row => (
@@ -466,7 +473,10 @@ function Breakdown({
  * @param props.messages - the rows from `messageRows`.
  * @returns the message list.
  */
-function MessageView({ messages }: { messages: MessageRow[] }): ReactElement {
+function MessageView({ messages, compared }: {
+  messages: MessageRow[]
+  compared: Map<string, PromptDivergenceItem>
+}): ReactElement {
   return (
     <ul className="iris-prompt__messages" data-control="prompt-messages">
       {messages.map(message => (
@@ -494,6 +504,16 @@ function MessageView({ messages }: { messages: MessageRow[] }): ReactElement {
                         {part.kind === 'depth' && part.explanation?.placement?.depth !== undefined
                           ? <span className="iris-meta"> @{part.explanation.placement.depth}</span>
                           : null}
+                        {/*
+                          The same divergence mark the row view shows, on the
+                          same part — one comparison, two ways of listing the
+                          request. `compared` is keyed by part id in both views,
+                          so this is the identical lookup the row above does,
+                          not a second notion of "changed".
+                        */}
+                        {compared.get(part.id) === undefined ? null : (
+                          <ItemMark item={compared.get(part.id) as PromptDivergenceItem} />
+                        )}
                       </span>
                       {/* The same explanation the row view renders, so one
                           component holds the copy for both. */}

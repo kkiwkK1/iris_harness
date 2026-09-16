@@ -180,3 +180,61 @@ test('assemble carries the block by default and lets a budget turn it off', () =
     withBlock.overflow.droppedHistory,
   )
 })
+
+test('the trim reports which floors it dropped and what they cost, in its own pass', () => {
+  // A conversation whose entries carry ids, so the identity half can be checked
+  // against the count and the weight: the three have to describe **the same
+  // floors**, which is the property a caller re-summing the dropped span could
+  // not have without a second walk.
+  const history: HistoryEntry[] = Array.from({ length: 10 }, (_unused, index) => ({
+    role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+    text: `floor-${String(index)}`,
+    id: `history.${String(index)}`,
+  }))
+
+  // Room for four of ten one-token floors.
+  const trimmed = trimHistory(history, 4, one, 0)
+
+  assert.equal(trimmed.dropped, 6)
+  assert.equal(trimmed.droppedTokens, 6, 'one token per floor, so the weight equals the count here')
+  assert.deepEqual(
+    trimmed.droppedEntries.map(entry => entry.id),
+    ['history.0', 'history.1', 'history.2', 'history.3', 'history.4', 'history.5'],
+    'the oldest six, in order — a trim from the oldest end, never a hole in the middle',
+  )
+  // And the weight is the sum over exactly those entries, counted with the
+  // caller's own counter rather than assumed to be one each. The budget is in
+  // the same units — 4 floors × 7 characters — so the same six floors go.
+  const weighted = trimHistory(history, 28, text => text.length, 0)
+  assert.equal(weighted.droppedTokens, 42, 'six floors of seven characters each (`floor-0` … `floor-5`)')
+  assert.equal(
+    weighted.droppedTokens,
+    weighted.droppedEntries.reduce((total, entry) => total + entry.text.length, 0),
+  )
+})
+
+test('nothing dropped means nothing weighed, and the block does not change that', () => {
+  const history = conversation(5).map((entry, index) => ({ ...entry, id: `history.${String(index)}` }))
+  const roomy = trimHistory(history, 100, one, 8)
+  assert.equal(roomy.dropped, 0)
+  assert.equal(roomy.droppedTokens, 0)
+  assert.deepEqual(roomy.droppedEntries, [])
+})
+
+test('an entry with no id contributes no identity but still its weight', () => {
+  // The count and the weight must not depend on ids being present — only the
+  // identity list does. A caller that minted none gets fewer ids, not a wrong
+  // sum.
+  const history: HistoryEntry[] = Array.from({ length: 6 }, (_unused, index) => ({
+    role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+    text: `floor-${String(index)}`,
+  }))
+  const trimmed = trimHistory(history, 2, one, 0)
+  assert.equal(trimmed.dropped, 4)
+  assert.equal(trimmed.droppedTokens, 4)
+  assert.equal(
+    trimmed.droppedEntries.filter(entry => entry.id !== undefined).length,
+    0,
+    'no ids were minted, so none may be invented',
+  )
+})

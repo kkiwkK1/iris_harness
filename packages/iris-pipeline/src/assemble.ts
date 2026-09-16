@@ -553,7 +553,7 @@ function selectHistory(
   history: readonly HistoryEntry[],
   available: number,
   count: (text: string) => number,
-): { kept: HistoryEntry[], dropped: number } {
+): { kept: HistoryEntry[], dropped: number, droppedTokens: number, droppedEntries: HistoryEntry[] } {
   const keep = new Set<number>()
   let spent = 0
 
@@ -572,7 +572,20 @@ function selectHistory(
   }
 
   const kept = history.filter((_entry, index) => keep.has(index))
-  return { kept, dropped: history.length - kept.length }
+  // The dropped entries themselves, in the same walk that decided what fits, so
+  // the identity, the count and the weight cannot disagree about which entries
+  // went. Each is counted exactly once in total: the loop above counts only the
+  // entries it kept (it breaks at the first that does not fit, and every older
+  // one is then dropped), so this is the first and only count for the ones that
+  // went.
+  const droppedEntries: HistoryEntry[] = []
+  let droppedTokens = 0
+  history.forEach((entry, index) => {
+    if (keep.has(index)) return
+    droppedEntries.push(entry)
+    droppedTokens += count(entry.text)
+  })
+  return { kept, dropped: droppedEntries.length, droppedTokens, droppedEntries }
 }
 
 /** How many of these entries are not exempt from trimming. */
@@ -589,19 +602,29 @@ function unpinnedCount(entries: readonly HistoryEntry[]): number {
  * either way and is not one of the drops.
  * @param history - the full conversation, oldest first.
  * @param drop - how many trimmable entries to give up from the oldest end.
- * @returns the survivors in chronological order, and how many were dropped.
+ * @param count - the token counter, for the dropped entries' weight.
+ * @returns the survivors in chronological order, how many were dropped, and
+ *   what those dropped entries cost.
  */
 function dropOldest(
   history: readonly HistoryEntry[],
   drop: number,
-): { kept: HistoryEntry[], dropped: number } {
+  count: (text: string) => number,
+): { kept: HistoryEntry[], dropped: number, droppedTokens: number, droppedEntries: HistoryEntry[] } {
   let seen = 0
-  const kept = history.filter(entry => {
+  let droppedTokens = 0
+  const droppedEntries: HistoryEntry[] = []
+  const kept = history.filter((entry) => {
     if (entry.pinned === true) return true
     seen += 1
-    return seen > drop
+    if (seen <= drop) {
+      droppedEntries.push(entry)
+      droppedTokens += count(entry.text)
+      return false
+    }
+    return true
   })
-  return { kept, dropped: history.length - kept.length }
+  return { kept, dropped: droppedEntries.length, droppedTokens, droppedEntries }
 }
 
 /**
@@ -650,14 +673,15 @@ function dropOldest(
  * @param count - token counter.
  * @param block - drop floors in multiples of this many; `0` drops exactly what
  *   does not fit, upstream's rule.
- * @returns the surviving entries in chronological order, and how many were dropped.
+ * @returns the surviving entries in chronological order, how many were dropped,
+ *   and what those dropped entries cost in tokens.
  */
 export function trimHistory(
   history: readonly HistoryEntry[],
   available: number,
   count: (text: string) => number,
   block = 0,
-): { kept: HistoryEntry[], dropped: number } {
+): { kept: HistoryEntry[], dropped: number, droppedTokens: number, droppedEntries: HistoryEntry[] } {
   const exact = selectHistory(history, available, count)
   // Nothing had to go, so nothing is given up: the block is the price of a cut,
   // and a conversation that still fits is not being cut.
@@ -669,7 +693,7 @@ export function trimHistory(
   // kept, and rounding that up would hand the model a conversation with no
   // present in it.
   const drop = Math.min(Math.ceil(exact.dropped / block) * block, Math.max(trimmable - 1, exact.dropped))
-  return dropOldest(history, drop)
+  return dropOldest(history, drop, count)
 }
 
 /**
@@ -877,7 +901,7 @@ export function assemble(input: AssembleInput): AssembleResult {
     + history.reduce((total, entry) => total + (entry.pinned === true ? count(entry.text) : 0), 0)
 
   const available = budget.context - budget.reserve - fixed
-  const { kept, dropped } = trimHistory(
+  const { kept, dropped, droppedTokens, droppedEntries } = trimHistory(
     history,
     Math.max(available, 0),
     count,
@@ -897,7 +921,15 @@ export function assemble(input: AssembleInput): AssembleResult {
     messages,
     tokens,
     stablePrefixTokens: stablePrefixTokens(contributions, messages, cacheFriendly, count),
-    overflow: { droppedHistory: dropped, overBudget: available < 0 },
+    overflow: {
+      droppedHistory: dropped,
+      droppedTokens,
+      // Ids for the floors that went, when the caller's entries carry them. A
+      // bare entry with no id contributes nothing rather than an invented one,
+      // which is why this is a filter and not a map.
+      droppedIds: droppedEntries.flatMap(entry => entry.id === undefined ? [] : [entry.id]),
+      overBudget: available < 0,
+    },
     items: account.items,
     messageSlots: account.messageSlots,
   }
