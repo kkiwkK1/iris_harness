@@ -137,7 +137,7 @@
 | --- | --- | --- | --- |
 | [LICENSE-INVENTORY.md](LICENSE-INVENTORY.md) | 上游许可证、我们的移植面、依赖清单；`AGPL-3.0-only` 裁定的输入 | 2026-09-07 | 记录（正文未改动） |
 
-## 七、已归档（`archive/`，5）
+## 七、已归档（`archive/`，7）
 
 工作已经完成或结论已被后来的记录关闭的计划与交接。放在这里是因为它们不再指导任何工作，但仍然解释「当时为什么这么做」。**只有能点名接替者的文件才会被归档。**
 
@@ -148,6 +148,8 @@
 | [archive/MD-INVENTORY.md](archive/MD-INVENTORY.md) | `notes/MD-INVENTORY.md` | 2026-09-06 的全仓 `.md` 盘点与那次搬迁的落地差异 | 本文件（`notes/README.md`）是它的后继 |
 | [archive/DISPATCH-plugin-client-runtime.md](archive/DISPATCH-plugin-client-runtime.md) | `notes/DISPATCH-plugin-client-runtime.md` | 落点 3（插件客户端运行环境）的派工单 | 落点 3 已落地（`dev/plugin-client-runtime` @ `4fab477`），记录见 [CONSTRUCTION-REPORT-2026-09-13.md](st-compat/CONSTRUCTION-REPORT-2026-09-13.md) 追记二 |
 | [archive/HANDOFF.md](archive/HANDOFF.md) | `notes/st-compat/HANDOFF.md` | 任务 C（ST-Prompt-Template P3 试点）的交接：现状、踩平的坑、剩余工作 | [st-compat/PILOT-REPORT.md](st-compat/PILOT-REPORT.md)：§4 列的四项剩余工作在那份验收里全部有判定 |
+| [archive/EXTENSIONS.md](archive/EXTENSIONS.md) | `docs/EXTENSIONS.md`（分支 `dev/feat-extension-system`） | 第一版第三方扩展系统契约：扩展 = `cordis.yml` 一行 + npm 包，同进程同权限 | 系统插件平台 #88（`docs/SYSTEM-PLUGINS.md`、`docs/INFRASTRUCTURE-INTERFACES.md`）；信任判断被吸收，装载机制未采用 |
+| [archive/EXTENSION-SYSTEM-RULING.md](archive/EXTENSION-SYSTEM-RULING.md) | `notes/EXTENSION-SYSTEM-RULING.md`（同一分支） | 2026-09-12 扩展系统裁决（宪法） | 同上；`docs/SYSTEM-PLUGINS.md` 的 Trust model 一节 |
 
 ---
 

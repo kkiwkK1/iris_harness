@@ -23,9 +23,9 @@
  *   fibers themselves, and the drain that a disable waits behind.
  *
  * Two documents on `main` describe the rest, and this comment names them
- * rather than the third-party extension design it used to cite: that design's
- * contract document, `docs/EXTENSIONS`, exists only on the unmerged
- * `dev/feat-extension-system` branch, so a reader here could not open it.
+ * rather than the third-party extension design it used to cite: that design
+ * was retired with its branch on 2026-09-16 and is archived, as history, at
+ * `notes/archive/EXTENSIONS.md`.
  *
  * - `docs/SYSTEM-PLUGINS.md` — the architecture decision these types encode:
  *   one control plane whether the implementation shipped with Iris or arrived
