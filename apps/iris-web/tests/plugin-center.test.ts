@@ -180,16 +180,30 @@ test('every failure state, every source badge and the consent page read in both 
     id: 'pkg-builtin', name: 'Package builtin', description: 'ships with Iris', version: '0.0.0', apiVersion: 1,
     dependencies: [], installed: true, enabled: false, status: 'disabled', source: 'builtin',
   }
+  // A second builtin row: the real catalog seats two (TavernHelper, MVU), and
+  // the copy must read for both of them. `enabled: false` here is what makes
+  // the asset reduce to `undeclared` under an SSR (no manifest fetch); the
+  // real pair is enabled with no manifest row, which is the same phase.
+  const builtinTwo: SystemPluginView = {
+    id: 'pkg-builtin-two', name: 'Package builtin two', description: 'also ships with Iris', version: '0.0.0', apiVersion: 1,
+    dependencies: [], installed: true, enabled: false, status: 'disabled', source: 'builtin',
+  }
   const current = wired.store.getState().systemPlugins
   assert.ok(current !== undefined)
   wired.store.setState({
     systemPlugins: {
       revision: current.revision + 1,
-      plugins: [...STATES.map(row), dev, builtin],
+      plugins: [...STATES.map(row), dev, builtin, builtinTwo],
     } satisfies SystemPluginSnapshot,
   })
 
   const english = harness.renderPluginCenter(wired.store)
+  /** Slice one row's markup by its `data-plugin-id`, so a per-row claim cannot be satisfied by another row. */
+  const articleOf = (html: string, id: string): string => {
+    const at = html.indexOf(`data-plugin-id="${id}"`)
+    assert.ok(at >= 0, `no row rendered for ${id}`)
+    return html.slice(at, html.indexOf('</article>', at))
+  }
 
   // Each of the seven is named, and each says what it means AND what to do — two
   // separate sentences, because "what happened" and "what now" are two
@@ -274,6 +288,28 @@ test('every failure state, every source badge and the consent page read in both 
   assert.doesNotMatch(english, /data-uninstall-copy="builtin"/, 'a builtin row grew a per-row uninstall note')
   assert.match(english, /Uninstalling keeps card and chat data/, 'the builtin retention sentence is gone')
 
+  // W1: a builtin ships no browser bundle — its frame members ride the core
+  // member bundle — so the three cells that read like a fault are replaced by
+  // one sentence. The claim is per row: `pkg-install-failed` is a `git` row
+  // whose asset is `undeclared` too, and for a third party that phase is real
+  // information, so it must keep the cells. Matched on the row's own slice and
+  // on the sentence's own `data-plugin-builtin-asset-note` stamp, not on the
+  // page: a blunt whole-page match stays green while a git row is wrongly
+  // swallowed by the branch.
+  const builtinOneRow = articleOf(english, 'pkg-builtin')
+  const builtinTwoRow = articleOf(english, 'pkg-builtin-two')
+  for (const [id, row] of [['pkg-builtin', builtinOneRow], ['pkg-builtin-two', builtinTwoRow]] as const) {
+    assert.match(row, /data-plugin-asset-phase="undeclared"/, `${id} is not the undeclared case this branch is for`)
+    assert.match(row, /data-plugin-builtin-asset-note/, `${id} does not say in words why it has no browser asset`)
+    assert.match(row, /frame members load with the core member bundle/, `${id} lacks the builtin-asset sentence`)
+    assert.doesNotMatch(row, /Never/, `${id} still shows "Never"`)
+    assert.doesNotMatch(row, /Browser asset/, `${id} still shows the browser-asset cells`)
+  }
+  const gitUndeclaredRow = articleOf(english, 'pkg-install-failed')
+  assert.doesNotMatch(gitUndeclaredRow, /data-plugin-builtin-asset-note/, 'a third-party `undeclared` row was given the builtin sentence')
+  assert.match(gitUndeclaredRow, /Browser asset/, 'a third-party `undeclared` row lost its browser-asset cells')
+  assert.match(gitUndeclaredRow, /Never/, 'a third-party `undeclared` row no longer says it was never loaded')
+
   harness.setLanguage('zh')
   const chinese = harness.renderPluginCenter(wired.store)
   const ZH: Record<SystemPluginFailureState, RegExp> = {
@@ -296,6 +332,9 @@ test('every failure state, every source badge and the consent page read in both 
   assert.match(chinese, /你的开发目录绝不会被碰/, 'the Chinese dev uninstall copy is missing')
   assert.match(chinese, /dev 本地/, 'the Chinese dev badge is missing')
   assert.match(chinese, /安装时记录/, 'the Chinese provenance summary is missing')
+  // W1's copy exists in both languages, for both builtin rows.
+  assert.match(chinese, /内置插件的帧侧成员随核心成员包加载，没有独立的浏览器包。/, 'the Chinese builtin-asset sentence is missing')
+  assert.equal(chinese.match(/data-plugin-builtin-asset-note/g)?.length, 2, 'the Chinese builtin-asset sentence is not on both builtin rows')
   harness.setLanguage('en')
 
   // ---------------------------------------------------------- the consent page

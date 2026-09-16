@@ -183,6 +183,14 @@
   font-weight: 600;
 }
 
+/* A builtin has no browser bundle of its own; the sentence replaces the three
+   cells, so it takes the prose styling of the block rather than the cell grid. */
+.iris-plugin__asset-builtin {
+  margin: 0;
+  color: var(--iris-ink-secondary);
+  font-size: 12px;
+}
+
 .iris-plugin__asset--loaded .iris-plugin__asset-phase {
   color: var(--iris-accent-strong);
 }
