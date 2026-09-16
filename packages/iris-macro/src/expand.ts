@@ -81,6 +81,23 @@ export interface ExpandOptions {
    */
   readonly maxDepth?: number
   /**
+   * Called once for each named macro this pass **resolves**, with the macro's
+   * head — its name, lowercased the way the registry folds it.
+   *
+   * An observation, never an input: it cannot change the returned string, which
+   * is what lets the itemization turn it on without moving a byte. Called for a
+   * resolved macro only — a name nothing implements is left in the text as
+   * `{{...}}` and is not reported, because "expanded" and "passed through" are
+   * different facts and the second one is already visible in the output.
+   *
+   * **Nested expansions are reported too.** `{{getvar::x}}` inside another
+   * macro's argument is resolved by the same walk and counts once, which is the
+   * honest reading: it was expanded. The callback is not re-entrant-safe across
+   * concurrent expansions because there are none — `expandMacros` is synchronous
+   * and one call owns its state.
+   */
+  readonly onMacro?: (head: string) => void
+  /**
    * Transform each resolved macro value before it is written into the result.
    *
    * Applies to what a macro EXPANDED TO, never to the literal text around it —
@@ -131,6 +148,7 @@ interface ExpandState {
   readonly scratch: Map<string, unknown>
   readonly maxDepth: number
   readonly postProcess?: (value: string) => string
+  readonly onMacro?: (head: string) => void
   depth: number
 }
 
@@ -351,6 +369,11 @@ function expandText(text: string, base: number, state: ExpandState): string {
         },
       }
       value = state.registry.resolve(invocation)
+      // Reported only when a resolver claimed it. `value === undefined` means
+      // the `{{...}}` survives verbatim, and counting that as an expansion would
+      // tell a reader a macro ran where none did — the same confusion the
+      // source/reason split exists to avoid.
+      if (value !== undefined) state.onMacro?.(call.name.trim().toLowerCase())
     }
 
     // `raw` is an unresolved macro passing through verbatim, not a substituted
@@ -390,6 +413,7 @@ export function expandMacros(text: string, context: MacroContext, options: Expan
   const state: ExpandState = {
     registry,
     ...options.postProcess === undefined ? {} : { postProcess: options.postProcess },
+    ...options.onMacro === undefined ? {} : { onMacro: options.onMacro },
     context,
     // Hashed by `{{pick}}`: the text as the caller wrote it, so rewriting a
     // legacy marker does not silently reroll every pick in the document.

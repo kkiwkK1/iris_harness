@@ -749,9 +749,13 @@ export class ChatEntry {
             : { firstIncludedMessageId: this.firstIncludedMessageId },
           ...this.tokenBudget === undefined ? {} : { tokenBudget: this.tokenBudget },
         })
-        const expanded = expandMacros(text, macros, options?.postProcess === undefined
-          ? {}
-          : { postProcess: options.postProcess })
+        const expanded = expandMacros(text, macros, {
+          ...options?.postProcess === undefined ? {} : { postProcess: options.postProcess },
+          // The macro stage's trace. Forwarded to the engine's own observation,
+          // so it sees exactly the macros the untraced path resolves and cannot
+          // affect a byte of the result.
+          ...options?.onMacro === undefined ? {} : { onMacro: options.onMacro },
+        })
         // `postProcess` marks the regex-pattern path, where every expanded value
         // is escaped before being read as syntax. A variable macro there would
         // put an unescaped YAML block into a pattern, so it is left alone: the
@@ -781,7 +785,7 @@ export class ChatEntry {
             // would claim the scope exists and holds nothing.
           },
           onUnsupportedScope: (scope) => { this.unsupportedScopes.add(scope) },
-        })
+        }, options?.onMacro)
       }
     }
     return this.#substitute

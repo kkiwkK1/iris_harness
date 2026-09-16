@@ -188,12 +188,28 @@ test('provenance metadata changes no assembled byte', () => {
     source: contribution.id === 'atDepth'
       ? { kind: 'script', id: 'atDepth' }
       : { kind: 'preset', id: contribution.id },
-    ...contribution.id === 'init' ? { zeroReason: 'macros-only' as const } : {},
+    // The macro stage's report rides the same test: `init` is the row a
+    // variable-driven preset produces, so it is the one that has heads to show.
+    ...contribution.id === 'init'
+      ? {
+          zeroReason: 'macros-only' as const,
+          macros: { heads: { setvar: 61 }, charsBefore: 1250, charsAfter: 0 },
+          regex: { applied: ['strip-updates'] },
+        }
+      : {},
   }))
 
   const history = conversation(4)
   const plain = assemble({ contributions: bare, history, budget: roomy })
-  const traced = assemble({ contributions: explained, history, budget: roomy })
+  const traced = assemble({
+    contributions: explained,
+    history,
+    budget: roomy,
+    // A history rule too, so the aggregate row's own regex report is in the
+    // comparison — the one contribution-shaped field the caller supplies
+    // rather than the builder.
+    historyRules: ['hide-commands'],
+  })
 
   assert.equal(traced.system, plain.system)
   assert.deepEqual(traced.messages, plain.messages)
@@ -210,6 +226,16 @@ test('provenance metadata changes no assembled byte', () => {
     explained.map(contribution => contribution.source),
   )
   assert.equal(traced.items.find(item => item.id === 'init')?.zeroReason, 'macros-only')
+  assert.deepEqual(
+    traced.items.find(item => item.id === 'init')?.macros,
+    { heads: { setvar: 61 }, charsBefore: 1250, charsAfter: 0 },
+  )
+  assert.deepEqual(traced.items.find(item => item.id === 'init')?.regex, { applied: ['strip-updates'] })
+  // And the conversation row carries the caller's rule list, which is the only
+  // place a prompt-direction regex can be recorded.
+  assert.deepEqual(traced.items.find(item => item.id === 'chatHistory')?.regex, { applied: ['hide-commands'] })
+  // Without the rules the same assembly reports none — absent is not `[]`.
+  assert.equal(plain.items.find(item => item.id === 'chatHistory')?.regex, undefined)
 })
 
 /**

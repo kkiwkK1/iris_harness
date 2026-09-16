@@ -351,3 +351,63 @@ test('scripts compose in the order given', () => {
 test('empty text is returned untouched', () => {
   assert.equal(applyRegexScripts('', PLACEMENT.AI_OUTPUT, [MVU_STRIP_COMMANDS], { isPrompt: true }), '')
 })
+
+// ── the rule trace: which rules actually fired ──────────────────────────────
+
+test('onRule reports only the rules that rewrote the text, by display name', () => {
+  const fired: string[] = []
+  applyRegexScripts(MVU_REPLY, PLACEMENT.AI_OUTPUT, MVU_SCRIPTS, {
+    isPrompt: true,
+    onRule: name => { fired.push(name) },
+  })
+
+  // Both scripts match this reply, and both are prompt-direction — so both are
+  // reported, under the `scriptName` the card editor shows.
+  assert.deepEqual(fired, ['去除变量更新', '对 AI 隐藏状态栏'])
+
+  // A script whose pattern does not match reports nothing. This is the whole
+  // reason the check is on identity rather than on "the script was in the
+  // chain": a chain that runs and changes nothing must not read as a rule that
+  // fired, or the itemization would report every enabled rule on every turn.
+  const misses: string[] = []
+  applyRegexScripts('A reply with no commands in it.', PLACEMENT.AI_OUTPUT, MVU_SCRIPTS, {
+    isPrompt: true,
+    onRule: name => { misses.push(name) },
+  })
+  assert.deepEqual(misses, [])
+})
+
+test('a rule with no name is reported under its id, and the fallback is not invented', () => {
+  const named: string[] = []
+  applyRegexScripts('TOKEN', PLACEMENT.AI_OUTPUT, [
+    script({ id: 'a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84', findRegex: 'TOKEN', replaceString: 'x' }),
+  ], { onRule: name => { named.push(name) } })
+  // `id` when there is no `scriptName`: unreadable but true, and the panel's
+  // job is to show what the host knows rather than to guess a nicer name.
+  assert.deepEqual(named, ['a3e91f27-5d64-4b08-8c1f-7e2a9d5c3f84'])
+
+  const anonymous: string[] = []
+  applyRegexScripts('TOKEN', PLACEMENT.AI_OUTPUT, [
+    script({ findRegex: 'TOKEN', replaceString: 'x' }),
+  ], { onRule: name => { anonymous.push(name) } })
+  assert.deepEqual(anonymous, ['unnamed'])
+})
+
+test('onRule is an observation: it cannot change the rewritten text', () => {
+  // The property the whole feature rests on — asking for the report moves no
+  // byte. Compared against the same run with no observer at all.
+  const plain = applyRegexScripts(MVU_REPLY, PLACEMENT.AI_OUTPUT, MVU_SCRIPTS, { isPrompt: true })
+  const observed = applyRegexScripts(MVU_REPLY, PLACEMENT.AI_OUTPUT, MVU_SCRIPTS, {
+    isPrompt: true,
+    onRule: () => {},
+  })
+  assert.equal(observed, plain)
+
+  // And a selector that matches nothing but looks like a rule fires none: the
+  // trace follows the *effect*, never the presence of a script in the chain.
+  const fired: string[] = []
+  applyRegexScripts('untouched', PLACEMENT.AI_OUTPUT, [
+    script({ scriptName: 'never-matches', findRegex: 'ABSENT', replaceString: 'x' }),
+  ], { onRule: name => { fired.push(name) } })
+  assert.deepEqual(fired, [])
+})

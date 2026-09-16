@@ -133,6 +133,10 @@ export interface ContributionMember {
   text: string
   /** Where this member's text came from; see {@link ContributionSource}. */
   source?: ContributionSource
+  /** Which macros this member ran through, when the caller traced them. */
+  macros?: ContributionMacros
+  /** Which regex rules rewrote this member, by name, when the caller recorded them. */
+  regex?: { applied: string[] }
   /** Whether this member's text is expected to differ next turn; see {@link Contribution.volatile}. */
   volatile?: boolean
   /** Whether this member has been observed unchanged for long enough to promote; see {@link Contribution.settled}. */
@@ -177,18 +181,44 @@ export type ContributionZeroReason
     | 'trimmed'
     | 'dropped-by-budget'
 
+/**
+ * What one macro expansion pass did, when the caller traced it.
+ *
+ * Carries heads and sizes, never the text: the M1 manual's third iron rule is
+ * that a report stores hashes, tokens, sources and reasons, and the prompt's
+ * own bytes stay in the host's session. `heads` is insertion-ordered by
+ * first-seen, so two runs over the same state produce the same object.
+ */
+export interface ContributionMacros {
+  /** Head → how many times it resolved, folded to lower case. */
+  heads: Record<string, number>
+  /** Characters before expansion (UTF-16 code units, i.e. `String.length`). */
+  charsBefore: number
+  /** Characters after expansion. */
+  charsAfter: number
+}
+
 /** One piece of text contributed to the prompt. */
 export interface Contribution {
   /** Stable identity, for diagnostics and for the itemization view. */
   id: string
-  /**
-   * Where the text came from; see {@link ContributionSource}.
-   *
-   * **Metadata, never prompt bytes.** The assembler reads it only to fill the
-   * itemization, so two contributions differing in this field alone assemble to
-   * the identical request — which is the property the golden test pins.
-   */
+  /** Where the text came from; see {@link ContributionSource}. */
   source?: ContributionSource
+  /**
+   * Which macros the text ran through, when the caller traced the expansion.
+   *
+   * Metadata for the itemization, never prompt bytes: the assembler reads it
+   * only to fill the report. A contribution with no macros — or one expanded by
+   * a caller that did not trace — carries neither and renders as "not
+   * explained", which is the same state the placement fields take.
+   */
+  macros?: ContributionMacros
+  /**
+   * The regex rules that rewrote this text, by name, when the caller recorded
+   * them. Empty or absent means no rule fired, which is different from a host
+   * that does not record at all; the wire shape keeps that distinction too.
+   */
+  regex?: { applied: string[] }
   /**
    * Why this rendered to nothing; see {@link ContributionZeroReason}.
    *
@@ -359,6 +389,24 @@ export interface AssembleInput {
    * lists included, which is not read at all on that path.
    */
   cacheFriendly?: boolean
+  /**
+   * The regex rules that rewrote the conversation, by name — the history
+   * half of the regex stage's trace.
+   *
+   * The prompt-direction scripts run over the floors (`runScripts` with
+   * `isPrompt`), never over the preset's own text, so the only place they can be
+   * recorded is here: the caller that rewrote the floors knows, and by the time
+   * `assemble` sees `history` the text is already rewritten and the evidence is
+   * gone. Attached to the `chatHistory` aggregate row, which is the row those
+   * floors are folded into.
+   *
+   * A **union over every floor**, not a per-floor list, because the conversation
+   * is one aggregate row by contract; the itemization would otherwise have to
+   * grow a row per floor, which is the split `AssembleResult.items` refuses.
+   * Absent means the caller recorded nothing — different from an empty array,
+   * which means it recorded and no rule fired.
+   */
+  historyRules?: readonly string[]
 }
 
 /** Why an assembly could not fit everything. */
@@ -426,6 +474,10 @@ export interface AssembledItem {
   role?: Role
   /** Where this row's text came from; see {@link ContributionSource}. */
   source?: ContributionSource
+  /** Which macros this row ran through, when the caller traced them. */
+  macros?: ContributionMacros
+  /** Which regex rules rewrote this row, by name, when the caller recorded them. */
+  regex?: { applied: string[] }
   /** Why this row rendered to nothing, on the rows where that happened. */
   zeroReason?: ContributionZeroReason
   /**
@@ -495,6 +547,10 @@ export interface AssembledMember {
   tokens: number
   /** Where this member's text came from; see {@link ContributionSource}. */
   source?: ContributionSource
+  /** Which macros this member ran through, when the caller traced them. */
+  macros?: ContributionMacros
+  /** Which regex rules rewrote this member, by name, when the caller recorded them. */
+  regex?: { applied: string[] }
   /** Where in the assembled request this member ended up; see {@link AssembledPlacement}. */
   placement?: AssembledPlacement
   /** Whether this member is inside the cache-friendly stable prefix. */

@@ -1271,6 +1271,41 @@ export interface PromptItemExplanation {
    * says "not cached" about text that was not in the request.
    */
   stable?: boolean
+  /**
+   * The macro stage: which heads expanded and what the text cost before and
+   * after.
+   *
+   * Absent when the text carried no macros — or when the host did not trace the
+   * expansion, which is the same "not explained" state the other optional
+   * fields take. **Heads and sizes, never the text**: the panel renders
+   * "expanded 61 `setvar`, 1 250 → 0 characters", which is the answer to why a
+   * variable-driven prompt costs nothing, and the prompt's own bytes stay in
+   * the host's session.
+   */
+  macros?: PromptItemMacros
+  /**
+   * The regex stage: the rules that rewrote this part, by name.
+   *
+   * Empty or absent means no rule fired. A rule's name is the preset's or the
+   * card's own (`comment`), so a reader can find it in the editor; the rewritten
+   * text is not carried, for the reason above.
+   */
+  regex?: { applied: string[] }
+}
+
+/**
+ * What one macro expansion did.
+ *
+ * `charsBefore` / `charsAfter` are UTF-16 code units (they are `String.length`),
+ * so a reader comparing them against a number they measured agrees. `heads` is
+ * keyed by the macro name folded to lower case, in first-seen order, so the
+ * object is deterministic for a given input.
+ */
+export interface PromptItemMacros {
+  /** Head → how many times it resolved, folded to lower case. */
+  heads: Record<string, number>
+  charsBefore: number
+  charsAfter: number
 }
 
 /**

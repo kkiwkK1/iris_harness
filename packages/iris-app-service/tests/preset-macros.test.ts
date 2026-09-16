@@ -173,3 +173,63 @@ test('previewing a prompt does not write to the chat variables', async (t) => {
   const { variables } = await handlers['script.getVariables']({ chatId, scope: 'chat' })
   assert.deepEqual(variables, {}, 'previewing a prompt mutated the stored chat variables')
 })
+
+test('a macro-driven prompt reports the heads it expanded, and the byte count both ways', async (t) => {
+  // The manual's own acceptance for the macro stage: a preset whose prompt is
+  // nothing but `{{setvar}}` calls is *working as designed* while costing zero
+  // tokens, and the itemization has to be able to say so rather than just
+  // 「空」. Written here as a fixture with a known count so the assertion is
+  // exact; the real preset's 61 is the shape this stands in for.
+  const preset: ChatCompletionPreset = {
+    prompts: [
+      {
+        identifier: 'init',
+        name: '初始化',
+        role: 'system',
+        content: '{{setvar::a::1}}{{setvar::b::2}}{{setvar::c::3}}',
+        enabled: true,
+      },
+      { identifier: 'read', name: '开始', role: 'system', content: 'A=[{{getvar::a}}]', enabled: true },
+    ],
+    prompt_order: [{
+      character_id: 100001,
+      order: [{ identifier: 'init', enabled: true }, { identifier: 'read', enabled: true }],
+    }],
+  }
+  const { handlers } = await fixture(t, preset)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  const init = itemization.entries.find(entry => entry.id === 'init')
+  assert.ok(init !== undefined, 'the all-macros prompt must still get a row')
+  assert.equal(init.tokens, 0)
+  assert.equal(init.explanation?.zeroReason, 'macros-only')
+  // The count and the sizes are the answer: three `setvar` calls collapsed a
+  // non-empty prompt to nothing.
+  assert.deepEqual(init.explanation?.macros?.heads, { setvar: 3 })
+  assert.equal(init.explanation?.macros?.charsBefore, '{{setvar::a::1}}{{setvar::b::2}}{{setvar::c::3}}'.length)
+  assert.equal(init.explanation?.macros?.charsAfter, 0)
+
+  // The reading prompt shows its own head, so the trace is per row.
+  const read = itemization.entries.find(entry => entry.id === 'read')
+  assert.deepEqual(read?.explanation?.macros?.heads, { getvar: 1 })
+  assert.ok((read?.explanation?.macros?.charsAfter ?? 0) > 0)
+})
+
+test('a prompt with no macros carries no macro explanation', async (t) => {
+  const preset: ChatCompletionPreset = {
+    prompts: [{ identifier: 'main', name: 'Main', role: 'system', content: 'Plain prose.', enabled: true }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: 'main', enabled: true }] }],
+  }
+  const { handlers } = await fixture(t, preset)
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  // `main` is plain prose, so the row has a source and no macro stage. A report
+  // that carried `heads: {}` would be claiming a trace it did not take, which is
+  // the difference the field's absence encodes.
+  const main = itemization.entries.find(entry => entry.id === 'main')
+  assert.ok(main !== undefined)
+  assert.ok(main.tokens > 0)
+  assert.equal(main.explanation?.macros, undefined)
+})

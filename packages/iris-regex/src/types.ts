@@ -146,5 +146,12 @@ export type MacroSubstitute = (
     /** Applied to each expanded value — used to escape regex metacharacters. */
     postProcess?: (value: string) => string
     characterOverride?: string
+    /**
+     * Called once per resolved macro with its folded head — the macro stage's
+     * trace. An observation only: it cannot change the returned string, so a
+     * caller asking for it does not move a byte. See `@iris/macro`'s
+     * `ExpandOptions.onMacro` for what counts as resolved.
+     */
+    onMacro?: (head: string) => void
   },
 ) => string

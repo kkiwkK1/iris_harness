@@ -1174,6 +1174,15 @@ export const en = {
   promptSourceHistory: 'the conversation',
   promptSourceScript: 'script: {name}',
   promptSourceHost: 'host: {name}',
+  /**
+   * The macro stage: `{kinds}` distinct heads, `{top}` the most frequent and
+   * `{count}` its count, and the character count before → after. The answer to a
+   * variable-driven preset's zero rows — `1 250 → 0` says the prompt did its job.
+   */
+  promptMacros: 'expanded {kinds} macros ({top} ×{count}), {before} → {after} chars',
+  /** The regex stage: `{rules}` is a comma-joined list of rule names, or none. */
+  promptRegex: 'regex rewrote this: {rules}',
+  promptRegexNone: 'regex ran and changed nothing',
   /** The row/message view switch, and the message view's own words. */
   promptViewTabRows: 'By part',
   promptViewTabMessages: 'By message',
@@ -2825,6 +2834,11 @@ export const zh: Record<StringKey, string> = {
   promptSourceHistory: '对话本身',
   promptSourceScript: '脚本：{name}',
   promptSourceHost: '宿主：{name}',
+  /** 宏阶段：`{kinds}` 种宏头，`{top}` 出现最多、`{count}` 其次数，前后字符数。变量驱动型预设 0 行的答案。 */
+  promptMacros: '展开了 {kinds} 种宏（{top} ×{count}），{before} → {after} 字符',
+  /** regex 阶段：`{rules}` 是规则名列表。 */
+  promptRegex: 'regex 改写了这段：{rules}',
+  promptRegexNone: 'regex 跑过，没有改动',
   /** 行视图 / 消息视图切换，与消息视图自己的文案。 */
   promptViewTabRows: '按部分',
   promptViewTabMessages: '按消息',

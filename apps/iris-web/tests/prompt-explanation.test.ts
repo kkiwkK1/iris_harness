@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
 import type { PromptItemEntry, PromptItemization, PromptItemMember } from '@iris/protocol'
-import { messageRows, sourceNoteKey, zeroReasonKey } from '../src/app/itemization.ts'
+import { macroNote, messageRows, regexNote, sourceNoteKey, zeroReasonKey } from '../src/app/itemization.ts'
 import { DICTIONARIES, en, type StringKey } from '../src/app/i18n/strings.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -159,7 +159,6 @@ test('the panel renders the explanation and its classes have rules', () => {
 test('the panel offers both views, and the message view has rules and a locator', () => {
   const panel = readFileSync(join(HERE, '..', 'src', 'app', 'PromptPanel.tsx'), 'utf8')
   const panels = readFileSync(join(HERE, '..', 'src', 'app', 'panels.css'), 'utf8')
-
   // The switch is only rendered when the host sent a reverse index — an older
   // record has none, and a tab over an empty view reads as a defect. The
   // condition and the guard are checked as source facts because the panel only
@@ -180,6 +179,58 @@ test('the panel offers both views, and the message view has rules and a locator'
   // words exist in both dictionaries (checked above) and the panel asks for the
   // right one per message.
   assert.ok(panel.includes("promptMessageStable") && panel.includes('promptMessageUnstable'))
+})
+
+test('the macro stage reports the most frequent head, not the first', () => {
+  const note = macroNote(row(0, {
+    source: { kind: 'preset', id: 'init' },
+    zeroReason: 'macros-only',
+    macros: { heads: { getvar: 2, setvar: 61 }, charsBefore: 1250, charsAfter: 0 },
+  }))
+  // `setvar` runs sixty-one times and `getvar` twice; the count is the point, so
+  // the head reported is the frequent one however the map was ordered.
+  assert.deepEqual(note, { kinds: 2, top: 'setvar', count: 61, before: 1250, after: 0 })
+
+  // Absent macros produce nothing — an untraced or macro-free row must not grow
+  // a line claiming a trace nobody took.
+  assert.equal(macroNote(row(40, { source: { kind: 'preset', id: 'main' } })), null)
+  assert.equal(macroNote(row(0, { source: { kind: 'preset', id: 'x' }, zeroReason: 'blank' })), null)
+  // A traced row with no heads at all is the same nothing: the trace found
+  // nothing to resolve, which the panel says by saying nothing.
+  assert.equal(macroNote(row(40, {
+    source: { kind: 'preset', id: 'main' },
+    macros: { heads: {}, charsBefore: 12, charsAfter: 12 },
+  })), null)
+})
+
+test('the regex stage tells "no rule fired" from "not recorded"', () => {
+  // Recorded and nothing matched: the panel says so, because a chain that ran
+  // is a different fact from a host that did not look.
+  assert.deepEqual(regexNote(row(10, { source: { kind: 'preset', id: 'main' }, regex: { applied: [] } })), [])
+  assert.deepEqual(
+    regexNote(row(10, { source: { kind: 'preset', id: 'main' }, regex: { applied: ['strip', 'hide'] } })),
+    ['strip', 'hide'],
+  )
+  // Not recorded at all.
+  assert.equal(regexNote(row(10, { source: { kind: 'preset', id: 'main' } })), null)
+})
+
+test('the macro and regex copy exists in both dictionaries with matching slots', () => {
+  const keys: StringKey[] = ['promptMacros', 'promptRegex', 'promptRegexNone']
+  for (const key of keys) {
+    const english = (en as Record<string, string>)[key]
+    assert.ok(english !== undefined && english !== '', `${key} is missing from en`)
+    for (const [language, dictionary] of Object.entries(DICTIONARIES)) {
+      const value = (dictionary as Record<string, string>)[key]
+      assert.ok(value !== undefined && value !== '', `${key} is missing from ${language}`)
+    }
+  }
+  for (const token of ['{kinds}', '{top}', '{count}', '{before}', '{after}']) {
+    assert.ok(en.promptMacros.includes(token), `promptMacros lost ${token}`)
+  }
+  assert.ok(en.promptRegex.includes('{rules}'), 'promptRegex lost {rules}')
+  // `promptRegexNone` is a fixed phrase — no slots to fill.
+  assert.equal(en.promptRegexNone.includes('{'), false)
 })
 
 /**

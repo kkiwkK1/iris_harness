@@ -544,7 +544,10 @@ test('the explanation carries no prompt text and no secret', async (t) => {
   )
 
   // The setvar preset's own prose (`Style is [gothic].`) and the user's floor
-  // are both in the request; neither may appear in an explanation.
+  // are both in the request; neither may appear in an explanation. The macro
+  // stage makes this a live risk rather than a theoretical one: a setvar's
+  // **value** is what a naive trace would record, and the value here is
+  // `gothic`.
   for (const secret of ['gothic', 'A SECRET FLOOR', 'Style is']) {
     assert.equal(
       explanations.includes(secret),
@@ -552,6 +555,89 @@ test('the explanation carries no prompt text and no secret', async (t) => {
       `"${secret}" reached the explanation report; the report must carry hashes, sources and reasons only`,
     )
   }
+  // And the macro report is present, carrying the head and not the value — so
+  // the assertions above are not passing because nothing was traced.
+  const withMacros = itemization.entries.find(entry => entry.explanation?.macros !== undefined)
+  assert.ok(withMacros !== undefined, 'this preset is macro-driven, so a row must report its heads')
+  const heads = Object.keys(withMacros.explanation?.macros?.heads ?? {})
+  assert.ok(heads.includes('setvar'), `expected a setvar head, got ${heads.join(', ')}`)
+  assert.equal(heads.includes('gothic'), false, 'a macro head is a name, never its value')
   // And there are explanations to have leaked, so the scan is not vacuous.
   assert.ok(itemization.entries.some(entry => entry.explanation !== undefined))
+})
+
+/**
+ * The regex stage's trace reaches the row it belongs to.
+ *
+ * The prompt-direction scripts rewrite the **conversation floors**, never the
+ * preset's own text, so the only row that can honestly report them is the
+ * `chatHistory` aggregate — and the caller is the only thing that knows, since
+ * by the time `assemble` sees the history the text is already rewritten. A card
+ * with a prompt-only rule over its own reply is the measured shape (MVU's
+ * `去除变量更新`, which strips its command block from what the model reads).
+ */
+const REGEX_CARD = JSON.stringify({
+  spec: 'chara_card_v2',
+  spec_version: '2.0',
+  data: {
+    name: 'Aria', description: '', personality: '', scenario: '',
+    first_mes: 'Hello there.\n<UpdateVariable>\n_.set("hp", 10)\n</UpdateVariable>', mes_example: '', creator_notes: '',
+    system_prompt: '', post_history_instructions: '', alternate_greetings: [],
+    tags: [], creator: '', character_version: '1',
+    extensions: {
+      regex_scripts: [{
+        id: 'r1',
+        scriptName: 'strip-commands',
+        findRegex: '/<UpdateVariable>[\\s\\S]*?<\\/UpdateVariable>/gm',
+        replaceString: '',
+        trimStrings: [],
+        // AI_OUTPUT placement, prompt direction only.
+        placement: [2],
+        disabled: false,
+        markdownOnly: false,
+        promptOnly: true,
+        runOnEdit: false,
+        substituteRegex: 0,
+        minDepth: null,
+        maxDepth: null,
+      }],
+    },
+  },
+})
+
+test('a prompt-direction regex on a floor is reported on the conversation row', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-itemize-regex-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), REGEX_CARD, 'utf8')
+
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const chats = materialisingChatStore(dir, library)
+  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
+  const handlers = new IrisAppService({
+    stream: scripted(),
+    library,
+    chats,
+    settings,
+    broadcast: () => {},
+    userName: 'Traveller',
+  }).handlers()
+
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  const { itemization } = await handlers['prompt.itemize']({ chatId: created.view.chatId })
+
+  // The greeting carries a command block, so the prompt-direction rule fired on
+  // the floor it rewrote — and the row says which rule, by the `scriptName` a
+  // card author would recognise.
+  const history = itemization.entries.find(entry => entry.id === 'chatHistory')
+  assert.ok(history !== undefined)
+  assert.deepEqual(history.explanation?.regex, { applied: ['strip-commands'] })
+
+  // The rule really rewrote the prompt direction: the block is not in the
+  // assembled history. (It is still in the *stored* greeting — the script is
+  // prompt-only, which is exactly why the record is the only place a reader can
+  // see that it ran.)
+  const opened = await handlers['chat.open']({ chatId: created.view.chatId })
+  const stored = opened.view.messages.map(message => message.text).join('\n')
+  assert.ok(stored.includes('<UpdateVariable>'), 'a prompt-only rule must leave the stored message alone')
 })

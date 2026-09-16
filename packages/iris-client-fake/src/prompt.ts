@@ -114,7 +114,14 @@ const ENTRIES: readonly PromptItemEntry[] = [
     label: 'Auxiliary Prompt',
     kind: 'system',
     tokens: 0,
-    explanation: { source: { kind: 'preset', id: 'nsfw', label: 'Auxiliary Prompt' }, zeroReason: 'macros-only' },
+    explanation: {
+      source: { kind: 'preset', id: 'nsfw', label: 'Auxiliary Prompt' },
+      zeroReason: 'macros-only',
+      // The macro stage, at the scale the measured preset has: a variable-driven
+      // prompt that resolves while writing nothing. A fixture without it would
+      // not exercise the macro line the panel exists to draw.
+      macros: { heads: { setvar: 61 }, charsBefore: 1250, charsAfter: 0 },
+    },
   },
   {
     id: 'e4a7c209-6b31-4f85-a0d2-3c9e7b1a5f68',
@@ -126,7 +133,7 @@ const ENTRIES: readonly PromptItemEntry[] = [
       zeroReason: 'marker-unfilled',
     },
   },
-  { id: 'chatHistory', label: 'Chat History', kind: 'history', tokens: 27, explanation: { source: { kind: 'history', id: 'chatHistory' } } },
+  { id: 'chatHistory', label: 'Chat History', kind: 'history', tokens: 27, explanation: { source: { kind: 'history', id: 'chatHistory' }, regex: { applied: ['去除变量更新'] } } },
 ]
 
 /**

@@ -383,6 +383,8 @@ export function runScripts(
     isPrompt?: boolean
     depth?: number
     substitute?: MacroSubstitute | undefined
+    /** Called once per rule that rewrote the text, by name. Observation only. */
+    onRule?: (name: string) => void
   } = {},
 ): string {
   if (scripts.length === 0) return text
