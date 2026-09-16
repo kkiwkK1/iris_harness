@@ -7357,7 +7357,7 @@ fake 侧（`iris-client-fake/tests/system-plugins.test.ts`）只镜像一个可�
 
 ---
 
-## 105. 卡脚本的 `console.*` 进诊断面（帧与壳半）：有界序列化、每卡限流、以及一条自己走完的往返
+## 107. 卡脚本的 `console.*` 进诊断面（帧与壳半）：有界序列化、每卡限流、以及一条自己走完的往返
 
 Dated 2026-09-16 (owner task sheet W7, branch `dev/sandbox-console-capture`
 against `035094e`). The host half is §88 on `notes/packages/iris-app-service`.
