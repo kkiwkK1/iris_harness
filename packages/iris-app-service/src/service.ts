@@ -2037,16 +2037,27 @@ export class IrisAppService {
      * would be the one that forgets.
      */
     const handlers: Handlers = {
-      'plugin.list': async () => requirePlugins().snapshot(),
+      'plugin.list': async () => {
+        // W5: the one read that pays for a fresh footprint walk, so the
+        // uninstall control can say what an opt-in deletion would delete.
+        // Every other transition answers from the cache `snapshot()` reads.
+        await requirePlugins().refreshFootprints()
+        return requirePlugins().snapshot()
+      },
       'plugin.install': async ({ id }) => await requirePlugins().install(id),
       // Routed through the install path when one is configured, because an
       // installed package's uninstall deletes its tree (§6) and the catalog
       // alone cannot do that. A host without an installer keeps the old
       // behaviour exactly: the row's installed flag flips and nothing on disk
       // moves.
-      'plugin.uninstall': async ({ id }) => pluginInstaller === undefined
+      //
+      // `removeData` (W5) is opt-in and defaults off, so an older client's
+      // `{ id }` is untouched. A host without an installer has no data store
+      // either, so the flag is a no-op there rather than an unsupported
+      // method — the request shape is unchanged.
+      'plugin.uninstall': async ({ id, removeData }) => pluginInstaller === undefined
         ? await requirePlugins().uninstall(id)
-        : await pluginInstaller.uninstall(id),
+        : await pluginInstaller.uninstall(id, removeData === true ? { removeData: true } : {}),
       'plugin.enable': async ({ id }) => await requirePlugins().enable(id),
       'plugin.disable': async ({ id }) => await requirePlugins().disable(id),
       'plugin.reload': async ({ id }) => await requirePlugins().reload(id),

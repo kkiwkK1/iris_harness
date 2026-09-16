@@ -101,6 +101,21 @@ export interface SystemPluginView {
   source?: SystemPluginSource
   provenance?: SystemPluginProvenance
   failure?: SystemPluginFailure
+  /**
+   * How much this plugin has stored under `<profile>/plugin-data/<id>/`, when
+   * the host has measured it.
+   *
+   * Additive and optional (owner task W5), on the same terms as `source`,
+   * `provenance` and `failure`: an older browser ignores it, and an older
+   * host's snapshot parses here. It exists so the uninstall control can say
+   * *what* an opt-in "delete its data too" would delete ("3 files, 2 kB")
+   * instead of asking the user to approve a number they cannot see. Absent
+   * means "nothing to delete or not measured" — the host omits it for a
+   * plugin with no `plugin-data` directory, and the page then offers no
+   * checkbox. Display only: `plugin.uninstall`'s `removeData` is the real
+   * decision, and the host never reads this field back.
+   */
+  dataFootprint?: { files: number, bytes: number }
 }
 
 /** Authoritative state of the profile's registered system-plugin catalog. */

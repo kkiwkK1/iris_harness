@@ -135,13 +135,26 @@ export class FakeSystemPlugins {
     return this.snapshot()
   }
 
-  uninstall(id: string): SystemPluginSnapshot {
+  uninstall(id: string, options: { removeData?: boolean } = {}): SystemPluginSnapshot {
     const plugin = this.#require(id)
     this.#requireNoEnabledDependents(plugin)
     if (!plugin.installed) return this.snapshot()
     if (plugin.enabled) {
       this.#write(id, { status: 'disabling' })
       this.#write(id, { enabled: false, status: 'disabled' })
+    }
+    // W5: the fake mirrors the real host's one observable consequence — with
+    // the flag the row's `dataFootprint` goes, without it the row keeps it.
+    // The fake has no directory to delete, and a fake that pretended to delete
+    // bytes it never had would be a worse model than one that only moves the
+    // number the page reads.
+    if (options.removeData === true) {
+      const row = this.#plugins.get(id)
+      if (row !== undefined && row.dataFootprint !== undefined) {
+        const next = { ...row }
+        delete next.dataFootprint
+        this.#plugins.set(id, next)
+      }
     }
     this.#write(id, { installed: false, enabled: false, status: 'not-installed' })
     return this.snapshot()

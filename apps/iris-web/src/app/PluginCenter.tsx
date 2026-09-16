@@ -191,6 +191,15 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
   const [updateStaging, setUpdateStaging] = useState(false)
   const [updateProblem, setUpdateProblem] = useState<StringKey | undefined>()
   const [updateError, setUpdateError] = useState<{ id: string, message: string } | undefined>()
+  /*
+   * W5: the ids whose "delete its data too" checkbox is ticked. A set rather
+   * than one id because the checkbox lives on every installed row and the user
+   * may tick several before acting on one; each is erased when its own row's
+   * uninstall runs, so a later reinstall starts clean. Default off for every
+   * row, which is §12 ruling 1's "uninstall keeps `plugin-data`" — the new
+   * path is opt-in, never assumed.
+   */
+  const [removeDataFor, setRemoveDataFor] = useState<ReadonlySet<string>>(() => new Set())
 
   /*
    * Tokens whose transaction is already gone — confirmed, refused (a refused
@@ -254,18 +263,37 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
 
   const run = async (plugin: SystemPluginView, operation: Operation): Promise<void> => {
     if (busy) return
+    const removeData = operation === 'uninstall' && removeDataFor.has(plugin.id)
     setRequest({ id: plugin.id, operation })
     setOperationError(current => current?.id === plugin.id ? undefined : current)
     try {
       const result = operation === 'install' ? await actions.installSystemPlugin(plugin.id)
-        : operation === 'uninstall' ? await actions.uninstallSystemPlugin(plugin.id)
+        : operation === 'uninstall' ? await actions.uninstallSystemPlugin(plugin.id, removeData)
           : operation === 'enable' ? await actions.enableSystemPlugin(plugin.id)
             : operation === 'disable' ? await actions.disableSystemPlugin(plugin.id)
               : await actions.reloadSystemPlugin(plugin.id)
       if (!result.ok) setOperationError({ id: plugin.id, message: t('pluginCenterOperationFailed', { name: plugin.name, detail: result.error }) })
+      // The checkbox is spent once its uninstall has run, whether or not the
+      // row left: a stale tick must not survive to the next attempt.
+      else if (operation === 'uninstall') setRemoveDataFor(current => {
+        if (!current.has(plugin.id)) return current
+        const next = new Set(current)
+        next.delete(plugin.id)
+        return next
+      })
     } finally {
       setRequest(undefined)
     }
+  }
+
+  /** Tick or untick one row's "delete its data too" box. */
+  const toggleRemoveData = (id: string, checked: boolean): void => {
+    setRemoveDataFor(current => {
+      const next = new Set(current)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
   }
 
   const stage = async (source: { kind: 'git', remote: string, commit: string } | { kind: 'dev', path: string }): Promise<void> => {
@@ -460,6 +488,8 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
         onUpdateCancel={closeUpdate}
         onRetryAsset={() => retryAsset(plugin.id)}
         onReinstall={reinstall}
+        removeData={removeDataFor.has(plugin.id)}
+        onToggleRemoveData={checked => { toggleRemoveData(plugin.id, checked) }}
         onRun={run}
       />)}
     </div>
@@ -727,7 +757,7 @@ function SourceBadge({ source, lang }: { source: SystemPluginSource, lang: Langu
   >{translate(lang, SOURCE_KEYS[source])}</span>
 }
 
-function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, asset, reinstalling, updateOpen, updateCommit, updateStaging, updateProblem, updateError, onUpdateOpen, onUpdateCommit, onUpdateSubmit, onUpdateCancel, onRetryAsset, onReinstall, onRun }: {
+function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, asset, reinstalling, updateOpen, updateCommit, updateStaging, updateProblem, updateError, onUpdateOpen, onUpdateCommit, onUpdateSubmit, onUpdateCancel, onRetryAsset, onReinstall, removeData, onToggleRemoveData, onRun }: {
   plugin: SystemPluginView
   snapshot: SystemPluginSnapshot
   lang: Language
@@ -747,6 +777,8 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
   onUpdateCancel: () => void
   onRetryAsset: () => void
   onReinstall: (plugin: SystemPluginView) => Promise<void>
+  removeData: boolean
+  onToggleRemoveData: (checked: boolean) => void
   onRun: (plugin: SystemPluginView, operation: Operation) => Promise<void>
 }): ReactElement {
   const dependents = snapshot.plugins.filter(candidate =>
@@ -859,6 +891,32 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
         onClick={onUpdateOpen}
       >{translate(lang, 'pluginCenterUpdateOpen')}</button> : null}
     </div>
+    {/*
+      * W5: the opt-in data deletion. Shown only where there is something to
+      * delete — `dataFootprint` is absent for a row with no `plugin-data`
+      * directory, and a checkbox that promised to delete nothing would be
+      * worse than no checkbox. Default unticked, here and everywhere.
+      *
+      * A checkbox and not a second button: the decision is an adjective on the
+      * uninstall, not an action of its own, and there is one uninstall button
+      * for it to modify. Its label names the exact cost — file count and size
+      * — from the host's own measurement, not an estimate the page computed.
+      */}
+    {plugin.installed && plugin.dataFootprint !== undefined ? <label
+      className="iris-plugin__remove-data"
+      data-plugin-remove-data={plugin.id}
+    >
+      <input
+        type="checkbox"
+        checked={removeData}
+        disabled={busy || blocked}
+        onChange={event => { onToggleRemoveData(event.target.checked) }}
+      />
+      {translate(lang, 'pluginCenterRemoveData', {
+        files: String(plugin.dataFootprint.files),
+        size: describeBytes(plugin.dataFootprint.bytes, lang),
+      })}
+    </label> : null}
     {updateOpen && updatable ? <form
       className="iris-plugin__update"
       data-plugin-update-form={plugin.id}

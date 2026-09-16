@@ -7309,6 +7309,50 @@ asset.phase === 'undeclared'`。为真时不再渲染那五格
 的三条（zh 含中文、两列槽位一致、用到的键存在）自然覆盖——这句话没有槽位，
 zh 列含中文，键两列都有。
 
+---
+
+---
+
+## 104. 卸载行旁的「同时删除它存的数据」复选框：默认不勾、只显示在真有数据的行、勾了才传 `removeData`
+
+Dated 2026-09-16 (owner task sheet W5, branch
+`dev/plugin-uninstall-remove-data` against `035094e`). The host half of this
+round is §87 on `notes/packages/iris-app-service`.
+
+### 形状
+
+- **行的可选字段 `dataFootprint?: { files, bytes }`** 是页面上数字的唯一来源。
+  宿主在 `plugin.list` 时测量（`refreshFootprints`），所以它反映的是「用户刚
+  打开/刷新的这一页」时磁盘上的事实。无数据的行没有这个字段——**没有复选框**。
+  不给零值行显示一个「删除 0 个文件」的勾选框：那是一个承诺删不掉任何东西的
+  控件。`plugin.installed` 也不够：未安装的行本来就没有数据。
+- **复选框，不是第二个按钮**。决定是卸载的一个形容词，不是独立动作；它改的
+  就是旁边那颗卸载按钮。标签把代价说全：「同时删除它存的数据（3 个文件，2 kB）」
+  / `Also delete the data it stored (3 files, 2 kB)`，`{files}`/`{size}` 来自
+  宿主自己的测量，不是页面估算的。数字格式化复用 `describeBytes`（同意页
+  同一套）。
+- **默认不勾**，逐行独立，且卸载一跑就把那一行的勾**擦掉**（无论行是否真的
+  离开）：一次陈旧的勾不能活到下一次尝试。
+- **不勾就不传**。store 的 `uninstallSystemPlugin(id, removeData?)` 在
+  `removeData !== true` 时发 `{ id }`——与 W5 之前的客户端**逐字节相同**的
+  请求形状。发 `removeData: false` 也能用，但那样「这个客户端知道有选项」就
+  和「这个用户要了默认」分不开了，而保持旧形状不花任何代价。
+
+### 测试侧
+
+`plugin-center-install.test.ts` 挂载真实组件、对真实 fake 驱动点击，断言的是
+**客户端被调用时的参数**（不是页面说它发了什么）：
+
+- 勾选框只出现在 `dataFootprint` 存在的行上（用具名行切片，不用整页模糊匹配）；
+- 默认 `checked === false`；
+- 标签正文是两个数字 `(3 files, 2 kB)`；
+- 不勾 → `plugin.uninstall` 的 params 是 `{ id }`；
+- 勾上再卸载 → params 是 `{ id, removeData: true }`。
+
+fake 侧（`iris-client-fake/tests/system-plugins.test.ts`）只镜像一个可观察后果：
+带 `removeData` 时行的 `dataFootprint` 消失、不带时保留。fake 没有目录可删，
+假装删了它从未拥有的字节是更差的模型。
+
 ### 牙齿
 
 | 断言 | 让它变红的改动 | 结果 |
@@ -7344,3 +7388,19 @@ zh 列含中文，键两列都有。
 id 会盖，虚拟目录里缺席）——那会让这句话在更多行上出现，是预期方向。
 (c) 第三方插件的「真缺失」也需要更明确的文案——那是另一栏的事，不是把
 这句话扩大到所有 `undeclared`，那正是这次变异要防的错。
+
+---
+
+| 无 `dataFootprint` 的行**没有**复选框（`page.find('[data-plugin-remove-data="tavern-helper"]') === null`） | 删掉 `plugin.dataFootprint !== undefined` 条件（行一律显示勾选框） | 红（勾选框出现在无数据行上；断言还发现 `data-plugin-remove-data="mvu"` 本应是那一个）→ 复原绿 |
+| 未勾选卸载的 params 恰为 `{ id }` | store 恒发 `{ id, removeData: <checked> }` | 红（`{ id, removeData: false }`）→ 绿 |
+| 勾选卸载的 params 为 `{ id, removeData: true }` | `run()` 里丢掉 `removeDataFor.has(plugin.id)` 的读取 | 红（发的是 `{ id }`）→ 绿 |
+| 标签正文 `(3 files, 2 kB)` | 直接把字节数渲染成 `2048` | 红 → 绿 |
+| fake：带 flag 去 footprint、不带保留 | fake 的 flag 分支删掉 | 红 → 绿 |
+
+### What would reopen this
+
+(a) 行上出现第二个可删的数据根（缓存、导出）——一个布尔装不下，需要一个显式
+列表而不是第二个勾选框。(b) 卸载前想显示「哪些键」而不是「多少」——`dataFootprint`
+只有数量，键名需要另一个只读方法，而键名可能泄露插件内部命名，是一个隐私判断
+而不是显示判断。(c) 一次卸载会连带删除别的行的数据（级联）——今天复选框只
+影响它自己那一行，级联删除需要自己的同意面。

@@ -851,7 +851,7 @@ export class SystemPluginInstallService {
    * pair, so keeping it buys nothing and costs a same-privilege code tree
    * sitting on disk after the user believes they deleted it.
    */
-  async uninstall(id: string): Promise<SystemPluginSnapshot> {
+  async uninstall(id: string, options: { removeData?: boolean } = {}): Promise<SystemPluginSnapshot> {
     const record = this.#runtime.record(id)
     if (record?.source === 'git') {
       const dir = this.installedDir(id)
@@ -867,6 +867,20 @@ export class SystemPluginInstallService {
       // with the package for `dev` rows too.
       await fsp.rm(path.join(this.#clientAssetRoot, id), { recursive: true, force: true }).catch(() => {})
     }
+    /*
+     * W5: the opt-in data deletion.
+     *
+     * Ordered **before** the catalog row goes, and not through `record`: a
+     * builtin has no `record` (it is not an installed package) and can still
+     * have a `plugin-data` directory — its `scope.storage` face comes from the
+     * same store (measured: a builtin declares all permissions, so
+     * `plugin-storage` is never the thing that withholds it). `removeDataFor`
+     * is best effort and answers rather than throws, so an undeletable
+     * directory cannot tear down an uninstall that has otherwise succeeded;
+     * the runtime reports the leftover by name through its own diagnostics
+     * channel and the row still leaves.
+     */
+    if (options.removeData === true) await this.#runtime.removeDataFor(id)
     return await this.#runtime.uninstall(id)
   }
 

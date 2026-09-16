@@ -324,11 +324,28 @@ export class SystemPluginRuntime {
    */
   readonly #declaredPermissions = new Map<string, ReadonlySet<string>>()
   /**
+   * The last measured private-store footprint per plugin id, keyed by id.
+   *
+   * A **cache**, because measuring is asynchronous (`stat` per key file) and
+   * `snapshot()` is synchronous — it runs after every transition and inside
+   * every broadcast. `refreshFootprints()` is the one writer and the caller
+   * that has a reason to pay for the walk (`plugin.list`); `snapshot()` only
+   * reads. A write a plugin makes between two lists is therefore not reflected
+   * until the next list, which is the honest limit: the number exists so the
+   * uninstall checkbox can name what it will delete, and the user is looking at
+   * a page they just opened or refreshed. Entries with nothing stored are
+   * removed rather than kept at zero, so `snapshot()` omits `dataFootprint` the
+   * same way it omits every other absent optional field.
+   */
+  readonly #footprints = new Map<string, { files: number, bytes: number }>()
+  /**
    * The private-store backend, present only when the host passed a
    * `pluginDataRoot`. A runtime without one — every lifecycle test — hands
    * out a `storage` face that refuses with a name rather than no member.
    */
   readonly #pluginData: PluginDataStore | undefined
+  /** The deletion seam (W5); `undefined` means use the real store. */
+  readonly #removeDataOverride: ((pluginId: string) => Promise<{ removed: true } | { removed: false, leftover: string, reason: string }>) | undefined
   #revision = 0
   #queue: Promise<void> = Promise.resolve()
   #initialized = false
@@ -340,6 +357,7 @@ export class SystemPluginRuntime {
     this.#file = options.file
     this.#onError = options.onError ?? (() => {})
     this.#writePreferences = options.writePreferences ?? atomicWriteFile
+    this.#removeDataOverride = options.removeData
     this.#pluginData = options.pluginDataRoot === undefined
       ? undefined
       : new PluginDataStore({
@@ -840,6 +858,7 @@ export class SystemPluginRuntime {
         const stored = this.#persisted.get(plugin.definition.id)
         const provenance = provenanceOf(stored)
         const failure = this.#failures.get(plugin.definition.id)
+        const footprint = this.#footprints.get(plugin.definition.id)
         return {
           id: plugin.definition.id,
           name: plugin.definition.name,
@@ -857,6 +876,11 @@ export class SystemPluginRuntime {
           ...stored?.source === undefined ? {} : { source: stored.source },
           ...provenance === undefined ? {} : { provenance },
           ...failure === undefined ? {} : { failure: { ...failure } },
+          // W5's display-only footprint. Omitted when nothing is stored (no
+          // `plugin-data` directory, or an empty one) for the same reason the
+          // three above are: a row with no data serializes to exactly the
+          // bytes it serialized to before this round.
+          ...footprint === undefined ? {} : { dataFootprint: footprint },
         }
       }),
     }
@@ -1087,6 +1111,61 @@ export class SystemPluginRuntime {
   flushPluginData(): Promise<void> {
     if (this.#pluginData === undefined) return Promise.resolve()
     return this.#pluginData.flush()
+  }
+
+  /**
+   * Re-measure every catalog row's private-store footprint, for the next
+   * `snapshot()`. Owner task W5.
+   *
+   * Called by the `plugin.list` handler before it answers, which is the one
+   * place a reader is asking "what is there right now" and can pay a `stat`
+   * walk per installed row. Silent about a row whose directory is unreadable
+   * for a reason other than "absent": `footprint()` already answers a zero
+   * for an absent directory, and a genuinely broken one is `plugin-data`'s
+   * problem, reported by the store like every other. No-op without a store.
+   */
+  async refreshFootprints(): Promise<void> {
+    if (this.#pluginData === undefined) return
+    for (const id of this.#plugins.keys()) {
+      const measured = await this.#pluginData.footprint(id)
+      if (measured.files === 0) this.#footprints.delete(id)
+      else this.#footprints.set(id, measured)
+    }
+  }
+
+  /**
+   * Delete one plugin's private data, for the opt-in half of an uninstall
+   * (owner task W5).
+   *
+   * On the runtime rather than on the install service because the store is
+   * the runtime's (`#pluginData`), and because a `dev` row and a builtin have
+   * no installer-side tree at all — the data directory is the one thing every
+   * source can have. Best effort, never throwing: the row's uninstall is a
+   * separate, already-decided act, and a leftover directory must not turn a
+   * successful uninstall into a failed one. The answer names the leftover when
+   * there is one, and the caller reports it.
+   * @param id - the plugin's catalog id.
+   * @returns whether the directory is gone, with a reason when it is not.
+   */
+  async removeDataFor(id: string): Promise<{ removed: true } | { removed: false, leftover: string, reason: string }> {
+    this.#footprints.delete(id)
+    if (this.#pluginData === undefined) return { removed: true }
+    try {
+      const outcome = await (this.#removeDataOverride ?? ((pluginId: string) => this.#pluginData!.remove(pluginId)))(id)
+      // A leftover is a completed uninstall with a named disk consequence, not
+      // a failure: the same reading `install.ts` gives a superseded tree that
+      // will not delete (`docs/SYSTEM-PLUGIN-INSTALL.md` §5.4). Reported so it
+      // reaches the diagnostics surface; the row still leaves.
+      if (!outcome.removed) {
+        this.#report(new Error(`system plugin "${id}": the private data at ${outcome.leftover} could not be deleted (${outcome.reason}); the uninstall succeeded — remove the directory by hand`))
+      }
+      return outcome
+    } catch (error: unknown) {
+      // `remove` answers rather than throws for the failure worth naming, so
+      // reaching here is a programming error (an invalid id) — reported the
+      // same way, so the uninstall still completes.
+      return { removed: false, leftover: id, reason: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   /** Tear down every child fiber without changing persisted preferences. */

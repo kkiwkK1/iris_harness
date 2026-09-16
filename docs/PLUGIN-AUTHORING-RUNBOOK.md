@@ -263,7 +263,7 @@ await scope.storage.keys()               // → string[]，排序后返回
 - **两个上限**：单值 1 MiB、单插件全量 64 MiB，按序列化后的 UTF-8 字节数计。超限时 `set` 抛 `invalid-request`，消息里带两个数字（你的值多大、闸门在哪）。
 - **没声明权限就调用**：四个方法都抛 `invalid-request`，消息点名 `plugin-storage`——这是权限词表里第一条真正挡人的规则，见安装一节裁决 1 的例外说明。
 - **`get` 对「没存过」和「存过但文件坏了」都答 `undefined`**，这是设计：坏文件的事实上报给宿主的诊断面（debug 页与日志），不抛给插件——插件处理不了它，能处理的人是用户。
-- **卸载保留数据**：`plugin.uninstall` 删安装树、删目录行，**不动** `plugin-data/<id>/`。重装同 id 插件读回的是上一代写下的字节，所以 `get` 的返回类型是 `unknown`——磁盘上的东西是上一个版本的插件写的，形状要自己收窄。
+- **卸载保留数据**：`plugin.uninstall` 删安装树、删目录行，**不动** `plugin-data/<id>/`。重装同 id 插件读回的是上一代写下的字节，所以 `get` 的返回类型是 `unknown`——磁盘上的东西是上一个版本的插件写的，形状要自己收窄。用户可以在卸载时勾选「同时删除它存的数据」（W5），那时 `plugin.uninstall` 带 `removeData: true`，宿主编名删除 `plugin-data/<id>/`；默认不勾，旧客户端发 `{ id }` 行为不变。
 - 写入是原子的（临时文件 + 改名）；宿主卸载后的写抛 `invalid-request`，插件被停用后的写抛 `unsupported`。读不受两者影响。
 
 ## 安装一个系统插件包

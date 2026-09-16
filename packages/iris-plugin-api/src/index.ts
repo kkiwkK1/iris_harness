@@ -327,4 +327,17 @@ export interface SystemPluginRuntimeOptions {
   onError?: (error: Error) => void
   /** Persistence seam used by lifecycle tests; production uses atomic replacement. */
   writePreferences?: (file: string, contents: string) => Promise<void>
+  /**
+   * Deletion seam used by lifecycle tests (owner task W5): the one place a
+   * test can make a data-directory removal *fail* deterministically.
+   *
+   * The real removal is rename-aside-then-delete, and its two failure shapes
+   * — the rename refusing, the delete not taking — are environment facts
+   * (Windows keeps handles, POSIX needs an unwritable parent) that no portable
+   * fixture can produce. Injecting the outcome is the same move
+   * `writePreferences` makes for the persistence side, and it is what lets the
+   * "a leftover is named and the row still leaves" assertion be deterministic
+   * rather than a race against the filesystem.
+   */
+  removeData?: (pluginId: string) => Promise<{ removed: true } | { removed: false, leftover: string, reason: string }>
 }
