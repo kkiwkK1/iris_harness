@@ -8847,57 +8847,6 @@ PR-2 的三个可选字段同一条规则：旧的浏览器忽略它，旧的宿
 
 ---
 
-## 88. 卡脚本的 `console.*` 进诊断面（宿主半）：`script.report` 与 `card-console` 这个 kind
-
-Dated 2026-09-16 (owner task sheet W7, branch `dev/sandbox-console-capture`
-against `035094e`). The frame and shell halves are §105 on
-`notes/apps/iris-web`; this is the host's.
-
-### 一个方法，一个新 kind
-
-线协议新增 `script.report`（静态表 137 → 138）：`chatId` / `at` / `level` /
-`message` / `scriptId?` / `characterId?`。`ReportKind` 新增 `card-console`，
-`KIND_WIRED` 里为 `true`——kind 在 union 里而不在这张表里，在页面上读作「没人
-在看」，正是这张表存在的理由。
-
-**grade 不在请求里。** 一条 console 调用永远不是 fault——`console.error` 是卡
-自己选的字，不是宿主拒了一次调用——所以宿主一律记 `note`，调用方无法说成别的。
-`level` 在请求上（给读线上报文的人），但宿主不据此改判，也不把它当第二份级别
-去和正文里的 `warn:` 前缀较劲：正文是帧序列化时就已经成形的，宿主只存。
-
-**`at` 走 `ReportContext` 新增的可选字段。** 只有这一个站点传它，理由写在
-`ReportContext.at` 的 docblock：消息跨了一层帧边界和一次往返，`Date.now()` 记
-的是到达而不是打印，一批一起到的行会读成同时。
-
-**这个 arm 直接调 `diagnostics.record`，不调 `#report`。** `#report` 会顺带推
-`irreversible` 广播并发一条 `onError` 日志——一条 `console.log` 两样都不是；走
-`#report` 会让卡自己的打印进宿主 stderr。`chatId` 必须能 `chats.open`：一条归不
-到任何会话的 console 行没人能处理，这是这个 arm 唯一的拒绝。
-
-### 牙齿
-
-| 断言 | 让它变红的改动 | 结果 |
-| --- | --- | --- |
-| W5a：`uninstall(id, { removeData: true })` 后 `plugin-data/<id>` `ENOENT`、行也消失 | 把安装服务里的 `if (options.removeData === true) await this.#runtime.removeDataFor(id)` 改成 `if (false) …` | 红（W5a「`removeData: true` left the data directory behind」+ W5b「leftover was not reported」）→ 复原绿 |
-| W5a：默认卸载后数据目录**仍在** | 把默认从 false 改成 true | 红 → 绿 |
-| W5a：未测量时行上无 `dataFootprint`，`refreshFootprints()` 后才有，且等于 `counter.json` 的实际字节 | 在 `snapshot()` 里给缺席的 footprint 填 `{ files: 0, bytes: 0 }` | 红（「a footprint appeared without a measurement」）→ 绿 |
-| W5b：注入 `{ removed: false, leftover, reason }` 后行仍卸载成功、`onError` 恰好一条、正文含 leftover 与「the uninstall succeeded」 | 删掉 `removeDataFor` 里 `if (!outcome.removed) { … #report … }` 分支 | 红（「the leftover was not reported on the diagnostics channel」）→ 绿 |
-| fake：`uninstall(id)` 保留 `dataFootprint`，`uninstall(id, { removeData: true })` 去掉它 | fake 的 `if (options.removeData === true)` 分支删掉 | 红 → 绿 |
-| T7（未改）：默认卸载不碰数据一个字节 | ——（W5 的默认正是它） | 常绿 |
-
-### What would reopen this
-
-(a) 一个真的想「删安装树以外的东西」的第二个数据根——那时 `removeData` 是一个
-布尔，装不下第二个目标，需要一个显式的列表而不是加第二个布尔。(b) 内置插件
-开始用 `scope.storage`——删除路径已经按 id 走，不需要改，但 `dataFootprint`
-会第一次在两个内置行上出现，值得在实机上确认一次。(c) 一个「删不掉」的目录
-需要一个比诊断面更强的处置（重试、开机清理）——今天它只是被具名报告，用户
-自己删；`superseded/` 的安装树也是同一个立场。
-
----
-
----
-
 ## 90. 第三批偶发红：`scoped-regex` 的清理 `EBUSY`，与 `variable-writers` 的墙钟屏障
 
 Dated 2026-09-16 (owner task sheet W6, branch `dev/flaky-tests-batch-3`
@@ -8989,3 +8938,54 @@ against `035094e`). §86 根治了 `chat-search` 与 `chat-integrity`；这是�
 (b) 一个「把某张卡的 console 静音」的用户开关——那是设置面，不是报告面。
 (c) 把 console 行写进日志文件——今天刻意不写（缓冲不落盘），要写就得先回答
 「卡打印的敏感内容进谁的盘」。
+
+## 91. 卡脚本的 `console.*` 进诊断面（宿主半）：`script.report` 与 `card-console` 这个 kind
+
+Dated 2026-09-16 (owner task sheet W7, branch `dev/sandbox-console-capture`
+against `035094e`). The frame and shell halves are §105 on
+`notes/apps/iris-web`; this is the host's.
+
+### 一个方法，一个新 kind
+
+线协议新增 `script.report`（静态表 137 → 138）：`chatId` / `at` / `level` /
+`message` / `scriptId?` / `characterId?`。`ReportKind` 新增 `card-console`，
+`KIND_WIRED` 里为 `true`——kind 在 union 里而不在这张表里，在页面上读作「没人
+在看」，正是这张表存在的理由。
+
+**grade 不在请求里。** 一条 console 调用永远不是 fault——`console.error` 是卡
+自己选的字，不是宿主拒了一次调用——所以宿主一律记 `note`，调用方无法说成别的。
+`level` 在请求上（给读线上报文的人），但宿主不据此改判，也不把它当第二份级别
+去和正文里的 `warn:` 前缀较劲：正文是帧序列化时就已经成形的，宿主只存。
+
+**`at` 走 `ReportContext` 新增的可选字段。** 只有这一个站点传它，理由写在
+`ReportContext.at` 的 docblock：消息跨了一层帧边界和一次往返，`Date.now()` 记
+的是到达而不是打印，一批一起到的行会读成同时。
+
+**这个 arm 直接调 `diagnostics.record`，不调 `#report`。** `#report` 会顺带推
+`irreversible` 广播并发一条 `onError` 日志——一条 `console.log` 两样都不是；走
+`#report` 会让卡自己的打印进宿主 stderr。`chatId` 必须能 `chats.open`：一条归不
+到任何会话的 console 行没人能处理，这是这个 arm 唯一的拒绝。
+
+### 牙齿
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| W5a：`uninstall(id, { removeData: true })` 后 `plugin-data/<id>` `ENOENT`、行也消失 | 把安装服务里的 `if (options.removeData === true) await this.#runtime.removeDataFor(id)` 改成 `if (false) …` | 红（W5a「`removeData: true` left the data directory behind」+ W5b「leftover was not reported」）→ 复原绿 |
+| W5a：默认卸载后数据目录**仍在** | 把默认从 false 改成 true | 红 → 绿 |
+| W5a：未测量时行上无 `dataFootprint`，`refreshFootprints()` 后才有，且等于 `counter.json` 的实际字节 | 在 `snapshot()` 里给缺席的 footprint 填 `{ files: 0, bytes: 0 }` | 红（「a footprint appeared without a measurement」）→ 绿 |
+| W5b：注入 `{ removed: false, leftover, reason }` 后行仍卸载成功、`onError` 恰好一条、正文含 leftover 与「the uninstall succeeded」 | 删掉 `removeDataFor` 里 `if (!outcome.removed) { … #report … }` 分支 | 红（「the leftover was not reported on the diagnostics channel」）→ 绿 |
+| fake：`uninstall(id)` 保留 `dataFootprint`，`uninstall(id, { removeData: true })` 去掉它 | fake 的 `if (options.removeData === true)` 分支删掉 | 红 → 绿 |
+| T7（未改）：默认卸载不碰数据一个字节 | ——（W5 的默认正是它） | 常绿 |
+
+### What would reopen this
+
+(a) 一个真的想「删安装树以外的东西」的第二个数据根——那时 `removeData` 是一个
+布尔，装不下第二个目标，需要一个显式的列表而不是加第二个布尔。(b) 内置插件
+开始用 `scope.storage`——删除路径已经按 id 走，不需要改，但 `dataFootprint`
+会第一次在两个内置行上出现，值得在实机上确认一次。(c) 一个「删不掉」的目录
+需要一个比诊断面更强的处置（重试、开机清理）——今天它只是被具名报告，用户
+自己删；`superseded/` 的安装树也是同一个立场。
+
+---
+
+---
