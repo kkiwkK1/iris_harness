@@ -7278,7 +7278,7 @@ walk 的结果。一个在变更之后的消息把它所有的 part 一起带出
 
 ---
 
-## 103. 内置插件的「浏览器资产」一栏说人话：`undeclared` 且 `source === 'builtin'` 时三格换一句话
+## 105. 内置插件的「浏览器资产」一栏说人话：`undeclared` 且 `source === 'builtin'` 时三格换一句话
 
 Dated 2026-09-16 (owner task sheet W1, branch
 `dev/plugin-center-builtin-asset-copy` against `035094e`). Web-only; the host
