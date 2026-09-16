@@ -103,7 +103,13 @@ async function fixture(t: TestContext, options: { rules?: unknown } = {}): Promi
   events: IrisEvent[]
 }> {
   const dir = await mkdtemp(join(tmpdir(), 'iris-scoped-regex-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // `maxRetries`/`retryDelay`, the tidy-up hardening `card-storage.test.ts`
+  // documents: on Windows a handle inside `chats/` survives `settle()` by a
+  // moment, and a bare recursive `rm` then fails the whole file with EBUSY or
+  // ENOTEMPTY — *after* every assertion passed, which is what made this test
+  // look like a racy assertion under parallel load. Measured: 7/24 parallel
+  // runs failed this way before the retry, 0 after.
+  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
   await mkdir(join(dir, 'characters'), { recursive: true })
   // `'rules' in options`, not `?? RULES`: a caller that passes `undefined`
   // deliberately means "a card with no tier at all", and a defaulting `??`
