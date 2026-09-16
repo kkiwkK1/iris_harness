@@ -8992,7 +8992,7 @@ against `035094e`). The frame and shell halves are §107 on
 
 ---
 
-## 89. The macro and regex stages say what they did: `expandTraced`, an `onRule` observer, and the one row a prompt-direction rule can be recorded on
+## 92. The macro and regex stages say what they did: `expandTraced`, an `onRule` observer, and the one row a prompt-direction rule can be recorded on
 
 **What changed.** M1 step 3 of `notes/tasks/M1-PROMPT-BUILD-REPORT.md`. Step 1
 answered "who wrote this and why is it zero", step 2 "where did it go". This adds
