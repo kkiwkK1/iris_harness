@@ -1466,10 +1466,19 @@ emitted JS **and** `.d.ts`」。实测 TypeScript 5.9.3 **只改写 JS**:
 
 ## 发现但没改
 
-- `.d.ts.map` 指向 `../src/*.ts`,而 `files: ["lib"]` 不含 `src`,
+- ~~`.d.ts.map` 指向 `../src/*.ts`,而 `files: ["lib"]` 不含 `src`,
   于是从插件仓库对契约类型"跳转到定义"会落空。`sourceMap` 这半已经用
   `inlineSources` 补上(`.js.map` 自带源码);`.d.ts.map` 那半没补,因为修它要么改
-  `files`(发布形的决定),要么删 `declarationMap`(任务书明确要求开)。
+  `files`(发布形的决定),要么删 `declarationMap`(任务书明确要求开)。~~
+  **已修 2026-09-16(owner task W4)**:三个 `tsconfig.pack.json` 的
+  `declarationMap`、`sourceMap`、`inlineSources` 一并关掉。原判断的错在于把它当成
+  「补 `.js.map`」与「删 `.d.ts.map`」两件事——实际上 tarball 只发 `lib`、没有
+  `src`,**任何** map 都指向消费者没有的文件,悬空的 map 比没有 map 更糟。
+  `apps/iris/tests/contract-pack.test.ts` 加两条断言:解包后 `lib/` 无 `.map`、无
+  `.js`/`.d.ts` 带 `sourceMappingURL=`;实测三个 tarball 开→关
+  `plugin-api` 20,629→17,845 B、`plugin-web-api` 20,952→17,329 B、
+  `protocol` 286,301→155,478 B。`docs/PLUGIN-CONTRACT-PACKAGING.md` §9 那条随之
+  从「已知缺口」改为「已修」。
 - 三个 tarball 的体积很不均:`iris-protocol` 275 KB(`rpc.d.ts` 一个文件 135 KB,
   `views.d.ts` 138 KB),`plugin-web-api` 19.5 KB,`plugin-api` 16.7 KB。
   没有做任何裁剪——协议包就是这么大,而它是插件调 RPC 唯一的类型来源。

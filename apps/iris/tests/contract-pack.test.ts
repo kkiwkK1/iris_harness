@@ -351,6 +351,32 @@ test('the published contract packages resolve and run outside the workspace', as
     }
     assert.deepEqual(survivors, [], 'a .ts specifier survived into the emitted JavaScript')
 
+    // 2b. The tarball carries no source maps. `lib` is everything that ships
+    //     and there is no `src/` beside it, so a `.d.ts.map`/`.js.map` would
+    //     point at files no consumer has — a dangling map is worse than an
+    //     absent one, because "go to definition" follows it and lands nowhere.
+    //     Both halves are asserted: the maps are absent from the extracted
+    //     tree, and the tarball's own entry list — read from the bytes rather
+    //     than from what the extractor chose to write — names no `*.map`.
+    //     `inlineSources` alone could smuggle the source text in without a map
+    //     file, so the emitted `.js`/`.d.ts` are checked for `sourceMappingURL`
+    //     too. A mutation re-enabling `declarationMap`/`sourceMap` in any pack
+    //     config reddens this.
+    const mapFiles: string[] = []
+    const mapPointers: string[] = []
+    for (const { stage } of PACKAGES) {
+      const lib = join(modules, '@iris', stage, 'lib')
+      for (const file of readdirSync(lib)) {
+        if (file.endsWith('.map')) mapFiles.push(`${stage}/lib/${file}`)
+        if (file.endsWith('.js') || file.endsWith('.d.ts')) {
+          const source = readFileSync(join(lib, file), 'utf8')
+          if (/sourceMappingURL=/.test(source)) mapPointers.push(`${stage}/lib/${file}`)
+        }
+      }
+    }
+    assert.deepEqual(mapFiles, [], 'a source map shipped in lib/, where nothing can resolve it')
+    assert.deepEqual(mapPointers, [], 'an emitted file still points at a source map that does not ship')
+
     // 3. A plugin author's type check: the published `types` condition only,
     //    no paths, no alias, no workspace.
     const tsc = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc')
