@@ -22,17 +22,16 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
+import { cdpPort } from './cdp-port.mjs'
+
 // Every host, browser and path this script needs comes from the environment
 // with a default, so a run on another machine is a variable away rather than an
 // edit. Defaults are this script's own: the CDP port is unique per script so two
 // QA runs can overlap (9341 used to be shared by three of them).
 const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8821/'
-// Default CDP port is offset by the pid: two runs back to back would
-// otherwise fight over one debug port, and the loser dies as
-// "chrome never came up" — which reads as a broken environment, not as a
-// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
-const DEBUG_PORT = Number(process.env.CDP_PORT ?? 9342) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0)
+// The one pid-offset CDP rule lives in qa/cdp-port.mjs (see qa/README.md).
+const DEBUG_PORT = cdpPort(9342)
 const OUT = join(fileURLToPath(new URL('.', import.meta.url)), 'results')
 
 /**

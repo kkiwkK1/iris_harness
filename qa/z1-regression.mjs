@@ -8,6 +8,7 @@
 // Usage: node qa/z1-regression.mjs <characterId> "<turn text>"
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
+import { cdpPort } from './cdp-port.mjs'
 import { call, eventWatcher, BASE } from './rpc.mjs'
 
 const [, , characterId, turnText] = process.argv
@@ -16,7 +17,8 @@ if (characterId === undefined || turnText === undefined) {
   process.exit(64)
 }
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-const CDP_PORT = process.env.CDP_PORT ?? '9353'
+// The one pid-offset CDP rule lives in qa/cdp-port.mjs (see qa/README.md).
+const CDP_PORT = cdpPort(9353)
 const HARD_DEADLINE = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 420_000)
 
 const scripts = await call('script.list', { characterId })
@@ -61,8 +63,8 @@ function socket(url) {
 }
 
 const chrome = spawn(CHROME, [
-  `--remote-debugging-port=${CDP_PORT}`,
-  `--user-data-dir=${process.env.TEMP}/iris-z1-reg-${CDP_PORT}-${Date.now()}`,
+  `--remote-debugging-port=${String(CDP_PORT)}`,
+  `--user-data-dir=${process.env.TEMP}/iris-z1-reg-${String(CDP_PORT)}-${Date.now()}`,
   '--no-first-run', '--no-default-browser-check', '--headless=new',
   '--window-size=1600,1000', 'about:blank',
 ], { stdio: 'ignore' })
@@ -72,7 +74,7 @@ try {
   for (let at = 0; at < 30 && page === undefined; at += 1) {
     await delay(1000)
     try {
-      const targets = await fetch(`http://127.0.0.1:${CDP_PORT}/json`).then(r => r.json())
+      const targets = await fetch(`http://127.0.0.1:${String(CDP_PORT)}/json`).then(r => r.json())
       page = targets.find(t => t.type === 'page' && t.url.startsWith('about:blank'))
     } catch { /* chrome not up */ }
   }

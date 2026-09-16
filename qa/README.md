@@ -47,6 +47,11 @@ Error: chrome never came up
 render 就这么挂了 exit 1,换端口重跑即正常)。偏移让"再跑一趟"这个最常见的动作默认安全。
 **显式传 `CDP_PORT` 时按原值用,不加偏移** —— 你指定了端口,就是你在负责它。
 
+> **脚本一律走 `cdpPort()`**(`qa/cdp-port.mjs`,三行导出),不要再把偏移公式抄进去。
+> 之前七个脚本各抄一份、两种写法,`z1-e2e.mjs` 那份还漏了偏移、写死了与
+> `notice-center-baseline.mjs` 相同的 9343——两个同时跑就撞,而失败长得像环境故障。
+> 需要旧名 `CHROME_DEBUG_PORT` 的两个脚本把它当第二个参数传给 `cdpPort(base, 'CHROME_DEBUG_PORT')`。
+
 > **8790 不用。** 那上面常驻着操作者自己从 `iris_分支` 检出跑的 dev 宿主。
 
 ### 起宿主前的两条,都是被真事故换来的(2026-09-06)
@@ -123,8 +128,8 @@ render 就这么挂了 exit 1,换端口重跑即正常)。偏移让"再跑一趟
 
 | 脚本 | 量什么 |
 |---|---|
-| `z1-e2e.mjs` | Z1:政经博弈卡的建国链路走真 UI(RPC 授权建聊天 → CDP 进卡自己的界面帧填两个字段点「确认建国」)。CDP 默认 **9343** |
-| `z1-regression.mjs` | Z1:状态栏 MVU 卡上跑一轮真对话,盯 user→reply 窗口里 STATE 面板的变量。CDP 默认 **9353** |
+| `z1-e2e.mjs` | Z1:政经博弈卡的建国链路走真 UI(RPC 授权建聊天 → CDP 进卡自己的界面帧填两个字段点「确认建国」)。CDP 默认 **9343 + `pid % 100`**(与 `notice-center-baseline.mjs` 同默认端口,但两份都走 `cdpPort()`,偏移错开) |
+| `z1-regression.mjs` | Z1:状态栏 MVU 卡上跑一轮真对话,盯 user→reply 窗口里 STATE 面板的变量。CDP 默认 **9353 + `pid % 100`** |
 | `z1-repro.mjs` | Z1:同一条建国链路按卡的原始调用顺序走线,不开浏览器 |
 | `measure-z2-scroll.mjs` | Z2:在 `measure-frame-fit` 的几何之外,量**帧内部**能不能滚到底 |
 | `measure-z3-occlusion.mjs` | Z3:三张重卡的帧几何 + 帧内滚动 + 边注遮挡。`IRIS_BASE` 默认 `8823` |
@@ -132,10 +137,9 @@ render 就这么挂了 exit 1,换端口重跑即正常)。偏移让"再跑一趟
 | `z3-scroll-proof.mjs` | Z3 视觉佐证:把 1847px 的界面在 546px 带里滚到底并截图 |
 | `plugin-platform/browser-fixture.mjs` | 系统插件客户端面的真浏览器夹具:服生产沙箱包体 + 一个合成插件的 `client.js` + 两个 Iris 自己拼的 srcdoc 帧。端口取 `IRIS_ACCEPTANCE_PORT`,默认 **8792** |
 
-> **`z1-e2e.mjs` 的 CDP 默认值 9343 与 `notice-center-baseline.mjs` 撞了**,而且它**不加**
-> `pid % 100` 偏移(上表那批都加)。两个同时跑、或者连着跑两趟 `z1-e2e`,就是上面「CDP 默认端口
-> 还会加上 `pid % 100`」那一段讲的那种「`chrome never came up`,长得像环境故障」。显式传
-> `CDP_PORT` 绕开。
+> **CDP 端口已经统一走 `qa/cdp-port.mjs` 的 `cdpPort()`。** 上表那批脚本、`z1-e2e.mjs`、
+> `z1-regression.mjs` 以及 `verify-click-shift` / `verify-widescreen` 全部按同一公式算端口,
+> `z1-e2e.mjs` 原先写死 9343 不加偏移的陷阱随之关闭(仓库里 grep 不到第二份偏移公式)。
 
 ---
 

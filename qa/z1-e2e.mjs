@@ -10,11 +10,18 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+import { cdpPort } from './cdp-port.mjs'
 import { call, rpc, BASE } from './rpc.mjs'
 
 const CHARACTER = '新架空政治经济模拟器'
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-const CDP_PORT = process.env.CDP_PORT ?? '9343'
+// The same `9343 + pid % 100` rule every other QA script follows
+// (`qa/cdp-port.mjs`). This one used to hardcode 9343, which collides with
+// `notice-center-baseline.mjs`'s default — two scripts at once, or two runs of
+// this one, and the loser dies as `chrome never came up`, which reads as a
+// broken environment (qa/README.md warned exactly about this, and the warning
+// is now gone because there is nothing left to warn about).
+const CDP_PORT = cdpPort(9343)
 const HARD_DEADLINE = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 420_000)
 const outDir = new URL('./results/', import.meta.url)
 mkdirSync(outDir, { recursive: true })
@@ -68,7 +75,7 @@ function socket(url) {
 
 const userDataDir = `${process.env.TEMP}/iris-z1-cdp-${CDP_PORT}-${Date.now()}`
 const chrome = spawn(CHROME, [
-  `--remote-debugging-port=${CDP_PORT}`,
+  `--remote-debugging-port=${String(CDP_PORT)}`,
   `--user-data-dir=${userDataDir}`,
   '--no-first-run', '--no-default-browser-check', '--headless=new',
   '--window-size=1600,1000', 'about:blank',
@@ -79,7 +86,7 @@ try {
   for (let at = 0; at < 30 && page === undefined; at += 1) {
     await delay(1000)
     try {
-      const targets = await fetch(`http://127.0.0.1:${CDP_PORT}/json`).then(r => r.json())
+      const targets = await fetch(`http://127.0.0.1:${String(CDP_PORT)}/json`).then(r => r.json())
       page = targets.find(t => t.type === 'page' && t.url.startsWith('about:blank'))
     } catch { /* chrome not up yet */ }
   }
@@ -112,7 +119,7 @@ try {
   }
 
   // Reach into the console iframe and drive the founding flow.
-  const targets = await fetch(`http://127.0.0.1:${CDP_PORT}/json`).then(r => r.json())
+  const targets = await fetch(`http://127.0.0.1:${String(CDP_PORT)}/json`).then(r => r.json())
   const consoleTarget = targets.find(t => t.type === 'iframe')
   if (consoleTarget === undefined) throw new Error('no iframe target for the console')
   const frame = socket(consoleTarget.webSocketDebuggerUrl)

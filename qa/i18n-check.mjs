@@ -12,13 +12,12 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { cdpPort } from './cdp-port.mjs'
+
 const BASE = process.argv[2] ?? process.env.IRIS_BASE ?? 'http://127.0.0.1:8797'
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-// Default CDP port is offset by the pid: two runs back to back would
-// otherwise fight over one debug port, and the loser dies as
-// "chrome never came up" — which reads as a broken environment, not as a
-// collision. An explicit CDP_PORT is honoured verbatim (see qa/README.md).
-const CDP_PORT = String(Number(process.env.CDP_PORT ?? 9336) + (process.env.CDP_PORT === undefined ? process.pid % 100 : 0))
+// The one pid-offset CDP rule lives in qa/cdp-port.mjs (see qa/README.md).
+const CDP_PORT = String(cdpPort(9336))
 const WIDTH = 1680
 const HEIGHT = 1050
 
