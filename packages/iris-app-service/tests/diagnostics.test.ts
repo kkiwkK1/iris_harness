@@ -222,7 +222,7 @@ test('every kind the host can report is one it declares', () => {
    * by the union now; this asserts the derivation still covers everything the
    * host actually reports with.
    */
-  const reported: ReportKind[] = ['mvu', 'template', 'prompt', 'script', 'variables', 'storage', 'host']
+  const reported: ReportKind[] = ['mvu', 'template', 'prompt', 'script', 'variables', 'storage', 'host', 'card-console']
   for (const kind of reported) {
     assert.equal(
       WIRED_KINDS.includes(kind),
@@ -245,4 +245,56 @@ test('a host that retains nothing refuses instead of reporting all clear', async
     () => fixed.handlers['debug.reports']({}),
     (error: unknown) => (error as { code?: string }).code === 'unsupported',
   )
+})
+
+// ---------------------------------------------------------------------------
+// W7: a card's console output reaches the buffer under its own kind
+// ---------------------------------------------------------------------------
+
+test('W7: `script.report` files a card-console note with the frame\'s own timestamp', async (t) => {
+  const fixed = await fixture(t)
+  const at = 1_700_000_000_000
+  const answer = await fixed.handlers['script.report']({
+    chatId: fixed.chatId,
+    at,
+    level: 'warn',
+    message: 'warn: "a card printed this"',
+    scriptId: 'script-a',
+  })
+
+  // The record is the host's, and the one the caller can read back.
+  assert.equal(answer.report.kind, 'card-console')
+  assert.equal(answer.report.grade, 'note', 'a console call was filed as a fault')
+  assert.equal(answer.report.chatId, fixed.chatId)
+  assert.equal(answer.report.scriptId, 'script-a')
+  // The frame's clock, not the arrival's — this is the whole reason `at` is on
+  // the request. The fixture's own generation reports carry `Date.now()`.
+  assert.equal(answer.report.at, at)
+  assert.match(answer.report.message, /a card printed this/u)
+
+  const page = await fixed.handlers['debug.reports']({})
+  const stored = page.reports.find(entry => entry.kind === 'card-console')
+  assert.ok(stored !== undefined, 'the console report never reached the buffer')
+  assert.equal(stored.at, at)
+  assert.equal(stored.grade, 'note')
+})
+
+test('W7: a console report naming no chat is refused, not filed against a guess', async (t) => {
+  const fixed = await fixture(t)
+  // The host refuses because the chat does not exist: a console line attributed
+  // to a conversation nobody can open is a line nobody can act on. This is the
+  // only refusal on the arm, and it is why the shell drops the report when it
+  // has no `chatId` rather than sending one it made up.
+  await assert.rejects(
+    () => fixed.handlers['script.report']({
+      chatId: 'no-such-chat', at: 0, level: 'log', message: 'log: x',
+    }),
+    (error: unknown) => (error as { code?: string }).code === 'not-found',
+  )
+})
+
+test('W7: the console kind is declared wired, so an empty page is not ambiguous', async (t) => {
+  const fixed = await fixture(t)
+  const page = await fixed.handlers['debug.reports']({})
+  assert.ok(page.kinds.includes('card-console'), 'card-console is collected but not declared')
 })

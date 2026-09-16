@@ -1499,6 +1499,32 @@ export const requestSchemas = {
     runId: z.string().min(1).max(200),
   }),
   /**
+   * A card script's `console.*` output, on its way to the diagnostics buffer
+   * (owner task W7).
+   *
+   * The frame captures it and the shell forwards it here, because the frame is
+   * behind `srcdoc` and cannot reach the host itself. The host only records: it
+   * does not run anything on this input, and the text arrives already serialized
+   * to a bounded summary frame-side (so a 10 MB string is cut before it crosses
+   * a message boundary, not after).
+   *
+   * `grade` is deliberately **absent** from the request: a console call is never
+   * a fault — `console.error` is still the card's own chosen word, not a
+   * refused call — so the host files every one as a `note` and a caller cannot
+   * claim otherwise.
+   */
+  'script.report': z.object({
+    chatId: z.string().min(1),
+    /** ISO-free: the frame's own clock, so the report is stamped when the card printed, not when it arrived. */
+    at: z.number().int().nonnegative(),
+    level: z.enum(['log', 'info', 'warn', 'error']),
+    /** The serialized summary, already bounded frame-side. Bounded again here. */
+    message: z.string().max(8_000),
+    scriptId: z.string().min(1).optional(),
+    characterId: z.string().min(1).optional(),
+  }),
+
+  /**
    * A frame run has ended, so its injections can go.
    *
    * Sent by the shell when it tears a run down — the moment upstream’s
@@ -2893,6 +2919,12 @@ export interface RpcResponseMap {
   'script.saveChat': Record<string, never>
   'script.setExtensionPrompt': Record<string, never>
   /** How many injections that run had left behind. */
+  /**
+   * The recorded report, so the shell can confirm what landed in the buffer
+   * (and see the `seq` it will read back). The card-console kind is a note, and
+   * the host never refuses it for its content — only for an unknown chat.
+   */
+  'script.report': { report: DebugReport }
   'script.runEnded': { cleared: number }
   /** The settings as stored, so a card can see what survived. */
   'script.setExtensionSettings': { settings: Record<string, unknown> }

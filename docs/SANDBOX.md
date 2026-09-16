@@ -676,6 +676,21 @@ frames — reopens this decision before it reopens anything else.
   boundary, not an implementation choice that could be optimized away.
   (Verified live 2026-09-01: the probe frame sized to its content through this
   path.)
+- **A card's `console.log/info/warn/error` is captured frame-side and reaches
+  the host's diagnostics** (`apps/iris-web/src/sandbox/console-capture.ts`, owner
+  task W7). Upstream's `log.js` does the same five-method override and shows it
+  in a Logger panel; Iris forwards it as a bounded text summary
+  (`frame → shell → script.report → DiagnosticBuffer`, kind `card-console`,
+  grade `note`) and **still calls the original**, so the browser console keeps
+  the line. `console.debug` is not captured (upstream's `log.js` overrides it,
+  but it is also where upstream itself writes hundreds of lines, so capturing it
+  would bury a card's own output), and neither are unhandled exceptions — those
+  have their own channel (`reportAsyncFailures`). The summary is bounded by
+  depth, entries and characters before it crosses the frame boundary, so a card
+  logging a 10 MB string cannot evict the diagnostic buffer; each card is capped
+  at 50 lines/second and the drops are counted on the next admitted line.
+  Local only: `DiagnosticBuffer` does not persist, so nothing reaches a log
+  file.
 
 ## Remote imports
 

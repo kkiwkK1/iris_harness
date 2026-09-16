@@ -200,7 +200,7 @@ ST 兼容面另有五个方法，形状见 `requestSchemas` 的 `stCompat.*` 与
 
 ## 4. 业务 RPC 目录（完整方法名索引）
 
-2026-09-16 从 `requestSchemas` 数出 **137 个方法**，分域计数见下表。plugin 域的 10 个里，
+2026-09-16 从 `requestSchemas` 数出 **138 个方法**，分域计数见下表。plugin 域的 10 个里，
 六个是目录生命周期，四个是安装路径（`previewInstall` / `confirmInstall` / `cancelInstall` / `update`，
 其中 `update` 由 U1 实现，不再是预留位）。
 
@@ -225,7 +225,7 @@ ST 兼容面另有五个方法，形状见 `requestSchemas` 的 `stCompat.*` 与
 | preset | 12 | list, select, view, setEnabled, move, upsertPrompt, removePrompt, save, delete, read, import, importFile |
 | prompt | 2 | itemize（响应带解释，见下）, divergence |
 | regex | 11 | list, set, scopedList, setScopedAllowed, setScopedEnabled, presetList, setPresetAllowed, setPresetEnabled, tavernList, tavernReplace, tavernFormat |
-| script | 32 | getVariables, setVariables, swipeTo, slash, list, setEnabled, setDocumentGrant, setScriptsAllowed, fetch, context, saveMetadata, createChatMessages, deleteChatMessages, getPreset, evalTemplate, replaceScriptButtons, saveChat, setExtensionPrompt, runEnded, body, setExtensionSettings, generateRaw, setChatMessages, generate, getCharacter, chatHistoryBrief, chatHistoryDetail, rotateChatMessages, createOrReplacePreset, deletePreset, renamePreset, loadPreset |
+| script | 33 | getVariables, setVariables, swipeTo, slash, list, setEnabled, setDocumentGrant, setScriptsAllowed, fetch, context, saveMetadata, createChatMessages, deleteChatMessages, getPreset, evalTemplate, replaceScriptButtons, saveChat, setExtensionPrompt, runEnded, report, body, setExtensionSettings, generateRaw, setChatMessages, generate, getCharacter, chatHistoryBrief, chatHistoryDetail, rotateChatMessages, createOrReplacePreset, deletePreset, renamePreset, loadPreset |
 | scriptLibrary | 5 | list, read, save, delete, setEnabled |
 | settings | 2 | get, set |
 | stCompat | 4 | plane.attach, plane.detach, submit, settings |
@@ -379,7 +379,7 @@ globalThis.__iris_members__.registerPluginMembers('<literal id>', { /* literal k
 | 缺口 | 现状 | 完成条件 |
 | --- | --- | --- |
 | `Handlers` 改 Partial | **刻意不做**：全量映射是本次构建自己的声明，静态词表里缺 handler 要是编译错误（`packages/iris-app-service/src/service.ts:283` 起的注释写明理由） | 无——除非这条理由被推翻 |
-| `script.*` 与 TH 形状留在协议 | 未动：**137 个静态键里 32 个是 `script.*`**（口径见 §4），`views.ts` 的 TH 类型原样 | 要么协议获得插件形状合并机制，要么承认 TH 只从实现剥离、不从契约剥离 |
+| `script.*` 与 TH 形状留在协议 | 未动：**138 个静态键里 33 个是 `script.*`**（口径见 §4），`views.ts` 的 TH 类型原样 | 要么协议获得插件形状合并机制，要么承认 TH 只从实现剥离、不从契约剥离 |
 | th-core 仍在浏览器 import 白名单 | 未动：`apps/iris/tests/architecture.test.ts:153` 的 `allowed` 集合有六个名字，`@iris/compat-tavernhelper-core` 是其中之一（另外五个是 `@iris/protocol`、`@iris/plugin-web-api`、`@iris/client-fake`、`@iris/rpc-client`、`@iris/text`） | 帧与宿主两侧的事件名/正则解析对齐要有别的办法 |
 | 生成钩子的**实现** | **设计已裁决（2026-09-16），实现未开始**：设计稿是 [GENERATION-HOOKS](GENERATION-HOOKS.md)，注册口定为 `scope.hooks`（**不是** `AppServiceOptions`——那是组合根的注入口，插件够不着）。代码侧仍是 TH/MVU 经 `capabilities.ts` 在固定调用点被取用，`SystemPluginActivationScope` 上没有 `hooks` 成员 | 按该文 §8 的 PR-A/B/C 分步落地；`hook-failed` 行上状态与 `noteHookFailure`/`clearHookFailure` 已由 U2 提供，钩子复用，不另起一套 |
 | `scope.settings` | 未做：ST 设置走的是专门的 `StCompatOptions` 闭包，不是通用接口；shell 的 `iris.settings.sections` 槽只有 shell 内代码能注册（§5） | 要有自己的 owner 与约束清单后再开放 |

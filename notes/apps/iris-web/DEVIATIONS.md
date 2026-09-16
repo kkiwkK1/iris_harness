@@ -7353,6 +7353,84 @@ fake 侧（`iris-client-fake/tests/system-plugins.test.ts`）只镜像一个可�
 带 `removeData` 时行的 `dataFootprint` 消失、不带时保留。fake 没有目录可删，
 假装删了它从未拥有的字节是更差的模型。
 
+---
+
+---
+
+## 105. 卡脚本的 `console.*` 进诊断面（帧与壳半）：有界序列化、每卡限流、以及一条自己走完的往返
+
+Dated 2026-09-16 (owner task sheet W7, branch `dev/sandbox-console-capture`
+against `035094e`). The host half is §88 on `notes/packages/iris-app-service`.
+
+### 为什么这条是「上游领先的最后一项」
+
+`docs/OBSERVABILITY.md` 的十二项状态表里，第 1 项（分 frame 的日志视图）是唯一
+一条「上游有而我们没有」：酒馆助手 4.3.0 起 `log.js` 覆盖五个 console 方法并
+在 Logger 面板显示，而 Iris 的沙箱里没有任何 `console` 接管。这一项做完，表里
+再无上游领先项。
+
+### 三层，各修一处
+
+**帧侧（`apps/iris-web/src/sandbox/`）**
+
+- 新模块 `console-capture.ts`：`serializeConsole`（纯函数，有界序列化）+
+  `RateGate`（每卡每秒 50 行）+ `installConsoleCapture`（包裹四个方法）。
+- `frame-entry.ts` 在 `installSandbox` 之后、任何 body 之前装一次，sink 把结果
+  post 成新的帧→壳消息 `console`，带 `scriptId`（最后一个 `run` 消息的 id，和
+  帧自己的错误归因同一个近似）。
+- **包裹但仍调原始**：卡作者对着 devtools 开发，原行必须继续出现在浏览器控制
+  台。顺序是先 forward 再 apply（原文已废弃：serializer 抛错不能连浏览器那行
+  一起丢）；`apply(target, args)` 而不是裸调用，因为某些引擎要求 console 作
+  receiver。
+- **只捕四个**：`log/info/warn/error`。`console.debug` 不捕——上游 `log.js` 虽
+  然覆盖它，但上游自己就往它写几百行，捕它会把卡自己的输出埋掉。
+- **不捕未处理异常**：那已经由 `reportAsyncFailures` 走自己的通道，上游也没把
+  它们并进 Logger。
+- **摘要而不是原参数**：`postMessage` 的 structured clone 会在函数、DOM 节点、
+  抛错的 getter 上失败，而捕 console 的全部意义是它本身绝不能弄坏卡。所以每个
+  值在帧里就变成文本。深度 4、每条 12 项、单值 512 字符、整行 4000 字符，截断
+  在文本里可见（`…N more` / `…+M chars`）——读者分不出短字符串和被截断的字符串
+  就等于分不出健康卡和坏摘要。循环引用安全（`WeakSet`，且出栈时移除，所以一个
+  重复但非循环的引用会被各描述一次而不是误报 `[Circular]`）。
+- **两个非显然的读取**：`Map`/`Set` 报大小而不是走 `Object.keys`（后者对任何非
+  空 Map 都答 `{}`，是**读错**而不是读少）；抛错的 getter 具名（`boom: [getter
+  threw]`）而不是让整次 console 调用失败。
+
+**壳→宿主（`client/store.ts` 的 `reportCardConsole`）**
+
+- 帧的 `console` 消息 → `runner.ts` 的新 hook `onConsole` →
+  `useCardScripts.tsx` → `actions.reportCardConsole` → `script.report`。
+- 不 await：一次 console 调用不该等一个往返。
+- 无 `chatId` 就丢，不编一个：宿主会拒一个不存在的会话，编一个只是把错放到更
+  远的地方。
+- 失败**不吞**：宿主拒了就 `addCardReport(..., { grade: 'fault', channel:
+  'card-console' })`，落在读者已经在看的那张列表上——否则「宿主没记下卡的
+  console 行」和「卡什么都没打印」长得一样。
+
+**诊断页**：`HostReports` 已经按 `kind` 过滤，`card-console` 自成一个过滤按钮，
+两语文案只加了这一条 kind 标签（实际不新增壳文案：kind 名直接显示）。
+
+### 边界与代价
+
+- **默认开**：这是可观测性不是执行权限，和上游一样常开。
+- **本地**：`DiagnosticBuffer` 不落盘（记录在案），所以卡打印的敏感内容只在本机
+  内存里；文档写明这一点。
+- **限流是保护不是礼貌**：缓冲是 2000 条 / 1 MiB 有界的，一张在渲染循环里打日志
+  的卡每秒能打几千行，全部过界会把读者打开这一页要看的报告挤出去。所以每卡每秒
+  50 条，**且把丢弃数写在下一行**——看见 40 行而没有计数器的人会以为卡只打了 40。
+
+### 测试与文件
+
+- `apps/iris-web/tests/console-capture.test.ts`（18）：序列化的每一条上限与
+  marker、循环与重复引用、抛错 getter、Map/Set、10 MB 字符串、包裹的顺序与
+  receiver、只取四个、限流计数。
+- `apps/iris-web/tests/card-console-store.test.ts`（4）：store 转发的参数形状、
+  无 chat 丢弃、宿主拒绝时上报告列表。
+- `packages/iris-client-fake/tests/card-console.test.ts`（2）：fake 的
+  `script.report` → `debug.reports` 往返。
+- `packages/iris-app-service/tests/diagnostics.test.ts`（+3）：宿主半，见 §88。
+- `apps/iris/tests/rpc-transport.test.ts`（+1 探针）。
+
 ### 牙齿
 
 | 断言 | 让它变红的改动 | 结果 |
@@ -7404,3 +7482,21 @@ id 会盖，虚拟目录里缺席）——那会让这句话在更多行上出�
 只有数量，键名需要另一个只读方法，而键名可能泄露插件内部命名，是一个隐私判断
 而不是显示判断。(c) 一次卸载会连带删除别的行的数据（级联）——今天复选框只
 影响它自己那一行，级联删除需要自己的同意面。
+
+---
+
+| 「10 MB 字符串被截到值上限且带 marker」 | `MAX_VALUE_CHARS` 改成 10 000 000 | 红（2 条：值上限与 10 MB 字符串）→ 复原绿 |
+| 「循环引用不炸且说 `[Circular]`」 | 去掉 `seen.has(object)` 分支 | 红（栈溢出/断言）→ 绿 |
+| 「重复但非循环的引用各描述一次」 | 去掉 `finally { seen.delete(object) }` | 红（误报 `[Circular]`）→ 绿 |
+| 「限流把丢弃数写在下一行」 | `CONSOLE_BUDGET_PER_SECOND` 改成 100000 | 红 → 绿 |
+| 「宿主拒绝时上报告列表」 | store 的 catch 里改成 `void error`（吞掉） | 红（「console output could not be filed」不再出现）→ 绿 |
+| 宿主 `grade === 'note'` | 改成 `'fault'` | 红（见 §88）→ 绿 |
+| fake 往返 | fake 的 `script.report` 分支删掉 | 红 → 绿 |
+
+### What would reopen this
+
+(a) 卡开始用 `console.group`/`console.table`——今天的形状是平铺四 level，结构化
+需要能带嵌套的正文。(b) 一个「跟到 devtools 之外还要落文件」的需求——落盘先得
+回答敏感内容和保留期。(c) 帧里出现第二个 console 消费者（比如插件自己的 client
+也打 console）——今天包裹的是 `globalThis.console`，第二个消费者会连着被包一层，
+需要先决定谁拥有它。

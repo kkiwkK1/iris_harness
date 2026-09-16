@@ -457,6 +457,17 @@ export function CardScriptFrames(): ReactElement {
                */
               onNote: text => actionsOf(store).addCardReport(text),
               /*
+               * W7: the card's own console output. Forwarded to the host so it
+               * lands in the same `DiagnosticBuffer` the debug page reads —
+               * local only, never a log file (the buffer does not persist) —
+               * and, because the debug page needs the chat to have been loaded,
+               * the shell always has one when a card frame runs. Not awaited:
+               * a console call must not wait on a round trip.
+               */
+              onConsole: (level, message, at, scriptId) => {
+                void actionsOf(store).reportCardConsole(level, message, at, scriptId)
+              },
+              /*
                * Readiness belongs to the frame, so it is reported for every
                * script in it — they all started when it did.
                */

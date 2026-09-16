@@ -224,7 +224,7 @@ Stated here rather than discovered later.
   ecosystem.
 - **Registration is hand-maintained.** `register` is generic per method, so the
   call list cannot be looped without a cast that discards the type check. That
-  decision stands, and its cost is now **137 static methods** long
+  decision stands, and its cost is now **138 static methods** long
   (`Object.keys(requestSchemas).length` over
   `packages/iris-protocol/src/rpc.ts`, the same reading
   `packages/iris-protocol/tests/method-names.test.ts` takes — never a grep of
@@ -233,7 +233,7 @@ Stated here rather than discovered later.
   registration site, one asks the running host.
 
   A plugin may also contribute methods at runtime (`scope.registerRpc` plus
-  `registerRequestSchema`), which are deliberately **not** in that 137 — the
+  `registerRequestSchema`), which are deliberately **not** in that 138 — the
   static table is the contract, the dynamic registry is a plugin's own. There is
   no production user of the dynamic path on `main`; see
   [INFRASTRUCTURE-INTERFACES.md](INFRASTRUCTURE-INTERFACES.md) §1.
@@ -246,6 +246,6 @@ Recorded so a re-measurement is a command rather than a reconstruction.
 | --- | --- |
 | 27 packages | `ls packages \| wc -l` |
 | the layer table | the manifest walk in `apps/iris/tests/architecture.test.ts` (`manifestGraph`), longest path to a leaf over `packages/*` + `apps/*` |
-| 137 RPC methods | `node --input-type=module -e "import {requestSchemas} from './packages/iris-protocol/src/index.ts'; console.log(Object.keys(requestSchemas).length)"` |
-| 137 registration calls | `grep -c "ctx.irisRpc.register(" packages/iris-app-service/src/index.ts` — the hand-maintained call list, one per method, which is the point |
+| 138 RPC methods | `node --input-type=module -e "import {requestSchemas} from './packages/iris-protocol/src/index.ts'; console.log(Object.keys(requestSchemas).length)"` |
+| 138 registration calls | `grep -c "ctx.irisRpc.register(" packages/iris-app-service/src/index.ts` — the hand-maintained call list, one per method, which is the point |
 | CI shape | `.github/workflows/ci.yml`, read end to end |

@@ -219,6 +219,16 @@ export interface RunnerHost {
    */
   onNote?: (message: string) => void
   /**
+   * A card script's own `console.*` line (owner task W7).
+   *
+   * Its own hook rather than a variant of `onNote`, because the shell files it
+   * under a different kind and needs three things a note does not carry: the
+   * level, the frame's print time, and the script id. Optional for the same
+   * reason `onNote` is — a message frame's card never logs through this path,
+   * and a host with nowhere to put it should not be forced to say so.
+   */
+  onConsole?: (level: 'log' | 'info' | 'warn' | 'error', message: string, at: number, scriptId: string | undefined) => void
+  /**
    * Markup for the frame's own body — a message frame's card interface.
    *
    * Present only for a message frame. Its absence is what makes this a script
@@ -757,6 +767,12 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'note':
         host.onNote?.(message.message)
+        return
+      case 'console':
+        // W7: the card's own output. A dedicated hook rather than `onNote`,
+        // because the shell files these under their own kind (`card-console`)
+        // and a note would lose the level and the print time on the way.
+        host.onConsole?.(message.level, message.message, message.at, message.scriptId)
         return
       case 'fetch':
         void ride(message)

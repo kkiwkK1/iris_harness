@@ -384,7 +384,7 @@ export function isFrontend(content: string): boolean {
 
 | # | 状态 | 落在哪 |
 | --- | --- | --- |
-| 1 · 分 frame 的日志视图 | **未做** | 沙箱里没有任何 `console.*` 接管（`grep -rn "console\[" apps/iris-web/src/sandbox` 为空）。这是十二条里唯一一条「上游有而我们没有」的 |
+| 1 · 分 frame 的日志视图 | **已做**（2026-09-16，owner task W7） | 沙箱 bootstrap 包裹 `console.log/info/warn/error`（`apps/iris-web/src/sandbox/console-capture.ts` 的 `installConsoleCapture` + `serializeConsole`），把参数序列化成**有界文本摘要**（深度 4 / 每条 12 项 / 单值 512 字符 / 整行 4000 字符，循环引用安全，且仍调用原 `console`）经帧→壳消息通道上送，壳转 `script.report`，宿主记进 `DiagnosticBuffer`（kind `card-console`，grade `note`，`at` 用帧自己的时钟）。诊断页 `HostReports` 按 kind 过滤即显示。每卡每秒 50 条，超出计数在下一行点名。`console.debug` 与未处理异常**不**捕（后者走 `reportAsyncFailures`） |
 | 2 · 错误点名来源 | **已做** | `DebugReport` 带 `chatId` / `characterId` / `scriptId` 三个结构化字段（`packages/iris-app-service/src/diagnostics.ts`），页面是 `apps/iris-web/src/app/HostReports.tsx` |
 | 3 · 具名拒绝进面板 | **已做** | `ScriptRunPhase` 的 `refused` 带 `member`；被拒子资源经 `apps/iris-web/src/app/blocked-line.ts` 统一措辞——它单独存在的理由本身就是这条：同一条规则写两遍，会自相矛盾，而错的那半没人看 |
 | 4 · 常驻分代报告 | **部分** | `ScriptPanel` 有常驻报告列表（带 `channel`、`withdrawn`），但它挂在卡上而不是挂在「这一代加载」上 |
@@ -407,7 +407,7 @@ export function isFrontend(content: string): boolean {
 「空」。面板同时多了一个「按消息」视图，列出真正发出去的每一条消息及它装了哪些 part——
 与第 12 条同一个道理：「某一步为什么这么判」不说出来，读者只能猜。
 
-**给读者的一句**：层三里投入最小、收益最大的第 8 条已经做了；而「产品主张」那段
+**给读者的一句**：第 1 条（W7，2026-09-16）是这份表里最后一条「上游有而我们没有」——它关上后，十二条里再无一项是上游领先的。层三里投入最小、收益最大的第 8 条已经做了；而「产品主张」那段
 押注的三条（8、11、12）今天是**两条做了一条没做**——没做的 11 恰好是把前两条交回
 作者手里的那一条，所以那段主张至今只兑现了一半。
 

@@ -52,6 +52,7 @@ import { describeAttempts, type TimedResource } from './import-attempts.ts'
 import { describeTransferCost, type TransferTiming } from './transfer-cost.ts'
 import { parseToFrame, type FromFrame } from './protocol.ts'
 import { blockedMessageFor } from './blocked-report.ts'
+import { installConsoleCapture } from './console-capture.ts'
 import type { Measured, Visibility } from './overlay-regions.ts'
 import { MEMBERS_GLOBAL, MEMBERS_MARKER, PLUGIN_ADMITTED_GLOBAL, type MemberTable } from './members-contract.ts'
 import { collectPluginMembers } from './plugin-members.ts'
@@ -1790,6 +1791,55 @@ window.addEventListener('message', event => {
   for (const listener of listeners) listener(message)
 })
 
+/*
+ * W7: the card's own `console.*`, captured and forwarded.
+ *
+ * **Wrapped, and the originals still called.** A card's `console.log` must keep
+ * reaching the browser console — a card author develops against devtools and
+ * SillyTavern's Logger does both — so the wrapper forwards and then calls the
+ * original with `this` bound to the real console (`apply`, not a bare call: some
+ * engines require the console as receiver).
+ *
+ * **Only the four levels.** `console.debug` is deliberately left alone, matching
+ * upstream's `log.js`, which overrides exactly `log/debug/info/warn/error` — and
+ * of those, `debug` is the one upstream itself writes hundreds of lines to, so
+ * capturing it here would bury a card's real output under the preset's own
+ * chatter. The task sheet names the four that matter.
+ *
+ * **Not exceptions.** `window.onerror` / `unhandledrejection` are already
+ * captured by `reportAsyncFailures`, on their own channel, and upstream does not
+ * fold them into its Logger either. Two sources in one list would make "the card
+ * threw" and "the card printed" read the same.
+ *
+ * The script id is the **last `run` message's**, which is the same approximation
+ * the frame's error attribution already lives with: several bodies share one
+ * realm and a `console.log` from a callback carries no identity of its own. It
+ * is named when it is known and absent when it is not, rather than invented.
+ */
+let consoleScriptId: string | undefined
+window.addEventListener('message', event => {
+  const message = parseToFrame(run, event.data)
+  if (message?.type === 'run') consoleScriptId = message.scriptId
+})
+
+/**
+ * Install the console wrapper, after `post` exists and before any body runs.
+ *
+ * Thin on purpose: the wrapper, the serializer and the rate gate are all in
+ * `console-capture.ts` where a test can drive them with a plain object. What is
+ * here is the frame's half of the binding — the real `console`, the real sink,
+ * and the script id read live because the frame learns it from a `run` message
+ * that arrives after install.
+ */
+function reportConsole(): void {
+  installConsoleCapture(
+    globalThis.console as unknown as Record<string, unknown>,
+    (level, message, at) => {
+      post({ iris: run, type: 'console', level, message, at, scriptId: consoleScriptId })
+    },
+  )
+}
+
 try {
   /*
    * The member table, fetched once per page and read here.
@@ -2338,6 +2388,11 @@ try {
   virtualiseNestedFrames(run, post, members)
   reportBlocked(run, post)
   reportStorage(run, post)
+  // W7: the card's own console, wrapped before any body runs — an interface
+  // frame's inline markup starts during parse, and a card script's body runs on
+  // the `run` message, both after this line. Installed after `installSandbox`
+  // so the sandbox's own diagnostics still reach the real console unwrapped.
+  reportConsole()
   reportBodySummary(run, post)
   requestRemeasure = reportHeight(run, post)
   // Read here rather than captured earlier: the attribute is on the body the
