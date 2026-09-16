@@ -11,13 +11,23 @@
   // `rewriteRelativeImportExtensions` is what makes the emit importable: the
   // sources say `./views.ts`, and without it that specifier survives into
   // `lib/index.js`, where no `.ts` file exists beside it.
+  //
+  // `declarationMap` and `sourceMap` are **off**, and so is `inlineSources`
+  // (which only *has* meaning alongside a source map). The tarball ships `lib`
+  // and nothing else — no `src/` — so both maps pointed at files a consumer
+  // does not have: a `.d.ts.map` whose `"sources": ["../../src/index.ts"]`
+  // resolves to nothing, and a `.js.map` that inlines the source to stand in
+  // for a file it cannot point at. A dangling map is worse than an absent one:
+  // an editor offering "go to definition" follows it and lands nowhere. The
+  // declarations themselves (`declaration: true`) are what consumers read, and
+  // they stay.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": false,
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "inlineSources": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "inlineSources": false,
     "rewriteRelativeImportExtensions": true,
     "module": "nodenext",
     "moduleResolution": "nodenext",

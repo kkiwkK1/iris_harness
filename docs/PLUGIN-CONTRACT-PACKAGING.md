@@ -59,7 +59,7 @@ dist-pack/
 ├── plugin-api/          ← staging 树，npm pack 的输入
 │   ├── LICENSE
 │   ├── package.json     ← 生成的，不是拷贝改的
-│   └── lib/             ← tsc 的输出：.js / .d.ts / .js.map / .d.ts.map
+│   └── lib/             ← tsc 的输出：.js / .d.ts（不带 .map，见下）
 ├── plugin-web-api/
 └── protocol/
 ```
@@ -69,7 +69,7 @@ dist-pack/
 1. `tsc -p packages/<pkg>/tsconfig.pack.json`，输出到 `<out>/<stage>/lib`。
    pack 配置 `extends` 仓库根的 `tsconfig.base.json`，所以 `target`、`lib`、严格性
    开关都是工作区那一份，不是一份会各自漂移的拷贝。只有 emit 相关的项在 pack
-   配置里：`declaration`、`declarationMap`、`sourceMap`、`inlineSources`、
+   配置里：`declaration`（`declarationMap`/`sourceMap`/`inlineSources` 已关，见 §9）。
    `module`/`moduleResolution` 为 `nodenext`，以及 **`rewriteRelativeImportExtensions`**。
    最后这项是承重的：源码写的是 `./views.ts`，没有它这个 specifier 会原样留在
    `lib/index.js` 里，而那里没有任何 `.ts` 文件。
@@ -247,10 +247,18 @@ tsconfig 侧不需要任何 `paths` 或别名：解析全部走已发布 `export
   `skipLibCheck` 关闭的探针里先验证过一次，没有出现任何 "Cannot find module"）。
   记在这里是因为任务书预期的是「JS 与 `.d.ts` 都被改写」，而实测只有前者；若将来
   这条解析规则变了，症状会是插件作者那边的类型全变 `any`。
-- **map 文件指向 tarball 里没有的路径。** `sourceMap` 已开 `inlineSources`，所以
-  `.js.map` 自带源码、可用；`.d.ts.map` 指向 `../src/*.ts`，而 `files: ["lib"]` 不包含
-  `src`，于是从插件仓库对契约类型做「跳转到定义」会落空。没有改，因为修它要么改
-  `files`（发布形的决定），要么删 `declarationMap`（任务书明确要求开）。
+- **map 文件指向 tarball 里没有的路径。已修（2026-09-16）。** 原先
+  `sourceMap` 开 `inlineSources`，`.js.map` 自带源码；`.d.ts.map` 指向
+  `../src/*.ts`，而 `files: ["lib"]` 不含 `src`，于是从插件仓库对契约类型做「跳转到
+  定义」会落空。修法是把三个 `tsconfig.pack.json` 的 `declarationMap`、`sourceMap`、
+  `inlineSources` 一并关掉——tarball 只发 `lib`，没有 `src`，任何 map 都指向消费
+  者没有的文件，而**悬空的 map 比没有 map 更糟**（编辑器会跟着它跳到空处）。
+  `apps/iris/tests/contract-pack.test.ts` 新增两条断言：解包后的 `lib/` 里没有
+  `.map`、且没有 `.js`/`.d.ts` 仍带 `sourceMappingURL=`（防止 `inlineSources` 单独
+  把源码塞进来）。本次实测 `npm run pack:contracts -- --version 1.0.0-alpha.0`，
+  三个 tarball 体积（开 → 关）：`iris-plugin-api` 20,629 → 17,845 B，
+  `iris-plugin-web-api` 20,952 → 17,329 B，`iris-protocol` 286,301 → 155,478 B
+  （protocol 省下的是内联进 `.js.map` 的源码；另外两份的小头是 `.d.ts.map`）。
 - **「删掉上一轮的输出」这一步是被检查的，因为它真的静默失败过。** 实测本机的 agent
   沙箱会拦截项目目录下的删除：`rmSync(outDir, { recursive: true, force: true })`
   **不报错也不删**，于是两次不同 `--version` 的运行在 `dist-pack/` 里留下了六个

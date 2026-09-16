@@ -3,13 +3,18 @@
   // `packages/iris-protocol/tsconfig.pack.json` for why it extends the base
   // instead of restating `target`, and why
   // `rewriteRelativeImportExtensions` is load-bearing.
+  //
+  // `declarationMap` and `sourceMap` are **off**: the tarball ships `lib` and
+  // nothing else, so both maps pointed at files no consumer has. A dangling
+  // `.d.ts.map`/`.js.map` is worse than absent — an editor offering "go to
+  // definition" follows it into `../../src/...` and lands nowhere.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": false,
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "inlineSources": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "inlineSources": false,
     "rewriteRelativeImportExtensions": true,
     "module": "nodenext",
     "moduleResolution": "nodenext",
