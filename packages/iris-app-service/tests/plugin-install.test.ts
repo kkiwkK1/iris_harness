@@ -1318,6 +1318,23 @@ async function publishedCopy(value: Harness, lang: 'en' | 'zh'): Promise<string 
   )
 }
 
+/**
+ * Which file is at the published table's name — not what is in it.
+ *
+ * A rewrite keeps the file that is there and refills it; a temp-then-rename
+ * leaves a *different* file under the same name. The filesystem's own identity
+ * number is therefore the one thing about a finished write that still says
+ * which of the two shapes performed it, which is what makes the assertion
+ * below possible after the fact rather than from inside a moment no test can
+ * stand in (`atomic.test.ts` explains why per-site atomicity is otherwise not
+ * checkable). Measured before it was relied on: on this Windows machine a
+ * `writeFile` over an existing file kept the index and a `rename` changed it,
+ * as POSIX guarantees it does.
+ */
+async function publishedCopyInode(value: Harness, lang: 'en' | 'zh'): Promise<bigint> {
+  return (await stat(join(value.assetRoot, PLUGIN_ID, 'i18n', `${lang}.json`), { bigint: true })).ino
+}
+
 test('an update republishes the bundled copy with the bundle: the new generation’s tables are on the asset face before any restart', async (t) => {
   const value = await harness(t)
   const base = join(value.dir, 'copy-update-src')
@@ -1331,6 +1348,9 @@ test('an update republishes the bundled copy with the bundle: the new generation
   await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
   await value.runtime.enable(PLUGIN_ID)
   assert.equal(await publishedCopy(value, 'en'), COPY_GEN.a.en, 'the first generation published its own tables')
+  const firstInode = await publishedCopyInode(value, 'en')
+  assert.notEqual(firstInode, 0n,
+    'this filesystem reports no file identity, so the check below cannot tell a rename from a rewrite')
 
   const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.second })
   const snapshot = await confirmPreview(value, preview)
@@ -1344,6 +1364,18 @@ test('an update republishes the bundled copy with the bundle: the new generation
     'the copy follows the manifest at update time, not at the next host start',
   )
   assert.equal(await publishedCopy(value, 'zh'), COPY_GEN.b.zh)
+
+  // And it landed the way every other file this package owns lands (§68). The
+  // republish writes over a table the asset face is already serving, so a plain
+  // `writeFile` would truncate it first and a reader arriving in that window
+  // would get a prefix; `atomicWriteFile` puts the bytes in a sibling temporary
+  // and renames. Nothing in the contents distinguishes the two — only which
+  // file is now at the name does.
+  assert.notEqual(
+    await publishedCopyInode(value, 'en'),
+    firstInode,
+    'the new table was written into the file the asset face was already serving instead of being renamed over it',
+  )
 })
 
 test('a new generation whose manifest dropped i18n takes the old copy off the asset face', async (t) => {

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from '
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
   atomicWriteFile, quarantineCorruptFile, quarantineUnparsable, readJsonStore,
@@ -41,9 +42,9 @@ async function temporaries(dir: string): Promise<string[]> {
 }
 
 test('no module in this package writes a file except through this one', async () => {
-  // **A source pin, and the only net that covers all twenty-eight write sites.**
+  // **A source pin, and the only net that covers all twenty-nine write sites.**
   // Each site's atomicity is a property of a moment a test cannot stand inside,
-  // so proving it per site would mean twenty-eight instrumented writes. The
+  // so proving it per site would mean twenty-nine instrumented writes. The
   // property that *is* checkable, and the one that actually regresses, is the
   // import: `writeFile` reaches this package through exactly one module, so a
   // store added later cannot quietly write its file the old way, and neither
@@ -53,16 +54,43 @@ test('no module in this package writes a file except through this one', async ()
   // what a new site needs and what a reviewer sees at the top of the diff. A
   // caller reaching for `node:fs`'s sync form would slip through this and is
   // covered by the second assertion.
-  const src = new URL('../src/', import.meta.url)
-  const modules = (await readdir(src)).filter(name => name.endsWith('.ts') && name !== 'atomic.ts')
+  //
+  // **Two recall gaps this check had, both found by REVIEW-4's drift recheck
+  // and both closed here.** It listed one directory, so `src/plugins/` — a
+  // subtree of this package like any other — was never read at all; and it
+  // only knew the two shapes `writeFile` takes when it is *named*, so a module
+  // importing the namespace (`import fsp from 'node:fs/promises'`, which most
+  // of this package does for `readFile` and `mkdir`) could call
+  // `fsp.writeFile(...)` in plain sight. `plugins/install.ts` did both at once
+  // for the plugin copy tables, which is how the one site that drifted stayed
+  // green. The scan now descends, and matches the call as well as the import.
+  const src = fileURLToPath(new URL('../src/', import.meta.url))
+  const modules = (await readdir(src, { recursive: true }))
+    .map(name => name.replaceAll('\\', '/'))
+    .filter(name => name.endsWith('.ts') && name !== 'atomic.ts')
   assert.ok(modules.length > 40, 'the source scan found almost nothing — is the path right?')
+  assert.ok(modules.some(name => name.includes('/')),
+    'the scan did not descend into a subdirectory, which is the gap it was widened to close')
 
   const offenders: string[] = []
   for (const name of modules) {
-    const text = await readFile(new URL(name, src), 'utf8')
+    const text = await readFile(join(src, name), 'utf8')
     for (const line of text.split('\n')) {
+      // Prose is not a write. Several modules — this one's own subject
+      // included — name `writeFile` in a comment explaining why they do not
+      // call it, and a check that counted those would have to be silenced by
+      // rewording rather than by fixing anything.
+      if (/^\s*(?:\*|\/\/)/u.test(line)) continue
       if (/^import .*\bwriteFile\b.*from 'node:fs/u.test(line)) offenders.push(`${name}: ${line.trim()}`)
       if (/\bwriteFileSync\s*\(/u.test(line)) offenders.push(`${name}: ${line.trim()}`)
+      // The namespace form, with one allowance: `host-lock.ts` writes the lock
+      // record through the *handle* it just created with `wx`, and the whole
+      // point of that write is that the create was exclusive — a rename over
+      // the path would hand the directory to both hosts. It is an O_EXCL
+      // create, not a replace, so it is not what this rule is about.
+      if (/\bwriteFile\s*\(/u.test(line) && name !== 'host-lock.ts') {
+        offenders.push(`${name}: ${line.trim()}`)
+      }
     }
   }
   assert.deepEqual(offenders, [],
