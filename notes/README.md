@@ -23,11 +23,11 @@
 | [packages/iris-rpc-host/DEVIATIONS.md](packages/iris-rpc-host/DEVIATIONS.md) | 传输层（含 Host 头与绑定策略）的偏离账 | 2026-09-11 |
 | [packages/iris-variables/DEVIATIONS.md](packages/iris-variables/DEVIATIONS.md) | 变量系统的偏离账 | 2026-09-11 |
 
-## 二、研究与测量记录（52）
+## 二、研究与测量记录（53）
 
 某天对着某个对象量出来的事实。状态一律是**记录**：它描述那一天，不描述今天。
 
-### 2.1 根目录（11）
+### 2.1 根目录（12）
 
 | 文件 | 内容 | 测量于 | 被谁取代 |
 | --- | --- | --- | --- |
@@ -42,6 +42,7 @@
 | [TEST-CARDS.md](TEST-CARDS.md) | 验收语料地图：每张卡能测到什么、测不到什么（只记形状不记内容） | 2026-09-07 | — |
 | [UPSTREAM-THEME-VARS.md](UPSTREAM-THEME-VARS.md) | 上游主题 CSS 变量，以及卡的前端能不能看见它们 | 2026-09-06 | — |
 | [RESEARCH-3D-SCENES-2026-09-16.md](RESEARCH-3D-SCENES-2026-09-16.md) | 「文字生成 3D 场景」的应用与行业经验调研：模型侧（Astra 代码生成、Blender MCP、布局 DSL 研究）、资产侧（文生 3D 服务、Roblox Cube、世界模型）、浏览器侧（glTF、three.js、A-Frame、3DGS）、聊天产品现有 3D 面（ST VRM/Live2D），供构思阶段用 | 2026-09-16 | —— |
+| [RESEARCH-AGENT-TOOL-FOUNDATION-2026-09-17.md](RESEARCH-AGENT-TOOL-FOUNDATION-2026-09-17.md) | 审计方案二「Agent Tool Foundation」只读工具部分的技术摘要：已有部件（流式 `tool_calls` 解析、U4 钩子设计、worldbook/变量 RPC、权限词表）与缺口、三分模型、与 ST JSONL 的 sidecar 边界、分步与风险、三个待 owner 决定的问题 | 2026-09-17（基线 `7011d6f`） | 记录；代码未动，等 owner 决定是否立项 |
 
 ### 2.2 界面与沙箱（`apps/iris-web/`，15）
 
