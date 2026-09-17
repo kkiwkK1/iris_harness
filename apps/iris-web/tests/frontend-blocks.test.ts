@@ -550,9 +550,22 @@ test('every string the row hands the renderer goes through the rule', () => {
       `a MarkdownText that skips the rule: ${render}`,
     )
   }
-  // The segment form is pre-cleaned in the map above it, so that spelling is
-  // only allowed while the map is there.
-  assert.match(source, /unwrapUnknownTagsOutsideCode\(segment\.text\)/, 'segments must be cleaned before render')
+  /*
+   * The segment form is pre-cleaned in the map that builds the segments, so
+   * that spelling is only allowed while the map is there.
+   *
+   * The map moved to `message-body.ts` with the rest of the body assembly
+   * (§110) — the seam this reads is the same seam, and reading it where it
+   * lives is what keeps the clause load-bearing rather than vacuous.
+   */
+  const layout = readFileSync(
+    fileURLToPath(new URL('../src/app/message-body.ts', import.meta.url)),
+    'utf8',
+  )
+  assert.match(layout, /unwrapUnknownTagsOutsideCode\(segment\.text\)/, 'segments must be cleaned before render')
+  // And the row really does render the segments that map produced, rather than
+  // assembling a second list of its own beside it.
+  assert.match(source, /const segments = layOutMessageBody\(/, 'the row renders the assembled body')
 })
 
 /*
@@ -650,14 +663,27 @@ test('the row actually hands the style spans over, and takes neither shortcut', 
    * stylesheet as text in the middle of the message; leaving the early return
    * on `blocks.length === 0` alone does the same for a message whose only
    * markup *was* the sheet.
+   *
+   * The hand-off is now two links long: the row hands its spans to
+   * `layOutMessageBody`, which hands them to the split (§110 moved the
+   * assembly there so a test could call it). Both links are read, because a
+   * shortcut taken at either end is the same silent failure.
    */
   const source = readFileSync(
     fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)),
     'utf8',
   )
-  const calls = [...source.matchAll(/splitAroundInterfaces\(([^)]*)\)/g)].map(hit => hit[1] ?? '')
+  const layout = readFileSync(
+    fileURLToPath(new URL('../src/app/message-body.ts', import.meta.url)),
+    'utf8',
+  )
+  const calls = [...layout.matchAll(/splitAroundInterfaces\(([^)]*)\)/g)].map(hit => hit[1] ?? '')
   assert.equal(calls.length, 1, `splitAroundInterfaces call sites: ${String(calls.length)}`)
-  assert.match(calls[0] ?? '', /\bstyles\b/, 'the row keeps the sheet’s characters in the prose')
+  assert.match(calls[0] ?? '', /\bstyles\b/, 'the layout keeps the sheet’s characters in the prose')
+  const handed = [...source.matchAll(/layOutMessageBody\(([^)]*)\)/g)].map(hit => hit[1] ?? '')
+  assert.equal(handed.length, 1, `layOutMessageBody call sites: ${String(handed.length)}`)
+  assert.match(handed[0] ?? '', /\bstyles\b/, 'the row stopped handing its style spans over')
+  assert.match(handed[0] ?? '', /\bblocks\b/, 'the row stopped handing its claimed blocks over')
   assert.match(
     source,
     /blocks\.length === 0 && styles\.length === 0/,

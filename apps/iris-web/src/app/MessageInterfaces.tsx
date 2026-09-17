@@ -35,9 +35,9 @@ import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import {
   claimMessageSurfaces,
-  splitAroundInterfaces,
   unwrapUnknownTagsOutsideCode,
 } from '../sandbox/frontend-blocks.ts'
+import { layOutMessageBody } from './message-body.ts'
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
@@ -251,9 +251,8 @@ export function MessageInterfaces({
    * flight and code-to-end-of-stream is its honest render.
    *
    * Everything below — the controller's claim, the row's splice and the
-   * fallback — reads the one string this derives (the body when a body tag is
-   * present, `display` itself when not), so no two of them derive surfaces
-   * from different texts.
+   * fallback — reads this one string, so no two of them derive surfaces from
+   * different texts.
    */
   const display = streaming ? text : repairStrayFences(text)
 
@@ -262,15 +261,23 @@ export function MessageInterfaces({
    * (`<content>` and siblings — see `notes/apps/iris-web/BODY-TAG.md`), and
    * everything the model writes outside it is scaffolding, not prose.
    *
-   * The split runs here, on `display`, one seam later than the repair: the
+   * It is located here, on `display`, one seam later than the repair: the
    * scaffolding can carry an unclosed fence of its own, and repairing before
-   * splitting keeps the fence ruling inside the text the fence is in. When the
-   * wrapper is absent the split is the identity — `bodyText` is `display`,
-   * every downstream read is unchanged, and a card that never heard of the
-   * convention renders byte-for-byte as it always has. When it is present,
-   * `bodyText` becomes the one string the claim, the controller, the splice
-   * and the fallback read, and the scaffolding folds into the expandable
-   * regions the return renders at the edges.
+   * splitting keeps the fence ruling inside the text the fence is in.
+   *
+   * **What it decides is prose layout, never membership.** The claim, the
+   * controller and the splice below all read `display` — the whole message —
+   * because a card's interface is an interface wherever the model put it, and
+   * a preset that tells the model to wrap only its prose puts the card's own
+   * panels *outside* the wrapper by construction. Handing the claim
+   * `leak.body` instead is the defect §110 records: 12 of 14 corpus cards
+   * rendered zero frames on every reply, and the head and tail they were
+   * folded into was not even reachable in the fold. So the wrapper reaches the
+   * splice as a **range** — `layOutMessageBody` resolves the tag name to one —
+   * which labels the text runs between the claimed interfaces and drops the
+   * tag's own markup. `bodyText` stays what it always was: the prose the
+   * no-interface fast path renders, and the identity (`display`) for a card
+   * that never heard of the convention.
    */
   const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag, getBodyTag)
   const leak = splitBodyTag(display, bodyTag)
@@ -282,7 +289,11 @@ export function MessageInterfaces({
 
   const { states, swapping } = useMessageInterfaces({
     floor,
-    text: bodyText,
+    // `display`, not the wrapper's body: the controller re-claims this string
+    // and the instance numbers it builds frames for must be the ones the splice
+    // below places slots for. Two texts here is two claims, and a card whose
+    // panels sit outside the wrapper would have the controller build nothing.
+    text: display,
     refusedInstances,
     gate,
     allowed:
@@ -532,7 +543,7 @@ export function MessageInterfaces({
    */
   const { blocks, refused, styles } = streaming
     ? { blocks: [], refused: [] as readonly string[], styles: [] as readonly MessageStyle[] }
-    : claimMessageSurfaces(bodyText)
+    : claimMessageSurfaces(display)
 
   /*
    * An unclosed region is reported, not swallowed.
@@ -588,8 +599,28 @@ export function MessageInterfaces({
    * reader — which is true of the raw arm too, where the stylesheet would
    * simply be printed instead of escaped.
    */
+  /*
+   * The scaffolding still folds on this path, which is where it used to be
+   * **lost**: a message whose every frameable block sits outside the wrapper
+   * claimed nothing (the claim read the body), fell through here, and returned
+   * the prose alone — the card's whole status panel gone from the screen with
+   * no `.iris-bodyleak` to expand and nothing said. The claim reads `display`
+   * now, so a message reaching this line genuinely has no interface anywhere;
+   * its head and tail are ordinary scaffolding and fold like any other.
+   */
   if (blocks.length === 0 && styles.length === 0) {
-    return markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(bodyText)} streaming={streaming} /> : <>{bodyText}</>
+    const prose = markdownProse ? <MarkdownText text={unwrapUnknownTagsOutsideCode(bodyText)} streaming={streaming} /> : <>{bodyText}</>
+    if (!leak.tagged) return prose
+    // `leak.tagged` again inside, redundantly: it is the one spelling of "fold
+    // only a wrapper that exists" the rest of the codebase reads, and the
+    // `.trim()` beside it is the guard that actually decides here.
+    return (
+      <>
+        {leak.tagged && leak.head.trim() !== '' && <BodyLeak text={leak.head} edge="head" />}
+        {prose}
+        {leak.tagged && leak.tail.trim() !== '' && <BodyLeak text={leak.tail} edge="tail" />}
+      </>
+    )
   }
 
   /*
@@ -604,21 +635,20 @@ export function MessageInterfaces({
    * The style spans go in as **dropped**: no frame, no prose, nothing in their
    * place. Their CSS has already gone into the region frames (through the same
    * claim, in `useMessageInterfaces`), and the characters themselves have no
-   * reader left.
+   * reader left. The body tag's own markup rides in beside them, for the same
+   * reason and by the same mechanism.
    *
-   * The split reads `bodyText`, the one string the claim and the controller
-   * already agreed on — a style span's offsets come from a claim over the
-   * repaired, body-tag-split text, so splicing them out of anything else
-   * would cut at the wrong characters on any message whose fence was repaired
-   * or whose scaffolding was folded.
+   * The layout reads `display`, the one string the claim and the controller
+   * already agreed on — every claim's offsets come from a claim over the
+   * repaired text, so splicing them out of anything else would cut at the wrong
+   * characters on any message whose fence was repaired. The wrapper reaches it
+   * as a *range* rather than as a substring: it decides which runs come back as
+   * scaffolding to fold, and nothing about which blocks were claimed. That
+   * assembly is `layOutMessageBody` rather than four lines here, so a test can
+   * call it with the row's own arguments — see §110 for the defect that was
+   * invisible precisely because it lived between two correct functions.
    */
-  const segments = splitAroundInterfaces(bodyText, blocks, styles)
-    .map(segment =>
-      segment.kind === 'text'
-        ? { ...segment, text: unwrapUnknownTagsOutsideCode(segment.text) }
-        : segment,
-    )
-    .filter(segment => segment.kind !== 'text' || segment.text.trim() !== '')
+  const segments = layOutMessageBody(display, bodyTag, blocks, styles)
   const byInstance = new Map(states.map(state => [state.instance, state]))
 
   return (
@@ -629,14 +659,16 @@ export function MessageInterfaces({
      * class name with no rule behind it, which `interface-styles.test.ts` now
      * refuses on the grounds that a selector matching nothing is silent.
      *
-     * The folded scaffolding sits at the fragment's edges, outside the prose:
-     * it was written before and after the body, so it renders before and after
-     * the body, folded. An empty region is not rendered — a whitespace-only
-     * head or tail is layout noise, not scaffolding a reader could learn from.
+     * The folded scaffolding rides **in the sequence**, where it was written,
+     * rather than being gathered to the two edges. On a card that obeys the
+     * preset, the head is not one block of director notes: it is notes, then a
+     * status panel, then more notes, and the panel between them is a frame. An
+     * empty region is not rendered — a whitespace-only head or tail is layout
+     * noise, not scaffolding a reader could learn from — and the split drops
+     * those in the same walk that labels them.
      */
     <>
-      {leak.tagged && leak.head.trim() !== '' && <BodyLeak text={leak.head} edge="head" />}
-      {segments.map(segment =>
+      {segments.map((segment, at) =>
         segment.kind === 'text' ? (
           markdownProse ? (
             <MarkdownText key={`t-${segment.text.length}-${segment.text.slice(0, 16)}`} text={segment.text} />
@@ -645,6 +677,8 @@ export function MessageInterfaces({
             // not of primitives — so the plain row needs no wrapper here.
             segment.text
           )
+        ) : segment.kind === 'scaffold' ? (
+          <BodyLeak key={`s-${String(at)}-${segment.edge}`} text={segment.text} edge={segment.edge} />
         ) : (
           <InterfaceSlot
             key={`i-${segment.instance}`}
@@ -658,7 +692,6 @@ export function MessageInterfaces({
           />
         ),
       )}
-      {leak.tagged && leak.tail.trim() !== '' && <BodyLeak text={leak.tail} edge="tail" />}
     </>
   )
 }

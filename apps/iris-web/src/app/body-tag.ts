@@ -118,6 +118,78 @@ export interface BodyTagSplit {
 const UNTAGGED: BodyTagSplit = { tagged: false, body: null, head: '', tail: '' }
 
 /**
+ * Where the wrapper sits in one message, in **source offsets**.
+ *
+ * The same reading {@link BodyTagSplit} gives, said in offsets rather than in
+ * detached slices — because the slices cannot be combined with anything else.
+ * A message is also claimed for interfaces (`sandbox/frontend-blocks.ts`) and
+ * every claim is an offset into the message as displayed; handing the claim
+ * the *body slice* is what made the body tag decide which blocks exist at all,
+ * since a fenced document in `head` was simply not in the string the claim
+ * read (`notes/apps/iris-web/DEVIATIONS.md` §110). Offsets let one walk place
+ * the interfaces and the wrapper against the same characters.
+ *
+ * The untagged value is the identity: the body is the whole text, and the head
+ * and tail are empty ranges at its edges.
+ */
+export interface BodyTagSpan {
+  /** Whether the message carries the wrapper at all. */
+  tagged: boolean
+  /** Offset of the opening tag's `<`. `0` when untagged. */
+  openStart: number
+  /** Offset of the prose's first character — just past the opening `>`. */
+  bodyStart: number
+  /** Offset just past the prose's last character — the closing tag's `<`. */
+  bodyEnd: number
+  /** Offset just past the closing tag's `>`. The text length when unclosed. */
+  closeEnd: number
+}
+
+/**
+ * Locate the wrapper in one message.
+ *
+ * Every matching rule {@link splitBodyTag} documents is *this* function's —
+ * that one is this one plus three `slice` calls — so one place decides where
+ * the prose begins and ends, and the row's splice and the row's fold cannot
+ * come to disagree about it.
+ * @param text - the message as it will be rendered (already display-regex'd
+ *   and stray-fence-repaired).
+ * @param tag - the body tag name, from {@link getBodyTag}.
+ * @returns the span, with `tagged: false` and the identity ranges for anything
+ *   without a wrapper.
+ */
+export function locateBodyTag(text: string, tag: string): BodyTagSpan {
+  const untagged: BodyTagSpan = {
+    tagged: false,
+    openStart: 0,
+    bodyStart: 0,
+    bodyEnd: text.length,
+    closeEnd: text.length,
+  }
+  if (!TAG_NAME.test(tag)) return untagged
+  const open = findTag(text, tag, 0)
+  if (open === -1) return untagged
+  // The prose starts after the *open tag's* `>` — presets write bare tags, but
+  // an attribute (`<content lang="zh">`) puts that `>` further out. A tag name
+  // still being typed mid-stream (`<content` and nothing else yet) has no `>`
+  // at all; the body then starts after the name and the `>` rides in it for
+  // one frame, the same transient a streaming claim already tolerates.
+  const gt = text.indexOf('>', open)
+  const bodyStart = gt === -1 ? open + tag.length + 1 : gt + 1
+  const close = text.indexOf(`</${tag}>`, bodyStart)
+  if (close === -1) {
+    return { tagged: true, openStart: open, bodyStart, bodyEnd: text.length, closeEnd: text.length }
+  }
+  return {
+    tagged: true,
+    openStart: open,
+    bodyStart,
+    bodyEnd: close,
+    closeEnd: close + tag.length + 3,
+  }
+}
+
+/**
  * Split one message into its prose and the scaffolding around it.
  *
  * **First opening tag, first closing tag after it.** A model that repeats
@@ -145,25 +217,13 @@ const UNTAGGED: BodyTagSplit = { tagged: false, body: null, head: '', tail: '' }
  * @returns the split, with `tagged: false` for anything without a wrapper.
  */
 export function splitBodyTag(text: string, tag: string): BodyTagSplit {
-  if (!TAG_NAME.test(tag)) return UNTAGGED
-  const open = findTag(text, tag, 0)
-  if (open === -1) return UNTAGGED
-  // The prose starts after the *open tag's* `>` — presets write bare tags, but
-  // an attribute (`<content lang="zh">`) puts that `>` further out. A tag name
-  // still being typed mid-stream (`<content` and nothing else yet) has no `>`
-  // at all; the body then starts after the name and the `>` rides in it for
-  // one frame, the same transient a streaming claim already tolerates.
-  const gt = text.indexOf('>', open)
-  const bodyStart = gt === -1 ? open + tag.length + 1 : gt + 1
-  const close = text.indexOf(`</${tag}>`, bodyStart)
-  if (close === -1) {
-    return { tagged: true, body: text.slice(bodyStart), head: text.slice(0, open), tail: '' }
-  }
+  const span = locateBodyTag(text, tag)
+  if (!span.tagged) return UNTAGGED
   return {
     tagged: true,
-    body: text.slice(bodyStart, close),
-    head: text.slice(0, open),
-    tail: text.slice(close + tag.length + 3),
+    body: text.slice(span.bodyStart, span.bodyEnd),
+    head: text.slice(0, span.openStart),
+    tail: text.slice(span.closeEnd),
   }
 }
 

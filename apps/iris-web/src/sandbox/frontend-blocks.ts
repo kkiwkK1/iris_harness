@@ -566,7 +566,23 @@ function opensIndentedBlock(lines: readonly string[], at: number): boolean {
 /** One piece of a message: prose to render, or an interface to mount. */
 export type MessageSegment =
   | { kind: 'text', text: string }
+  | { kind: 'scaffold', edge: 'head' | 'tail', text: string }
   | { kind: 'interface', block: FrontendBlock, instance: number }
+
+/**
+ * The range of a message its caller considers prose, in source offsets.
+ *
+ * Supplied by the row when a body tag is in force (`app/body-tag.ts`): text
+ * outside it is the model's scaffolding and comes back as `scaffold` segments
+ * for the row to fold. It is a **range**, not a substring, precisely so the
+ * claim can keep reading the whole message — the interfaces a card wrote
+ * outside the wrapper are still interfaces, and deciding that from a body slice
+ * is the defect §110 records.
+ */
+export interface ProseRange {
+  start: number
+  end: number
+}
 
 /**
  * Split a message so each claimed block is **replaced** by its interface.
@@ -593,16 +609,29 @@ export type MessageSegment =
  * places the interfaces — a second pass that rewrote the text would move every
  * offset the claims are named by.
  *
+ * **And prose can be scaffolding.** When the caller names a {@link ProseRange}
+ * — a body tag's wrapper, the only thing that does — every run outside it is
+ * emitted as `scaffold` instead of `text`, cut at the range's edges so a run
+ * that straddles one becomes two pieces rather than being labelled by whichever
+ * end it started at. The claims themselves are untouched by the range: an
+ * interface outside the wrapper is still an interface, in its own place, which
+ * is the whole of §110's ruling. Without the argument nothing here changes —
+ * an untagged message produces byte-for-byte the segments it always did.
+ *
  * @param source - the message text, after display regex.
  * @param blocks - the claimed blocks, from `claimFrontendBlocks`.
  * @param dropped - spans to remove from the prose and replace with nothing,
- *   from `claimMessageSurfaces`'s `styles`.
+ *   from `claimMessageSurfaces`'s `styles`, plus the body tag's own markup when
+ *   the row supplies a prose range.
+ * @param prose - the range the caller calls prose; everything else is
+ *   scaffolding. Omitted when no body tag is in force.
  * @returns the pieces, in order, with empty prose dropped.
  */
 export function splitAroundInterfaces(
   source: string,
   blocks: readonly FrontendBlock[],
   dropped: readonly { start: number, end: number }[] = [],
+  prose?: ProseRange,
 ): MessageSegment[] {
   /*
    * The instance number is fixed **before** the two lists are merged, and that
@@ -622,18 +651,67 @@ export function splitAroundInterfaces(
   let at = 0
 
   for (const claim of claims) {
-    const before = source.slice(at, Math.max(at, claim.start))
-    // Trimmed only for the emptiness test: a gap of whitespace between two
-    // interfaces is not prose, and rendering it would add a blank paragraph.
-    if (before.trim() !== '') segments.push({ kind: 'text', text: before })
+    pushRun(segments, source, at, Math.max(at, claim.start), prose)
     if (claim.block !== undefined) {
       segments.push({ kind: 'interface', block: claim.block, instance: claim.instance })
     }
     at = Math.max(at, claim.end)
   }
 
-  const rest = source.slice(at)
-  if (rest.trim() !== '') segments.push({ kind: 'text', text: rest })
+  pushRun(segments, source, at, source.length, prose)
   return segments
+}
+
+/**
+ * Emit one run of non-interface text, cut at the prose range's edges.
+ *
+ * @param out - where the pieces accumulate, in source order.
+ * @param source - the message text the offsets belong to.
+ * @param from - the run's first character, inclusive.
+ * @param to - just past the run's last character.
+ * @param prose - the caller's prose range, or undefined when all of it is prose.
+ */
+function pushRun(
+  out: MessageSegment[],
+  source: string,
+  from: number,
+  to: number,
+  prose: ProseRange | undefined,
+): void {
+  if (to <= from) return
+  if (prose === undefined) {
+    // Trimmed only for the emptiness test: a gap of whitespace between two
+    // interfaces is not prose, and rendering it would add a blank paragraph.
+    const text = source.slice(from, to)
+    if (text.trim() !== '') out.push({ kind: 'text', text })
+    return
+  }
+  pushPiece(out, source, from, Math.min(to, prose.start), 'head')
+  const body = source.slice(Math.max(from, prose.start), Math.min(to, prose.end))
+  if (body.trim() !== '') out.push({ kind: 'text', text: body })
+  pushPiece(out, source, Math.max(from, prose.end), to, 'tail')
+}
+
+/**
+ * Emit one folded scaffolding piece, if there is anything in it.
+ *
+ * @param out - where the piece goes.
+ * @param source - the message text.
+ * @param from - the piece's first character, inclusive.
+ * @param to - just past its last character.
+ * @param edge - which side of the prose it was written on.
+ */
+function pushPiece(
+  out: MessageSegment[],
+  source: string,
+  from: number,
+  to: number,
+  edge: 'head' | 'tail',
+): void {
+  if (to <= from) return
+  const text = source.slice(from, to)
+  // The same emptiness rule the prose runs follow: a whitespace-only head is
+  // layout noise, not scaffolding a reader could learn anything from.
+  if (text.trim() !== '') out.push({ kind: 'scaffold', edge, text })
 }
 
