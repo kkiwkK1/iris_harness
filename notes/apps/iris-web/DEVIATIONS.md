@@ -7585,3 +7585,114 @@ id 会盖，虚拟目录里缺席）——那会让这句话在更多行上出�
 换成一个更诚实的度量（字节？），`overflowNote` 的返回形状要跟着改。 (c) `droppedIds`
 在面板上的落点：今天只随对象传下来，面板还没按它高亮对话里的对应楼层——那是显而易见的
 下一步，且不需要契约再变。
+
+---
+
+---
+
+## 110. 正文标签只管散文怎么排、脚手架怎么折，不管哪些块有资格成为界面
+
+**Kind:** compatibility gap（已关闭）。上游在围栏文档所在处建 frame，与它在不在
+`<content>` 里**无关**；Iris 曾经不是这样。
+
+**错在哪。** `MessageInterfaces.tsx` 的派生链是
+`text → repairStrayFences → bodyText = leak.body ?? display → claim / 控制器 / 切片 / 回退`。
+`bodyText` 是**正文标签里的那一段**，于是「标签内/标签外」这条判据悄悄决定了**哪些块
+有资格成为界面**。预设教模型把散文包进 `<content>`，卡片自己的显示正则产出的整段
+HTML 因此**按构造**落在 `head`/`tail` 里——越服从预设的卡，界面越会被判成脚手架。
+
+2026-09-17 的卡族回归实测（`notes/CARD-REGRESSION-2026-09-17.md` 异常 A）：本轮 15 个
+可渲染回复里 **13 个** `displayBlocks>0 && bodyBlocks==0`；**12/14 张卡**的回复楼层
+`frame=0`、`iframe=0`。定点对照（同一段文本，只有块结构不同）：
+
+| 变体 | 文本 | claim 块数 | 浏览器建 frame |
+| --- | --- | --- | --- |
+| A | 只留第一个围栏文档 | 1 | 1 |
+| C | 只留最后一个围栏文档 | 1 | 1 |
+| D | 两个围栏文档，无 `<content>` 散文 | 2 | 2 |
+| M6 | 三个块（围栏+裸 HTML+围栏），无 `<content>` 散文 | 3 | **3** |
+| M7 | 同 M6，**加上 `<content>` 散文区** | 3 | **0** |
+
+因果开关：把 `localStorage['iris.bodyTag']` 设成一个不匹配的名字，同一文本立刻建出 3 个
+frame；设回默认 `content` 又变 0。**不是帧层、不是宿主层、也不是模型输出本身。**
+
+**第二半：连折叠件都没落地。** claim 读 `bodyText` 时，界面全在标签外的消息 claim 到
+**零个块**，于是走进「无块快路径」`blocks.length === 0 && styles.length === 0`——那条
+路径只 `return` 散文，`head`/`tail` 连 `.iris-bodyleak` 都不渲染。卡片的整块状态栏就这样
+离开屏幕，**现场没有任何线索**。看不见的丢失比看得见的错更贵。
+
+**裁决（coordinator，不再重议）。** 正文标签决定**散文怎么排、脚手架怎么折**；它**永远
+不决定哪些块有资格成为界面**。依据是上游：`RENDER.md` §「Measured: what upstream
+actually triggers on」写明 frame 判据是 `<pre>` 文本里含 `html>`/`<head>`/`<body`，上游对
+正文标签一无所知，所以围栏文档在哪它就在哪建 frame。
+
+**修法的形状。** 新的派生链：
+
+```
+text →(流式门)→ display = repairStrayFences(text)
+     →(claim/控制器)→ claimMessageSurfaces(display) / useMessageInterfaces({ text: display })
+     →(正文标签作为**区间**)→ layOutMessageBody(display, bodyTag, blocks, styles)
+     →(切片)→ interface / text / scaffold 三种段，按源序
+```
+
+- `body-tag.ts` 增 `locateBodyTag(text, tag) → BodyTagSpan`：同一套匹配规则，产出**偏移**
+  而不是三段字符串。`splitBodyTag` 现在就是它加三次 `slice`，所以「散文从哪开始」只有
+  一个地方判定。未标签时是恒等（`bodyStart=0, bodyEnd=len`）。
+- `splitAroundInterfaces` 多一个可选的 `prose` 区间参数：**区间而不是子串**，这正是它无法
+  隐藏任何块的那个性质。区间外的文本run 以 `kind: 'scaffold'`（带 `edge`）返回给行去折；
+  标签自己的两段标记（`<content>`/`</content>`）像 `<style>` 跨度一样，在**同一次遍历**里
+  被丢弃——事后再删会挪动 claim 赖以命名的每一个偏移。不传该参数时，产出逐字节等同旧行为。
+- 新文件 `app/message-body.ts` 的 `layOutMessageBody`：把行里原本四行的组装挪成一个**可被
+  测试调用的函数**。这条是本次最重要的结构性决定——三个函数各自都对，错在它们之间那个
+  没有测试能渲染的组件里。
+- 行的快路径保留（`MarkdownText` 的 `streaming` 只在那条路上给），但现在在散文两侧渲染
+  `BodyLeak`：到得了那一行的消息是**真的全篇没有界面**，它的 head/tail 就是普通脚手架。
+- 折叠件**按源序就地渲染**，不再汇到 fragment 两端：服从预设的卡，head 是「导演本→状态栏
+  →更多导演本」，中间那块是 frame。
+
+**旁证：预算层从来没有这个缺陷。** `ChatPane.tsx` 的 `budgeted` 用
+`repairStrayFences(message.text)` 规划，**不经过正文标签**。于是每一条带标签的消息上，
+预算层看见 N 个块、行看见 0 个——两层对「这一楼有几个界面」的答案长期不一致，而这恰恰
+不会红：预算多留了配额没人投诉。修好之后两边读同一个串，这条不一致一并消失。
+
+**顺带改变的一件事，记在这里以免以后被当成回归。** claim 现在读整条消息，所以写在
+`head`/`tail` 里的 `<style>` 也进入这条消息的样式表并被复制进区域帧——以前它们在
+`bodyText` 之外，样式表根本看不见。这与「卡片的界面是卡片的界面，不看它在标签哪一侧」
+同一条裁决。
+
+**两处既有源码断言按新链改写（不是放松）。** `stray-fences.test.ts` 的
+`claimMessageSurfaces(bodyText)` / `text: bodyText` 钉的正是这条缺陷链；改写后钉的仍是
+「claim、控制器、切片读同一个串」这条不变量，并且额外钉死了**是哪一个串**——偏移所在的
+那一个。`frontend-blocks.test.ts` 两处读行源码的接缝断言改读 `message-body.ts`（接缝搬去
+哪就读到哪），并各加一条钉住行确实把 `blocks`/`styles` 交了出去。
+
+### 牙齿
+
+夹具是回归记录的变体缩微版（M6/M7 那一对，加 A/C/D 对照），写在
+`tests/body-tag-interfaces.test.ts`，调用的是行自己的 `layOutMessageBody` 而不是它四行的
+拷贝——拷贝正是那种「行回归了它还绿着」的东西。M7 夹具自带**判别力对照**：用旧办法
+（claim 读 `splitBodyTag(M7).body`）必须得 0，否则这个夹具什么也没证明。
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| 行的 claim 读 `display`（`stray-fences.test.ts` 源码断言）+ `check:render` 有 slot | M1：`claimMessageSurfaces(display)` → `(bodyText)` | 红（「the row claims over the whole repaired message」；render：「an interface outside the body tag did not get a slot」） |
+| 控制器读同一个串 | M2：`text: display` → `text: bodyText` | 红（「the controller claims the same string the row splices」） |
+| 切片读同一个串 | M3：`layOutMessageBody(bodyText, …)` | 红（「the splice reads that same string…」） |
+| 折叠件不丢（head/tail 都在）+ `check:render` 有 `.iris-bodyleak` | M4：在组装末尾滤掉 `scaffold` 段 | 红（「head and tail must both survive, got 0 folded pieces」；render：「the scaffolding around it is not reachable in the fold」） |
+| M6/M7 claim 块数相等、三个都到行 | M5：只保留落在标签区间内的块 | 红 4 条（「and all three reach the row as interfaces」等） |
+| 标签标记不进散文 + `check:render` 不出 `&lt;content&gt;` | M6：从 dropped 列表里去掉 `tagMarkup` | 红（「the document outside the wrapper is an interface…」；render：「the body tag markup was printed at the reader」） |
+| 匹配的标签仍然折叠脚手架 | M7：`prose` 恒为 `undefined` | 红（「head and tail must both survive」「and the matching tag still folds the scaffolding」） |
+
+七个变异全部至少红一条。**记下判别力的边界**：M1 与 M2 在单元层只被**源码断言**抓住
+（claim 的输入是在组件里选的，单元测试自己传参，看不见这个选择），M1 另有
+`check:render` 抓住；M2 目前只有源码断言一条腿——把消息流真正跑起来的浏览器验收才是它
+的第二条腿。
+
+### What would reopen this
+
+(a) 预设生态放弃正文标签约定，或上游给正文标签一个正式字段：届时区间的来源变了，`prose`
+参数的形状不变。 (b) 出现「标签外的块应当被当成脚手架」的真实卡形（例如模型把示例 HTML
+写进导演本）：那要的是**新的判据**（谁写的、为什么），不是把正文标签重新接回 membership
+——本节裁决的就是后者。 (c) 开标签落在某个被 claim 的围栏块**内部**（模型把 `<content>`
+写进代码块）目前是温和退化：markup 跨度与块重叠，块赢，标签标记留在块自己的正文里。真
+出现这种卡，应当在 `locateBodyTag` 之前先排除代码块区间，并在此处补记。

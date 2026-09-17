@@ -1963,6 +1963,66 @@ async function main(): Promise<void> {
 
   wired.store.setState({ view: seeded })
 
+  // ---------------------------------------------------------------- body tag
+  /*
+   * An interface **outside** the body tag, which is where a preset that teaches
+   * `<content>` puts every card panel by construction: the model is told to
+   * wrap its prose, so the card's own HTML lands in the head or the tail.
+   *
+   * `notes/apps/iris-web/DEVIATIONS.md` §110 — the row used to claim over the
+   * wrapper's prose, so this floor rendered as narration alone with the panel
+   * gone from the screen and nothing in the fold to expand. Pinned here rather
+   * than only in a unit test because the unit cannot answer "is there a slot on
+   * the page": three individually correct functions produced the wrong page
+   * between them, and this is the only harness that renders the tree.
+   */
+  const FENCE = String.fromCharCode(96, 96, 96)
+  const LINE = String.fromCharCode(10)
+  const taggedFloor = [
+    '【开始思考】导演本：夜雨，室内。【结束思考】',
+    '',
+    FENCE + 'html',
+    '<html><body><h1 id="panel-anchor-zz">状态栏</h1></body></html>',
+    FENCE,
+    '',
+    '<content>',
+    '她把伞收起来，没有说话。',
+    '</content>',
+    '',
+    '【自检】人称一致，未越界。',
+  ].join(LINE)
+  wired.store.setState({
+    view: {
+      ...seeded,
+      messages: [
+        {
+          id: 0,
+          key: 'body-tag-floor',
+          role: 'assistant' as MessageView['role'],
+          name: seeded.title,
+          text: taggedFloor,
+          turn: 1,
+        },
+      ],
+    },
+  })
+  const tagged = render(wired.store, slots.core)
+  assert.match(tagged, /class="iris-interfaces__slot"/, 'an interface outside the body tag did not get a slot')
+  assert.match(tagged, /class="iris-bodyleak/, 'the scaffolding around it is not reachable in the fold')
+  assert.ok(tagged.includes('她把伞收起来，没有说话。'), 'the wrapped prose is not on the page')
+  assert.ok(tagged.includes('【开始思考】导演本：夜雨，室内。【结束思考】'), 'the director notes were dropped rather than folded')
+  assert.ok(tagged.includes('【自检】人称一致，未越界。'), 'the tail scaffolding was dropped rather than folded')
+  // The claimed document is replaced by its frame, not printed beside it —
+  // upstream's rule, and the reason the slot exists at all.
+  // `panel-anchor-zz` rather than the panel's visible words: the fixture's own
+  // display-regex list happens to carry a rule named 「状态栏隐藏」, and a token
+  // that appears elsewhere on the page would make this assertion unfalsifiable.
+  assert.equal(tagged.includes('panel-anchor-zz'), false, 'the claimed document was printed as text instead of framed')
+  // And the wrapper's own markup never reaches the reader.
+  assert.equal(tagged.includes('&lt;content&gt;'), false, 'the body tag markup was printed at the reader')
+
+  wired.store.setState({ view: seeded })
+
   // ------------------------------------------------------------------ usage
   /*
    * The two usage surfaces: the conversation's line under the composer, and

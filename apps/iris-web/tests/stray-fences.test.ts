@@ -206,17 +206,37 @@ test('the streaming gate holds where the text enters, and every consumer repairs
    */
   const row = readFileSync(fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)), 'utf8')
   assert.match(row, /const display = streaming \? text : repairStrayFences\(text\)/, 'the row repairs only settled text')
-  assert.match(row, /claimMessageSurfaces\(bodyText\)/, 'the row claims over the string it splices — the body when a body tag split it, the repaired text when not')
-  assert.match(row, /text: bodyText/, 'the controller claims the same string the row splices')
+  /*
+   * The claim, the controller and the splice all read `display` — the whole
+   * repaired message.
+   *
+   * These lines used to pin `bodyText`, the body tag's prose, and that is the
+   * defect `notes/apps/iris-web/DEVIATIONS.md` §110 records: a card's panels
+   * sit *outside* the wrapper whenever the model obeys the preset, so claiming
+   * over the body meant 12 of 14 corpus cards built no frame at all. The
+   * restatement is stricter rather than looser — the agreement pinned is still
+   * "one text for all three", and it now also pins *which* text, the one the
+   * claims' offsets were measured in. The wrapper reaches the splice as a
+   * range, which is the shape that cannot decide membership.
+   */
+  assert.match(row, /claimMessageSurfaces\(display\)/, 'the row claims over the whole repaired message, not over the body tag’s prose')
+  assert.match(row, /text: display,/, 'the controller claims the same string the row splices')
+  assert.match(
+    row,
+    /const segments = layOutMessageBody\(display, bodyTag, blocks, styles\)/,
+    'the splice reads that same string — and the wrapper reaches it as a name the layout resolves to a range, never as a substring',
+  )
   /*
    * The fallback splits by role: an assistant row reads the repaired body as
    * markdown, every other row keeps the raw body it has always shown. Assert
    * the branch rather than one arm of it — an earlier version of this line
    * pinned the markdown arm as `text={text}`, which stopped describing the
    * code the moment the unknown-markup rule joined it and would have gone red
-   * on a correct change. Both arms now read `bodyText` — the split's
+   * on a correct change. Both arms read `bodyText` — the split's
    * `body ?? display` — because a body tag changes what "the raw text" means
-   * for every role: the scaffolding outside the tag belongs to no reader.
+   * for every role: the scaffolding outside the tag belongs to no reader. The
+   * expression is bound to a name now, because the fold renders beside it on
+   * that path; the rendering pinned is the same rendering.
    */
   assert.ok(
     row.includes(
@@ -224,6 +244,9 @@ test('the streaming gate holds where the text enters, and every consumer repairs
     ),
     'the fallback splits the repaired-vs-raw rendering by role',
   )
+  // And an untagged message leaves that path as the bare prose it always was —
+  // the compatibility zero, pinned where the fold was added beside it.
+  assert.match(row, /if \(!leak\.tagged\) return prose/, 'an untagged message renders the fallback with nothing around it')
 
   const pane = readFileSync(fileURLToPath(new URL('../src/app/ChatPane.tsx', import.meta.url)), 'utf8')
   assert.match(
