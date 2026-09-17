@@ -137,7 +137,7 @@
 | --- | --- | --- | --- |
 | [LICENSE-INVENTORY.md](LICENSE-INVENTORY.md) | 上游许可证、我们的移植面、依赖清单；`AGPL-3.0-only` 裁定的输入 | 2026-09-07 | 记录（正文未改动） |
 
-## 七、已归档（`archive/`，7）
+## 七、已归档（`archive/`，15）
 
 工作已经完成或结论已被后来的记录关闭的计划与交接。放在这里是因为它们不再指导任何工作，但仍然解释「当时为什么这么做」。**只有能点名接替者的文件才会被归档。**
 
@@ -150,6 +150,14 @@
 | [archive/HANDOFF.md](archive/HANDOFF.md) | `notes/st-compat/HANDOFF.md` | 任务 C（ST-Prompt-Template P3 试点）的交接：现状、踩平的坑、剩余工作 | [st-compat/PILOT-REPORT.md](st-compat/PILOT-REPORT.md)：§4 列的四项剩余工作在那份验收里全部有判定 |
 | [archive/EXTENSIONS.md](archive/EXTENSIONS.md) | `docs/EXTENSIONS.md`（分支 `dev/feat-extension-system`） | 第一版第三方扩展系统契约：扩展 = `cordis.yml` 一行 + npm 包，同进程同权限 | 系统插件平台 #88（`docs/SYSTEM-PLUGINS.md`、`docs/INFRASTRUCTURE-INTERFACES.md`）；信任判断被吸收，装载机制未采用 |
 | [archive/EXTENSION-SYSTEM-RULING.md](archive/EXTENSION-SYSTEM-RULING.md) | `notes/EXTENSION-SYSTEM-RULING.md`（同一分支） | 2026-09-12 扩展系统裁决（宪法） | 同上；`docs/SYSTEM-PLUGINS.md` 的 Trust model 一节 |
+| [archive/tasks/U1-plugin-update-transaction.md](archive/tasks/U1-plugin-update-transaction.md) | `notes/tasks/U1-plugin-update-transaction.md`（分支上，未曾合入） | U1 施工文档 · plugin.update 事务；落地于 #106 | 2026-09-17 |
+| [archive/tasks/U2-plugin-variable-writers.md](archive/tasks/U2-plugin-variable-writers.md) | `notes/tasks/U2-plugin-variable-writers.md`（分支上，未曾合入） | U2 施工文档 · 插件变量写者改线；落地于 #103 | 2026-09-17 |
+| [archive/tasks/U3-plugin-scope-storage.md](archive/tasks/U3-plugin-scope-storage.md) | `notes/tasks/U3-plugin-scope-storage.md`（分支上，未曾合入） | U3 施工文档 · scope.storage 私有存储；落地于 #104 | 2026-09-17 |
+| [archive/tasks/U4-generation-hooks-design.md](archive/tasks/U4-generation-hooks-design.md) | `notes/tasks/U4-generation-hooks-design.md`（分支上，未曾合入） | U4 施工文档 · 生成钩子设计；落地于 #102（五条裁决，设计已定） | 2026-09-17 |
+| [archive/tasks/U5-plugin-i18n-bundles.md](archive/tasks/U5-plugin-i18n-bundles.md) | `notes/tasks/U5-plugin-i18n-bundles.md`（分支上，未曾合入） | U5 施工文档 · 插件 i18n 文案表；落地于 #101 | 2026-09-17 |
+| [archive/tasks/U6-infra-hardening-batch-2.md](archive/tasks/U6-infra-hardening-batch-2.md) | `notes/tasks/U6-infra-hardening-batch-2.md`（分支上，未曾合入） | U6 施工文档 · 基础设施硬化第二批；落地于 #105 | 2026-09-17 |
+| [archive/tasks/M1-PROMPT-BUILD-REPORT.md](archive/tasks/M1-PROMPT-BUILD-REPORT.md) | `notes/tasks/M1-PROMPT-BUILD-REPORT.md`（分支上，未曾合入） | M1 技术与施工手册 · 可解释装配报告；落地于 #110、#112、#121、#123（四步） | 2026-09-17 |
+| [archive/tasks/OWNER-TASKS-2026-09-16.md](archive/tasks/OWNER-TASKS-2026-09-16.md) | `notes/tasks/OWNER-TASKS-2026-09-16.md`（分支上，未曾合入） | W1–W7 owner 任务单；落地于 #113–#120 | 2026-09-17 |
 
 ---
 
