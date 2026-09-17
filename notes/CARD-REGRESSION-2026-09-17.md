@@ -6,6 +6,7 @@
 > 仍是它们取得时的原始证据，未改动。
 
 > 状态：验收记录，验收于 2026-09-17，对象 main（开工时 `e668785`，见下），宿主 8787（`apps/iris/bin.ts`，`dataDir=./data`，`profile=default-user`）。
+> 异常 B 已定层（2026-09-17，REVIEW-6，[FRAME-OSCILLATION-chuangshi-2026-09-17.md](FRAME-OSCILLATION-chuangshi-2026-09-17.md)）：本记录量到的是阅读带高度，被临时通知横幅推着走，是几次一次性阶跃，不是振荡；属壳层，非缺陷，不派修法。
 > 仪器（已入库，`qa/`，与表外仪器同例）：`qa/review2-drive.mjs`（逐卡一遍，产出 `qa/results/review2/*.json` 与截图）、
 > `qa/review2-batch.mjs`（成批跑）、`qa/review2-u2-probe.mjs` 与 `qa/review2-u2-sentinel.mjs`（候选级变量）、
 > `qa/review2-fold-scan.mjs`（全 chat 的折走扫描）。
