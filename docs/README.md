@@ -2,7 +2,7 @@
 
 > 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
 
-本目录下 13 份文档，加上仓库根的 [README](../README.md) 与
+本目录的使用与开发文档，加上仓库根的 [README](../README.md) 与
 [CONTRIBUTING](../CONTRIBUTING.md)，是一个新读者需要的全部入口。这一页只回答两件事：
 **每份文档是干什么的**，以及**按什么顺序读**。它不复述任何一份的内容。
 
@@ -22,7 +22,8 @@
 
 ## 读的顺序
 
-1. [../README.md](../README.md) —— Iris 是什么、怎么起一个宿主、一个 profile 里有什么。
+1. [项目首页](../README.md) —— Iris 是什么、如何安装和开始使用。
+   模型连接、迁移、环境变量与数据目录见[使用手册](USER-GUIDE.md)。
 2. [ARCHITECTURE.md](ARCHITECTURE.md) —— 谁可以依赖谁，以及由测试强制的那些不变量。
 3. [SANDBOX.md](SANDBOX.md) —— 卡脚本跑在哪里。这是理解界面那一半的前提。
 4. [INFRASTRUCTURE-INTERFACES.md](INFRASTRUCTURE-INTERFACES.md) —— 今天可调用的接口面，
@@ -30,10 +31,11 @@
 5. [SYSTEM-PLUGINS.md](SYSTEM-PLUGINS.md) → [PLUGIN-AUTHORING-RUNBOOK.md](PLUGIN-AUTHORING-RUNBOOK.md)
    —— 插件是什么，然后怎么做一个。
 
-## 十三份文档
+## 文档索引
 
 | 文档 | 它回答什么 |
 | --- | --- |
+| [USER-GUIDE.md](USER-GUIDE.md) | 模型连接、兼容范围、数据迁移、运行配置与常见问题 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 包的分层与依赖方向，以及 `apps/iris/tests/architecture.test.ts` 强制的每一条不变量 |
 | [SANDBOX.md](SANDBOX.md) | 卡脚本沙箱的冻结策略：不透明源 iframe、CSP、能力面、已接受的缺口 |
 | [AUTORUN.md](AUTORUN.md) | 卡脚本自动运行的条款：按卡记忆的同意门，以及接线前必须成立的前提 |
