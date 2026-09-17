@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, EffectMeta } from '@deepseek-ai/cordis'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { describeUnconfiguredBind } from '@iris/rpc-host'
@@ -104,6 +104,53 @@ function status(response: string): number {
   return Number(response.split(' ')[1] ?? '0')
 }
 
+/**
+ * Every path prefix this composition mounted an Iris-owned route on, read from
+ * the live effect tree rather than restated by hand.
+ *
+ * This is the calibration §3.1 of `notes/tasks/REVIEW-4-SECURITY-DRIFT-RECHECK.md`
+ * asks for, in the smaller of the two shapes it offers. The two route tables in
+ * this file are hand-written, and a hand-written table cannot see the route it
+ * does not name: `/plugins/*` and `/iris-st-ext/*` were mounted on 2026-09-11
+ * and after and no test in the tree proved they went through `guard`, because
+ * the only thing that would have said so was a table nobody had added them to.
+ * The count below is read from `@iris/app-service`'s own `ctx.effect` labels —
+ * the strings `irisApp: GET <prefix>` beside each `ctx.webServer.register` — so
+ * a route added without a row in the tables turns the comparison in the test red
+ * instead of staying invisible.
+ *
+ * **Why the effect tree and not a getter on the service.** A `mountedPrefixes`
+ * getter would put a test-only read into the product because a test wanted one,
+ * and the label is already the thing a person greps for when a route is added
+ * (the same argument that made them labels in the first place). The walk is two
+ * levels: `ctx.registry` is mixed into the context, and each fiber's effects are
+ * a tree because an effect registered inside another is a child.
+ *
+ * Only `irisApp: GET …` labels are read, so the other labelled effects in the
+ * same fiber (`irisApp.handlers`, the CSP tap) are not mistaken for routes. The
+ * `/version` label carries a literal path rather than a template for the same
+ * reason, and both shapes are matched.
+ *
+ * @returns the mounted prefixes, in effect-registration order.
+ */
+function mountedRoutePrefixes(): string[] {
+  const prefixes: string[] = []
+  const visit = (effects: readonly EffectMeta[]): void => {
+    for (const effect of effects) {
+      const match = /^irisApp: GET (\S+)$/.exec(effect.label)
+      if (match !== null) prefixes.push(match[1]!)
+      visit(effect.children)
+    }
+  }
+  for (const runtime of ctx.registry.values()) {
+    for (const fiber of runtime.fibers) {
+      if (fiber.name !== 'iris-app-service') continue
+      visit(fiber.getEffects())
+    }
+  }
+  return prefixes
+}
+
 /** GET one path under a chosen `Host`. */
 async function get(path: string, host: string): Promise<string> {
   return raw(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`)
@@ -193,25 +240,62 @@ test('a Host that is absent or repeated is refused on the upgrade', async () => 
 
 test('every route the application registers refuses a foreign Host and answers the real one', async () => {
   /*
-   * The four routes `@iris/app-service` puts on the same carrier. They are not
+   * The six routes `@iris/app-service` puts on the same carrier. They are not
    * the RPC endpoint, and a guard that lived only there would leave the user's
    * character library (avatars), the card code running in their sandbox (the
-   * bundle and the sandbox assets) and the build identity (`/version`) readable
-   * to the same rebound page.
+   * bundle and the sandbox assets), the build identity (`/version`) and the two
+   * plugin faces (`/plugins/*`, `/iris-st-ext/*`) readable to the same rebound
+   * page.
    *
    * The accepted side asserts "not 403" rather than 200: `/version` answers a
-   * body, the sandbox asset answers a file, and the other two answer 404 for a
-   * name that does not exist — which is the right answer and is not a refusal.
+   * body, the sandbox asset answers a file, and the rest answer 404 for a name
+   * that does not exist — which is the right answer and is not a refusal.
+   *
+   * The two plugin faces were added on 2026-09-11 and after (`#88`, `#95`);
+   * before this table grew them nothing in the tree proved they went through
+   * `guard`, which is the entire reason the list exists — a route a handler
+   * forgot is indistinguishable from one it remembered. See
+   * `mountedRoutePrefixes` below for the half that keeps this list from going
+   * stale again.
    */
-  const routes = ['/version', '/iris/avatar/aria.png', '/iris/script-bundle/nothing.js', '/sandbox/preset.js']
+  const routes = [
+    '/version',
+    '/iris/avatar/aria.png',
+    '/iris/script-bundle/nothing.js',
+    '/sandbox/preset.js',
+    '/plugins/nothing/nothing.js',
+    '/iris-st-ext/nothing.js',
+  ]
+
+  const mounts = mountedRoutePrefixes()
+  // The floor, and the reason it is asserted before the loop: a read that
+  // answers nothing — a renamed fiber, an unwalked effect tree — would leave
+  // `every mount has a route` vacuously true. Six is the count this composition
+  // has today; it moves when a route is added, which is the point.
+  assert.ok(
+    mounts.length >= 6,
+    `the composition mounts at least six guarded routes, found ${String(mounts.length)}: ${mounts.join(', ')}`,
+  )
 
   for (const path of routes) {
     assert.equal(status(await get(path, rebinding)), 403, `${path} must refuse a rebinding Host`)
     assert.notEqual(status(await get(path, real())), 403, `${path} must answer the real host`)
   }
 
+  // Every mounted prefix is exercised above. A route a future PR mounts without
+  // a row here makes this red rather than silently unguarded — the comparison is
+  // the teeth, not the count on its own.
+  for (const prefix of mounts) {
+    const covered = routes.some(route => route === prefix || route.startsWith(`${prefix}/`))
+    assert.ok(covered, `${prefix} is mounted but no route in this table covers it — add one`)
+  }
+  assert.ok(
+    routes.length >= mounts.length,
+    `the table (${String(routes.length)}) must cover every mounted route (${String(mounts.length)})`,
+  )
+
   // And the one that exists really is served, so the loop above is not passing
-  // on four 404s.
+  // on a run of 404s.
   const asset = await get('/sandbox/preset.js', real())
   assert.equal(status(asset), 200, 'the sandbox asset a card frame loads is still served')
   assert.match(asset, /access-control-allow-origin/i, 'with the CORS header its opaque-origin frame needs')
@@ -233,7 +317,14 @@ test('every route Iris owns answers nosniff, refusals and misses included', asyn
    * the header has to come from the wrapper rather than from whichever branch
    * happens to write the body.
    */
-  const routes = ['/version', '/iris/avatar/aria.png', '/iris/script-bundle/nothing.js', '/sandbox/preset.js']
+  const routes = [
+    '/version',
+    '/iris/avatar/aria.png',
+    '/iris/script-bundle/nothing.js',
+    '/sandbox/preset.js',
+    '/plugins/nothing/nothing.js',
+    '/iris-st-ext/nothing.js',
+  ]
 
   for (const path of routes) {
     assert.match(await get(path, real()), /x-content-type-options: nosniff/i, `${path} answers unsniffable`)

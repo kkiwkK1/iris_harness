@@ -36,7 +36,7 @@
 | [GROUPS.md](GROUPS.md) | 上游群聊机制速写；结论是语料对群聊的兼容义务为零，维持 deferred | 2026-09-02 | — |
 | [METHODS.md](METHODS.md) | 工作方法：每条规则都由本仓库的一个真实 bug 付过学费（语料定理、计数课、静默失败纪律） | 2026-09-07 | — |
 | [PLUGIN-FEASIBILITY.md](PLUGIN-FEASIBILITY.md) | 把酒馆助手与 MVU 剥离为插件的可行性与难度，逐文件盘点 | 2026-09-12（对象 `2d80c7f`） | — |
-| [SECURITY-REMEDIATION.md](SECURITY-REMEDIATION.md) | 两份外部审计 34 条发现逐条的处置状态与证据 | 2026-09-11 | — |
+| [SECURITY-REMEDIATION.md](SECURITY-REMEDIATION.md) | 两份外部审计 34 条发现逐条的处置状态与证据 | 2026-09-11；2026-09-17 复查 | — |
 | [SETTINGS-IA.md](SETTINGS-IA.md) | 设置面的信息架构设计输入：每一项接哪个 RPC、建不建、不建的理由 | 2026-09-02（2026-09-11 补落地说明） | — |
 | [SYSTEM-PLUGINS-ACCEPTANCE.md](SYSTEM-PLUGINS-ACCEPTANCE.md) | 系统插件抽取的交付归属记录；结果不在这里，在两份验收记录里 | 2026-09-15（对象 `2eccf30`） | — |
 | [TEST-CARDS.md](TEST-CARDS.md) | 验收语料地图：每张卡能测到什么、测不到什么（只记形状不记内容） | 2026-09-07 | — |
