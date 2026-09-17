@@ -139,7 +139,7 @@
 
 | 文件 | 内容 | 写于 | 状态 |
 | --- | --- | --- | --- |
-| [LICENSE-INVENTORY.md](LICENSE-INVENTORY.md) | 上游许可证、我们的移植面、依赖清单；`AGPL-3.0-only` 裁定的输入 | 2026-09-07 | 记录（正文未改动） |
+| [LICENSE-INVENTORY.md](LICENSE-INVENTORY.md) | 上游许可证、我们的移植面、依赖清单；`AGPL-3.0-only` 裁定的输入 | 2026-09-07；2026-09-17 复查 | 记录（正文未改动；§六为追加） |
 
 ## 七、已归档（`archive/`，15）
 

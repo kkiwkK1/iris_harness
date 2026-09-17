@@ -258,3 +258,145 @@ Version 1.36, provided by Punkerslut Freethought" / "AnarchistRevolt.com"），
 2. **上游版本号要钉进注释**：(B) 里多条引用的行号会随上游更新漂移
    （已经吃过一次：TH 4.9.1 把 `predefine.js:38-45` 变成了 `:37-44`）。
    移植声明里带上被移植时的上游版本，审计与复核都靠它。
+
+---
+
+## 六、复查（2026-09-17，main `96b1a8e`）
+
+按 `notes/tasks/REVIEW-7-LICENSE-INVENTORY-RECONCILE.md` 做的对账。**上文一行未改**；
+本节是追加。口径仍然是「只给事实与位置，不裁」。
+
+### 6.1 开头那句「本仓库没有任何 `LICENSE` 文件」
+
+**已于 2026-09-07 失效**：`LICENSE`（GNU AGPLv3 全文，661 行）在那天随裁定一并入库
+（提交 `7985fe0`），`git ls-files LICENSE` 命中，根 `README.md` 的徽章链到它，
+`package.json` 与四个包的 manifest 也写着 `"license": "AGPL-3.0-only"`。
+正文不改，因为那句话描述的是 9 月 7 日之前的事实。
+
+### 6.2 工作区（§三）：总数一个没变，成分动了一处
+
+今天 `pnpm licenses list` 读到 **54 包 / MIT 47、Apache-2.0 4、ISC 2、Python-2.0 1**，
+与 §三 表逐个相等；`@deepseek-ai/*` 仍是 **23 个**，`--prod` 之外的 7 个仍是
+`@types/ejs`、`@types/js-yaml`、`@types/lodash`、`@types/lodash-es`、
+`@types/node`、`@types/ws`、`undici-types`。**逐名对完成，零新增、零移除。**
+
+**唯一移动的是那一行 prod 计数。** §三 写「prod 46、dev 8」，今天
+`pnpm licenses list --prod` 读 **47**，与「总数 54 − dev 7」自洽。
+**差的那一个包是 `typescript`**，而这句话是这样量出来的：从 lockfile 的 importer
+图重算可达性（从每个 importer 的 `dependencies` 出发走 `packages:` 段的传递边），
+2026-09-10 那份得出 37 个可达，今天得出 **38 个**，**两次之间唯一进集的就是
+`typescript`**。
+
+> **这个 38 不是 pnpm 的 47，两者是两个尺。** 重算的边只走 `dependencies`，
+pnpm 显然还算了别的（可能包括 `peerDependencies` 与「某 importer 的 devDep
+是另一 importer 的 prodDep」这类情形），**我没有把它的分类复现出来，也不假装复现了**。
+> 能站住的是**两次读数之间方向与身份一致**：两个尺各自 +1，而唯一移动的名字是
+> 同一个。下面那句原因的强度也只到这。
+
+原因写在 manifest 里：`packages/iris-compat-st-extension/package.json` 把
+`typescript: 5.9.3` 写在 **`dependencies`**（不只是 `devDependencies`）——
+`src/analyze.ts:34` 真的 `import ts from 'typescript'`，用编译器 API 做 ST 扩展的
+模块图分析，是运行时依赖——而这个包是 09-14 的 `2eccf30f` 新建的。
+根本仓 `package.json` 与 `apps/iris-web/package.json` 的 `typescript` 仍在
+**`devDependencies`**（未动），所以这是**分类依据变化、不是安装变化**：
+同一个名字、同一版本，只是有人把它当运行时依赖声明的。
+（不属这 54 个的 dev 侧仍是 7 个：`@types/ejs`、`@types/js-yaml`、
+`@types/lodash`、`@types/lodash-es`、`@types/node`、`@types/ws`、`undici-types`。
+`@types/node` 全仓只在 `devDependencies`，经它到达的 `undici-types` 两次读数里
+都不在可达集——所以 46/8 与 47/7 之差与它无关。）
+
+**成分上只有一处版本移动，就是 §二 栏四已经补记过的那一条：**
+`ejs@3.1.9 → 3.1.10`（2026-09-11，提交 `9d93280`，CVE-2024-33883；许可证不变）。
+把它钉成数字：`pnpm-lock.yaml` 的 `packages:` 段共 **55 个 package-version**，
+拿 2026-09-10 那份（`9d93280~1`）与今天逐行 diff，**差别只有这一行**。
+那 55 个与 `pnpm licenses list` 的 54 个同名同版本（多出的是 `@deepseek-ai/schemastery`
+的 3.18.1／3.18.2 两版，列表按名合并算一个）——一个不多一个不少。
+
+**手册 §0 说改了 `package.json` 的提交有三个，实际是六个。** 对着 `5601082` 量：
+`9d93280`（09-11，`iris-compat-prompt-template`，ejs 升版）、`1226546`（09-11，
+`iris-variables`）、`2079dbe1`（09-12）、`2eccf30f`（09-14）、**`963744a`（09-15，
+根 `package.json` 只加了一条 `pack:contracts` 脚本，无依赖变动）**、
+`dd1cc24d`（09-16）。§0 点名的是后三个（`2079dbe1`、`2eccf30f`、`dd1cc24d`），
+**漏的是 `9d93280`、`1226546`、`963744a` 这三个**；其中前两个确实改了依赖
+（下面分别说），所以§0「改过 `package.json` 的只有三个」这句需以六个为准。
+
+**这六个里，四个一个第三方包都没进没出：**
+`2079dbe1`（新建 `@iris/text`，`js-yaml` 从 `@iris/mvu` 挪到
+`@iris/compat-tavernhelper`——`js-yaml` 本来就在树里）、`2eccf30f`
+（新建四个 `@iris/*` 包；`typescript` 从 devDep 变 runtimeDep 的那个包也在这里，
+但名字本来就已在册）、`963744a`（只改 scripts）、`dd1cc24d`（`@iris/text`
+加一个 workspace 使用者）。它们改的全是 workspace link 与声明位置，而这两样
+都不进 `pnpm licenses list` 的名字表。
+
+**剩下两个改的是已在册名字的版本约束**，都不是新名字：`9d93280` 把
+`iris-compat-prompt-template` 的 `ejs` 搬到 3.1.10（就是上面那条 lockfile 差异），
+`1226546` 把 `iris-variables` 的 `lodash-es` 约束从 `^4.17.21` 抬到 `^4.18.1`
+（**而安装的版本两次都是 4.18.1**，所以名字表与版本表都没动）。
+**所以「总数与逐名都对得上」与「lockfile 确实动过」不矛盾**：
+动的是一个版本声明与一堆 workspace link，名字一个没进没出。
+
+### 6.3 新事实：`apps/iris-web` 有第二棵依赖树，两份文件都没有它
+
+**这是这次对账的主体。** `apps/iris-web` 由 npm 管、在 pnpm 工作区之外，
+`pnpm licenses list` 看不见它，`THIRD-PARTY-NOTICES.md` 与本文的 §三 也都从未包含它。
+今天走一遍它的 `node_modules`：
+
+- **251 个第三方 package-version**（251 个目录行、248 个不同包名；
+  `commander`、`entities`、`lru-cache` 各有两版），**13 种许可证表达式**；
+- 另有 6 行 `@iris/*`（5 个包）是**指回 `packages/` 的 junction**，已剔；
+  它们自己的 `AGPL-3.0-only` 算进去就是第 14 种——**手册 §0 记的 14 种
+  包含这一条，13 种是不含我们自己的那棵**；
+- **直接依赖 37 个**（`dependencies` 29 + `devDependencies` 8），传递 214 个；
+- `react`、`react-dom`、`vite`、`vue`、`zod` 之前**一次都没出现在这两份文件里**，
+  而它们和服务端那份 `THIRD-PARTY-NOTICES.md` 的标题是同一个承诺。
+
+**与 §1 脚本的两个修正（照实记，因为下一个人会照抄那段脚本）：**
+① 脚本原样运行会**多算 5 行 `@iris/*`**，必须手工剔掉——口径是「路径是 junction
+指回 `packages/`」，而这点脚本没写；② 全树 257 行里 `@iris/protocol` 出现两次
+（一次在 `node_modules/` 顶层、一次嵌在 `@iris/plugin-web-api/node_modules/`
+下），所以**按行数报「256 个包」会把 junction 与重复行算进去**，
+按 name+version 去重后是 **251 个第三方包**。手册 §0 写的 256 与 14 种表达式，
+差的就是这 5 行 junction；**14 种表达式一字不差**（它数的是未剔 `@iris/*` 的
+全树，含我们的 `AGPL-3.0-only`；第三方那 251 个只占 13 种）。
+
+**对这棵树做了一次手册没要求的对账，结论钉住了整张表：** 把 walk 的
+`name@version` 与 `package-lock.json` 里所有 `node_modules/` 条目对比
+（5 个 `link: true` 的 workspace 条目除外）——**walk 有而 lock 没有：0 条；
+lock 有而 walk 没有：50 条，50 条全部带 os/cpu/optional 门**
+（48 个 `@esbuild/*`／`@rollup/*` 平台二进制 + `@napi-rs/lzma-linux-x64-gnu`
++ `fsevents`，都是别的操作系统的副本）。301 − 5 links − 50 门 = **251**，
+与 walk 逐条相等。所以「磁盘上的树就是 lockfile 的树」是量出来的。
+
+汇总表与 37 个直接依赖的逐条用途写在 `THIRD-PARTY-NOTICES.md` 新增的
+`## apps/iris-web npm dependencies (2026-09-17)` 一节（那里的「用途」一列是
+按 §EJS、§jQuery 两节的写法写的：怎么用，而不是它是什么）。
+
+### 6.4 待裁清单（5 条，附路径）
+
+按手册 §2 的口径，非 SPDX 自由文本、CC/OFL/MPL 一律只记不裁，交总指挥：
+
+| 包 | 版本 | 表达式 | 路径 | 未决的是什么（只记事实） |
+| --- | --- | --- | --- | --- |
+| `jquery-ui-touch-punch` | 0.2.3 | `Dual licensed under the MIT or GPL Version 2 licenses.` | `apps/iris-web/node_modules/jquery-ui-touch-punch` | 非 SPDX；**包内无许可证文件**，只有 `jquery.ui.touch-punch.js` 头部注释（`Copyright 2011–2014, Dave Furfero`）与 `package.json` 同一句。GPL-2.0 那一支才是要看的。**未进任何 frame bundle**，但是声明了的直接依赖 |
+| `dompurify` | 3.4.14 | `(MPL-2.0 OR Apache-2.0)` | `apps/iris-web/node_modules/dompurify` | 二选一，且两条都随包发（`LICENSE` = Apache-2.0，`LICENSE-MPL` = MPL-2.0）。MPL-2.0 是文件级 copyleft，选哪条或怎么记是我们的事。用在 `src/app/sanitize-html.ts`，**是出货代码** |
+| `@fortawesome/fontawesome-free` | 6.5.2 | `(CC-BY-4.0 AND OFL-1.1 AND MIT)` | `apps/iris-web/node_modules/@fortawesome/fontawesome-free` | 按资产分三份（`LICENSE.txt` 自己写明）：图标 CC-BY-4.0、字体 OFL-1.1（`Copyright (c) 2024 Fonticons, Inc.`，保留字体名 "Font Awesome"）、代码 MIT。**CC-BY 要署名、OFL 有保留字体名条款**；这些表被内联进 message frame bundle，即义务跟着每个 frame 走 |
+| `caniuse-lite` | 1.0.30001810 | `CC-BY-4.0` | `apps/iris-web/node_modules/caniuse-lite` | 只经 `@vitejs/plugin-react → @babel/core → @babel/helper-compilation-targets → browserslist` 到达，**不进任何出货产物**；`LICENSE` 带 `Copyright (c) 2014-present Alexis Deveria` |
+| `lru-cache` | 11.5.2 | `BlueOak-1.0.0` | `apps/iris-web/node_modules/jsdom/node_modules/lru-cache` | 只经 `jsdom`（devDependency）到达，**不进出货产物**；树里另一份 `lru-cache@5.1.1` 是 ISC |
+
+另有 **6 个包不带自己的许可证文件**（只有 `package.json` 的 `license` 字段）：
+`@esbuild/win32-x64@0.25.12`、`@rollup/rollup-win32-x64-gnu@4.63.1`、
+`@rollup/rollup-win32-x64-msvc@4.63.1`、`@vue/devtools-api@6.6.4`、`saxes@6.0.0`、
+以及上面那条 `jquery-ui-touch-punch`。**只记事实**，与 §三 里 `filelist`／`jake`
+「包内无许可证文件」是同一类记录。
+
+### 6.5 门禁：清单靶子没有牙齿
+
+`node --test apps/iris/tests/md-references.test.ts` 过（新增的表格里若有路径写错会被它查出来）。
+除它以外，**没有任何测试钉 `THIRD-PARTY-NOTICES.md` 与本文**——全仓 `apps/*/tests`
+与 `scripts/*.mjs` 里 `THIRD-PARTY`、`LICENSE-INVENTORY` 零命中。
+一条「`pnpm licenses list` 的总数与 NOTICES 里写的数相等」之类的测试**没有加**：
+按手册 §3.4，加不加由总指挥决定，这里只记。
+
+**§三 那个读数今天仍对，是因为没有人改依赖；它下一次漂移时不会有任何东西变红。**
+这次能发现 `apps/iris-web` 那棵树整棵不在册，靠的是人，不是门禁。
+
