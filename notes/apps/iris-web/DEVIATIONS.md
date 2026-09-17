@@ -7696,3 +7696,130 @@ text →(流式门)→ display = repairStrayFences(text)
 ——本节裁决的就是后者。 (c) 开标签落在某个被 claim 的围栏块**内部**（模型把 `<content>`
 写进代码块）目前是温和退化：markup 跨度与块重叠，块赢，标签标记留在块自己的正文里。真
 出现这种卡，应当在 `locateBodyTag` 之前先排除代码块区间，并在此处补记。
+
+---
+
+## 111. 「the library preset never executed」读的是 bootstrap 那一瞬，不是 preset 跑完之后
+
+**Kind:** 自有仪器的报告缺陷（不是兼容性差异），已修。
+
+**这句话是什么。** `describeLibraryState` 是 Iris 的增量仪器：一帧只能看见「某些全局不在」，
+看不见「为什么」，而两个原因把读者送去相反的方向——**一次请求失败**（拦截、404、解析错，
+每个缺名都是它的后果）与**若干个真缺口**（Iris 确实不带这些库，一个一个决定）。preset 的
+最后一条语句写一个标记，这条仪器就靠那个标记在两者之间裁决。**这条函数本身没错**，
+`library-state.test.ts` 原有的十条断言全部成立。错的是**谁在什么时刻调用它**。
+
+**测到的时间线**（读于 `origin/main` `64d18ab`，产品代码 `0aa3ede`；行号是改前的）：
+
+| # | 位置 | 发生什么 |
+| --- | --- | --- |
+| 1 | `apps/iris-web/src/sandbox/srcdoc.ts:756` | bootstrap 的 `<script src>`：classic、**无** `async`/`defer` → 阻塞执行 |
+| 2 | `apps/iris-web/src/sandbox/frame-entry.ts:1890` | 这个脚本在**顶层同步**调用 `installSandbox({...})` |
+| 3 | `apps/iris-web/src/sandbox/frame.ts:3011` → `:3103` | `if (env.interfaceFrame === true && hasTavernHelper)` 块里同步调 `env.reportMissingGlobals?.(EXPECTED_GLOBALS)` |
+| 4 | `apps/iris-web/src/sandbox/frame-entry.ts:2163` | 钩子实现**当场**读 `host[PRESET_MARKER]`、`expected.filter(...)`、`document.querySelector('script[data-iris-lib]')`，当场组句、当场 `post` |
+| 5 | `apps/iris-web/src/sandbox/srcdoc.ts:823` | preset 的 `<script src … data-iris-lib>` 这时才轮到——它在文档里排在 bootstrap **之后**，理由写在 `srcdoc.ts:672`（bootstrap 必须先拿到通道和错误处理，否则库加载失败就没人能说） |
+| 6 | `apps/iris-web/src/sandbox/preset-entry.ts:257` | preset 的最后一条语句写下标记 |
+
+第 4 步因此**必然**读到三件事：标记未设、恰好那八个 preset 自己要发布的全局缺席、
+preset 标签连解析都还没解析出来——最后一点就是线上那句话里 `(the preset script)` 这个
+兜底 URL 的来历，它是自带的物证。**这不是竞态，是固定的文档顺序**，每一帧每一次都这样。
+
+owner 的 CDP 反证（爱衣 5 个 frame 逐个读）：`__iris_preset_loaded__` 5/5 为真、
+`__iris_message_preset_loaded__` 5/5 为真、`__iris_preset_error__` 5/5 为 `null`、
+十个 `EXPECTED_GLOBALS` 全部有定义。语料 11 张卡里 **10 张**逐楼层各一条，唯一没有的是
+无脚本卡（`hasTavernHelper` 为假，根本不进第 3 步）——那正是这一列的阴性对照。
+
+**一处前提更正。** 复跑记录把另一个调用点 `frame.ts:2950` 记成「`message.type === 'context'`
+快照处理器（`:2639` 起）内」。实读是 `message.type === 'run'` 分支（`frame.ts:2784`，
+try 从 `:2867` 起），也就是**脚本帧跑卡脚本**的路径；壳只在帧 `ready` 之后才发 `run`，而
+`ready` 挂在 `load` 上（`frame-entry.ts:168`），所以那个调用点**本来就在 preset 之后**，
+不误报。误报只有 `:3103` 一个来源——这也正好解释了计数为什么是「每个有 frame 的楼层一条」
+而不是「每个脚本一条」。
+
+**裁决。** 诊断不删：一个真的没跑起来的 preset 必须被点名，`blocked, missing, or
+unparseable` 是这句话里最有用的半句。改的是**什么时候读**——报告要在它所描述的那个状态
+真正到达之后才组句，并且在标记还可能翻转的时候**永远不许**说「从来没执行」。
+
+**修法。** `library-state.ts` 多出 `PRESET_SETTLE_TIMEOUT_MS`、`LibraryProbe`、
+`reportLibraryState(probe)`。realm 的六个读数全部是 thunk——整件事的要点就是它们可能比
+「请求出报告」的那次调用晚，并且必须为**那个**时刻作答。三支：
+
+- 标记已为真 → 当场出。此时若仍有缺名，那是真缺口，走既有的 gap 句式。
+- 文档已解析完（`readyState !== 'loading'`）→ 当场出。preset 标签的回合已经过去，
+  标记仍未设就是真结论，按名上报。
+- 否则推迟到 `DOMContentLoaded` 与 15 s 上界里**先到的那个**，并在那一刻**重读**而不是
+  重放：中途翻转的标记会换掉组出来的句子，而不是只决定发不发。最多报一次。
+
+`frame-entry.ts` 的钩子只剩下把六个读数交出去；`DOMContentLoaded` 而不是 `load`，因为
+阻塞的 classic `<script src>` 到那时已经跑过或已经确定失败，等子资源只会把一条真结论压在
+一张无关的图后面。
+
+**上界的边界，照实记。** 被拦、404、语法错的 preset **不会**卡住解析器（浏览器发 error
+事件、解析继续），所以正常路径是 `DOMContentLoaded`，毫秒级；15 s 那条腿只覆盖「请求既不
+完成也不失败、文档永远解析不完」这一种形状，那时把诊断永远扣住才是更坏的失败。它同时是
+本次唯一留下的窗口：上界到点时解析仍在进行，标记理论上还能翻转。取 15 s 与
+`frame-entry.ts` 的 `IMPORT_TIMEOUT_MS` 同量级，理由相同——那是这一帧对「多久之后我就说」
+的既有答案。
+
+**上游对照。** SillyTavern 自己**没有**这条仪器，而且结构上不可能有这种失败：
+`public/index.html:8186`–`:8202` 把每个库都写成阻塞的 classic `<script src>`，应用代码
+`script.js` 是 `type="module"`（天然 defer），所以上游任何代码观察到全局时，全部库标签都
+已经跑完；库缺席的唯一信号是卡自己运行时的 `ReferenceError: Vue is not defined`，而它必然
+发生在库标签之后。TavernHelper 同理（它把库注入消息 iframe，卡的代码在注入之后才跑）。
+换句话说：**上游没有「早读」这种模式可言**，Iris 这句话是文档化的增量，本节修的是这个增量
+自己引入的时刻错位，不是向上游看齐或偏离。
+
+**测试。** `apps/iris-web/tests/library-state.test.ts`（+7，全部是「什么时候读」而不是
+「说什么」）。`frame-libraries.test.ts` 钉的 `provideToastr` → `reportMissingGlobals` 顺序
+走的是 `run` 路径，不受影响，仍绿。
+
+**实地对照（8790 宿主，`apps/iris/data` 的副本，爱衣，只开新对话不发回合，不花 token）。**
+同一张卡、同一个开场白楼层、同一套读法（`#iris-card-scripts` 里的 `.iris-script__report`
+行），只换 `dist/sandbox` 的 bootstrap 构建：
+
+| 构建 | bootstrap 资产 | 面板行数 | 含「never executed」的行 | slot / iframe |
+| --- | --- | --- | --- | --- |
+| 改前（`origin/main` 源码重建） | `bootstrap-49aeaca23a0e188a.js` | 31 | **1** | 1 / 1 |
+| 改后 | `bootstrap-8541ed23c753134e.js` | 29 | **0** | 1 / 1 |
+
+改前那一行逐字是：
+
+```
+the library preset never executed (the preset script) — it did not run far enough to record a
+reason, so the request itself is what to check: blocked, missing, or unparseable. Every library
+below is a consequence of that one failure, not a separate gap: $, jQuery, _, z, YAML, showdown,
+Vue, VueRouter
+```
+
+`(the preset script)` 这个兜底 URL 就是上面第 4 步「标签还没解析出来」的现场物证。
+（复跑记录把末名抄成了 `VueRoute`，实读是 `VueRouter`——八个名字正好是 `EXPECTED_GLOBALS`
+去掉 `toastr` 与 `EjsTemplate` 之后那批，那两个是 Iris 在 preset 之前就种进去的。）
+frame 数两次都是 1，所以少掉的只有这条误报，不是这一层整个塌了。
+
+### 牙齿
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| (a) bootstrap 那一刻不出报告，preset 跑完后也不出 | M1：`if (probe.presetRan() \|\| !probe.parsing() \|\| true)`，恢复即时读 | 红 3 条（(a)(b)(c) 全红）→ 绿 |
+| (b) 等待是**有界**的 | M2：删掉 `probe.after(PRESET_SETTLE_TIMEOUT_MS, settled)` | 红（`the wait is not bounded`）→ 绿 |
+| (b) 上界与结算点只发一次 | M3：去掉 `spoken` 守卫 | 红（`the settle point repeated a report the bound had already made`）→ 绿 |
+| (a)(c) 结算点**重读**而不是重放 | M4：把 `presetRan()`/`missing()` 在调用时快照成常量 | 红 2 条（含 `the preset ran and every library is present…`）→ 绿 |
+| 已有定论的读数不该等 | M5：`if (false)`，恒走推迟支 | 红 2 条（`a settled marker was made to wait for the parser`、`nothing was waited for…`）→ 绿 |
+| (c) gap 句走 `note` 频道 | M6a：`probe.report(message, 'error')` | 红（`a library Iris does not carry is not a failed load`）→ 绿 |
+| 记录到抛错的走 `error` 频道 | M6b：`probe.report(message, 'note')` | 红 → 绿 |
+| entry 只经包装到达这句话 | M7：在 `frame-entry.ts` 里恢复直接 `describeLibraryState(...)` 组装并 `post` | 红（`frame-entry.ts composes the library sentence itself again…`）→ 绿 |
+
+八次变异各自至少红一条，且都是**改代码**而不是改夹具。M7 是其中判别力最特别的一条：
+缺陷不在句子里，所以任何只钉句子的断言都会对「把它搬回 entry 里即时组装」保持绿——
+那条源码断言是唯一能红的腿。
+
+### What would reopen this
+
+(a) preset 标签改成 `defer`/`async`/`type="module"`：那时 `DOMContentLoaded` 不再是它的
+结算点，要改的是 `onParsed` 那一行（`load`，或标签自身的 `load`/`error`），本节其余不变。
+(b) 真出现「请求既不完成也不失败」的网络形状：15 s 那条腿会在解析仍在进行时说出「没跑」，
+这是上面写明的唯一残余窗口，届时应当把上界换成对标签 `error` 事件的等待而不是加长它。
+(c) 某天 bootstrap 不再必须排在 preset 之前（`srcdoc.ts:672` 的理由失效）：那时
+`frame.ts:3103` 可以直接挪到 preset 之后，这一层包装就成了多余的间接，应当连同本节一起退。
+(d) 出现第三个调用点：本节只验过 `:3103`（界面帧，bootstrap 内）与 `:2950`（脚本帧，`run`
+路径）两个；新调用点必须自己说清它在文档顺序的哪一侧。
