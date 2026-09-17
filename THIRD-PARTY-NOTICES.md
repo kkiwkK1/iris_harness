@@ -333,6 +333,23 @@ Taken from `pnpm licenses list --json` against the current lockfile:
 The `.reference/` checkouts (MagVarUpdate, deepseek-harness) are reference
 material, not dependencies, and are not counted here.
 
+> **Re-read 2026-09-17 (`main` `96b1a8e`):** the totals above are unchanged —
+> `pnpm licenses list` still reports **54 packages across 4 licences**, MIT 47 /
+> Apache-2.0 4 / ISC 2 / Python-2.0 1, name for name, and the 23
+> `@deepseek-ai/*` are still 23. The one figure that moved is the
+> production/development split: today `pnpm licenses list --prod` reports
+> **47 production, 7 development** (this line said 46 / 8), and the one package
+> that changed sides is **`typescript`** — `packages/iris-compat-st-extension`
+> declares it in `dependencies`, not `devDependencies`, because
+> `src/analyze.ts:34` imports the compiler API at runtime. Composition is
+> otherwise unchanged apart from `ejs@3.1.9 → 3.1.10`; the diff against the
+> lockfile of 2026-09-10 is that one line, and the four `package.json` commits
+> since (`2079dbe1`, `2eccf30f`, `963744a`, `dd1cc24d`) moved workspace links and
+> declaration positions and no third-party name. Details in
+> `notes/LICENSE-INVENTORY.md` §六.
+> **This section covers the pnpm workspace only** — the second dependency tree
+> below was never in it.
+
 | Licence | Packages |
 | --- | --- |
 | MIT | 47 |
@@ -385,6 +402,16 @@ holder, marked to verify. Two of them (`filelist`, `jake`) ship **no licence
 file in the published package at all**, so the `Apache-2.0` above comes from
 their `package.json` `license` field and nothing else.
 
+> **One version in the table above is out of date, and the line is left standing
+> on purpose.** `ejs` moved **3.1.9 → 3.1.10** on 2026-09-11 (commit `9d93280`,
+> CVE-2024-33883); the licence is unchanged, so every statement on that row —
+> Apache-2.0, the author, the absent `NOTICE`, the absent copyright line — still
+> holds at 3.1.10. The **EJS section above** also reads `ejs@3.1.9` in two
+> places (`What Iris uses` and `Version read`) and is likewise uncorrected here.
+> The date on this file is 2026-09-11–16; this note is 2026-09-17. Same
+> correction, with the same date, is in `notes/LICENSE-INVENTORY.md` §二, which
+> made it when the bump landed.
+
 ### ISC — 2 packages
 
 > `Copyright (c) 2011-2023 Isaac Z. Schlueter and Contributors` — `minimatch@5.1.9`
@@ -400,6 +427,207 @@ licence, and it is the only dependency outside the MIT / ISC / BSD / Apache set.
 **To verify** — the PSF text's copyright is Python's own
 (`Copyright (c) 2001…2010 Python Software Foundation`); the JavaScript port's own
 copyright line is not stated in the shipped package.
+
+---
+
+## apps/iris-web npm dependencies (2026-09-17)
+
+**The second dependency tree, and it is not the one above.** `apps/iris-web` is
+npm-managed and sits outside the pnpm workspace (its own README says why), so
+`pnpm licenses list` cannot see it and neither could any earlier version of this
+file. This part of Iris's dependency surface was, until today, recorded
+**nowhere**. It is the larger half: **251 third-party package-versions on 248
+names**, of which **twelve are `@deepseek-ai/*`** — the published half of
+**deepseek-harness**, whose copyright line is quoted in the section above.
+`react`, `react-dom`, `vite`, `vue` and `zod` were absent from every list here,
+and so was every one of these 251.
+
+**Licences of record.** The expression below is each package's own
+`package.json` `license` field, verbatim; 245 of the 251 also ship a licence
+file, and the six that do not are named at the end of this section.
+
+**The tree this was read from.** `apps/iris-web/node_modules`, walked by the
+script in `notes/tasks/REVIEW-7-LICENSE-INVENTORY-RECONCILE.md` §1. `@iris/*`
+entries the walk also visits (five packages, six rows) are **junctions back to
+`packages/`** — our own code under `AGPL-3.0-only` in its own `package.json` —
+and are excluded from every count here.
+
+**One "to verify" in the section above, answered here.** The
+`@deepseek-ai/*` note says the store holds `dsh-client-modules`,
+`dsh-client-ui-primitives`, `dsh-client-ui-slots` and `dsh-client-web` and asks
+whether they are reachable at runtime. **They are: all four are direct
+dependencies of `apps/iris-web` and all four appear in the walk** — this tree is
+the reason `pnpm licenses list` never listed them, since it is not the tree they
+are installed in. All four are on the direct table below. The workspace's own 23
+and this tree's 12 are otherwise disjoint sets of names, so the two
+`@deepseek-ai/*` lists do not overlap and each must be read on its own.
+
+| Licence expression | Packages |
+| --- | --- |
+| `MIT` | 226 |
+| `ISC` | 8 |
+| `Apache-2.0` | 3 |
+| `BSD-2-Clause` | 3 |
+| `MIT-0` | 2 |
+| `BSD-3-Clause` | 2 |
+| `Python-2.0` | 1 |
+| `CC0-1.0` | 1 |
+| `BlueOak-1.0.0` | 1 |
+| `CC-BY-4.0` | 1 |
+| `(CC-BY-4.0 AND OFL-1.1 AND MIT)` | 1 |
+| `(MPL-2.0 OR Apache-2.0)` | 1 |
+| `Dual licensed under the MIT or GPL Version 2 licenses.` | 1 |
+
+Counted as **package-version pairs**, not directory rows: the walk visits 251
+third-party directories, and three names appear at two versions each
+(`commander` 8.3.0 + 9.5.0, `entities` 7.0.1 + 8.1.0, `lru-cache` 5.1.1 +
+11.5.2), so 251 rows are 248 distinct names.
+
+**Every one of the 251 is a dependency in the ordinary sense** — no file from
+this tree is transcribed into `src/`, and the one transcription relationship
+these packages do carry is the `@deepseek-ai/*` family's, recorded in that
+section. (`ejs` is **not** in this tree: the near-verbatim patch attributed to
+it belongs to the `ejs` row in the workspace list above, and to the EJS section.)
+`react`, `vue`, `lodash-es`, `yaml`, `zod`, `jquery` and `showdown` are supplied
+to card frames as **globals** by `src/sandbox/preset-entry.ts`; that is a runtime
+dependency and a licence obligation in the usual way, not a copy.
+
+### Direct dependencies (37) — the ones the obligation mostly attaches to
+
+The 29 `dependencies` plus 8 `devDependencies` of
+`apps/iris-web/package.json`. Versions are what is installed today.
+
+| Package | Version | Licence | How Iris uses it |
+| --- | --- | --- | --- |
+| `@deepseek-ai/cordis` | 4.0.2 | MIT | The application framework's `Context` and plugin declaration merging for the browser shell — see the `deepseek-harness` section above for the copyright line. |
+| `@deepseek-ai/cordis-plugin-group` | 1.0.2 | MIT | Cordis plugin grouping; same family, same copyright line. |
+| `@deepseek-ai/cordis-plugin-include` | 1.0.7 | MIT | Cordis configuration includes; same family. |
+| `@deepseek-ai/cordis-plugin-loader` | 1.0.3 | MIT | The loader the browser shell boots through; a peer the `dsh-client-*` packages declare. |
+| `@deepseek-ai/dsh-client-modules` | 0.1.1-rc.2 | MIT | The browser module system: its `/client` entry registers the bundle and is imported dynamically in `src/main.tsx`. |
+| `@deepseek-ai/dsh-client-ui-primitives` | 0.1.1-rc.2 | MIT | The shell's UI primitives (`Button`, `Menu`, `Modal`, `writeClipboard`) and, through them, `katex`. |
+| `@deepseek-ai/dsh-client-ui-slots` | 0.1.1-rc.2 | MIT | The slot model the message-action surfaces are built on. |
+| `@deepseek-ai/dsh-client-web` | 0.1.1-rc.2 | MIT | `AppWebEntry` — the boot the browser entry hands the container to. |
+| `@deepseek-ai/dsh-invariants` | 0.1.1-rc.2 | MIT | Runtime-invariant registry declared as a peer by the four `dsh-client-*` packages. |
+| `@fortawesome/fontawesome-free` | 6.5.2 | `(CC-BY-4.0 AND OFL-1.1 AND MIT)` | The icon sheets inlined into the message-frame bundle; the font files are inlined as data URIs. **待裁** — see below. |
+| `@iris/client-fake` | *workspace* | AGPL-3.0-only | Our own package, linked in: the fake client the shell and its tests run against. |
+| `@iris/compat-tavernhelper-core` | *workspace* | AGPL-3.0-only | Our own package: the event bus and event names the card frame speaks. |
+| `@iris/plugin-web-api` | *workspace* | AGPL-3.0-only | Our own package: the plugin asset manifest parser the shell reads. |
+| `@iris/protocol` | *workspace* | AGPL-3.0-only | Our own package: the request/response schemas every panel is typed against. |
+| `@iris/text` | *workspace* | AGPL-3.0-only | Our own package: `stringHash` and the bilingual-copy audit shared with the host. |
+| `@tailwindcss/browser` | 4.1.12 | MIT | Tailwind, as the message frame gets it; pinned to the copy the ST extension vendors. |
+| `dompurify` | 3.4.14 | `(MPL-2.0 OR Apache-2.0)` | HTML sanitising for message bodies. **待裁** — see below. |
+| `jquery` | 3.5.1 | MIT | The `$` global in both frame kinds, pinned to what SillyTavern serves. |
+| `jquery-ui` | 1.13.2 | MIT | Declared and version-pinned, and deliberately **not** shipped in any frame (see below). |
+| `jquery-ui-touch-punch` | 0.2.3 | `Dual licensed under the MIT or GPL Version 2 licenses.` | Same — declared, pinned, not shipped. **待裁** — see below. |
+| `lodash-es` | 4.18.1 | MIT | The `_` global in preset frames. |
+| `react` | 18.3.1 | MIT | The shell's renderer. |
+| `react-dom` | 18.3.1 | MIT | The shell's DOM renderer. |
+| `showdown` | 2.1.0 | MIT | Markdown in preset frames, as the `showdown` global. |
+| `vue` | 3.5.42 | MIT | The `Vue` global in preset frames. |
+| `vue-router` | 4.6.4 | MIT | Companion to `vue` for the frames that route. |
+| `yaml` | 2.9.0 | ISC | The `YAML` global in preset frames. |
+| `zod` | 4.5.4 | MIT | The `z` global in preset frames. |
+| `zustand` | 4.5.7 | MIT | The shell's client-side store. |
+| `@types/lodash-es` | 4.17.12 | MIT | Types for `lodash-es` (dev). |
+| `@types/node` | 22.20.1 | MIT | Node types for the Vite config and tools (dev). |
+| `@types/react` | 18.3.31 | MIT | Types for `react` (dev). |
+| `@types/react-dom` | 18.3.7 | MIT | Types for `react-dom` (dev). |
+| `@vitejs/plugin-react` | 4.7.0 | MIT | The React transform in `vite.config.ts` (dev). |
+| `jsdom` | 29.1.1 | MIT | The DOM the browser-shell tests run in (dev). |
+| `typescript` | 5.9.3 | Apache-2.0 | The compiler (dev); the same version as the workspace's, same notice caveat — it ships `LICENSE.txt` and a `ThirdPartyNoticeText.txt`, and nothing named `NOTICE`. |
+| `vite` | 6.4.3 | MIT | The bundler for the shell and the four frame bundles (dev). |
+
+**A note on `jquery-ui` and `jquery-ui-touch-punch`, because "declared but not
+shipped" is the sort of fact that goes stale.** Both are dependencies with exact
+pins and both are **absent from every frame bundle** — measured: no bundle under
+`apps/iris-web/public/sandbox/` contains a jQuery UI token, and
+`src/sandbox/jquery-plugin-gap.ts` exists precisely to *report* a card that
+reaches for `$.fn.draggable` and gets `undefined`, which is what it would get
+from a SillyTavern install without the plugin. The pins are asserted by
+`tests/message-preset.test.ts` so the versions cannot drift; the absence is a
+decision recorded in `message-preset-entry.ts` (316 KB cold-fetched per frame
+against zero corpus uses). A reader asking "is this shipped?" should answer it
+from the bundles, not from `package.json` — and this file now says so.
+
+### Transitive dependencies (214 distinct) — summarised by family
+
+The remainder, reached only through the 37 above. Notification obligations are
+mostly the direct packages' business; these are recorded by family and by the
+six that ship no licence file of their own.
+
+**The families below count all 251**, direct and transitive together — the table
+at the head of this section is the same 251, split by expression rather than by
+reach; a family line naming a package marked "also direct" above is in both.
+What is *only* transitive is the 214, and no claim is made here that each of
+them needs its own notice.
+
+- **MIT — 226.** The four heaviest sub-trees, by who pulls them in:
+  `rollup` and `esbuild` (through `vite`), the `@babel/*` family (through
+  `@vitejs/plugin-react`), and `react-dom`'s own dependency chain (through
+  `@deepseek-ai/dsh-client-ui-primitives`, and directly).
+- **ISC — 8**, including `yaml@2.9.0` (also direct, above).
+- **Apache-2.0 — 3**, of which one is also direct: `typescript@5.9.3`, plus
+  `baseline-browser-mapping` and `xml-name-validator`. **No package anywhere in
+  this tree ships a file named `NOTICE`** (`find . -iname 'NOTICE*'` → 0), so
+  Apache-2.0 §4's NOTICE clause has nothing to carry here; each of the three
+  does ship an Apache-2.0 `LICENSE.txt`. `typescript` additionally ships
+  `ThirdPartyNoticeText.txt`, which is not a `NOTICE` file and is named here so
+  a reader who finds it is not left guessing.
+- **BSD-3-Clause — 2**: `source-map-js`, `tough-cookie`. **BSD-2-Clause — 3**:
+  `entities` (both versions), `webidl-conversions`.
+- **MIT-0 — 2**: `@csstools/color-helpers`, `@csstools/css-syntax-patches-for-csstree`.
+- **CC0-1.0 — 1**: `mdn-data`. **BlueOak-1.0.0 — 1**: `lru-cache@11.5.2`.
+- **Python-2.0 — 1**: `argparse` (also in the workspace tree).
+- **CC-BY-4.0 — 1**: `caniuse-lite`, reached as
+  `@vitejs/plugin-react → @babel/core → @babel/helper-compilation-targets →
+  browserslist → caniuse-lite`. **It is a build-time browser-support database,
+  not shipped runtime code**, and its `LICENSE` carries a real attribution line.
+
+### 待裁 — recorded, not judged
+
+Five entries, each with its path, per this file's rule that a licence question
+is named here rather than answered here.
+
+| Package | Version | Expression | Path | What is unresolved (fact only) |
+| --- | --- | --- | --- | --- |
+| `jquery-ui-touch-punch` | 0.2.3 | `Dual licensed under the MIT or GPL Version 2 licenses.` | `apps/iris-web/node_modules/jquery-ui-touch-punch` | Not an SPDX expression; the package ships **no licence file**, only the header comment in `jquery.ui.touch-punch.js` (`Copyright 2011–2014, Dave Furfero`) and the same sentence in `package.json`. The GPL-2.0 arm is the one that would matter. **Not shipped in any frame** (see above) — but it is a declared direct dependency. |
+| `dompurify` | 3.4.14 | `(MPL-2.0 OR Apache-2.0)` | `apps/iris-web/node_modules/dompurify` | A disjunction, and both halves ship (`LICENSE` is Apache-2.0, `LICENSE-MPL` is MPL-2.0). MPL-2.0 is file-level copyleft and the choice between the arms is ours to make or record. Used in `src/app/sanitize-html.ts`, i.e. shipped. |
+| `@fortawesome/fontawesome-free` | 6.5.2 | `(CC-BY-4.0 AND OFL-1.1 AND MIT)` | `apps/iris-web/node_modules/@fortawesome/fontawesome-free` | Three licences by asset kind — `LICENSE.txt` states icons are CC-BY-4.0, fonts OFL-1.1 (`Copyright (c) 2024 Fonticons, Inc.`, Reserved Font Name "Font Awesome"), code MIT. **CC-BY-4.0 requires attribution and OFL has a reserved-name clause**; the sheets are inlined into the message-frame bundle, so this travels to every frame. |
+| `caniuse-lite` | 1.0.30001810 | `CC-BY-4.0` | `apps/iris-web/node_modules/caniuse-lite` | Reached only through `browserslist` under the Vite React plugin, i.e. **not in any shipped artifact**. `LICENSE` carries `Copyright (c) 2014-present Alexis Deveria` and the CC-BY-4.0 reference. |
+| `lru-cache` | 11.5.2 | `BlueOak-1.0.0` | `apps/iris-web/node_modules/jsdom/node_modules/lru-cache` | Reached only through `jsdom` (a devDependency) — **not shipped**. `lru-cache@5.1.1` elsewhere in the tree is ISC. |
+
+### Six packages ship no licence file of their own
+
+Each carries a `license` field and nothing readable in the package: the two
+platform-specific binaries `@esbuild/win32-x64@0.25.12` and
+`@rollup/rollup-win32-x64-gnu@4.63.1` / `-msvc@4.63.1` (MIT, the parent
+projects' licence, not restated in the platform package), `@vue/devtools-api@6.6.4`
+(MIT), `saxes@6.0.0` (ISC), and `jquery-ui-touch-punch@0.2.3` (the non-SPDX entry
+above, whose terms live in a source comment). Recorded rather than resolved,
+and it is the same situation the workspace's four Apache-2.0 packages are
+already in — two of those (`filelist`, `jake`) ship no licence file at all.
+`notes/LICENSE-INVENTORY.md`'s standing rule is that a missing file is a fact
+about the package, not a gap in this survey.
+
+**One measurement this section cannot make on its own, and the check that
+closes it instead.** The 251 are what the installed tree holds today, while
+`apps/iris-web/package-lock.json` is the authority on what a fresh `npm ci`
+would produce. Comparing the two — the walk's `name@version` pairs against
+every `node_modules/` entry in the lock, the five `link: true` workspace
+entries excluded — resolves exactly:
+
+- **In the walk and not the lock: 0.**
+- **In the lock and not the walk: 50**, and every one is **os/cpu/optional
+gated**: 48 `@esbuild/*` and `@rollup/*` platform binaries, plus
+`@napi-rs/lzma-linux-x64-gnu` and `fsevents` — the copies for other operating
+systems, which `npm ci` on Windows does not install. **301 lock entries (the
+five workspace `link` entries excluded) − 50 OS-gated = 251, exactly the walk's
+251 package-version pairs.**
+
+So the tree on disk is the lockfile's, with nothing unaccounted for on either
+side. That is the shape the pnpm half cannot have (its lock and disk agree by
+construction, and the *file* it is checked against is the stale artifact).
+`notes/LICENSE-INVENTORY.md` §六 records the same boundary.
 
 ---
 
