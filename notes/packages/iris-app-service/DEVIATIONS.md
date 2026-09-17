@@ -1039,7 +1039,7 @@ per-character ones.
 sharing costs more than it buys — which would be an argument for a namespace,
 and a divergence to take deliberately rather than by tidying.
 
-> 复查（2026-09-17）：归属文案改为先说行为者再说来源，见 §94。
+> 复查（2026-09-17）：归属文案改为先说行为者再说来源，见 §95。
 
 ## 17. Two upstream events are never sent, and MVU loses five callbacks
 
@@ -9270,7 +9270,7 @@ rule.
 
 ---
 
-## 94. The storage attribution says who acted before it says who wrote
+## 95. The storage attribution says who acted before it says who wrote
 
 **What changed, and what did not.** Nothing about card storage's behaviour: it
 is still one profile-wide store, a `clear()` still takes every card's keys, and
