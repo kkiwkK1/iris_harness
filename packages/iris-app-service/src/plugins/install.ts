@@ -81,6 +81,7 @@ import type {
   SystemPluginUpdateOf,
 } from '@iris/protocol'
 
+import { atomicWriteFile } from '../atomic.ts'
 import { AppError } from '../errors.ts'
 import type { SystemPluginDefinition } from '../system-plugins.ts'
 import type { InstalledPluginRecord, SystemPluginRuntime } from '../system-plugins.ts'
@@ -1161,6 +1162,16 @@ export class SystemPluginInstallService {
    * and the log names it. A manifest that no longer declares copy removes the
    * published directory, so the asset root stays a projection of the record
    * rather than a museum of earlier versions.
+   *
+   * The landing is `atomicWriteFile` like every other file this package owns
+   * (§68): an update republishes over a table the asset face is already
+   * serving, and a plain `writeFile` truncates that file before the new bytes
+   * arrive. What that window costs here is small and worth saying plainly —
+   * neither reader throws on a torn table (`plugin-assets.ts` hashes the bytes
+   * it serves, `plugin-copy.ts` parses inside a try and warns once) and the
+   * file is derived, so the next boot's `scanInstalled` republishes it — so
+   * this is the package's one write discipline being kept, not a data-loss
+   * bug being closed.
    */
   async #publishCopyBundles(id: string, contentDir: string, manifest: SystemPluginManifest): Promise<void> {
     const dir = path.join(this.#clientAssetRoot, id, 'i18n')
@@ -1179,7 +1190,7 @@ export class SystemPluginInstallService {
         this.#log(`system plugin "${id}" ships an unreadable i18n.${lang} table (${error instanceof Error ? error.message : String(error)}); the copy is not published and the row stays usable`)
         continue
       }
-      await fsp.writeFile(path.join(dir, `${lang}.json`), bytes)
+      await atomicWriteFile(path.join(dir, `${lang}.json`), bytes)
     }
   }
 

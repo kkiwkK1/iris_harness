@@ -8392,6 +8392,8 @@ two small files.
 
 > 复查（2026-09-17）：重开项 (b) 已处理，见 §94。
 
+> 复查（2026-09-17）：落盘改走 atomicWriteFile，见 §96（REVIEW-4 F6/F12）。
+
 ---
 
 ---
@@ -9355,3 +9357,51 @@ not a return to a line per key. (b) A surface that wants to *render* the
 provenance rather than read it: the grouping lives in the sentence, and a
 consumer that wanted the writers as data would want the reports on the record
 instead — which is a wire change, and none of today's readers asked for it.
+
+## 96. 插件文案的落盘回到 `atomicWriteFile`，以及那张源码网当初为什么没看见它
+
+**这是纪律回归，不是数据事故，先把话说到位。** REVIEW-4 把 2026-09 两轮审计的
+34 条逐条对 main 重读，只有 F6/F12 这两条漂回来了，而且落在同一处：
+`plugins/install.ts` 的 `#publishCopyBundles` 用裸 `fsp.writeFile` 写插件的
+`i18n/<lang>.json`，是 `src/plugins/` 下唯一一处不走 §68 那个唯一入口的写。**它
+能损失什么，如实写**：两侧读者都不会因半截文件抛——宿主 `plugin-assets.ts:144`
+只读字节算哈希，浏览器 `plugin-copy.ts` 的 `fetchCopyTable` 在 try 里解析、坏了
+只警告一次——而这个文件是派生物，下次启动 `scanInstalled` 会照清单重发。所以那
+个窗口里能坏的是**一次翻译显示**，不是任何一份用户自己的数据。改它的理由不是止
+损，是「这个包只有一种落盘写法」这件事本身就是 §68 买下的资产：只要有第二种写
+法在，下一处新写就有先例可循。改动是一行——`atomicWriteFile(path, bytes)`，字节
+重载，无 options，和 `library.ts`、`plugins/storage.ts` 这些派生物写者一致。
+
+**为什么偏偏是这一处漂了：那张源码网有两个召回缺口，正好在这一行交汇。** §68 的
+网（`atomic.test.ts` 第一条）不是逐点证明原子性——那要 29 次插桩——而是钉住
+import。它当时 (1) 只列了 `src/` 一层目录，`src/plugins/` 整个子树从没被读过；
+(2) 只认 `writeFile` 被**具名**引入的两种形状，而本包多数模块为 `readFile`/
+`mkdir` 引入的是命名空间（`import fsp from 'node:fs/promises'`），于是
+`fsp.writeFile(...)` 可以站在明处。两个缺口都在这一行上成立，所以这处漂移一直是
+绿的。网现在向下递归，并且认调用形状；唯一的豁免是 `host-lock.ts`——它是拿
+`wx` 独占创建后的句柄写锁记录，rename 覆盖恰恰会把目录同时交给两个宿主，那不是
+「替换」，不归这条规矩管。
+
+**client bundle 这次不动，理由记在这里而不是留白。** 旁边的
+`#publishClientBundle` 走 `fsp.copyFile`，按裁决保留。如实说：`copyFile` 同样先
+截断目标，所以同一类窗口在 bundle 上仍然存在；它不在 F6/F12 点名的位置，形状也
+不同（把磁盘上的一份文件复制过去，而不是把内存里的字节落盘），要闭窗得改成
+copy-to-temp 再 rename。此处只记录，不顺手改。
+
+### 牙齿
+
+| 断言 | 让它变红的改动 | 结果 |
+| --- | --- | --- |
+| 更新重发文案后，资产面上那个名字下换成了另一个文件（`plugin-install.test.ts`，比对 inode） | 把 `atomicWriteFile` 换回 `fsp.writeFile` | 红 → 还原 → 绿 |
+| 本包没有一处在 `atomic.ts` 之外写文件（`atomic.test.ts` 源码网，现在递归且认调用） | 同上；报出 `plugins/install.ts: await fsp.writeFile(path.join(dir, …), bytes)` | 红 → 还原 → 绿 |
+| 源码网确实下到了子目录 | 把扫描改回单层 | 红 → 还原 → 绿 |
+
+inode 这条是**先量后用**：在这台 Windows 上重写保留文件索引、rename 换掉它，
+POSIX 本就如此；文件系统不报身份时（`ino === 0n`）前置断言会先说这句检查在此处
+无法分辨，而不是假红。
+
+### 什么会让这条重开
+
+(a) `#publishClientBundle` 上那个同类窗口被测到真的伤了人——那时答案是
+copy-to-temp 加 rename，和这里同一形状。(b) 源码网的豁免长到第二条：一条带理由
+的例外是规矩，两条就是规矩在让路，那时该问的是这些写为什么不是替换。
