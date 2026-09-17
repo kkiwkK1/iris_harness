@@ -361,17 +361,103 @@ export class CardStorageStore {
 }
 
 /**
- * The sentence a removal deserves when it took another card's key.
+ * The clause every attribution report ends on.
+ *
+ * Kept on both sentences because the sharing is the fact that makes the loss
+ * legitimate: a reader who does not know the store is one profile-wide store
+ * reads any of these lines as a bug.
+ */
+const SHARED_CLAUSE = ' card storage is shared across the profile, as it is in SillyTavern'
+
+/**
+ * Who to call the card that made this call.
+ *
+ * Both wire methods require a `characterId` (`storage.remove` and
+ * `storage.clear` in the protocol), and the frame refuses to call them with no
+ * character open rather than inventing an id — so in practice the actor is
+ * always known here. The other branch exists so a caller that *cannot* say who
+ * acted says exactly that, instead of leaving the sentence to be read as though
+ * the last writer had acted. That confusion is the defect these sentences were
+ * rewritten for.
+ * @param by - who called, as the handler received it.
+ * @returns the subject of the sentence.
+ */
+function actorName(by: { characterId?: string }): string {
+  return by.characterId ?? 'a card Iris could not identify'
+}
+
+/** `1 key`, `3 keys`. */
+function keyCount(count: number): string {
+  return `${String(count)} key${count === 1 ? '' : 's'}`
+}
+
+/**
+ * The sentence a `remove` deserves when it took another card's key.
+ *
+ * **Actor first, provenance last.** The earlier wording — `remove removed "k",
+ * last written by X` — named the *last writer* in the subject position, and a
+ * reader takes the first card named as the one that acted: it read as "X
+ * deleted my key" when X had only written it. Nothing about the behaviour
+ * changed; the order of the clauses did. Who acted, then what happened, then
+ * whose the value had been.
  * @param report - what was removed.
- * @param action - the member the card called.
+ * @param by - which card called `storage.remove`.
  * @returns the message, or undefined when nothing is worth saying.
  */
-export function removalNote(report: RemovalReport, action: 'remove' | 'clear'): string | undefined {
+export function removalNote(report: RemovalReport, by: { characterId?: string }): string | undefined {
   if (!report.foreign) return undefined
   const owner = report.lastWriter?.characterId ?? 'another card'
   const script = report.lastWriter?.scriptId === undefined
     ? ''
     : ` (script "${report.lastWriter.scriptId}")`
-  return `${action} removed "${report.key}", last written by ${owner}${script};`
-    + ' card storage is shared across the profile, as it is in SillyTavern'
+  return `${actorName(by)} removed "${report.key}" from card storage;`
+    + ` the value had been written by ${owner}${script};`
+    + SHARED_CLAUSE
+}
+
+/**
+ * The one sentence a `clear` deserves, over every key it took.
+ *
+ * **One line for one call, where there used to be one line per key.** A clear
+ * of ten keys wrote ten lines each naming a different last writer, and a reader
+ * scrolling them saw several cards apparently deleting things; what happened
+ * was one card calling `clear()` once. The keys are still all named — §16's
+ * promise is that upstream's unattributable wipe becomes an attributable one —
+ * but they are grouped under the card that wrote them, with counts, so the
+ * provenance reads as provenance rather than as a list of culprits.
+ *
+ * Writers are grouped by card and not by script: a `remove` is about one key
+ * and can afford to say which script wrote it, while a clear that named a
+ * script per key would bury the one number a reader needs.
+ * @param reports - every key the clear removed, foreign or not.
+ * @param by - which card called `storage.clear`.
+ * @returns the message, or undefined when it took nobody else's key.
+ */
+export function clearanceNote(
+  reports: readonly RemovalReport[],
+  by: { characterId?: string },
+): string | undefined {
+  const foreign = reports.filter(report => report.foreign)
+  // Silence when a card cleared only its own keys, for the same reason
+  // `removalNote` is silent then: an instrument that also fires on the ordinary
+  // path teaches its reader to ignore it.
+  if (foreign.length === 0) return undefined
+
+  const byWriter = new Map<string, string[]>()
+  for (const report of foreign) {
+    const owner = report.lastWriter?.characterId ?? 'another card'
+    const keys = byWriter.get(owner)
+    if (keys === undefined) byWriter.set(owner, [report.key])
+    else keys.push(report.key)
+  }
+  const groups = [...byWriter].map(([owner, keys]) =>
+    `${owner} (${keyCount(keys.length)}: ${keys.map(key => `"${key}"`).join(', ')})`,
+  ).join(', ')
+
+  const held = foreign.length === 1
+    ? 'held a value written by another card'
+    : 'held values written by other cards'
+  return `${actorName(by)} cleared card storage, removing ${keyCount(reports.length)};`
+    + ` ${String(foreign.length)} of them ${held} — ${groups};`
+    + SHARED_CLAUSE
 }

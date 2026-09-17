@@ -90,7 +90,7 @@ import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
 import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
-import { CardStorageStore, QuotaExceeded, removalNote } from './card-storage.ts'
+import { CardStorageStore, clearanceNote, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, isReportKind, type ReportContext } from './diagnostics.ts'
 import { CacheTraceStore, traceOf } from './cache-trace.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
@@ -3908,7 +3908,10 @@ export class IrisAppService {
         }
         const removed = await cardStorage.remove(key, { characterId })
         if (removed !== undefined) {
-          const note = removalNote(removed, 'remove')
+          // The caller is the subject of the sentence, not the last writer:
+          // `characterId` is who asked for the removal, and naming it first is
+          // what stops the report reading as "the last writer deleted this".
+          const note = removalNote(removed, { characterId })
           if (note !== undefined) {
             this.#report(note, {
               kind: 'storage',
@@ -3928,17 +3931,20 @@ export class IrisAppService {
         // Upstream's `clear()` empties the whole origin, taking every other
         // card's keys with it. Reproduced — but each key another card wrote is
         // named, because upstream's version of this loss is unattributable.
+        //
+        // One report for the call, not one per key. Ten lines each opening on a
+        // different last writer read as several cards deleting things, when what
+        // happened was this card calling `clear()` once; the keys are all still
+        // named inside the one sentence, grouped by who wrote them.
         const removed = await cardStorage.clear({ characterId })
-        for (const report of removed) {
-          const note = removalNote(report, 'clear')
-          if (note !== undefined) {
-            this.#report(note, {
-              kind: 'storage',
-              grade: 'note',
-              characterId,
-              ...scriptId === undefined ? {} : { scriptId },
-            })
-          }
+        const note = clearanceNote(removed, { characterId })
+        if (note !== undefined) {
+          this.#report(note, {
+            kind: 'storage',
+            grade: 'note',
+            characterId,
+            ...scriptId === undefined ? {} : { scriptId },
+          })
         }
         return { removed: removed.length, foreign: removed.filter(one => one.foreign).length }
       },

@@ -7,7 +7,7 @@ import { test, type TestContext } from 'node:test'
 
 import type { StreamFn } from '@iris/turn'
 
-import { CardStorageStore, MAX_STORE_BYTES, removalNote } from '../src/card-storage.ts'
+import { CardStorageStore, clearanceNote, MAX_STORE_BYTES, removalNote } from '../src/card-storage.ts'
 import { ChatStore } from '../src/chats.ts'
 import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
@@ -110,6 +110,37 @@ test('removing another card’s key is reported, with the key and its writer', a
   assert.equal(storage[0]?.characterId, 'aria', 'the report does not say who did it')
 })
 
+test('the removal report names the card that acted before the card that wrote', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.handlers['storage.set']({
+    characterId: 'other-card', scriptId: 'panel', key: 'shared', value: 'theirs',
+  })
+
+  await fixed.handlers['storage.remove']({ characterId: 'aria', key: 'shared' })
+
+  // The defect this pins is a reading, not a behaviour. `remove removed
+  // "shared", last written by other-card` put the writer in the subject
+  // position, and a reader takes the first card named as the one that acted —
+  // so a shared store's ordinary loss read as "other-card deleted my key". The
+  // actor comes first; the provenance arrives as provenance.
+  const page = await fixed.handlers['debug.reports']({})
+  const message = page.reports.filter(report => report.kind === 'storage')[0]?.message ?? ''
+  assert.equal(
+    message,
+    'aria removed "shared" from card storage;'
+    + ' the value had been written by other-card (script "panel");'
+    + ' card storage is shared across the profile, as it is in SillyTavern',
+  )
+  // Both indices checked to be real, because `indexOf` of an absent name is
+  // -1 and "less than" would then hold for a sentence that names nobody.
+  const actorAt = message.indexOf('aria')
+  const writerAt = message.indexOf('other-card')
+  assert.ok(
+    actorAt >= 0 && writerAt > actorAt,
+    `the actor must be named, and named first: ${message}`,
+  )
+})
+
 test('removing your own key says nothing', async (t) => {
   const fixed = await fixture(t)
   await fixed.handlers['storage.set']({ characterId: 'aria', key: 'mine', value: 'v' })
@@ -136,11 +167,39 @@ test('clear empties everything and names each key it took from someone else', as
   assert.equal(result.foreign, 2)
   assert.deepEqual(await fixed.storage.snapshot(), {})
 
+  // One report for one call, and every foreign key named inside it. Ten lines
+  // each opening on a different last writer read as several cards deleting
+  // things; what happened was one card clearing the store once.
   const page = await fixed.handlers['debug.reports']({})
   const names = page.reports.filter(report => report.kind === 'storage').map(report => report.message)
-  assert.equal(names.length, 2, 'a foreign key went unreported')
-  assert.equal(names.some(message => message.includes('theirs')), true)
-  assert.equal(names.some(message => message.includes('also-theirs')), true)
+  assert.equal(names.length, 1, `expected one report for the one call, saw ${JSON.stringify(names)}`)
+  assert.equal(names[0]?.includes('"theirs"'), true, 'a foreign key went unnamed')
+  assert.equal(names[0]?.includes('"also-theirs"'), true, 'a foreign key went unnamed')
+})
+
+test('a clear with several writers says who cleared, then who had written, with counts', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.handlers['storage.set']({ characterId: 'aria', key: 'mine', value: '1' })
+  await fixed.handlers['storage.set']({ characterId: 'warhammer', key: 'w-one', value: '2' })
+  await fixed.handlers['storage.set']({ characterId: 'warhammer', key: 'w-two', value: '3' })
+  await fixed.handlers['storage.set']({ characterId: 'corridor', key: 'c-one', value: '4' })
+
+  await fixed.handlers['storage.clear']({ characterId: 'aria' })
+
+  // The mixed-writer case is the one the old wording read worst on: three
+  // separate lines, each naming a card that had done nothing but write. One
+  // sentence, the actor in front, the writers grouped with counts behind.
+  const page = await fixed.handlers['debug.reports']({})
+  const storage = page.reports.filter(report => report.kind === 'storage')
+  assert.equal(storage.length, 1, `expected one report, saw ${JSON.stringify(storage)}`)
+  assert.equal(
+    storage[0]?.message,
+    'aria cleared card storage, removing 4 keys;'
+    + ' 3 of them held values written by other cards —'
+    + ' warhammer (2 keys: "w-one", "w-two"), corridor (1 key: "c-one");'
+    + ' card storage is shared across the profile, as it is in SillyTavern',
+  )
+  assert.equal(storage[0]?.characterId, 'aria', 'the record does not say who did it')
 })
 
 test('an unattributed key is not called someone else’s', async (t) => {
@@ -151,7 +210,25 @@ test('an unattributed key is not called someone else’s', async (t) => {
 
   const report = await fixed.storage.remove('legacy', { characterId: 'aria' })
   assert.equal(report?.foreign, false)
-  assert.equal(removalNote(report as never, 'remove'), undefined)
+  assert.equal(removalNote(report as never, { characterId: 'aria' }), undefined)
+  assert.equal(clearanceNote([report as never], { characterId: 'aria' }), undefined)
+})
+
+test('a caller that cannot be attributed says so rather than naming the writer', async (t) => {
+  const fixed = await fixture(t)
+  await fixed.storage.set('theirs', 'v', { characterId: 'other-card' })
+  const report = await fixed.storage.remove('theirs', {})
+
+  // Both wire methods require a `characterId` and the frame refuses to call
+  // them with no character open, so this branch is unreachable from a card
+  // today. It exists because the alternative — an empty subject — is what let
+  // the last writer be read as the actor in the first place.
+  assert.equal(
+    removalNote(report as never, {}),
+    'a card Iris could not identify removed "theirs" from card storage;'
+    + ' the value had been written by other-card;'
+    + ' card storage is shared across the profile, as it is in SillyTavern',
+  )
 })
 
 test('a removal of a key that is not there is not an error', async (t) => {

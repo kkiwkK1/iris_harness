@@ -1039,6 +1039,8 @@ per-character ones.
 sharing costs more than it buys — which would be an argument for a namespace,
 and a divergence to take deliberately rather than by tidying.
 
+> 复查（2026-09-17）：归属文案改为先说行为者再说来源，见 §94。
+
 ## 17. Two upstream events are never sent, and MVU loses five callbacks
 
 `CHAT_COMPLETION_SETTINGS_READY` and `worldinfo_entries_loaded` are **not
@@ -9265,3 +9267,91 @@ copy face that stops being a pure projection of the record — if published
 tables ever carried anything a user edited, the removal branch would be deleting
 user data and both the update and the uninstall path would need a different
 rule.
+
+---
+
+## 94. The storage attribution says who acted before it says who wrote
+
+**What changed, and what did not.** Nothing about card storage's behaviour: it
+is still one profile-wide store, a `clear()` still takes every card's keys, and
+every key still records its last writer. What changed is the order of the
+clauses in the two sentences §16 promised — the report now names **the card that
+called**, then **what it removed**, then **whose values those had been**.
+
+**The defect was a reading, not a fault.** The card-family regression of
+2026-09-17 (`notes/CARD-REGRESSION-2026-09-17.md` 异常 C) recorded the line as it
+arrived:
+
+```
+[storage] remove removed "mobile-trigger-btn-position", last written by 魔法少女的扣扣审判1; card storage is shared across the profile…
+```
+
+The card that acted was 银麒赎世; 魔法少女的扣扣审判1 had only written the value
+some turns earlier. But a reader takes **the first card named as the one that
+acted**, so a shared store's ordinary, documented loss read as one card deleting
+another's data — an accusation the facts do not support. The same line now reads:
+
+```
+[storage] 银麒赎世 removed "mobile-trigger-btn-position" from card storage; the value had been written by 魔法少女的扣扣审判1; card storage is shared across the profile, as it is in SillyTavern
+```
+
+**The actor is known, and was already on the record.** `storage.remove` and
+`storage.clear` both require a `characterId` (`z.string().min(1)` in `rpc.ts`),
+and the frame refuses to call them with no character open rather than inventing
+an id — so the handler always had the actor in hand and was passing it to
+`#report` as the record's `characterId` field while leaving it out of the
+sentence. The structured side is unchanged for exactly that reason: the actor
+field already exists, `kind` is still `storage` and `grade` is still `note`, so
+no consumer of `debug.reports` sees a new shape. `removalNote` takes `by` where
+it used to take the member's name, because the member's name was never the thing
+worth saying — `remove removed` was the sentence's subject standing in for a card.
+
+**A caller that cannot be attributed says so.** `by.characterId` absent composes
+*a card Iris could not identify removed …* rather than falling back to the last
+writer. Unreachable from a card today (see the contract above); it exists because
+an empty subject is what let the writer be read as the actor in the first place.
+
+**`clear` is one sentence per call, where it was one per key.** The regression
+record's clear took **ten** keys at once and wrote ten lines, each opening on a
+different last writer — three cards apparently deleting things, when what
+happened was one card calling `clear()` once. `clearanceNote` composes the call:
+how many keys went, how many of them were other cards', and the keys grouped
+under the card that wrote them with a count each.
+
+```
+银麒赎世 cleared card storage, removing 5 keys; 4 of them held values written by other cards — 战锤群星闪耀 (2 keys: "btn-x", "btn-y"), 爱衣 (1 key: "aiyi-state"), 创世回廊1 (1 key: "corridor-pos"); card storage is shared across the profile, as it is in SillyTavern
+```
+
+**Every key is still named**, which is §16's actual promise — upstream's
+unattributable wipe becomes an attributable one — so the grouping shortens
+nothing that mattered; it only stops the provenance reading as a list of
+culprits. Writers are grouped **by card and not by script**: a `remove` is about
+one key and can afford `(script "panel")`, while a clear that named a script per
+key would bury the one number a reader needs. Silence when a card cleared only
+its own keys, unchanged, for the same reason `removalNote` is silent then.
+
+**The trailing clause stays.** *card storage is shared across the profile, as it
+is in SillyTavern* is on both sentences, because a reader who does not know the
+store is shared reads any of these lines as a bug.
+
+### Teeth
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| the removal report names the card that acted before the card that wrote (`card-storage.test.ts`) | compose the old `remove removed "K", last written by …` | red → revert → green |
+| the same test's ordering check | the old wording, with the expected string moved to match it | red → revert → green |
+| a clear with several writers says who cleared, then who had written, with counts | report per key again, `removalNote` in a loop over the reports | red → revert → green |
+| clear empties everything and names each key it took from someone else | the same per-key loop | red → revert → green |
+| a caller that cannot be attributed says so rather than naming the writer | `by.characterId ?? 'another card'` | red → revert → green |
+| an unattributed key is not called someone else's (the `clearanceNote` arm) | drop the no-foreign-keys guard | red → revert → green |
+
+### What would reopen this
+
+(a) A clear over a store large enough that naming every key is unreadable — the
+line has no cap, deliberately, because a cap would drop key names §16 promises
+and the observed worst case is ten. A reader meeting a hundred would be the
+measurement that changes it, and the answer would be a cap with the count kept,
+not a return to a line per key. (b) A surface that wants to *render* the
+provenance rather than read it: the grouping lives in the sentence, and a
+consumer that wanted the writers as data would want the reports on the record
+instead — which is a wire change, and none of today's readers asked for it.
