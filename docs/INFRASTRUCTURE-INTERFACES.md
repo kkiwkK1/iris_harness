@@ -262,7 +262,7 @@ ST 兼容面另有五个方法，形状见 `requestSchemas` 的 `stCompat.*` 与
 | 项 | 事实 |
 | --- | --- |
 | 路由 | 前缀路由挂在 `irisRpc.guard` 之后，**无条件注册**（`packages/iris-app-service/src/index.ts` 的 `PLUGIN_ASSET_PREFIX` 挂载处），每次请求现读控制面状态 |
-| 安装目录 | `<dataDir>/system-plugins/<id>/client/client.js`（`.map` 同目录）；文案在 `<id>/i18n/<lang>.json`（U5，`install.ts` 的 `#publishCopyBundles` 发布，卸载随整目录删除） |
+| 安装目录 | `<dataDir>/system-plugins/<id>/client/client.js`（`.map` 同目录）；文案在 `<id>/i18n/<lang>.json`（U5，`install.ts` 的 `#publishCopyBundles` 发布，卸载随整目录删除）。**安装、开机扫描、`plugin.update` 事务及其回滚是同一条发布路径**：更新时浏览器包与文案一起跟着新清单走（新清单不再声明 `i18n` 就删掉该目录），回滚时两者一起按旧清单从回位的旧树重发（host ledger §94） |
 | 内容 rev | 文件字节的 sha1 前 12 位十六进制，按 `(mtimeMs, size)` 记忆；记忆键是**相对资产路径**（一文件一 rev，U5/D2：en 变了不失效 zh 的地址），`.map` 仍骑 bundle 的 rev（`packages/iris-app-service/src/plugin-assets.ts:165`） |
 | 清单 | `{ revision, plugins: { <id>: { rev, client?, i18n? } } }`；**只收已启用、且磁盘上确有 bundle 或成对文案的插件**（U5 放宽：纯文案插件也有行），键排序输出，同一状态序列化成同样的字节（`PluginAssetStore.manifest`，`plugin-assets.ts:208`）。文案行两列**全有或全无**：缺一份语言的表就整行不给文案，免得单语读者落到键名回退上 |
 | 清单缓存 | 永远 `no-cache`（`plugin-assets.ts:275`）——它是唯一路径固定而字节随启停变化的资源 |

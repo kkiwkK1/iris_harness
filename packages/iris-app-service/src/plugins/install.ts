@@ -702,6 +702,16 @@ export class SystemPluginInstallService {
       } else {
         await this.#publishClientBundle(id, path.join(promoted.targetPath, ...manifest.client.split('/')))
       }
+      // The bundled copy follows the same manifest the same way, and for the
+      // same reason: until this existed an update that changed a copy table
+      // left the old bytes served until the next boot's `scanInstalled`
+      // republished them, and a manifest that stopped declaring `i18n` kept
+      // serving a directory the record no longer names. `#publishCopyBundles`
+      // is the one place that layout lives, and it already carries both
+      // directions — publish when declared, remove the output when not — so
+      // the call is the whole fix. It runs *after* the bundle step because
+      // the client-less branch above deletes the id's whole asset directory.
+      await this.#publishCopyBundles(id, promoted.targetPath, manifest)
       // 6. The catalog swap. Keeps `installed` / `enabled` / lifecycle state —
       // "an update preserves `enabled`" happens in `replaceInstalled`.
       await this.#runtime.replaceInstalled(
@@ -785,6 +795,12 @@ export class SystemPluginInstallService {
           } else {
             await fsp.rm(path.join(this.#clientAssetRoot, id), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
           }
+          // The copy goes back with it, from the old tree that is home again:
+          // step 5 may have published the new generation's tables over it, or
+          // removed the directory for a manifest that dropped `i18n`, and D8
+          // says a rolled-back row is the old generation whole — the asset
+          // face included. Same call, same layout, the old manifest this time.
+          await this.#publishCopyBundles(id, this.installedDir(id), restoredManifest)
         } else {
           // The old manifest was already unreadable (D5 lets such a row be
           // updated, so this can happen). The row keeps its provenance but
@@ -1132,6 +1148,10 @@ export class SystemPluginInstallService {
 
   /**
    * Copy a package's bundled copy to the one place the asset face serves from.
+   *
+   * Three callers, one layout: the fresh install, the update transaction
+   * (`#replaceRow` step 5, and its rollback with the *old* manifest), and the
+   * boot scan.
    *
    * The install path has already audited these files — the contract does it
    * at `stage`, before the tree is hashed — but the boot scan re-publishes

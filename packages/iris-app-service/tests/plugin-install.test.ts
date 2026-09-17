@@ -958,7 +958,14 @@ async function twoCommitFixture(
   base: string,
   packageOverrides: PackageOverrides,
   secondHost: string,
-  secondOverrides: { client?: string | null, renameTo?: string } = {},
+  secondOverrides: {
+    client?: string | null
+    renameTo?: string
+    /** The second commit's `iris.plugin.i18n` block: a new pair, or `null` to drop it. */
+    i18n?: { en: string, zh: string } | null
+    /** Files the second commit rewrites — the second generation's copy tables live here. */
+    extraFiles?: Record<string, string>
+  } = {},
 ): Promise<TwoCommitFixture> {
   const repo = join(base, 'fixture-repo-two.git')
   fs.mkdirSync(repo, { recursive: true })
@@ -976,12 +983,18 @@ async function twoCommitFixture(
   const first = String(spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD']).stdout).trim()
   const hostRel = packageOverrides.host ?? 'host.js'
   await writeFile(join(repo, ...hostRel.split('/')), secondHost)
-  if (secondOverrides.client !== undefined || secondOverrides.renameTo !== undefined) {
+  for (const [rel, body] of Object.entries(secondOverrides.extraFiles ?? {})) {
+    await mkdir(join(repo, ...rel.split('/').slice(0, -1)), { recursive: true })
+    await writeFile(join(repo, ...rel.split('/')), body)
+  }
+  if (secondOverrides.client !== undefined || secondOverrides.renameTo !== undefined || secondOverrides.i18n !== undefined) {
     const manifestPath = join(repo, 'package.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { iris?: { plugin?: Record<string, unknown> } }
     if (secondOverrides.renameTo !== undefined) manifest.iris!.plugin!['id'] = secondOverrides.renameTo
     if (secondOverrides.client === null) delete manifest.iris?.plugin?.['client']
     else if (secondOverrides.client !== undefined) manifest.iris!.plugin!['client'] = secondOverrides.client
+    if (secondOverrides.i18n === null) delete manifest.iris?.plugin?.['i18n']
+    else if (secondOverrides.i18n !== undefined) manifest.iris!.plugin!['i18n'] = secondOverrides.i18n
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
     if (secondOverrides.client !== undefined) {
       if (secondOverrides.client !== null) await writeFile(join(repo, ...secondOverrides.client.split('/')), CLIENT_SOURCE)
@@ -1269,6 +1282,123 @@ test('a new generation whose manifest dropped client.js takes the old bundle off
     false,
     'the rev is a hash of the file\'s bytes — a surviving file would still be listed, served and loaded',
   )
+})
+
+/**
+ * The two generations' copy tables, as bytes.
+ *
+ * Both pass the bilingual audit on their own (same key set per generation, zh
+ * carries CJK, the `{name}` slot appears in both columns) — the update path is
+ * what is on trial here, not the audit. Generation B adds a key so "the old
+ * table survived" and "the new table landed" cannot be confused by a byte
+ * count: the key `extra` is either on disk or it is not.
+ */
+const COPY_GEN = {
+  a: {
+    en: JSON.stringify({ displayName: 'Panel A', description: 'Generation one for {name}' }),
+    zh: JSON.stringify({ displayName: '甲面板', description: '给 {name} 的第一代' }),
+  },
+  b: {
+    en: JSON.stringify({ displayName: 'Panel B', description: 'Generation two for {name}', extra: 'Only generation two ships this' }),
+    zh: JSON.stringify({ displayName: '乙面板', description: '给 {name} 的第二代', extra: '只有第二代带这一条' }),
+  },
+} as const
+
+const COPY_MANIFEST = { en: 'i18n/en.json', zh: 'i18n/zh.json' } as const
+
+function copyFiles(gen: 'a' | 'b'): Record<string, string> {
+  return { 'i18n/en.json': COPY_GEN[gen].en, 'i18n/zh.json': COPY_GEN[gen].zh }
+}
+
+/** What the asset face would serve right now, per language. */
+async function publishedCopy(value: Harness, lang: 'en' | 'zh'): Promise<string | undefined> {
+  return await readFile(join(value.assetRoot, PLUGIN_ID, 'i18n', `${lang}.json`), 'utf8').then(
+    text => text,
+    () => undefined,
+  )
+}
+
+test('an update republishes the bundled copy with the bundle: the new generation’s tables are on the asset face before any restart', async (t) => {
+  const value = await harness(t)
+  const base = join(value.dir, 'copy-update-src')
+  await mkdir(base, { recursive: true })
+  const fixture = await twoCommitFixture(
+    base,
+    genPackage(genHostSource('first'), { i18n: { ...COPY_MANIFEST }, extraFiles: copyFiles('a') }),
+    genHostSource('second'),
+    { extraFiles: copyFiles('b') },
+  )
+  await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
+  await value.runtime.enable(PLUGIN_ID)
+  assert.equal(await publishedCopy(value, 'en'), COPY_GEN.a.en, 'the first generation published its own tables')
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.second })
+  const snapshot = await confirmPreview(value, preview)
+  assert.equal(row(snapshot, PLUGIN_ID).provenance?.commit, fixture.second)
+
+  // No reboot between the update and these reads: `scanInstalled` repairing
+  // the directory at the next boot is exactly the lag this closes.
+  assert.equal(
+    await publishedCopy(value, 'en'),
+    COPY_GEN.b.en,
+    'the copy follows the manifest at update time, not at the next host start',
+  )
+  assert.equal(await publishedCopy(value, 'zh'), COPY_GEN.b.zh)
+})
+
+test('a new generation whose manifest dropped i18n takes the old copy off the asset face', async (t) => {
+  const value = await harness(t)
+  const base = join(value.dir, 'copy-drop-src')
+  await mkdir(base, { recursive: true })
+  const fixture = await twoCommitFixture(
+    base,
+    genPackage(genHostSource('first'), { i18n: { ...COPY_MANIFEST }, extraFiles: copyFiles('a') }),
+    genHostSource('second'),
+    { i18n: null },
+  )
+  await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
+  const copyDir = join(value.assetRoot, PLUGIN_ID, 'i18n')
+  assert.equal(await exists(copyDir), true, 'the first generation published a copy directory')
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.second })
+  const snapshot = await confirmPreview(value, preview)
+  assert.equal(row(snapshot, PLUGIN_ID).provenance?.commit, fixture.second)
+  assert.equal(
+    await exists(copyDir),
+    false,
+    'the asset root is a projection of the record, not a museum of earlier versions — the tables are still served while the file is there',
+  )
+  // The bundle the same manifest still declares is untouched by the copy's removal.
+  assert.equal(await exists(join(value.assetRoot, PLUGIN_ID, 'client', 'client.js')), true)
+})
+
+test('a rollback puts the old generation’s copy back too, not the failed generation’s', async (t) => {
+  const value = await harness(t)
+  const base = join(value.dir, 'copy-rollback-src')
+  await mkdir(base, { recursive: true })
+  const fixture = await twoCommitFixture(
+    base,
+    genPackage(genHostSource('first'), { i18n: { ...COPY_MANIFEST }, extraFiles: copyFiles('a') }),
+    genHostSource('second', { throwOnActivate: true }),
+    { extraFiles: copyFiles('b') },
+  )
+  await install(value, { kind: 'git', remote: fixture.repoUrl, commit: fixture.first })
+  await value.runtime.enable(PLUGIN_ID)
+  const before = row(value.runtime.snapshot(), PLUGIN_ID)
+
+  const preview = await value.installer.update({ id: PLUGIN_ID, commit: fixture.second })
+  await assert.rejects(() => confirmPreview(value, preview))
+
+  const after = row(value.runtime.snapshot(), PLUGIN_ID)
+  assert.equal(after.enabled, true)
+  assert.equal(after.provenance?.commit, before.provenance?.commit, 'the row is the old generation again')
+  // D8: a rolled-back row is the old generation whole — the asset face included.
+  assert.equal(
+    await publishedCopy(value, 'en'),
+    COPY_GEN.a.en,
+    'the failed generation’s tables were published at step 5 and must not outlive the transaction that published them',
+  )
+  assert.equal(await publishedCopy(value, 'zh'), COPY_GEN.a.zh)
 })
 
 test('a stale echo is refused before anything moves', async (t) => {
