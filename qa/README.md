@@ -136,6 +136,8 @@ render 就这么挂了 exit 1,换端口重跑即正常)。偏移让"再跑一趟
 | `z3-rpc-probe.mjs` | Z3 前置:任何操作之前先给重卡的聊天各拍一次 C17 快照。`IRIS_BASE` 默认 `8823` |
 | `z3-scroll-proof.mjs` | Z3 视觉佐证:把 1847px 的界面在 546px 带里滚到底并截图 |
 | `plugin-platform/browser-fixture.mjs` | 系统插件客户端面的真浏览器夹具:服生产沙箱包体 + 一个合成插件的 `client.js` + 两个 Iris 自己拼的 srcdoc 帧。端口取 `IRIS_ACCEPTANCE_PORT`,默认 **8792** |
+| `review2-drive.mjs` / `review2-batch.mjs` / `review5-claims.mjs` / `review5-causal-switch.mjs` / `review5-swipe-vars.mjs` | REVIEW-2 / REVIEW-5 的仪器:逐卡跑一轮真回合、成批跑、按**已存在**的对话逐层数 claim↔frame 等式(不花 token)、`iris.bodyTag` 因果开关、swipe 候选级变量。判据层与观察窗口见 `notes/CARD-REGRESSION-2026-09-17*.md` |
+| `review6-frame-oscillation.mjs` / `review6-three-runs.mjs` | REVIEW-6 的仪器:同一时基上录**两条曲线**(帧上报的 `height`/`sizing`/`note` vs 壳里 iframe 的已用高与内联高),外加带高的**邻居**(`.iris-notice` 横幅的高度与原文、`iris-scroll` 往上的盒子链),并逐采样验算 `带高 + 横幅高` 是否恒定。`review6-three-runs.mjs` 是三个 run 的包装(原样 / 录前清横幅 / 窗口内按住横幅),任一 run 非零退出即停。判据与读数见 `notes/FRAME-OSCILLATION-chuangshi-2026-09-17.md` |
 
 > **CDP 端口已经统一走 `qa/cdp-port.mjs` 的 `cdpPort()`。** 上表那批脚本、`z1-e2e.mjs`、
 > `z1-regression.mjs` 以及 `verify-click-shift` / `verify-widescreen` 全部按同一公式算端口,
