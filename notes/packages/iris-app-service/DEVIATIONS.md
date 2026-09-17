@@ -8388,6 +8388,8 @@ two small files.
 
 > 复查（2026-09-17，e668785）：重开条件 (b)「`plugin.update` 路径」已成立——证据 #106 与 host §81。决定**部分**重看：`#replaceRow` 只重发 client bundle，更新后到下一次启动前 `i18n/` 仍是旧字节（新清单不再声明 i18n 时也不删该目录），但 `scanInstalled`/`#adoptRecorded` 会在下次启动重发文案，所以是「滞后到下次启动」而不是永旧，见 REVIEW-1 清单第 5 条。
 
+> 复查（2026-09-17）：重开项 (b) 已处理，见 §94。
+
 ---
 
 ---
@@ -9145,3 +9147,121 @@ already has. (b) Compaction: a compacted conversation's dropped floors are insid
 a summary, not the trim, so this figure deliberately excludes them — the summary
 is pinned, and `#firstIncludedMessageId` documents the offset. A future "what did
 compaction cost" belongs beside this and not inside it.
+
+---
+
+## 94. An update republishes the bundled copy with the bundle, and a rollback puts the old generation's copy back
+
+Dated 2026-09-17, against `origin/main` `18ea65d`. This is §84's reopen item
+(b) — "a `plugin.update` path (the republish-then-cleanup story assumes
+install/uninstall, not in-place generation swaps)" — reached by the ledger
+reopen sweep (`notes/LEDGER-REOPEN-SWEEP-2026-09-17.md` 待办 1) and handled
+here rather than left as a note.
+
+**What was wrong.** §84 publishes a plugin's two copy tables through
+`#publishCopyBundles(id, contentDir, manifest)`, and both paths that bring an
+installed row into being call it: `confirm`'s fresh-install branch
+(`install.ts` `#promote…`) and the boot scan's `#adoptRecorded`. U1's update
+transaction `#replaceRow` did not. Its step 5 republished the **client bundle
+only** — the comment even names the rule it was obeying, D9's "the browser
+bundle follows the manifest" — because when §5.4 was written there was no copy
+face to follow it. Two consequences, both read off the source and both now
+pinned by tests: an update that changed a copy table left the **old** bytes
+being served, and a new manifest that stopped declaring `i18n` left the whole
+`i18n/` directory on the asset face. Neither was permanent — `scanInstalled` →
+`#adoptRecorded` runs the same publish at the next host start, and its removal
+branch cleans the dropped directory — so the honest size of the defect is
+"stale until the next boot", which is what the sweep's 复查 line on §84 said
+and what this entry keeps rather than inflates.
+
+**The fix is the existing call, in the existing layout.** `#publishCopyBundles`
+already carries both directions: a manifest with `i18n` writes
+`<dataDir>/system-plugins/<id>/i18n/<lang>.json` per language (skipping and
+logging a table that no longer parses, so bad copy never takes a working row
+down), and a manifest without it removes that directory. So step 5 gained one
+line — `await this.#publishCopyBundles(id, promoted.targetPath, manifest)` —
+and no second layout, no second removal helper, and no new failure mode. The
+copy is published **from the promoted tree**, which is the same source the
+`replaceInstalled` a few lines down builds the new definition from.
+
+**Ordering is load-bearing, and it is the client branch that forces it.** The
+call sits *after* the bundle step, not before, because the client-less branch
+above it removes the id's **whole** asset directory
+(`rm(path.join(this.#clientAssetRoot, id))`, not `<id>/client`). Published
+first, a copy-carrying, bundle-less new generation would have had its freshly
+written tables deleted by the very next statement — and the resulting row
+(`PluginAssetEntry` with neither `client` nor `i18n`) is exactly the row §84
+item 3 relaxed the manifest to allow, so it would have gone out as a
+well-formed empty row rather than as an error. The one-line comment in the
+source says this; T2 below is the assertion that keeps it true.
+
+**Rollback (D8) restores the copy with the bundle.** `#replaceRow`'s catch
+already re-published the old generation's `client.js` from the tree it had just
+moved home, or removed the bundle if the old manifest declared none. The copy
+now goes back the same way, from `this.installedDir(id)` and against
+`restoredManifest` — the old manifest, not the new one — because step 5 may
+have written the failed generation's tables over it or removed the directory
+outright, and D8's rule is that a rolled-back row is the old generation *whole*.
+The failed generation's copy must not outlive the transaction that published
+it.
+
+**The unreadable-old-manifest branch deliberately does nothing**, and that is a
+mirror, not an oversight. When `parsePluginManifest` could not read the old
+tree (D5 lets such a row be updated, which is why the branch exists), the
+rollback restores neither the definition nor the client bundle — there is no
+manifest to say what either should be. The copy follows: guessing at
+`i18n/en.json` from a tree whose manifest does not parse would be inventing a
+layout the record does not name. The row is marked, the reason says so, and the
+next boot's scan is what reconciles the asset root.
+
+**Upstream comparison: there is no referent, and that is the finding.** The
+bundled-copy face is an Iris addition in the first place (§84), and ST has no
+in-place generation swap to compare with — its extension reinstall keeps the
+tree because the artifact and its settings are user data
+(`packages/iris-app-service/src/st-reinstall.ts:1`; §6 records the opposite
+ruling for plugin trees and why). So "what does ST do when an update changes a
+copy table" has no answer to defer to. The standard this is measured against is
+Iris's own D9 rule for the client bundle, and the whole content of the decision
+is that the copy obeys the identical rule on the identical path, so a reader who
+knows what an update does to `client.js` already knows what it does to
+`i18n/`.
+
+### Teeth
+
+Each row: the assertion, the mutation applied to the **product code** to make it
+red, and the observed run. Every mutation was reverted and the file re-run green
+(49/49) afterwards. All three mutations are single-assertion: each reddened its
+own row and left the other two green, so no row is resting on another's failure.
+All three tests are in
+`packages/iris-app-service/tests/plugin-install.test.ts`; the fixture helper
+`twoCommitFixture` gained a second-commit `i18n` / `extraFiles` pair so the two
+generations differ in their copy tables, generation B adding a key (`extra`) the
+A tables do not have, so "the old table survived" and "the new table landed"
+cannot be confused.
+
+| Assertion | Mutation that reddens it | Result |
+| --- | --- | --- |
+| T1 after `plugin.update`, with no reboot, `<assetRoot>/<id>/i18n/{en,zh}.json` are generation **B**'s bytes ("an update republishes the bundled copy with the bundle") | publish from `aside` (the superseded old tree) instead of `promoted.targetPath` | red (tests 49, pass 48, fail 1 — only this test) → revert → green 49/49 |
+| T2 a new manifest with no `i18n` leaves no `i18n/` directory, and the bundle it still declares is untouched ("dropped i18n takes the old copy off the asset face") | guard step 5's call with `if (manifest.i18n !== undefined)`, i.e. publish but never remove | red (pass 48, fail 1 — only this test) → revert → green 49/49 |
+| T3 after a failed enable rolls the row back, the served tables are generation **A**'s again ("a rollback puts the old generation's copy back too") | drop the rollback's `#publishCopyBundles` call (the row still restores its definition, provenance and bundle) | red (pass 48, fail 1 — only this test) → revert → green 49/49 |
+
+T3 is the row that would otherwise have been a healthy sample: with step 5's
+call removed instead, T3 passes — the new generation's tables were never
+published, so generation A's are still on disk for the wrong reason. It is red
+only under a mutation to the rollback itself, which is why the rollback got its
+own mutation rather than riding T1's.
+
+### What would reopen this
+
+(a) A **dev** row that could be updated. `#replaceRow` refuses dev rows by name
+(editing the files *is* the update), and a dev tree's copy is republished at
+every boot from wherever the user keeps it; if dev rows ever gain an update
+transaction, the publish source stops being `promoted.targetPath` and this
+paragraph is the place that says so. (b) A third asset kind beside `client` and
+`i18n` — the pattern is now "every asset the manifest names is published at
+step 5 and restored in the rollback", and a third one landing in only one of
+those two places is precisely the shape of the defect this entry closes. (c) A
+copy face that stops being a pure projection of the record — if published
+tables ever carried anything a user edited, the removal branch would be deleting
+user data and both the update and the uninstall path would need a different
+rule.

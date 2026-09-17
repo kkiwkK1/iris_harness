@@ -310,12 +310,12 @@ plugin.confirmInstall（回带 id + treeHash + commit）
 1. 记下 `wasEnabled`；开着就先 `disable`（drain + dispose，Windows 上被 `import()` 过的目录可能改不了名，旧代的 fiber 也还持着 lease）；
 2. 旧树改名让位到 `<installRoot>/superseded/<id>.<8hex>/`——**必须在 promote 之前**：安装器的 `already-installed` 检查读的就是 `installed/<id>/` 里的 lock，rename 的目标非空也会失败；改名是同卷原子操作，lock 随树一起走，`superseded/` 是 `installed/` 的**兄弟目录**而不是它下面的一个名字，否则崩溃恢复扫描会把让位的树当成一个插件看；
 3. `promote` 到同一个 `installed/<id>/`；
-4. 浏览器包跟着新清单走：新清单有 `client` 就覆盖发布（`rev` 是文件字节的哈希，缓存自然失效），没有就把旧包的删掉——文件留着就还会被列进清单、被浏览器加载；
+4. 浏览器包**与自带文案**都跟着新清单走，同一条规则、同一套目录：新清单有 `client` 就覆盖发布（`rev` 是文件字节的哈希，缓存自然失效），没有就把旧包的删掉——文件留着就还会被列进清单、被浏览器加载；`i18n` 同理，由安装/开机两条路共用的 `#publishCopyBundles` 从刚 promote 的新树重发到 `<dataDir>/system-plugins/<id>/i18n/<lang>.json`，新清单不再声明 `i18n` 就把整个 `i18n/` 目录删掉（这一步先包后文案：没有 `client` 的那一支删的是该 id 的整个资产目录）。在 §84 重开项处理之前这一步只重发浏览器包，换了文案的更新要到下次开机 `scanInstalled` 才生效；
 5. `replaceInstalled` 换目录行的定义与 provenance：`installed`/`enabled`/`status` 不动，「更新保留 `enabled`」就是在这一步实现的；行上钉着的旧字节裁决（如 `tampered`）随定义一起退役——新树刚被重新哈希过，旧裁决针对的字节已经不在了；
 6. `wasEnabled` 就重新 `enable` 新代。新代的 `import()` 带 `?gen=<treeHash>` 代际串：Node 的 ESM 注册表按 URL 字符串缓存（2026-09-15 探针实测，见 ledger §81），同一个 `host.js` 路径换了字节，不带代际串就会无声地跑旧模块——这是整条路上**唯一没有症状的失败**；
 7. 最后才删 `superseded/` 下的旧树，尽力删、删不掉按名记日志（本仓库目录里递归 rm 可能静默无效——`scripts/pack-contracts.mjs` 的教训），删不掉不影响正确性。
 
-第 2 步之后任何一步失败走回滚：新树让位（`.failed` 后缀，尽力删）、旧树改名回位、目录行与浏览器包复原（旧清单可读时连定义一起恢复）、`wasEnabled` 就回到旧代。回滚成功时**行上不留 `failure`**——行回到了它原来的样子（原来开着的行必须读作开着），失败的名字在抛出的错误里（`state` 取实际发生的 `load-failed`/`activate-failed`，reason 带「已回到旧代 `<fromCommit>`」）。回滚自己再失败才是另一回事：那时行确实坏了，走既有的 `#setFailure`，消息里说明旧树现在在哪个目录。第 2 步与第 3 步之间断电，行会被下次开机的扫描标成 `install-failed`（既有行为），`superseded/` 下躺着一棵完好的旧树，可以按目录名手工放回 `installed/<id>/`。
+第 2 步之后任何一步失败走回滚：新树让位（`.failed` 后缀，尽力删）、旧树改名回位、目录行与浏览器包**及自带文案**复原（旧清单可读时连定义一起恢复——浏览器包与 `i18n` 都按**旧清单**从回位后的旧树重发，第 4 步发下去的新代文案不能活得比发它的那次事务长；旧清单不可读时两者都不动，与它恢复不了定义是同一个原因）、`wasEnabled` 就回到旧代。回滚成功时**行上不留 `failure`**——行回到了它原来的样子（原来开着的行必须读作开着），失败的名字在抛出的错误里（`state` 取实际发生的 `load-failed`/`activate-failed`，reason 带「已回到旧代 `<fromCommit>`」）。回滚自己再失败才是另一回事：那时行确实坏了，走既有的 `#setFailure`，消息里说明旧树现在在哪个目录。第 2 步与第 3 步之间断电，行会被下次开机的扫描标成 `install-failed`（既有行为），`superseded/` 下躺着一棵完好的旧树，可以按目录名手工放回 `installed/<id>/`。
 
 新 commit 与行上现记的 commit 相同是**允许**的（preview 的 `warnings` 会写明），对 `tampered` 行来说「按记录再取一遍」正是裁决 3 要的修复语义；`tampered`/`incompatible` 行可以被更新——整棵树按 (remote, commit) 重新取、取完重新哈希，不是「接受当前字节」。因此裁决 3 的重装按钮与 U1 的更新入口在 `tampered` 行上并存，两条路都走完整同意。
 
