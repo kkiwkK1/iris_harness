@@ -153,6 +153,19 @@ const readStateExpr = `(() => {
       return { present: true, showing: a.getAttribute('data-iris-aside'), head: (a.querySelector('.iris-aside__head')?.textContent ?? '').trim(), text: (a.textContent ?? '').trim().replaceAll('\\n', ' ⏎ ').slice(0, 700) }
     })(),
     notices: text('.iris-notices__list li').slice(0, 20),
+    // REVIEW-5 3.3: the folded scaffolding, one entry per .iris-bodyleak
+    // details element. The edge field says which side of the body tag it came
+    // from and text is what a reader sees when they expand it; the check is
+    // that this is scaffolding (details, status placeholders), never a block
+    // that should have built a frame. Written without backticks or regex
+    // escapes because this whole expression is itself a template literal.
+    bodyleaks: [...document.querySelectorAll('.iris-bodyleak')].map(el => ({
+      edge: String(el.className).split('iris-bodyleak--')[1]?.split(' ')[0] ?? '',
+      open: el.hasAttribute('open'),
+      summary: (el.querySelector('.iris-bodyleak__summary')?.textContent ?? '').trim(),
+      text: (el.querySelector('.iris-bodyleak__text')?.textContent ?? '').trim().split(String.fromCharCode(10)).join(' | ').slice(0, 400),
+      len: (el.querySelector('.iris-bodyleak__text')?.textContent ?? '').length,
+    })),
     panel: (() => {
       const VOCABULARY = /blocked|height sources|interface after|drawn nothing|timed out|failed|UnsupportedApiError|refused| KB of markup|failed to fetch|404|refused to/i
       const clip = s => (s ?? '').trim().replaceAll('\\n', ' ⏎ ').slice(0, 300)
@@ -468,6 +481,13 @@ console.log(`chat: ${String(chatId)}`)
 console.log(`greeting: gate=${JSON.stringify(result.browser?.gateBeforeConsent)} slotIframes=${result.browser?.greeting?.after?.iframes?.length ?? 0} frames=${result.browser?.greeting?.frames?.frames} stable=${result.browser?.greeting?.frames?.stable}`)
 console.log(`turn: ${JSON.stringify(result.browser?.turn)}`)
 console.log(`reply: slotIframes=${result.browser?.reply?.state?.iframes?.length ?? 0} frames=${result.browser?.reply?.frames?.frames} stable=${result.browser?.reply?.frames?.stable}`)
+// REVIEW-5 §4: the judgment is per floor — one slot per claimed block on that
+// floor's own text. The two lines above count every slot on the page, so this
+// one names the reply floor's own number; `qa/review5-claims.mjs` reads it,
+// and the claim count it must equal, for a whole card list at once.
+console.log(`reply floor slots: ${JSON.stringify((result.browser?.reply?.state?.slots ?? []).map(s => s.instance))}`)
+console.log(`folded scaffolding: greeting=${result.browser?.greeting?.after?.bodyleaks?.length ?? 0} reply=${result.browser?.reply?.state?.bodyleaks?.length ?? 0} last=${result.browser?.reply?.state?.bodyleaks?.at(-1)?.edge ?? '-'}/${result.browser?.reply?.state?.bodyleaks?.at(-1)?.len ?? 0}B`)
+console.log(`console: exceptions=${(result.browser?.consoleErrors ?? []).filter(c => c.level === 'exception').length} errors=${(result.browser?.consoleErrors ?? []).length} http>=400=${result.browser?.httpFailures?.length ?? 0}`)
 console.log(`iframe probes: ${result.browser?.iframeProbes?.length ?? 0}`)
 for (const pr of result.browser?.iframeProbes ?? []) console.log(`  - ${pr.url} :: ${JSON.stringify(pr.probe).slice(0, 220)}`)
 console.log(`itemize: ${JSON.stringify(result.browser?.itemize)?.slice(0, 500)}`)

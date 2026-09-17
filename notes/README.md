@@ -114,7 +114,7 @@
 | [PLUGIN-CONTRACT-LANDING-SITES.md](PLUGIN-CONTRACT-LANDING-SITES.md) | 第二批四个施工落点的底稿（切面设计草案、风险、工作量） | 2026-09-12 | 已被取代 | PR #88（`2eccf30`）的实现与 [`docs/INFRASTRUCTURE-INTERFACES.md`](../docs/INFRASTRUCTURE-INTERFACES.md) §8。因源码注释引用其路径而留在原地 |
 | [SYSTEM-PLUGINS-HANDOFF.md](SYSTEM-PLUGINS-HANDOFF.md) | 系统插件控制面的实施交接：分工、检查单、必须保持的行为合同 | 2026-09-12 | 已被取代（「行为合同」一节除外） | 同上。因源码注释引用其路径而留在原地 |
 
-## 四、验收记录（5）
+## 四、验收记录（6）
 
 一次验收跑出来的读数与判定。与第二类同理：它记录那一次，不记录今天。
 
@@ -124,7 +124,8 @@
 | [packages/iris-app-service/MVU-ACCEPTANCE.md](packages/iris-app-service/MVU-ACCEPTANCE.md) | 用一次真实生成验收 chat 级 MVU 折叠（判据预先写死，所以这一跑能失败） | 2026-09-07 | Iris 的 MVU 通路（爱衣卡） |
 | [PLUGIN-PLATFORM-ACCEPTANCE-2026-09-13.md](PLUGIN-PLATFORM-ACCEPTANCE-2026-09-13.md) | 插件平台联合验收：宿主运行时、动态 RPC、`/plugins` 资产面、成员合并、旧 revision 隔离 | 2026-09-13 | `dev/system-plugins` @ `4ade2b2` |
 | [st-compat/PILOT-REPORT.md](st-compat/PILOT-REPORT.md) | ST 扩展兼容试点联合验收：UC-1/2/3、故障与 revision 隔离、卸载、ST 1.18.0 同输入对照 | 2026-09-14 | `dev/st-compat-pilot` @ `065cc02`，ST-Prompt-Template `f9a07da` |
-| [PLUGIN-INSTALL-ACCEPTANCE-2026-09-15.md](PLUGIN-INSTALL-ACCEPTANCE-2026-09-15.md) | 系统插件安装路径的浏览器验收（真 Chrome + CDP，装—同意—启用—卸载走完） | 2026-09-15 | `dev/plugin-install-center`（`main` `1066381` + PR-3 工作树） |
+| [CARD-REGRESSION-2026-09-17.md](CARD-REGRESSION-2026-09-17.md) | 语料卡逐族回归（REVIEW-2）：13 张卡各一个真回合，异常 A–D。**§7 计数已作废**，指向下面那份复跑 | 2026-09-17 | main `b6eac97` |
+| [CARD-REGRESSION-2026-09-17-rerun.md](CARD-REGRESSION-2026-09-17-rerun.md) | 语料卡回归**复跑**（REVIEW-5）：#128 修复之后的 11 张卡，逐层 claim↔frame 等式 33/33、`iris.bodyTag` 因果开关、异常 A 关闭、异常 E | 2026-09-17 | main `64d18ab`（产品 = `0aa3ede`） |
 
 ## 五、任务单（2）
 

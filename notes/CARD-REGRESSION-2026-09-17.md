@@ -1,5 +1,10 @@
 # 语料卡逐族回归 — 验收记录
 
+> **这份记录的 §7 结论计数（2 如 ST / 1 偏离 / 11 异常）已作废，以 [CARD-REGRESSION-2026-09-17-rerun.md](CARD-REGRESSION-2026-09-17-rerun.md) 为准**
+> （2026-09-17，#128 落地之后的复跑：10 如 ST / 0 偏离 / 1 异常 E）。异常 A 已关闭，
+> 异常 C 已按 app-service 台账 §95 关闭；本记录的 §2 逐卡表、§4 四个特别点、§5 异常 A–D 的读数
+> 仍是它们取得时的原始证据，未改动。
+
 > 状态：验收记录，验收于 2026-09-17，对象 main（开工时 `e668785`，见下），宿主 8787（`apps/iris/bin.ts`，`dataDir=./data`，`profile=default-user`）。
 > 仪器（已入库，`qa/`，与表外仪器同例）：`qa/review2-drive.mjs`（逐卡一遍，产出 `qa/results/review2/*.json` 与截图）、
 > `qa/review2-batch.mjs`（成批跑）、`qa/review2-u2-probe.mjs` 与 `qa/review2-u2-sentinel.mjs`（候选级变量）、
