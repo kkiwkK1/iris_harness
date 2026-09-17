@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/iris-story-seal-variant-c-transparent-v1.png" width="200" alt="Iris：书页光圈与金色纹章">
+  <img src="assets/brand/iris-story-seal-variant-c-transparent-v1.png" width="240" alt="Iris：书页光圈与金色纹章">
 </p>
 
 <h1 align="center">Iris</h1>
@@ -7,9 +7,15 @@
 <p align="center">本地运行的 AI 角色扮演与聊天应用</p>
 
 <p align="center">
-  <a href="#开始使用">开始使用</a> ·
-  <a href="docs/USER-GUIDE.md">使用手册</a> ·
-  <a href="docs/README.md">开发文档</a> ·
+  <a href="#开始使用"><img src="assets/brand/badge-node.svg" alt="Node.js 24+" height="28"></a>
+  <a href="docs/ARCHITECTURE.md"><img src="assets/brand/badge-cordis.svg" alt="Built on Cordis" height="28"></a>
+  <a href="LICENSE"><img src="assets/brand/badge-license.svg" alt="License: AGPL-3.0" height="28"></a>
+</p>
+
+<p align="center">
+  <a href="#开始使用"><b>开始使用</b></a> &nbsp; / &nbsp;
+  <a href="docs/USER-GUIDE.md">使用手册</a> &nbsp; / &nbsp;
+  <a href="docs/README.md">开发文档</a> &nbsp; / &nbsp;
   <a href="CONTRIBUTING.md">参与贡献</a>
 </p>
 
@@ -19,10 +25,28 @@ Iris 支持 SillyTavern 的角色卡、世界书、Chat Completion 预设和聊�
 
 ## 在 Iris 里
 
-- **角色与世界**：导入角色卡，管理世界书、预设和用户人设。
-- **对话与分支**：流式回复、切换候选、对话分支、内容搜索与聊天备份。
-- **阅读与外观**：「雪」「墨」「宣」三套主题，可调整字号、行距与阅读设置。
-- **脚本与插件**：支持酒馆助手、MVU、EJS 模板的兼容能力，通过插件中心安装和管理扩展。
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>角色与世界</h3>
+      <p>导入角色卡，管理世界书、预设和用户人设。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>对话与分支</h3>
+      <p>流式回复、切换候选、对话分支、内容搜索与聊天备份。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>阅读与外观</h3>
+      <p>「雪」「墨」「宣」三套主题，可调整字号、行距与阅读设置。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>脚本与插件</h3>
+      <p>支持酒馆助手、MVU、EJS 模板的兼容能力，通过插件中心安装和管理扩展。</p>
+    </td>
+  </tr>
+</table>
 
 角色、聊天和设置保存在本机。模型由你选择；使用远程服务时，对话会发送到所配置的端点。
 
@@ -49,6 +73,7 @@ pnpm start
 
 Iris 通过 OpenAI 兼容接口连接模型，可使用 DeepSeek、OpenRouter 等远程服务，也可连接 Ollama、llama.cpp 或 LM Studio 的兼容端点。Iris 本身不附带模型。
 
+> [!NOTE]
 > 卡片脚本需要逐张授权；EJS 模板另需启用。默认服务仅供本机访问，不自带登录认证。配置说明见[使用手册](docs/USER-GUIDE.md)。
 
 ## 从 SillyTavern 迁移
@@ -57,7 +82,7 @@ Iris 通过 OpenAI 兼容接口连接模型，可使用 DeepSeek、OpenRouter �
 
 为 Iris 使用独立的数据目录，**不要直接把 SillyTavern 的数据目录设为 `IRIS_DATA_DIR`**。世界书扫描参数、扩展数据和卡片运行状态不会随文件自动迁移。
 
-具体步骤见[迁移说明](docs/USER-GUIDE.md#从-sillytavern-迁移)。
+→ [查看迁移步骤](docs/USER-GUIDE.md#从-sillytavern-迁移)
 
 ## 文档
 
@@ -73,6 +98,9 @@ Iris 通过 OpenAI 兼容接口连接模型，可使用 DeepSeek、OpenRouter �
 
 宿主在 `apps/iris`，浏览器界面在 `apps/iris-web`，领域逻辑和兼容层在 `packages/`。
 
+<details>
+<summary><b>本地检查命令</b></summary>
+
 完成上面的安装与构建后，可在仓库根目录运行：
 
 ```sh
@@ -85,6 +113,8 @@ npm --prefix apps/iris-web run check:render
 
 修改界面后需重新运行 `pnpm build:web`。前端开发服务器与数据源的用法见[界面开发说明](apps/iris-web/README.md)，提交流程见[贡献指南](CONTRIBUTING.md)。
 
+</details>
+
 欢迎提交问题和 PR。报告兼容问题时，请附上复现步骤和相关报错；分享日志或示例前，去掉密钥和私人对话。
 
 ## 致谢与许可
@@ -93,4 +123,8 @@ npm --prefix apps/iris-web run check:render
 
 Iris 以 [GNU AGPL-3.0](LICENSE) 发布。第三方代码与依赖的许可信息见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
-Copyright © 2026 kkiwkK1 and Iris contributors.
+---
+
+<p align="center">
+  <sub>Copyright © 2026 kkiwkK1 and Iris contributors.</sub>
+</p>
