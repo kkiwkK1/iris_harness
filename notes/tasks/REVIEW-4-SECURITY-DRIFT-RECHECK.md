@@ -44,6 +44,8 @@ const routes = ['/version', '/iris/avatar/aria.png', '/iris/script-bundle/nothin
 2. 让表不再靠手写：`index.ts:1496`/`:1526` 每次挂载都打一行 `irisApp: GET <prefix>` 日志。最省事的校验是在测试里数挂载：要么让 `irisApp` 暴露一个只读的「已挂载前缀」列表（一个 getter，不改行为），要么在测试里抓启动日志里 `irisApp: GET` 的条数，断言 `routes.length >= 挂载数`——**把比较过的数量当地板**（一条 `continue` 让只比 4 条还全绿，我们吃过这亏）。选前者，改动更小。
 3. 顺手确认 `guard` 不达的两处仍然只有两处：WebSocket 升级、carrier 的 `index.html`/静态资产兜底（rpc-host §1、app-service §74 记的缺口）。看 `index.ts` 有没有新的**不经 `guard`** 的注册。
 
+4. 两条新路由如果**一次就绿**，顺手把 `packages/iris-rpc-host/src/index.ts:340` 附近 `guard()` 注释里「Iris 拥有的每条路由都经过这一个函数」那句改成有出处的写法——「每条路由都经过这一个函数；`apps/iris/tests/host-allowlist.test.ts` 的两条路由表钉着这一点，新挂路由要同时加进那张表」。注释比文档更容易过期，这一句现在是靠人记着，改完就靠测试记着。
+
 ### 3.2 F1 / F6 / F12 / F14（原子写与坏文件）
 
 `packages/iris-app-service/src/atomic.ts` 是唯一的原子写入口（`atomicWriteFile` / `readJsonStore` / `quarantine*`），今天 24 个文件引用它。新面里要点名查的：
