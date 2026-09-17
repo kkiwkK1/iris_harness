@@ -57,7 +57,7 @@ import type { Measured, Visibility } from './overlay-regions.ts'
 import { MEMBERS_GLOBAL, MEMBERS_MARKER, PLUGIN_ADMITTED_GLOBAL, type MemberTable } from './members-contract.ts'
 import { collectPluginMembers } from './plugin-members.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
-import { describeLibraryState } from './library-state.ts'
+import { reportLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
 import { describeFailure, topFrame } from './failure-attribution.ts'
 import {
@@ -2162,49 +2162,56 @@ try {
 
   reportMissingGlobals: expected => {
     const host = window as unknown as Record<string, unknown>
-    const missing = expected.filter(name => host[name] === undefined)
 
     /*
-     * The tag is read back from the document rather than reconstructed, so the
-     * URL in the report is the one the browser was actually given. A rebuilt
-     * guess would stay plausible while pointing at the wrong place, which on a
-     * "go and check this request" instruction is worse than no URL at all.
-     */
-    const tag = document.querySelector('script[data-iris-lib]')
-    const url = tag?.getAttribute('src') ?? 'the preset script'
-
-    // The bundle's own record of its throw, when it got far enough to leave one.
-    const recorded = host[PRESET_ERROR]
-    const message = describeLibraryState(
-      host[PRESET_MARKER] === true,
-      missing,
-      url,
-      typeof recorded === 'string' ? recorded : undefined,
-    )
-    if (message === undefined) return
-
-    /*
-     * **The channel has to agree with the sentence.**
+     * **Every reader below is a thunk, and that is the whole fix.**
      *
-     * This was always posted as an `error`, and the panel renders an error under
-     * the card-script heading as *failed*. So a frame whose preset loaded fine
-     * and merely lacks `showdown` announced "card scripts: failed" — while the
-     * message itself said "the preset ran, so these are libraries Iris does not
-     * carry **rather than a failed load**". The text and the channel contradicted
-     * each other, and the channel is what a reader sees first.
+     * For an interface frame this hook is called from the bootstrap tag, which
+     * `srcdoc.ts` places *before* the preset tag (`:756` against `:823`) and
+     * deliberately so — the bootstrap has to own the channel before anything
+     * else can fail into it. Reading the marker and the globals eagerly here
+     * therefore read a moment that is over before the panel exists: the marker
+     * unset, the missing names exactly the eight the preset was about to
+     * publish, the preset tag not yet even parsed (so the URL fell back to the
+     * bare words "the preset script", which is the tell in the shipped line).
      *
-     * A recorded preset throw is a real failure and stays an error. Absent
-     * libraries with a preset that ran are a **note**: a fact worth having when
-     * something else goes wrong, and not itself something going wrong. That is
-     * the same split `describeTransferCost` already uses one screen up.
+     * `reportLibraryState` decides when to call these. Nothing about *what* the
+     * frame says changed; only the moment it is asked.
      */
-    const presetThrew = typeof recorded === 'string' && recorded !== ''
-    post({
-      iris: run,
-      type: presetThrew ? 'error' : 'note',
-      // No script owns this: it happened outside any body.
-      scriptId: undefined,
-      message,
+    reportLibraryState({
+      presetRan: () => host[PRESET_MARKER] === true,
+      // The bundle's own record of its throw, when it got far enough to leave one.
+      presetError: () => {
+        const recorded = host[PRESET_ERROR]
+        return typeof recorded === 'string' ? recorded : undefined
+      },
+      missing: () => expected.filter(name => host[name] === undefined),
+      /*
+       * The tag is read back from the document rather than reconstructed, so the
+       * URL in the report is the one the browser was actually given. A rebuilt
+       * guess would stay plausible while pointing at the wrong place, which on a
+       * "go and check this request" instruction is worse than no URL at all.
+       */
+      presetUrl: () =>
+        document.querySelector('script[data-iris-lib]')?.getAttribute('src') ?? 'the preset script',
+      // `loading` is the one readyState in which tags further down the document
+      // still have a turn coming.
+      parsing: () => document.readyState === 'loading',
+      // `DOMContentLoaded`, not `load`: a blocking classic `<script src>` has run
+      // or definitively failed by then, and waiting for subresources would hold a
+      // real finding behind an unrelated image.
+      onParsed: settled => document.addEventListener('DOMContentLoaded', settled, { once: true }),
+      after: (ms, expired) => {
+        window.setTimeout(expired, ms)
+      },
+      report: (message, channel) =>
+        post({
+          iris: run,
+          type: channel,
+          // No script owns this: it happened outside any body.
+          scriptId: undefined,
+          message,
+        }),
     })
   },
 

@@ -15,7 +15,12 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
-import { describeLibraryState } from '../src/sandbox/library-state.ts'
+import {
+  describeLibraryState,
+  reportLibraryState,
+  PRESET_SETTLE_TIMEOUT_MS,
+  type LibraryProbe,
+} from '../src/sandbox/library-state.ts'
 import { PRESET_ERROR, PRESET_MARKER } from '../src/sandbox/preset-globals.ts'
 
 test('a preset that never ran is reported as one failure, not as many gaps', () => {
@@ -233,6 +238,214 @@ test('the preset check runs where Node\u2019s globals do not exist', () => {
   assert.ok(
     !code.includes('new Function('),
     'a Function body resolves free names against Node, which is the blind spot this replaced',
+  )
+})
+
+/*
+ * ---------------------------------------------------------------------------
+ * When the reading is taken.
+ *
+ * Everything above pins the sentence. These pin the *moment*, which is the half
+ * that was wrong: the interface frame's only caller is the bootstrap tag, and
+ * `srcdoc.ts` places that before the preset tag on purpose. Read there, the
+ * marker is necessarily unset and the missing names are necessarily the preset's
+ * own — so ten of eleven corpus cards carried "the library preset never
+ * executed" on every floor that has a frame, naming the eight globals the preset
+ * published a millisecond later (the REVIEW-5 re-run acceptance record, §6).
+ * Not a race: a fixed document order, every run.
+ * ---------------------------------------------------------------------------
+ */
+
+/** The eight names the shipped false report listed, verbatim. */
+const PRESET_GLOBALS = ['$', 'jQuery', '_', 'z', 'YAML', 'showdown', 'Vue', 'VueRoute'] as const
+
+/**
+ * A frame whose document order can be driven a step at a time.
+ *
+ * The realm is mutable and the probe reads it through thunks, so a test can ask
+ * for the report at the bootstrap's moment and then let the preset run — which
+ * is exactly the sequence the browser performs and the one no test covered.
+ */
+function frame(initial: {
+  presetRan: boolean
+  missing: readonly string[]
+  parsing: boolean
+  presetError?: string
+}): {
+  probe: LibraryProbe
+  posted: { message: string, channel: 'note' | 'error' }[]
+  bounds: () => number[]
+  presetRuns: (stillMissing?: readonly string[]) => void
+  parseFinishes: () => void
+  boundExpires: () => void
+} {
+  const state = {
+    presetRan: initial.presetRan,
+    missing: initial.missing,
+    parsing: initial.parsing,
+    presetError: initial.presetError,
+  }
+  const posted: { message: string, channel: 'note' | 'error' }[] = []
+  const onParsed: (() => void)[] = []
+  const timers: { ms: number, fire: () => void }[] = []
+
+  return {
+    probe: {
+      presetRan: () => state.presetRan,
+      presetError: () => state.presetError,
+      missing: () => state.missing,
+      // The tag is only in the document once the parser has reached it, which is
+      // why the shipped line said "the preset script" instead of a URL.
+      presetUrl: () => (state.parsing ? 'the preset script' : 'http://h/sandbox/preset.js'),
+      parsing: () => state.parsing,
+      onParsed: settled => onParsed.push(settled),
+      after: (ms, expired) => timers.push({ ms, fire: expired }),
+      report: (message, channel) => posted.push({ message, channel }),
+    },
+    posted,
+    bounds: () => timers.map(timer => timer.ms),
+    presetRuns: (stillMissing = []) => {
+      state.presetRan = true
+      state.missing = stillMissing
+    },
+    parseFinishes: () => {
+      state.parsing = false
+      for (const settled of onParsed.splice(0)) settled()
+    },
+    boundExpires: () => {
+      for (const timer of timers.splice(0)) timer.fire()
+    },
+  }
+}
+
+test('the bootstrap’s own reading of the marker is never the report', () => {
+  /*
+   * Case (a), and the measured defect. At the moment the bootstrap asks, the
+   * marker is unset and every preset global is absent — the eager code composed
+   * "never executed" from exactly that and nothing later revised it.
+   */
+  const f = frame({ presetRan: false, missing: PRESET_GLOBALS, parsing: true })
+  reportLibraryState(f.probe)
+  assert.deepEqual(f.posted, [], 'the frame spoke about a document that had not finished parsing')
+
+  // The preset tag, which is placed after the bootstrap tag, now has its turn.
+  f.presetRuns()
+  f.parseFinishes()
+  assert.deepEqual(
+    f.posted,
+    [],
+    'the preset ran and every library is present, so there is nothing to report',
+  )
+})
+
+test('a marker still unset when the bound expires is reported once, by name', () => {
+  /*
+   * Case (b). The diagnosis is deferred, not deleted: a preset that really did
+   * not run must still send a reader to the request. The bound covers the one
+   * shape the settle point cannot — a parse that never finishes — so the frame
+   * cannot be silenced by a request that neither completes nor fails.
+   */
+  const f = frame({ presetRan: false, missing: PRESET_GLOBALS, parsing: true })
+  reportLibraryState(f.probe)
+  assert.deepEqual(f.bounds(), [PRESET_SETTLE_TIMEOUT_MS], 'the wait is not bounded')
+  assert.equal(f.posted.length, 0)
+
+  f.boundExpires()
+  assert.equal(f.posted.length, 1)
+  assert.ok(f.posted[0]?.message.includes('never executed'))
+  assert.ok(f.posted[0]?.message.includes('blocked, missing, or unparseable'))
+
+  // And once. Both arrivals fire in a real document; the second must add nothing.
+  f.parseFinishes()
+  assert.equal(f.posted.length, 1, 'the settle point repeated a report the bound had already made')
+})
+
+test('a preset that ran but lacks a name gets the gap sentence, not "never executed"', () => {
+  /*
+   * Case (c). The two worlds stay two worlds across the deferral: the reading
+   * taken at the settle point must be a fresh one, so a marker that flipped
+   * changes which sentence is composed rather than only whether it is sent.
+   */
+  const f = frame({ presetRan: false, missing: PRESET_GLOBALS, parsing: true })
+  reportLibraryState(f.probe)
+
+  f.presetRuns(['showdown'])
+  f.parseFinishes()
+
+  assert.equal(f.posted.length, 1)
+  const line = f.posted[0]
+  assert.ok(line?.message.includes('showdown'))
+  assert.ok(line?.message.includes('the preset ran'))
+  assert.ok(
+    line !== undefined && !line.message.includes('never executed'),
+    'the stale verdict survived the re-read',
+  )
+  assert.equal(line?.channel, 'note', 'a library Iris does not carry is not a failed load')
+})
+
+test('a blocked preset is still reported the moment parsing has finished, not after the bound', () => {
+  /*
+   * The deferral must not cost promptness where the answer is already in. A
+   * blocked, 404 or unparseable preset does not stall the parser — the browser
+   * fires the tag's error event and parsing continues — so by the time the
+   * document is parsed the verdict is final and waiting further would only
+   * delay a true finding.
+   */
+  const f = frame({ presetRan: false, missing: PRESET_GLOBALS, parsing: false })
+  reportLibraryState(f.probe)
+
+  assert.equal(f.posted.length, 1)
+  assert.ok(f.posted[0]?.message.includes('never executed'))
+  assert.ok(
+    f.posted[0]?.message.includes('http://h/sandbox/preset.js'),
+    'the report names the request to go and check',
+  )
+  assert.deepEqual(f.bounds(), [], 'nothing was waited for, so nothing should have been scheduled')
+})
+
+test('a marker already true is answered immediately, with no wait at all', () => {
+  const f = frame({ presetRan: true, missing: ['showdown'], parsing: true })
+  reportLibraryState(f.probe)
+
+  assert.equal(f.posted.length, 1, 'a settled marker was made to wait for the parser')
+  assert.ok(f.posted[0]?.message.includes('the preset ran'))
+  assert.deepEqual(f.bounds(), [])
+})
+
+test('a preset that recorded its own throw still reaches the error channel', () => {
+  // The deferral must not flatten the three outcomes into two: a recorded throw
+  // is a real failure and the panel has to keep counting it as one.
+  const f = frame({
+    presetRan: false,
+    missing: PRESET_GLOBALS,
+    parsing: true,
+    presetError: 'TypeError: boom',
+  })
+  reportLibraryState(f.probe)
+  f.parseFinishes()
+
+  assert.equal(f.posted.length, 1)
+  assert.ok(f.posted[0]?.message.includes('threw while loading'))
+  assert.equal(f.posted[0]?.channel, 'error')
+})
+
+test('the frame entry reaches this sentence only through the settling wrapper', () => {
+  /*
+   * The defect was not in the sentence, so a future edit that composes it
+   * directly in the entry would pass every assertion above while restoring the
+   * eager read exactly. The entry's own hook is called from the bootstrap tag
+   * and has no way to know it is early; the wrapper is the only thing that does.
+   */
+  const here = dirname(fileURLToPath(import.meta.url))
+  const entry = readFileSync(join(here, '..', 'src', 'sandbox', 'frame-entry.ts'), 'utf8')
+  assert.ok(
+    entry.includes('reportLibraryState('),
+    'frame-entry.ts no longer routes the library report through the settling wrapper',
+  )
+  assert.ok(
+    !entry.includes('describeLibraryState('),
+    'frame-entry.ts composes the library sentence itself again, which is the eager read'
+    + ' that reported "never executed" against a preset that had simply not run yet',
   )
 })
 
