@@ -23,11 +23,11 @@
 | [packages/iris-rpc-host/DEVIATIONS.md](packages/iris-rpc-host/DEVIATIONS.md) | 传输层（含 Host 头与绑定策略）的偏离账 | 2026-09-11 |
 | [packages/iris-variables/DEVIATIONS.md](packages/iris-variables/DEVIATIONS.md) | 变量系统的偏离账 | 2026-09-11 |
 
-## 二、研究与测量记录（54）
+## 二、研究与测量记录（55）
 
 某天对着某个对象量出来的事实。状态一律是**记录**：它描述那一天，不描述今天。
 
-### 2.1 根目录（13）
+### 2.1 根目录（14）
 
 | 文件 | 内容 | 测量于 | 被谁取代 |
 | --- | --- | --- | --- |
@@ -44,6 +44,7 @@
 | [RESEARCH-3D-SCENES-2026-09-16.md](RESEARCH-3D-SCENES-2026-09-16.md) | 「文字生成 3D 场景」的应用与行业经验调研：模型侧（Astra 代码生成、Blender MCP、布局 DSL 研究）、资产侧（文生 3D 服务、Roblox Cube、世界模型）、浏览器侧（glTF、three.js、A-Frame、3DGS）、聊天产品现有 3D 面（ST VRM/Live2D），供构思阶段用 | 2026-09-16 | —— |
 | [RESEARCH-AGENT-TOOL-FOUNDATION-2026-09-17.md](RESEARCH-AGENT-TOOL-FOUNDATION-2026-09-17.md) | 审计方案二「Agent Tool Foundation」只读工具部分的技术摘要：已有部件（流式 `tool_calls` 解析、U4 钩子设计、worldbook/变量 RPC、权限词表）与缺口、三分模型、与 ST JSONL 的 sidecar 边界、分步与风险、三个待 owner 决定的问题 | 2026-09-17（基线 `7011d6f`） | 记录；代码未动，等 owner 决定是否立项 |
 | [FRAME-OSCILLATION-chuangshi-2026-09-17.md](FRAME-OSCILLATION-chuangshi-2026-09-17.md) | 异常 B（创世回廊1 开场白 frame 高度振荡）的**定层测量**（REVIEW-6）：两条带时间戳的曲线对着看，结论是**壳层**——帧 20 s 只报 `1104 → 1105`，壳给的高度跟着**钳制带**走（503/515/552），而带高被 `App.tsx` 的临时通知横幅（37 / 49 px，3.2 / 8 s 自清）推着；`带高 + 横幅高 = 552` 逐采样成立，按住横幅则 24 s 零变化。REVIEW-2 量的是 `getBoundingClientRect().height`，它在钳制生效时**就是带高**，那 5 个采样抓到的是几次一次性的阶跃，不是振荡 | 2026-09-17（对象 main `535fc32`，产品 = `0aa3ede`） | 记录；不改产品代码、不写修法 |
+| [RESEARCH-DSH-CREATE-MODE-2026-09-18.md](RESEARCH-DSH-CREATE-MODE-2026-09-18.md) | deepseek-harness「创造模式」的机制调研（第二阶段「沙箱插件」的设计输入）：preset + 七个模型工具 + 两个 runner、`cordis_define` 的记录形状、定义期语法预检与注册期 guard 白名单、不重启挂载/拆卸的配方、求值器与 `styles.insert`、四种插槽与 chain、三条热重载路、以及「可信同进程」这个前提使它的哪些控制在 Iris 里不成立；末尾是逐条的「搬得过来 / 搬不过来」映射。只用想法不抄代码（dsh 为 MIT） | 2026-09-18（对象：本机 `.reference/deepseek-harness` 只读检出） | 记录；设计结论在 [`docs/SANDBOX-PLUGINS.md`](../docs/SANDBOX-PLUGINS.md) |
 
 ### 2.2 界面与沙箱（`apps/iris-web/`，15）
 
