@@ -231,8 +231,14 @@ export interface TurnUsage {
    * (time, model). The splits by source are carried instead as
    * {@link UsageTotals.script} and {@link UsageTotals.compaction}, so a surface
    * can show a share without the cell count doubling.
+   *
+   * A `'plugin'` record is **the request that wrote a sandbox plugin**
+   * (`docs/SANDBOX-PLUGINS.md` §11.3): the host asking, on the player's behalf,
+   * through a connection profile chosen for exactly this and nothing else. Its
+   * own member for the same reason `'compaction'` is not folded into
+   * `'script'` — the reader who wants less of it changes a habit, not a card.
    */
-  source?: 'turn' | 'script' | 'compaction'
+  source?: 'turn' | 'script' | 'compaction' | 'plugin'
 }
 
 /**

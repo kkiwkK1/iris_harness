@@ -15,10 +15,11 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { StrictMode } from 'react'
+import { createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { App } from './app/App.tsx'
+import { SandboxPluginPanel } from './app/SandboxPluginPanel.tsx'
 import { StoreProvider } from './client/provider.tsx'
 import { createIrisStore } from './client/store.ts'
 import { createClient } from './client/create-client.ts'
@@ -58,6 +59,29 @@ export function apply(ctx: Context): void {
   })
   const slots = createIrisSlots()
   ctx.effect(() => slots.dispose, 'iris-client-shell.slots')
+  /*
+   * 「What this conversation grew」, in the sidebar's own extension point.
+   *
+   * Through the slot rather than as hard-coded JSX in `Sidebar.tsx`, because
+   * that is where `docs/SANDBOX-PLUGINS.md` §12 puts it and because
+   * `Sidebar.tsx`'s own header says everything beyond its two lists arrives this
+   * way. The shell registering into a point it declares is not a contradiction:
+   * the point is the shell's either way, and one renderer means this panel and
+   * an extension's panel sit in one ordered list rather than in two places a
+   * reader has to learn separately.
+   *
+   * Registered here rather than from inside a component, so its lifetime is the
+   * shell's: `SlotCore` collapses a key's entries when their registrant goes
+   * away, and a registration living in an effect would come and go with a
+   * re-render.
+   */
+  ctx.effect(
+    () => slots.core.register(
+      { name: 'iris.sidebar.panels', registrant: 'iris-shell', id: 'sandbox-plugins' },
+      () => createElement(SandboxPluginPanel),
+    ),
+    'iris-client-shell.slots(sandbox-plugins)',
+  )
 
   const wired = createIrisStore(built.client, { transport: built.transport, origin: built.origin })
   report = error => {

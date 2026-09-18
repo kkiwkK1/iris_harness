@@ -26,7 +26,9 @@ import { StCompatBridge, applyGenerateResultToContributions, bridgeMessagesFromC
 import type { StBridgeContext, StBridgeResult } from '@iris/compat-st-extension'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
 import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemExplanation, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, SystemPluginSnapshot, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
-import { MAX_CONTEXT_WINDOW, providerPreset } from '@iris/protocol'
+import { MAX_CONTEXT_WINDOW, providerPreset, precheckSandboxPluginSyntax, SANDBOX_PLUGIN_QUOTAS } from '@iris/protocol'
+import type { SandboxPluginFailureState } from '@iris/protocol'
+import { toId, uniqueId } from './paths.ts'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
 import { isHelperMacroName, parseSlashCommands } from '@iris/compat-tavernhelper'
@@ -93,6 +95,23 @@ import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } 
 import { CardStorageStore, clearanceNote, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, isReportKind, type ReportContext } from './diagnostics.ts'
 import { CacheTraceStore, traceOf } from './cache-trace.ts'
+import {
+  hashOfPluginCode,
+  isPluginAuthorized,
+  mountsOf,
+  SandboxPluginStore,
+  viewOf as sandboxPluginViewOf,
+  type SandboxPluginRecord,
+  type SandboxPluginVersionRecord,
+} from './sandbox-plugins/store.ts'
+import {
+  parseSandboxPluginFences,
+  parseSandboxPluginToolCall,
+  replyExcerpt,
+  SANDBOX_PLUGIN_TOOL_NAME,
+  type SandboxPluginParse,
+} from './sandbox-plugins/parse.ts'
+import { authoringPrompt, readAuthoringDocument, sandboxPluginTool } from './sandbox-plugins/authoring.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
@@ -816,6 +835,18 @@ export interface AppServiceOptions {
    * rather than an error to be worked around.
    */
   cacheTrace?: CacheTraceStore
+  /**
+   * What each conversation has grown: its sandbox plugins.
+   *
+   * Optional, and absent is a **refusal** rather than a silence, which is the
+   * opposite of `cacheTrace` next door and deliberately so. That store is an
+   * instrument — a host that records no prompts is a normal host. This one is a
+   * feature: a host with no plugin store cannot keep a plugin, and answering
+   * `sandboxPlugin.list` with an empty list would tell a player their plugins
+   * are gone. So the three methods refuse by name, and every other path reads
+   * "this host does not do that" rather than "this conversation has none".
+   */
+  sandboxPlugins?: SandboxPluginStore
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -840,7 +871,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'hostConnection' | 'stCompat' | 'variableWriterTimeoutMs'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'sandboxPlugins' | 'hostConnection' | 'stCompat' | 'variableWriterTimeoutMs'>>
     & {
       onError: (error: Error) => void
       hostConnection?: HostConnection
@@ -868,6 +899,7 @@ export class IrisAppService {
       worldbookBindings?: WorldbookBindingStore
       backups?: BackupStore
       cacheTrace?: CacheTraceStore
+      sandboxPlugins?: SandboxPluginStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -1038,6 +1070,7 @@ export class IrisAppService {
       ...options.worldbookBindings === undefined ? {} : { worldbookBindings: options.worldbookBindings },
       ...options.backups === undefined ? {} : { backups: options.backups },
       ...options.cacheTrace === undefined ? {} : { cacheTrace: options.cacheTrace },
+      ...options.sandboxPlugins === undefined ? {} : { sandboxPlugins: options.sandboxPlugins },
     }
     // The manager's live state starts on whatever the caller assembled: a
     // stored selection is applied by the caller (the plugin) before the
@@ -1847,6 +1880,21 @@ export class IrisAppService {
     const cardStorage = this.#options.cardStorage
     const plugins = this.#options.plugins
 
+    /*
+     * A refusal rather than an empty list, which is the opposite of what a
+     * missing `cacheTrace` does and is the point: an empty list would tell a
+     * player their conversation has grown nothing, when what is true is that
+     * this host cannot hold plugins at all. One sentence answers the right
+     * question.
+     */
+    const requireSandboxPlugins = (): SandboxPluginStore => {
+      const store = this.#options.sandboxPlugins
+      if (store === undefined) {
+        throw new AppError('unsupported', 'this host keeps no sandbox plugins, so a conversation cannot grow one')
+      }
+      return store
+    }
+
     const requirePlugins = (): SystemPluginRuntime => {
       if (plugins === undefined) {
         throw new AppError('unsupported', 'system plugins are not configured on this host')
@@ -2192,6 +2240,19 @@ export class IrisAppService {
          * the deleted one used to be.
          */
         await this.#options.chatOrder?.forget(chatId)
+        /*
+         * And what this conversation grew.
+         *
+         * **The hard requirement of `docs/SANDBOX-PLUGINS.md` §10.3**, and the
+         * same argument as the two lines above it with the consequence one
+         * degree worse: a leftover settings layer changes a temperature, a
+         * leftover shelf position moves a row, and a leftover sandbox-plugin
+         * file makes the next conversation of this name **open with a
+         * stranger's code already authorised and mount it**. `cache-trace/` has
+         * this hole today and gets away with it because what it leaves behind is
+         * a diagnostic file; here what is left behind executes.
+         */
+        await this.#options.sandboxPlugins?.forget(chatId)
         await this.#announceChats()
         return {}
       },
@@ -2615,6 +2676,24 @@ export class IrisAppService {
         // branch point somewhere the user did not choose.
         await this.#idle(chatId, 'branched')
         const child = await chats.branch(chatId, id, swipeId)
+        /*
+         * The branch carries what the parent grew (coordinator, 2026-09-19).
+         *
+         * Copies, with their authorisations, each marked `branchedFrom` — see
+         * `SandboxPluginStore.branch`. Copying rather than inheriting by
+         * `parentChatId` is the whole point of a branch: two roads that change
+         * independently, and a child that does not turn into `orphaned` rows the
+         * day its parent is deleted.
+         *
+         * Not awaited *before* the view is built, but before the answer goes
+         * out: the browser opens the child immediately and asks it for its
+         * plugins, so a copy still in flight would show a branch that grew
+         * nothing and then silently gain them on the next refresh.
+         */
+        const grew = this.#options.sandboxPlugins
+        if (grew !== undefined) {
+          await grew.branch(chatId, child.chatId, child.meta.characterId ?? '')
+        }
         const view = this.#viewOf(child)
         this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(await chats.open(chatId)) })
         return { view, chats: await this.#chatList() }
@@ -2629,6 +2708,107 @@ export class IrisAppService {
       },
 
       'chat.export': ({ chatId }) => chats.exportFile(chatId),
+
+      /*
+       * ——— sandbox plugins ———
+       *
+       * `chat.export` above is the boundary these three sit on the far side of:
+       * a conversation taken out of Iris carries **the same bytes it would if
+       * this directory did not exist**. That is not an oversight to be fixed
+       * later — it is the compatibility floor, pinned by its own test.
+       */
+
+      'sandboxPlugin.list': async ({ chatId }) => {
+        const records = await requireSandboxPlugins().read(chatId)
+        return { plugins: records.map(sandboxPluginViewOf), mounts: mountsOf(records) }
+      },
+
+      'sandboxPlugin.define': async ({ chatId, characterId, sentence, replaces }) => {
+        const store = requireSandboxPlugins()
+        const entry = await chats.open(chatId)
+        // The card's own scripts, so the model knows what else lives in the
+        // realm it is about to join — which is the part a plugin can collide
+        // with. Read through the same helper `script.list` answers with, so the
+        // two can never describe different sets.
+        const scriptNames = (await listAllScripts(characterId)).map(script => script.name)
+        const { pending, plugins } = await this.#defineSandboxPlugin(
+          store, entry, characterId, sentence, replaces, scriptNames,
+        )
+        return {
+          pending: sandboxPluginViewOf(pending),
+          plugins: plugins.map(sandboxPluginViewOf),
+          // Empty for the new version by construction: nothing unauthorised is
+          // ever in this array, and a definition is unauthorised until the card
+          // is answered. It carries the conversation's *other* plugins so a
+          // caller can drive the frame from one answer.
+          mounts: mountsOf(plugins),
+        }
+      },
+
+      'sandboxPlugin.decide': async ({ chatId, characterId, pluginId, hash, verdict }) => {
+        const store = requireSandboxPlugins()
+        const before = await store.read(chatId)
+        const target = before.find(record => record.id === pluginId)
+        if (target === undefined) throw notFound(`this conversation has no plugin "${pluginId}"`)
+        const current = target.versions.at(-1)
+        if ((verdict === 'version' || verdict === 'plugin') && current?.hash !== hash) {
+          /*
+           * **The hash the card showed, or nothing.** A tick that authorised
+           * "whatever the current version is" would authorise a version written
+           * between the card being drawn and the click landing — which is
+           * exactly the window a replace opens.
+           */
+          throw invalid(
+            'this plugin has changed since the confirmation card was drawn, so that tick would have '
+            + 'authorised a different version — open it again',
+          )
+        }
+        const plugins = await store.mutate(chatId, characterId, records => records.flatMap(record => {
+          if (record.id !== pluginId) return [record]
+          switch (verdict) {
+            case 'version':
+              return [{
+                ...record,
+                enabled: true,
+                authorizedHashes: record.authorizedHashes.includes(hash ?? '')
+                  ? record.authorizedHashes
+                  : [...record.authorizedHashes, hash ?? ''],
+              }]
+            case 'plugin':
+              // The double tick trusts **a position**, not these bytes: this
+              // id's future versions mount unasked. The single tick is recorded
+              // too, so revoking the trust later leaves this version authorised.
+              return [{
+                ...record,
+                enabled: true,
+                trustFutureVersions: true,
+                authorizedHashes: record.authorizedHashes.includes(hash ?? '')
+                  ? record.authorizedHashes
+                  : [...record.authorizedHashes, hash ?? ''],
+              }]
+            case 'discard': {
+              /*
+               * The refused version goes and the ones before it stay, so
+               * refusing a rewrite leaves the plugin the player already had.
+               * Only when it was the first version does the whole row go — that
+               * is what "the sidecar reads as it did before" means for a
+               * definition that created the plugin.
+               */
+              const kept = record.versions.slice(0, -1)
+              return kept.length === 0 ? [] : [{ ...record, versions: kept }]
+            }
+            case 'disable':
+              return [{ ...record, enabled: false }]
+            case 'enable':
+              // Not asked again: the authorisation never went anywhere. Off is
+              // not gone, which is the whole reason the two verdicts differ.
+              return [{ ...record, enabled: true }]
+            case 'remove':
+              return []
+          }
+        }))
+        return { plugins: plugins.map(sandboxPluginViewOf), mounts: mountsOf(plugins) }
+      },
 
       'prompt.itemize': async ({ chatId, turn }) => {
         const entry = await chats.open(chatId)
@@ -2752,10 +2932,38 @@ export class IrisAppService {
         return { result: '' }
       },
 
-      'connection.list': async () => ({
-        ...await this.#connections().list(),
-        host: this.#hostDefaultRow(),
-      }),
+      'connection.list': async () => {
+        const store = this.#connections()
+        const authoring = await store.authoring()
+        return {
+          ...await store.list(),
+          host: this.#hostDefaultRow(),
+          // Omitted rather than sent as `undefined`: absence is the state the
+          // interface renders ("choose one before 「创造」 works"), and
+          // `exactOptionalPropertyTypes` makes the difference a type error
+          // rather than a convention.
+          ...authoring === undefined ? {} : { authoring },
+        }
+      },
+
+      'connection.authoring': async ({ id, model }) => {
+        const store = this.#connections()
+        if (id === undefined && model === undefined) {
+          await store.setAuthoring(undefined)
+          return {}
+        }
+        if (id === undefined || model === undefined) {
+          /*
+           * Both or neither. Half a setting would send a request with no model
+           * name, and the provider's answer to that is a 400 arriving after the
+           * player has typed their sentence — a failure three steps away from
+           * the control that caused it.
+           */
+          throw invalid('choosing a model to write plugins with needs both a provider and a model name')
+        }
+        await store.setAuthoring({ id, model })
+        return { authoring: { id, model } }
+      },
 
       'connection.save': async (input) => {
         // `adoptHostKey` used to be read here, copying the process's own
@@ -6941,6 +7149,25 @@ export class IrisAppService {
     entry?: ChatEntry,
     trace?: { chatId: string, kind: string, caller?: string, turn?: number },
     side?: { entry: ChatEntry, caller: string, source: SideSource },
+    /**
+     * The route this request goes out on, when the caller already knows it.
+     *
+     * The **fifth** caller — the sandbox-plugin authoring request — is the one
+     * generation whose provider is not the conversation's: it rides a profile
+     * the player chose for exactly this, and the design says so in as many words
+     * ("路由不经 `#resolveRoute` 的四级兜底", `docs/SANDBOX-PLUGINS.md` §11.1).
+     * Passing the route rather than letting the ladder run is what makes the "no
+     * fall back" ruling hold: rung 4 answers a dangling name with the host's own
+     * route, which for this request would spend the player's money on a model
+     * they did not choose — the exact outcome the ruling exists to refuse. The
+     * caller installs the adapter itself and refuses by name when it cannot.
+     *
+     * Everything *after* the route is unchanged, which is why this stays one
+     * funnel rather than becoming a second: the estimate, the residual-macro
+     * reports, the fingerprint, the usage fold-back and the side bill are all
+     * the same code for all five.
+     */
+    routed?: string,
   ): AsyncIterable<StreamChunk> {
     // **The route is settled before anything else runs**, and here rather than
     // at each of the four callers: a turn, `script.generateRaw`,
@@ -6952,8 +7179,13 @@ export class IrisAppService {
     // substitution lands *before* the fingerprint and `noteRoute` below —
     // which must name the route the provider was actually billed on, not the
     // one the settings asked for.
-    const routed = await this.#resolveRoute(options.provider, entry?.chatId ?? side?.entry.chatId ?? trace?.chatId)
-    const asked = routed === options.provider ? options : { ...options, provider: routed }
+    //
+    // A caller that already knows its route says so and the ladder does not
+    // run: see the `routed` parameter. It is the one case where falling back
+    // would be worse than refusing.
+    const route = routed
+      ?? await this.#resolveRoute(options.provider, entry?.chatId ?? side?.entry.chatId ?? trace?.chatId)
+    const asked = route === options.provider ? options : { ...options, provider: route }
     // The templates run here because here is the only place that has both the
     // assembled prompt and the chat it belongs to. `#generateRaw` reaches this
     // with no entry and is left alone deliberately: its prompt is written by
@@ -7399,6 +7631,308 @@ export class IrisAppService {
     entry.touch()
     if (persist) await this.#options.chats.save(entry)
     return this.#announceChat(entry)
+  }
+
+  /**
+   * File one sandbox-plugin failure where somebody will find it again.
+   *
+   * Its own helper because every one of the seven states goes to the same three
+   * places in the same shape, and the shape is the design's (§8): kind
+   * `sandbox-plugin` — never `script`, which would read as *the card's author*
+   * having written bad code — no `scriptId`, and the plugin id and state **in
+   * the sentence**, because `DebugReport` has no field to put them in.
+   * @param state - one of the seven.
+   * @param detail - what happened.
+   * @param where - the conversation and character the row belongs to.
+   * @param pluginId - which plugin, when one has an id yet.
+   */
+  #reportSandboxPlugin(
+    state: SandboxPluginFailureState,
+    detail: string,
+    where: { chatId: string, characterId: string },
+    pluginId = '(unnamed)',
+  ): void {
+    /*
+     * `fault` for the four that mean nothing is running, `note` for the three
+     * that describe a plugin which is up and merely untidy or refused a ceiling.
+     * The split is §8's table, written once here rather than at each site.
+     */
+    const fault = state === 'unparseable' || state === 'syntax-failed'
+      || state === 'mount-failed' || state === 'orphaned'
+    this.#report(`${pluginId} ${state}: ${detail}`, {
+      kind: 'sandbox-plugin',
+      grade: fault ? 'fault' : 'note',
+      chatId: where.chatId,
+      characterId: where.characterId,
+    })
+  }
+
+  /**
+   * Ask the authoring model for one plugin, and park what it wrote.
+   *
+   * The whole of §4.1 steps 3–8, in the order the design puts them: take the
+   * authoring profile (never the conversation's), assemble the request, send it
+   * down the one funnel, cut a record out of the reply, precheck its syntax,
+   * mint or reuse the id, and **write it to the sidecar in a state that cannot
+   * mount**.
+   *
+   * Landing before the player is asked looks backwards and is not: a definition
+   * that lived only in memory would disappear on a refresh, and what the player
+   * would see is a definition that silently did not happen. It is the shape the
+   * system-plugin install path already has — staged on preview, promoted on
+   * confirm — and the promotion here is an authorisation, not a copy.
+   * @param store - the sidecar.
+   * @param entry - the conversation.
+   * @param characterId - who it is played with.
+   * @param sentence - the player's own words.
+   * @param replaces - the plugin this rewrites, when it rewrites one.
+   * @param scriptNames - the card's own scripts, for the request's context.
+   * @returns the parked record and the conversation's table.
+   * @throws {AppError} `no-provider` when no authoring connection is set,
+   *   `invalid-request` for a quota or a reply that could not become a record.
+   */
+  async #defineSandboxPlugin(
+    store: SandboxPluginStore,
+    entry: ChatEntry,
+    characterId: string,
+    sentence: string,
+    replaces: string | undefined,
+    scriptNames: readonly string[],
+  ): Promise<{ pending: SandboxPluginRecord, plugins: SandboxPluginRecord[] }> {
+    const chatId = entry.chatId
+    const where = { chatId, characterId }
+    const connections = this.#options.connections
+    const authoring = connections === undefined ? undefined : await connections.authoring()
+    if (connections === undefined || authoring === undefined) {
+      /*
+       * **No fall back to the active connection** (§11.1 ruling 4). Falling back
+       * would spend the player's money on a model they never chose, and the
+       * failure it produces — a conversation model that cannot write a plugin —
+       * looks like a broken feature rather than an unfinished setting.
+       */
+      throw new AppError(
+        'no-provider',
+        '「创造」 has no model to write with yet: open the connection card and choose, under the provider '
+        + 'list, which saved provider and which model write plugins. It is deliberately not the model this '
+        + 'conversation is using — writing code and playing a character are rarely the same model.',
+      )
+    }
+    const profile = await connections.get(authoring.id)
+
+    /*
+     * **A route of its own, so choosing an authoring model cannot displace the
+     * connection this conversation is playing on.** `routeOf` gives two profiles
+     * of one provider the same route name, and installing an adapter under a
+     * name replaces whatever was there — so a player whose authoring profile and
+     * playing profile share a provider would have silently re-pointed their
+     * turns. Only a profile with its own endpoint can be given a private route;
+     * one that rides the composition's adapter has no endpoint to install.
+     */
+    const route = profile.baseURL !== undefined && profile.baseURL.length > 0
+      ? `authoring/${profile.id}`
+      : routeOf(profile)
+    if (profile.baseURL !== undefined && profile.baseURL.length > 0
+      && !this.#installedRoutes.has(route)
+      && !this.#installConnectionFor(route, { ...profile, baseURL: profile.baseURL })) {
+      throw new AppError(
+        'unsupported',
+        'this host was composed with no way to install a connection, so it cannot reach the provider chosen '
+        + 'for writing plugins',
+      )
+    }
+
+    let document: string
+    try {
+      document = await readAuthoringDocument()
+    } catch (error: unknown) {
+      /*
+       * Refused rather than asked with no instructions. A model told nothing
+       * about the facade would write code against an API that does not exist,
+       * and the player would be shown a confirmation card for a plugin that
+       * cannot mount — a failure three steps downstream of its cause.
+       */
+      throw new AppError(
+        'internal',
+        'the sandbox-plugin authoring document could not be read, so there is nothing to tell the model: '
+        + (error instanceof Error ? error.message : String(error)),
+      )
+    }
+
+    const before = await store.read(chatId)
+    const target = replaces === undefined ? undefined : before.find(record => record.id === replaces)
+    if (replaces !== undefined && target === undefined) {
+      throw invalid(`this conversation has no plugin "${replaces}" to rewrite`)
+    }
+    if (target === undefined && before.length >= SANDBOX_PLUGIN_QUOTAS.plugins) {
+      throw invalid(
+        `this conversation already holds ${String(SANDBOX_PLUGIN_QUOTAS.plugins)} plugins, which is as many as `
+        + 'it may hold — delete one first',
+      )
+    }
+
+    const current = target?.versions.at(-1)
+    const context = {
+      characterName: entry.names.character,
+      scriptNames,
+      existing: before.flatMap(record => {
+        const version = record.versions.at(-1)
+        return version === undefined ? [] : [{ name: version.name, purpose: version.purpose }]
+      }),
+      ...current === undefined
+        ? {}
+        : { replacing: { name: current.name, purpose: current.purpose, code: current.code } },
+    }
+
+    const assembler = new BlockAssembler()
+    for await (const chunk of this.#stream(
+      {
+        provider: route,
+        model: authoring.model,
+        system: document,
+        messages: [createUserMessage({
+          content: [{ type: 'text', text: authoringPrompt(context, sentence) }],
+          source: { kind: 'user' },
+        })],
+        /*
+         * The tool is **declared, not forced**. A provider that supports tools
+         * answers with a call and the code arrives as a field; one that does not
+         * answers with text and the fenced-block route reads it. That is how
+         * "when the provider supports tools" is decided here — by what came
+         * back — because nothing in this repo carries a per-provider capability
+         * flag and a hand-maintained list of endpoint names would be a guess.
+         */
+        tools: [sandboxPluginTool()],
+      },
+      // No `entry`: this prompt is the host's, so none of the card author's
+      // templates may evaluate in it and the turn's calibration must not move.
+      undefined,
+      { chatId, kind: 'plugin', caller: 'sandboxPlugin.define', turn: -1 },
+      // Billed to this conversation, under the third side source (§11.3).
+      { entry, caller: 'sandboxPlugin.define', source: 'plugin' },
+      // The route is already decided; the four-rung ladder must not substitute.
+      route,
+    )) {
+      assembler.push(chunk)
+    }
+
+    const finish = assembler.finish
+    if (finish.kind === 'error' || finish.kind === 'aborted') {
+      throw new AppError(
+        'provider-error',
+        finish.failure?.message ?? 'the provider ended the plugin request with an error',
+      )
+    }
+
+    const blocks = assembler.blocks()
+    const call = blocks.find(block => block.type === 'tool-call' && block.name === SANDBOX_PLUGIN_TOOL_NAME)
+    const text = blocks.filter(block => block.type === 'text').map(block => block.text).join('')
+    /*
+     * **Two routes, fixed priority** (§3.2 Q3). A tool call is preferred when
+     * one arrived because the code is a field rather than something cut out of
+     * prose; the fences are read when it did not. Both end in the same
+     * validator, and a test drives the same content down both and compares the
+     * records.
+     */
+    const parsed: SandboxPluginParse = call !== undefined && call.type === 'tool-call'
+      ? parseSandboxPluginToolCall(call.arguments)
+      : parseSandboxPluginFences(text)
+
+    if (!parsed.ok) {
+      /*
+       * The report carries the opening of the reply, which the design asks for
+       * by name: a row that says only "could not parse" hands the next reader a
+       * verdict and no evidence, and the evidence is not reproducible — the
+       * reply is gone the moment this throws.
+       */
+      this.#reportSandboxPlugin(
+        parsed.state,
+        `${parsed.detail}. The model answered: ${replyExcerpt(call === undefined ? text : 'a tool call')}`,
+        where,
+        replaces,
+      )
+      throw invalid(parsed.detail)
+    }
+
+    const refusal = precheckSandboxPluginSyntax(parsed.candidate.code)
+    if (refusal !== undefined) {
+      /*
+       * The **same wrapper the frame will compile**, byte for byte
+       * (`@iris/protocol`'s `sandboxPluginBody`). A precheck that built its own
+       * template would let a plugin pass here and fail there on syntax, which is
+       * the reassurance-only check dsh paid for.
+       */
+      this.#reportSandboxPlugin('syntax-failed', refusal.detail, where, replaces)
+      throw invalid(`the model's code does not compile — ${refusal.detail}`)
+    }
+
+    const code = parsed.candidate.code
+    const bytes = Buffer.byteLength(code, 'utf8')
+    const chatBytes = before.reduce(
+      (total, record) => total + record.versions.reduce((sum, version) => sum + version.bytes, 0),
+      0,
+    )
+    if (chatBytes + bytes > SANDBOX_PLUGIN_QUOTAS.chatCodeBytes) {
+      const detail =
+        `this conversation's plugins already hold ${String(chatBytes)} bytes of code and this one adds `
+        + `${String(bytes)}, over the ${String(SANDBOX_PLUGIN_QUOTAS.chatCodeBytes)} it may hold — delete one first`
+      this.#reportSandboxPlugin('too-large', detail, where, replaces)
+      throw invalid(detail)
+    }
+
+    /*
+     * **The host mints the id; the model only proposes a prefix** (§3.2 Q1).
+     * Letting the untrusted side choose its own namespace is letting it choose
+     * whom to collide with — and the id becomes part of a filename-shaped space,
+     * so it goes through the same `toId`/`uniqueId` pair every other id here
+     * does rather than a second implementation.
+     */
+    const taken = new Set(before.map(record => record.id))
+    const id = target?.id
+      ?? uniqueId(`${String(before.length + 1).padStart(2, '0')}-${toId(parsed.candidate.idPrefix)}`,
+        candidate => taken.has(candidate))
+
+    const version: SandboxPluginVersionRecord = {
+      version: (current?.version ?? 0) + 1,
+      name: parsed.candidate.name,
+      purpose: parsed.candidate.purpose,
+      declares: parsed.candidate.declares,
+      code,
+      bytes,
+      hash: hashOfPluginCode(code),
+      prompt: sentence.slice(0, SANDBOX_PLUGIN_QUOTAS.promptChars),
+      authored: { connectionId: profile.id, model: authoring.model, at: Date.now() },
+    }
+
+    let pending: SandboxPluginRecord | undefined
+    const plugins = await store.mutate(chatId, characterId, records => {
+      const existing = records.find(record => record.id === id)
+      const versions = [...existing?.versions ?? [], version]
+      /*
+       * Oldest versions fall off **with their authorisations**. A hash in
+       * `authorizedHashes` whose version is gone authorises nothing; leaving it
+       * would make the list longer than the thing it describes and, one day,
+       * would let a re-appearing byte-identical version mount unasked on the
+       * strength of a record nobody could see.
+       */
+      const kept = versions.slice(-SANDBOX_PLUGIN_QUOTAS.versionsKept)
+      const live = new Set(kept.map(entryVersion => entryVersion.hash))
+      const next: SandboxPluginRecord = {
+        id,
+        versions: kept,
+        enabled: existing?.enabled ?? true,
+        trustFutureVersions: existing?.trustFutureVersions ?? false,
+        authorizedHashes: (existing?.authorizedHashes ?? []).filter(hash => live.has(hash)),
+        ...existing?.branchedFrom === undefined ? {} : { branchedFrom: existing.branchedFrom },
+      }
+      pending = next
+      return existing === undefined
+        ? [...records, next]
+        : records.map(record => (record.id === id ? next : record))
+    })
+    // `mutate` ran the closure, so this cannot be undefined; narrowed rather
+    // than asserted so a future refactor that stops running it goes red here.
+    if (pending === undefined) throw new AppError('internal', 'the plugin table was not written')
+    return { pending, plugins }
   }
 
   /**

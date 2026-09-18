@@ -21,6 +21,7 @@ import { MAX_CONTEXT_WINDOW } from './views.ts'
 
 import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
 import type { SystemPluginInstallPreview, SystemPluginSnapshot } from './system-plugins.ts'
+import type { SandboxPluginView } from './sandbox-plugins.ts'
 // —— family①: identity & messages ——
 import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
 
@@ -705,6 +706,25 @@ export const requestSchemas = {
     ).optional(),
   }),
   'connection.delete': z.object({ id: z.string().min(1) }),
+  /**
+   * Choose — or clear — which saved profile and model **write sandbox plugins**.
+   *
+   * A setting of the file rather than of a profile, and a separate call from
+   * `connection.activate` for the reason the owner's 2026-09-09 ruling gives
+   * about saving a provider and using one: they are two actions, and a control
+   * that did both would make choosing the model that writes code a side effect
+   * of choosing the model that plays the character.
+   *
+   * **Both fields or neither.** Sending neither clears the setting, which
+   * switches the 「创造」 entry off with the sentence that says so; sending one
+   * is refused, because a profile with no model would send a request with no
+   * model name.
+   */
+  'connection.authoring': z.object({
+    id: z.string().min(1).max(200).optional(),
+    /** Free text: the model control always offers a hand-typed name (owner, 2026-09-10). */
+    model: z.string().min(1).max(200).optional(),
+  }),
   /** Apply a profile: globally, or to one chat when `chatId` is given. */
   'connection.activate': z.object({
     id: z.string().min(1),
@@ -824,6 +844,75 @@ export const requestSchemas = {
    */
   'chat.export': z.object({
     chatId: z.string().min(1),
+  }),
+
+  /*
+   * ——— sandbox plugins ———
+   *
+   * What a conversation grew: code a model wrote for this one chat, at the
+   * player's spoken request, mounted into the card's own sandbox frame
+   * (`docs/SANDBOX-PLUGINS.md`). Three methods, **static schemas here beside
+   * `chat.*`** rather than through `scope.registerRpc` — that road has no
+   * production user on `main` and this feature should not be its first, because
+   * a runtime-registered method is one the static vocabulary cannot keep total.
+   *
+   * They live beside `chat.*` because that is what they are about: a sandbox
+   * plugin belongs to a conversation the way its messages and its variables do,
+   * not to this installation the way a system plugin does. Nothing here is
+   * reachable from a plugin — the plugins are in a frame and these are the
+   * host's own doors.
+   */
+
+  /**
+   * What this conversation has grown.
+   *
+   * Answers the panel's rows **and** what the frame should mount, in two
+   * separate arrays: the rows never carry source, and the mount list carries
+   * only the plugins that are enabled and authorised. A single array with an
+   * optional `code` would put a model's source into every refresh of a panel
+   * that has no use for it.
+   */
+  'sandboxPlugin.list': z.object({ chatId: z.string().min(1) }),
+
+  /**
+   * Turn one sentence into a plugin, and park it for confirmation.
+   *
+   * **The expensive one.** It sends a request on the connection profile chosen
+   * for authoring (`connection.authoring`) — never on the conversation's own —
+   * parses what comes back, prechecks its syntax and writes it into the sidecar
+   * in a state that **cannot mount**. Landing before the player is asked is
+   * deliberate (§4.1 step 8): a definition that lived only in memory would
+   * disappear on a refresh, and what the player would see is a silent failure.
+   *
+   * `replaces` makes it a new version of an existing plugin rather than a new
+   * plugin: same id, version + 1, and the old version torn down before the new
+   * one goes up.
+   */
+  'sandboxPlugin.define': z.object({
+    chatId: z.string().min(1),
+    characterId: z.string().min(1),
+    /** The player's own words, kept verbatim on the record. */
+    sentence: z.string().min(1).max(2_000),
+    /** The plugin this sentence rewrites, when it rewrites one. */
+    replaces: z.string().min(1).max(120).optional(),
+  }),
+
+  /**
+   * The player decided something about one plugin.
+   *
+   * One arm for all six verdicts because they are one sentence — "the player
+   * made a decision about this plugin" — and they all answer with the same
+   * list. `hash` is required for the two authorising verdicts and ignored by the
+   * rest: it is what makes a single tick authorise **the version the card
+   * showed** rather than whatever the current version happens to be by the time
+   * the click lands.
+   */
+  'sandboxPlugin.decide': z.object({
+    chatId: z.string().min(1),
+    characterId: z.string().min(1),
+    pluginId: z.string().min(1).max(120),
+    hash: z.string().min(1).max(64).optional(),
+    verdict: z.enum(['version', 'plugin', 'discard', 'disable', 'enable', 'remove']),
   }),
 
   'character.list': z.object({}),
@@ -2576,6 +2665,36 @@ export interface RpcResponseMap {
    * with its parent still links up after a re-import on either host.
    */
   'chat.export': { filename: string, content: string }
+  /**
+   * The panel's rows, and what the frame should mount.
+   *
+   * **Two arrays, and the split is the design's `code` rule made workable.**
+   * §10.2 forbids `code` on `SandboxPluginView` — the list panel has no use for
+   * a model's source and putting it in every refresh would be a road to the
+   * shell for nothing — while §4.1 step 12 has the *shell* post the code into
+   * the frame, so it must have it. `mounts` is that, narrowed to the plugins
+   * that are actually going to run: one waiting for a confirmation, or switched
+   * off, hands the browser nothing. It is in the order §9 mounts in.
+   */
+  'sandboxPlugin.list': { plugins: SandboxPluginView[], mounts: { pluginId: string, version: number, code: string }[] }
+  /**
+   * The parked definition, plus the list it now appears in.
+   *
+   * `pending` is the row the confirmation card is drawn from. It is in
+   * `plugins` too — this is the same record, answered twice so the caller does
+   * not have to find it — and it is **not** in `mounts`, because nothing
+   * unauthorised ever is.
+   */
+  'sandboxPlugin.define': {
+    pending: SandboxPluginView
+    plugins: SandboxPluginView[]
+    mounts: { pluginId: string, version: number, code: string }[]
+  }
+  /** The list as it now reads, so the caller renders the host's answer. */
+  'sandboxPlugin.decide': {
+    plugins: SandboxPluginView[]
+    mounts: { pluginId: string, version: number, code: string }[]
+  }
   'prompt.itemize': { itemization: PromptItemization }
   /**
    * The comparison, or `undefined` when this conversation has fewer than two
@@ -2690,8 +2809,23 @@ export interface RpcResponseMap {
    * generating through. Its absence means "this host does not describe its own
    * route", **not** "there is no route" — a host has always had one.
    */
-  'connection.list': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
+  'connection.list': {
+    profiles: ConnectionProfile[]
+    activeId?: string
+    host?: HostDefaultConnection
+    /**
+     * Which profile and model write sandbox plugins.
+     *
+     * **Absent means the 「创造」 entry is off**, and the interface has to say why
+     * rather than hiding the entry: an entry that is simply not there teaches
+     * nobody that there is a setting to make. It is deliberately not filled in
+     * from `activeId` when it is missing (`docs/SANDBOX-PLUGINS.md` §11.1).
+     */
+    authoring?: { id: string, model: string }
+  }
   'connection.save': { profiles: ConnectionProfile[], activeId?: string, host?: HostDefaultConnection }
+  /** The setting as it now stands, so the row renders the host's answer. */
+  'connection.authoring': { authoring?: { id: string, model: string } }
   /**
    * The profiles that remain — and which settings layers stopped naming the
    * deleted one.

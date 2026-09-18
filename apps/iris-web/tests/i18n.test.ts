@@ -33,6 +33,11 @@ const NEUTRAL = new Set([
   'tokensThousand', 'tokensMillion', 'thousandsSeparator', 'usageCount',
   'usageSeconds', 'usageRate',
   'contextCardFigures', 'compactedFigures', 'commandRow',
+  // A version number's format (`v3`), not a sentence: the same three characters
+  // in both columns, joining the number formats above on the same grounds. The
+  // words around it in the same row — 挂着 / 停用 / 来自分支 — are in the
+  // dictionary and are checked.
+  'pluginVersionLabel',
 ])
 
 function auditShellColumns(): ReturnType<typeof auditBilingualCopy> {

@@ -1,9 +1,19 @@
 /**
  * Serialize harness messages and sampling into an OpenAI-compatible request body.
  *
- * Scope note: this spike serializes text only. Reasoning blocks are dropped on
- * the way out (a model must not be fed its own thinking back), and tool blocks
- * are out of scope because the roleplay loop does not call tools.
+ * Scope note: this serializes text only. Reasoning blocks are dropped on the way
+ * out (a model must not be fed its own thinking back), and tool **result**
+ * blocks are still out of scope, because nothing here runs a tool loop.
+ *
+ * **A tool declaration is not a tool loop, and this file now carries the
+ * declaration.** `translate.ts` has parsed streamed `tool_calls` into blocks
+ * since it was written, so the response half of "ask for one JSON object and get
+ * it back in a field" already worked — and the request half did not exist, so
+ * the whole road was unreachable. Sandbox plugins are the first caller
+ * (`docs/SANDBOX-PLUGINS.md` §3.2 Q3): they want one call of one tool, and the
+ * appeal is not elegance but that a model's code arrives as *a field* instead of
+ * having to be cut out of prose. Nothing else in this repo sets `tools`, so the
+ * body of every other request is byte for byte what it was.
  */
 
 import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
@@ -90,6 +100,29 @@ export function serializeRequest(options: GenerateOptions): Record<string, unkno
     ...options.temperature !== undefined ? { temperature: options.temperature } : {},
     ...options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {},
     ...options.stop !== undefined && options.stop.length > 0 ? { stop: options.stop } : {},
+    /*
+     * **Only when a caller declared one**, so a request that wants no tools is
+     * the request it always was — no `tools: []`, no `tool_choice`, not one
+     * changed byte. That matters beyond tidiness here: an endpoint's prefix
+     * cache is keyed on the bytes that went out, and an empty array added to
+     * every roleplay turn would move every prefix in the corpus.
+     *
+     * `tool_choice: 'auto'` rather than forcing the call. A provider that does
+     * not support tools at all answers with ordinary text, and the one caller
+     * reads that text down its fenced-block route — so "the provider supports
+     * tools" is answered by **what came back**, which is the only detector
+     * available: nothing in this repo carries a per-provider capability flag,
+     * and an allow-list of endpoint names would be a guess maintained by hand.
+     */
+    ...options.tools !== undefined && options.tools.length > 0
+      ? {
+        tools: options.tools.map(tool => ({
+          type: 'function',
+          function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+        })),
+        tool_choice: 'auto',
+      }
+      : {},
     ...sampling.topP !== undefined ? { top_p: sampling.topP } : {},
     ...sampling.topK !== undefined ? { top_k: sampling.topK } : {},
     ...sampling.minP !== undefined ? { min_p: sampling.minP } : {},

@@ -51,6 +51,7 @@
 | [ST-EXTENSION-DESIGN-AND-RUNBOOK.md](ST-EXTENSION-DESIGN-AND-RUNBOOK.md) | **设计稿**：SillyTavern 扩展兼容的设计与施工合同，不是已实现 API 文档 |
 | [GENERATION-HOOKS.md](GENERATION-HOOKS.md) | **设计稿**：`beforePrompt` / `afterReplyText` / `onSettle` 三个生成钩子，只设计不实现 |
 | [SANDBOX-PLUGINS.md](SANDBOX-PLUGINS.md) | **设计稿**：沙箱插件——玩家一句话、模型写一个插件、热挂进这张卡自己的沙箱帧、按对话持久。与同权的**系统插件**是两回事 |
+| [SANDBOX-PLUGIN-AUTHORING.md](SANDBOX-PLUGIN-AUTHORING.md) | **模型读的那一份**：写一个沙箱插件时有什么门面、没有什么、多大多久，以及两个完整例子。它是每次「创造」请求的输入，所以长度就是成本——8 KiB 上限与门面签名的一致性各由一个测试钉住 |
 
 ## 偏离账本
 

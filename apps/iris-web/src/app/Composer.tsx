@@ -251,6 +251,20 @@ export function Composer({
   const [presetOpen, setPresetOpen] = useState(false)
   const [listRead, setListRead] = useState<ModelListRead | undefined>(undefined)
   const [draft, setDraft] = useState('')
+  /**
+   * Whether the next sentence grows a feature instead of being said.
+   *
+   * State of this component rather than of the store, because it is a state of
+   * **this control** — switching conversations should put a reader back in the
+   * ordinary field, and a mode that outlived the screen it was set on is the
+   * shape that spends an authoring call on a line of dialogue.
+   */
+  const [creating, setCreating] = useState(false)
+  /** Whether a model can be asked at all, from the connection card's setting. */
+  const canAuthor = useIris(state => state.authoringConnection !== undefined)
+  /** Whether a definition is in flight, and why the last one did not land. */
+  const authoringWorking = useIris(state => state.sandboxPluginWorking)
+  const authoringRefusal = useIris(state => state.sandboxPluginRefusal)
   const field = useRef<HTMLTextAreaElement>(null)
   /*
    * The three triggers, for the menus that hang off them: `ComposerMenu` places
@@ -780,6 +794,22 @@ export function Composer({
   }
 
   const submit = (): void => {
+    /*
+     * 「Grow a feature」 is a **mode of this field**, not a second field.
+     *
+     * One sentence goes one of two places: into the conversation, or to the
+     * model that writes plugins. The mode shows in exactly two things — the
+     * placeholder and the send control's name — because a hidden mode is the one
+     * place this interaction can fail silently: a reader would type a line of
+     * dialogue and spend an authoring call on it.
+     */
+    if (creating) {
+      const sentence = draft.trim()
+      if (sentence === '') return
+      setDraft('')
+      void actions.defineSandboxPlugin(sentence)
+      return
+    }
     dispatch(draft.trim())
   }
 
@@ -883,7 +913,16 @@ export function Composer({
             className="iris-composer__field"
             rows={1}
             value={draft}
-            placeholder={generating ? t('irisWriting') : t('writeYourPart')}
+            /*
+              The placeholder is **one of the two things that show the mode**,
+              and it is the one a reader sees without looking for it. A mode with
+              no visible state is the single way this interaction fails quietly.
+            */
+            placeholder={
+              creating
+                ? authoringWorking ? t('createWorking') : t('createPlaceholder')
+                : generating ? t('irisWriting') : t('writeYourPart')
+            }
             aria-label={t('yourMessage')}
             onChange={(event) => {
               const next = event.target.value
@@ -990,6 +1029,34 @@ export function Composer({
                   }}
                 >
                   {t('composerSlash')}
+                </ComposerMenuItem>
+                {/*
+                  「Grow a feature」, in 「+」 rather than on the bar.
+
+                  The bar's rule is that every control there **states a fact and
+                  changes it** — the preset in force, the model in force, how
+                  full the window is. This is an act, not a fact, which is
+                  exactly what 「+」 holds (`docs/SANDBOX-PLUGINS.md` §12, and the
+                  ruling that `iris.composer.actions` is not used: that slot is
+                  an extension's hook and this is the shell's own feature).
+
+                  **Shown and dark rather than hidden** when no authoring model
+                  is set. An entry that is simply absent teaches nobody that
+                  there is a setting to make, and the note says which card to
+                  open. `checked` renders it as the mode toggle it is, so the
+                  reader can see from the list which mode they are in.
+                */}
+                <ComposerMenuItem
+                  checked={creating}
+                  {...canAuthor ? {} : { note: t('composerCreateNoModel') }}
+                  onSelect={() => {
+                    setPlusOpen(false)
+                    if (!canAuthor) return
+                    setCreating(!creating)
+                    field.current?.focus()
+                  }}
+                >
+                  {creating ? t('composerCreateOff') : t('composerCreate')}
                 </ComposerMenuItem>
               </ComposerMenu>
             )}
@@ -1206,9 +1273,15 @@ export function Composer({
                 size="sm"
                 className={`iris-composer__disc iris-composer__send iris-composer__send--${empty ? 'idle' : 'ready'}`}
                 icon={<SendArrow />}
-                aria-label={t('send')}
+                /*
+                  The send control's name is the **second** thing the mode shows.
+                  The disc is 32px and carries no visible text, so the word lives
+                  in the label — which is also where a screen reader finds it,
+                  and a mode that only a sighted reader can see is half a mode.
+                */
+                aria-label={creating ? t('createSend') : t('send')}
                 onClick={submit}
-                disabled={empty}
+                disabled={empty || (creating && authoringWorking)}
               />
             )}
           </div>
@@ -1290,9 +1363,39 @@ export function Composer({
           touch screen, and the figures are worth the same everywhere.
         */}
         <div className="iris-composer__under">
-          <span className="iris-composer__hint">
-            {t('composerHint')}
-          </span>
+          {/*
+            Why the last sentence did not become a feature, **with the way to
+            try again beside it**.
+
+            The design asks for the retry entry by name (`docs/SANDBOX-PLUGINS.md`
+            §6.1): a model writing code that does not compile is the one failure
+            a reader's honest next move is "ask again", and a sentence with no
+            control beside it makes them retype what they already typed. It is
+            here rather than in the notice bar because a notice clears itself
+            after a few seconds and cannot carry a button.
+          */}
+          {creating && authoringRefusal !== undefined ? (
+            <span className="iris-composer__hint">
+              {t('createFailed', { detail: authoringRefusal.detail })}
+              {' '}
+              <button
+                type="button"
+                className="iris-act"
+                disabled={authoringWorking}
+                onClick={() => {
+                  const { sentence } = authoringRefusal
+                  actions.clearSandboxPluginRefusal()
+                  void actions.defineSandboxPlugin(sentence)
+                }}
+              >
+                {t('createRetry')}
+              </button>
+            </span>
+          ) : (
+            <span className="iris-composer__hint">
+              {t('composerHint')}
+            </span>
+          )}
           {/*
           * What the conversation has cost.
           *
