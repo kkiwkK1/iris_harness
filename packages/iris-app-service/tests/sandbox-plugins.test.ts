@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -20,6 +19,7 @@ import {
   parseSandboxPluginToolCall,
   validateSandboxPluginFields,
 } from '../src/sandbox-plugins/parse.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A conversation growing a feature of its own, end to end on the host side.
@@ -90,8 +90,10 @@ async function fixture(
   t: TestContext,
   options: { reply?: string, authoring?: boolean } = {},
 ): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-sandbox-plugins-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  // The directory carries its own removal: `tempDir` registers it on the
+  // context at the moment it hands the path over, so the line that used to go
+  // missing cannot.
+  const dir = await tempDir(t, 'iris-sandbox-plugins-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -243,8 +245,7 @@ test('the seven ceilings each refuse or cut, and each is the number it claims', 
 })
 
 test('a sidecar round-trips, and a schema version it does not know is set aside whole', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-sidecar-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-sidecar-')
   const problems: string[] = []
   const store = new SandboxPluginStore(join(dir, 'sandbox-plugins'), {
     onProblem: message => { problems.push(message) },

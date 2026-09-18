@@ -38,14 +38,14 @@
  * Usage: node qa/sandbox-plugins-pr-b.mjs
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile, dataCopy } from './chrome-profile.mjs'
 import { answerConsentExpr, clickTabExpr } from './locators.mjs'
 
 // Host ports go from 8791 up, one per script; PR-A holds 8791.
@@ -100,8 +100,15 @@ const boundary = (what, detail) => {
  * A **copy** of the product's data dir, with the lock removed. One data dir has
  * one host since #72 and there is no bypass, so a QA host on the repo's own
  * `apps/iris/data` would either refuse to start or fight the operator's dev host.
+ *
+ * Through `dataCopy`, which is the **removed-not-renamed** half of
+ * `chrome-profile.mjs`: this copy carries `connections.json` and the key beside
+ * it, so a failed removal must not leave it on disk under another name. The
+ * prefix is kept as it was so the helper's sweep reaches anything an earlier
+ * run of this script already abandoned.
  */
-const dataDir = await mkdtemp(join(tmpdir(), 'iris-sandbox-plugins-b-qa-'))
+const data = dataCopy('iris-sandbox-plugins-b-qa-')
+const dataDir = data.dir
 const dataSource = process.env.IRIS_DATA_SOURCE
   ?? join(repoRoot, '..', 'iris_cordis_traven', 'apps', 'iris', 'data')
 await cp(dataSource, dataDir, { recursive: true }).catch(error => {
@@ -116,11 +123,18 @@ let hostOutput = ''
 let host
 const startHost = async () => {
   hostOutput = ''
-  host = spawn(process.execPath, ['apps/iris/bin.ts'], {
+  /*
+   * Adopted, so a run that ends any other way than through the `finally` —
+   * a signal, an uncaught throw, `process.exit` — kills the host before the
+   * copy it is holding open is removed. Item 3 starts a second host; `adopt`
+   * holds the latest, which is right here because the first is stopped before
+   * the second begins.
+   */
+  host = data.adopt(spawn(process.execPath, ['apps/iris/bin.ts'], {
     cwd: repoRoot,
     env: { ...process.env, IRIS_PORT: String(PORT), IRIS_DATA_DIR: dataDir },
     stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  }))
   host.stdout.on('data', chunk => { hostOutput += String(chunk) })
   host.stderr.on('data', chunk => { hostOutput += String(chunk) })
   console.log(`host process PID ${String(host.pid)} on port ${String(PORT)}, data dir ${dataDir}`)
@@ -163,6 +177,11 @@ const sidecarNames = async () =>
 const HARD = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 900_000)
 
 let chrome
+// The browser's profile. Made here rather than at the spawn below so the
+// `finally` can reach it whichever way the run ends — including the hard
+// timeout above, which leaves through `process.exit` and never reaches a
+// `finally` at all.
+const profile = chromeProfile('iris-qa-cdp-')
 try {
   await startHost()
 
@@ -220,12 +239,12 @@ try {
   if (chatTitle === undefined) throw new Error('the host did not name the chat it created')
 
   // ---- the browser -------------------------------------------------------
-  chrome = spawn(CHROME, [
+  chrome = profile.adopt(spawn(CHROME, [
     `--remote-debugging-port=${CDP}`,
-    `--user-data-dir=${tmpdir()}/iris-qa-cdp-${CDP}-${String(Date.now())}`,
+    `--user-data-dir=${profile.dir}`,
     '--no-first-run', '--no-default-browser-check', '--headless=new',
     '--window-size=1480,1000', 'about:blank',
-  ], { stdio: 'ignore' })
+  ], { stdio: 'ignore' }))
 
   let version
   for (let at = 0; at < 40 && version === undefined; at += 1) {
@@ -904,7 +923,15 @@ try {
   // Only what this script started, and only by the pid it holds.
   if (chrome?.pid !== undefined && chrome.exitCode === null) chrome.kill()
   await stopHost().catch(() => undefined)
-  await rm(dataDir, { recursive: true, force: true }).catch(() => undefined)
+  /*
+   * The two directories go through their own handles, which kill whatever is
+   * still holding them open first — on Windows a live renderer keeps a profile
+   * locked, and `rm` then fails in a way a `catch(() => undefined)` used to
+   * swallow entirely. The data copy is removed rather than renamed aside,
+   * because it carries `connections.json`.
+   */
+  await profile.dispose()
+  await data.dispose()
 }
 
 process.exit(failures === 0 ? 0 : 1)
