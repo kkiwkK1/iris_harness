@@ -17,8 +17,9 @@
 所以记录**永远不改成和代码一致**：错了就划掉并写清怎么发现的。目录索引见
 [notes/README.md](../notes/README.md)。
 
-两种例外都写在文档自己的开头：本目录里 `GENERATION-HOOKS.md` 与
-`ST-EXTENSION-DESIGN-AND-RUNBOOK.md` 是**设计稿**而不是现状，各自第一段就说了这件事。
+例外都写在文档自己的开头：本目录里 `GENERATION-HOOKS.md`、
+`ST-EXTENSION-DESIGN-AND-RUNBOOK.md` 与 `SANDBOX-PLUGINS.md` 是**设计稿**而不是现状，
+各自第一段就说了这件事。
 
 ## 读的顺序
 
@@ -49,6 +50,7 @@
 | [PLUGIN-CONTRACT-PACKAGING.md](PLUGIN-CONTRACT-PACKAGING.md) | 三个契约包怎么变成仓库外能装的 npm 包（`npm run pack:contracts`） |
 | [ST-EXTENSION-DESIGN-AND-RUNBOOK.md](ST-EXTENSION-DESIGN-AND-RUNBOOK.md) | **设计稿**：SillyTavern 扩展兼容的设计与施工合同，不是已实现 API 文档 |
 | [GENERATION-HOOKS.md](GENERATION-HOOKS.md) | **设计稿**：`beforePrompt` / `afterReplyText` / `onSettle` 三个生成钩子，只设计不实现 |
+| [SANDBOX-PLUGINS.md](SANDBOX-PLUGINS.md) | **设计稿**：沙箱插件——玩家一句话、模型写一个插件、热挂进这张卡自己的沙箱帧、按对话持久。与同权的**系统插件**是两回事 |
 
 ## 偏离账本
 
