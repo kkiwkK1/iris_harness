@@ -788,6 +788,8 @@ interface ConnectionsFile {
 
 ### PR-A · 帧里的树，没有模型
 
+> **落地：PR #142**（2026-09-19）。账本见 [notes/apps/iris-web/DEVIATIONS.md](../notes/apps/iris-web/DEVIATIONS.md) §112。
+
 **做什么**：`SandboxPluginTree`（§5.3）、三件能力的门面（§5.4–5.6）、拆卸清单（§5.7）、协议六条消息（§5.2）、`card-scripts.ts:281` 那一行的条件放宽（§5.1）。插件源从哪来？**从一个 dev 面板手打**（`apps/iris-web/src/dev/` 一族，与 `SandboxProbe` 同处）。
 
 **不做**：sidecar、确认卡、模型请求、B 族帧的样式扇出。
