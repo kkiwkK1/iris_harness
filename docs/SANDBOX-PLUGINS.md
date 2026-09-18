@@ -806,7 +806,7 @@ interface ConnectionsFile {
 
 ### PR-B · sidecar、确认卡、模型请求
 
-> **落地：PR #143**（2026-09-19）。账本见 [notes/apps/iris-web/DEVIATIONS.md](../notes/apps/iris-web/DEVIATIONS.md) §113
+> **落地：PR #145**（2026-09-19）。账本见 [notes/apps/iris-web/DEVIATIONS.md](../notes/apps/iris-web/DEVIATIONS.md) §113
 > 与 [notes/packages/iris-app-service/DEVIATIONS.md](../notes/packages/iris-app-service/DEVIATIONS.md) §97。
 
 **做什么**：§10 的存储（含 delete 的 `forget`）、§4.1 的全程、§11 的 `authoring` 设置与 `docs/SANDBOX-PLUGIN-AUTHORING.md`、Q3 的两条解析路、§6 的七个状态、§8 的 `sandbox-plugin` 报告 kind、§12 的列表面板与 composer 开关。
