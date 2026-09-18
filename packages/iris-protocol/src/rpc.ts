@@ -1522,6 +1522,29 @@ export const requestSchemas = {
     message: z.string().max(8_000),
     scriptId: z.string().min(1).optional(),
     characterId: z.string().min(1).optional(),
+    /**
+     * Which kind of frame output this is. Absent means a card's console line.
+     *
+     * Added so a **sandbox plugin**'s named failure (`docs/SANDBOX-PLUGINS.md`
+     * §6) can reach the diagnostic buffer without a second RPC — the design says
+     * in as many words that none is opened for it, and this arm is already "the
+     * shell forwarding something a frame said". The set is closed to two values:
+     * a caller cannot invent a kind, and a kind the host has not wired would file
+     * as a row nobody declared they were watching.
+     */
+    kind: z.enum(['card-console', 'sandbox-plugin']).optional(),
+    /**
+     * The grade, honoured **only** for `sandbox-plugin`.
+     *
+     * The ruling this arm was written with stands untouched for console output:
+     * a `console.error` is a card's own chosen word, not a call this host
+     * refused, so a console line is filed as a `note` whatever arrives here. A
+     * sandbox plugin's states are not one thing — `mount-failed` is a fault and
+     * `mount-timeout` is a note (§8) — and the side that knows which is which is
+     * the shell, which read the state off the frame message and validated it
+     * against the closed vocabulary before sending.
+     */
+    grade: z.enum(['fault', 'note']).optional(),
   }),
 
   /**

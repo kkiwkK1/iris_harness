@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { frameSandbox, isAllowedRemote, REMOTE_ALLOWLIST, UNBRIDGED_GLOBALS } from '../src/sandbox/policy.ts'
+import { SANDBOX_PLUGIN_LIMITS } from '@iris/protocol'
+
 import { parseFromFrame, parseToFrame } from '../src/sandbox/protocol.ts'
 
 test('an ungranted card gets an opaque origin', () => {
@@ -249,4 +251,140 @@ test('a window event dispatch carries its name and optional detail', () => {
   )
   assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'winevent', event: '' }), undefined)
   assert.equal(parseFromFrame('tok', { iris: 'tok', type: 'winevent' }), undefined)
+})
+
+/*
+ * The six sandbox-plugin arms.
+ *
+ * The allow-list **is** the two `default: return undefined` branches, so "this
+ * message exists" means an arm in the union *and* a case in the switch. A
+ * message added to the union alone type-checks and is refused at run time, which
+ * is silent in exactly the direction that costs a debugging round: the shell
+ * posts it, the frame ignores it, and nothing anywhere says so.
+ */
+test('the shell may ask a frame to mount, unmount and show plugins', () => {
+  assert.deepEqual(
+    parseToFrame('tok', {
+      iris: 'tok',
+      type: 'plugin:mount',
+      pluginId: '1-dark',
+      version: 2,
+      code: 'return {}',
+    }),
+    { iris: 'tok', type: 'plugin:mount', pluginId: '1-dark', version: 2, code: 'return {}' },
+  )
+  assert.deepEqual(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:unmount', pluginId: '1-dark' }),
+    { iris: 'tok', type: 'plugin:unmount', pluginId: '1-dark' },
+  )
+  assert.deepEqual(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:panel', visible: false }),
+    { iris: 'tok', type: 'plugin:panel', visible: false },
+  )
+})
+
+test('a mount over the code ceiling is refused rather than truncated', () => {
+  /*
+   * Cutting the source at 64 KiB produces a source with a syntax error, and the
+   * frame would then report `mount-failed` with a parse message — sending a
+   * reader to look at the model's code for a fault the transport introduced.
+   */
+  const ok = 'x'.repeat(SANDBOX_PLUGIN_LIMITS.codeBytes)
+  const over = 'x'.repeat(SANDBOX_PLUGIN_LIMITS.codeBytes + 1)
+  assert.notEqual(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:mount', pluginId: 'p', version: 1, code: ok }),
+    undefined,
+    'the ceiling itself is accepted, so the refusal below is about the extra byte',
+  )
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:mount', pluginId: 'p', version: 1, code: over }),
+    undefined,
+  )
+  // And the shapes that are simply wrong.
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:mount', pluginId: '', version: 1, code: '' }),
+    undefined,
+  )
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:mount', pluginId: 'p', version: 0, code: '' }),
+    undefined,
+    'versions start at 1; a zero would make "which version did the reader authorise" unanswerable',
+  )
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:panel', visible: 'yes' }),
+    undefined,
+    'a truthy string is not a boolean: a panel could not be argued out of being shown',
+  )
+})
+
+test('a frame may report a mount, a named failure and a stylesheet', () => {
+  assert.deepEqual(
+    parseFromFrame('tok', { iris: 'tok', type: 'plugin:mounted', pluginId: 'p', version: 1, ms: 12.4 }),
+    { iris: 'tok', type: 'plugin:mounted', pluginId: 'p', version: 1, ms: 12 },
+  )
+  assert.deepEqual(
+    parseFromFrame('tok', {
+      iris: 'tok',
+      type: 'plugin:failed',
+      pluginId: 'p',
+      version: 1,
+      state: 'mount-timeout',
+      detail: 'apply did not settle',
+    }),
+    {
+      iris: 'tok',
+      type: 'plugin:failed',
+      pluginId: 'p',
+      version: 1,
+      state: 'mount-timeout',
+      detail: 'apply did not settle',
+    },
+  )
+  assert.deepEqual(
+    parseFromFrame('tok', { iris: 'tok', type: 'plugin:style', pluginId: 'p', css: 'body{}' }),
+    { iris: 'tok', type: 'plugin:style', pluginId: 'p', css: 'body{}' },
+  )
+})
+
+test('a failure state the shell has no grade for is refused at the parser', () => {
+  // Validated rather than passed through, the same rule `sizing`'s one mode
+  // follows: the frame is untrusted, and a spelling that reached the shell would
+  // file as a row nobody declared they were watching.
+  assert.equal(
+    parseFromFrame('tok', {
+      iris: 'tok',
+      type: 'plugin:failed',
+      pluginId: 'p',
+      version: 1,
+      state: 'exploded',
+      detail: '',
+    }),
+    undefined,
+  )
+  assert.equal(
+    parseFromFrame('tok', {
+      iris: 'tok',
+      type: 'plugin:style',
+      pluginId: 'p',
+      css: 'x'.repeat(SANDBOX_PLUGIN_LIMITS.cssChars + 1),
+    }),
+    undefined,
+  )
+})
+
+test('an unknown plugin arm is still refused in both directions', () => {
+  /*
+   * The negative control the five tests above need. Without it they only say
+   * that six spellings are accepted, which a `default: return message` would
+   * also satisfy — and that is the change this whole allow-list exists to make
+   * impossible.
+   */
+  assert.equal(
+    parseToFrame('tok', { iris: 'tok', type: 'plugin:evaluate', pluginId: 'p', code: '' }),
+    undefined,
+  )
+  assert.equal(
+    parseFromFrame('tok', { iris: 'tok', type: 'plugin:asked', pluginId: 'p' }),
+    undefined,
+  )
 })

@@ -39,6 +39,18 @@ export type ReportKind =
    * nothing but the word script.
    */
   | 'card-console'
+  /**
+   * A sandbox plugin — code a model wrote for one conversation, mounted into
+   * that conversation's card-script frame (`docs/SANDBOX-PLUGINS.md` §8).
+   *
+   * **Not folded into `script`**, and the reason is attribution rather than
+   * tidiness: `script` answers "the card's scripts went wrong", so a sandbox
+   * plugin's row filed there reads as *the card's author* having written bad
+   * code — when the author is a model, a minute ago, at the reader's own
+   * request. Getting the blame one layer wrong is more expensive here than
+   * elsewhere, because the reader's next move is to distrust the card.
+   */
+  | 'sandbox-plugin'
 
 /**
  * Whether each kind has a report site behind it.
@@ -71,6 +83,13 @@ const KIND_WIRED: Record<ReportKind, boolean> = {
   // capture. `true` for the same reason as the rest: a kind in the union and
   // not here reads to the page as "nobody is looking".
   'card-console': true,
+  /*
+   * Wired by `script.report`, whose sandbox-plugin form the shell sends when a
+   * frame answers `plugin:failed`. `true` for the same reason as the rest: a
+   * kind in the union and not here reads to the page as "nobody is looking",
+   * and the four states PR-A can reach all arrive on that arm.
+   */
+  'sandbox-plugin': true,
 }
 
 /**

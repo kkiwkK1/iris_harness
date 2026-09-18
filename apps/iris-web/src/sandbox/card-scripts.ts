@@ -74,6 +74,19 @@ export interface CardScriptsEnv {
     documentGranted: boolean
     /** Reports against a script by id, since one frame now speaks for several. */
     onPhase: (scriptId: string | undefined, state: Omit<ScriptRunState, 'scriptId' | 'name'>) => void
+    /**
+     * The frame said `ready`.
+     *
+     * Supplied by this module and wired to the runner's own `onReady` by the
+     * caller, so that **the decision of what to do at readiness stays here**.
+     * The thing it does is mount this conversation's sandbox plugins, and a
+     * mount posted before the frame has a listener is a mount that never
+     * happened — silently, which is the failure this whole file is written
+     * against. Putting the send in the caller instead would put half of one
+     * mechanism on each side of an injected seam, with a test facing each other
+     * across it and the hand-copy between them untested.
+     */
+    onReady: () => void
   }) => RunningCard
   /**
    * Put a started frame into the document.
@@ -98,6 +111,21 @@ export interface CardScriptsEnv {
   onState: (states: readonly ScriptRunState[]) => void
   /** Called once per failure, for the notice bar. */
   onFailure: (state: ScriptRunState) => void
+  /**
+   * The sandbox plugins this conversation wants mounted, asked for **now**.
+   *
+   * A call rather than a value, for the reason `resolve` is one: it is answered
+   * at run time, and a value captured when the effect was built would be the set
+   * as it stood before the frame existed. Absent means none, and a host that
+   * does not know about plugins reads exactly as a conversation with none —
+   * which is the compatibility floor this feature is held to.
+   *
+   * Its consumer is the condition below: **a card with no runnable scripts still
+   * gets a frame when it has a plugin to mount.** That one line is the whole of
+   * §0.4; `runCard` already accepts an empty script array, so it is an existing
+   * shape used in a second place rather than a new capability.
+   */
+  plugins?: () => readonly { pluginId: string, version: number, code: string }[]
 }
 
 /** A running set of card scripts. */
@@ -147,6 +175,24 @@ export interface RunningCardScripts {
    * deduplicated on the far side.
    */
   resize: () => void
+  /**
+   * Mount a sandbox plugin into this set's frame, replacing any version up.
+   *
+   * A no-op when there is no frame — which is the honest answer rather than a
+   * defensive one: a conversation whose card has no scripts and no plugins has
+   * no frame on purpose, and a mount arriving then is a request that came before
+   * the thing it is about. The caller is expected to rebuild the set, which is
+   * what changing the plugin list does anyway.
+   * @param pluginId - the plugin's id.
+   * @param version - which version of it.
+   * @param code - the body, as authored.
+   */
+  mountPlugin: (pluginId: string, version: number, code: string) => void
+  /**
+   * Take a sandbox plugin down, running the six-item checklist in the frame.
+   * @param pluginId - the plugin's id.
+   */
+  unmountPlugin: (pluginId: string) => void
   /** Tear every frame down. Idempotent. */
   dispose: () => void
 }
@@ -164,6 +210,16 @@ export function startCardScripts(
   characterId: string,
 ): RunningCardScripts {
   const cards: RunningCard[] = []
+  /**
+   * Which plugin ids this set has asked a frame to mount.
+   *
+   * Kept so the frame's teardown can be told to take them down before the frame
+   * goes: a frame that is removed takes its tree with it, so this is not about
+   * correctness on that path — it is about the one path where the tree outlives
+   * the request, which is a plugin being replaced or removed while the chat
+   * stays open.
+   */
+  const mountedPlugins = new Set<string>()
   const timers: { unref?: () => void }[] = []
   const states = new Map<string, ScriptRunState>()
   let disposed = false
@@ -276,9 +332,25 @@ export function startCardScripts(
     }
 
     if (disposed) return
-    // A card whose every script failed to load has nothing to run, and starting
-    // an empty frame would report a readiness that means nothing.
-    if (loaded.length === 0) return
+    /*
+     * Nothing to run **and** nothing to mount.
+     *
+     * The first half is the original rule and it stands: a card whose every
+     * script failed to load has nothing to run, and starting an empty frame
+     * would report a readiness that means nothing.
+     *
+     * The second half is what makes sandbox plugins possible on a card that
+     * ships no scripts at all (`docs/SANDBOX-PLUGINS.md` §0.4, §5.1). A plugin
+     * lives in this frame; without this the most ordinary card in the corpus —
+     * one with an interface and no script — could never hold one, and the
+     * failure would be silent in the worst way: the plugin would be mounted, to
+     * nothing, and the panel would have no frame to report against.
+     *
+     * Read here rather than captured above, so a plugin added while the bodies
+     * were being fetched is still seen.
+     */
+    const plugins = env.plugins?.() ?? []
+    if (loaded.length === 0 && plugins.length === 0) return
 
     const byId = new Map(loaded.map(entry => [entry.script.id, entry.script]))
 
@@ -289,6 +361,30 @@ export function startCardScripts(
           context,
           bootstrapUrl,
           documentGranted: resolved.documentGranted,
+          onReady: () => {
+            if (disposed) return
+            /*
+             * **Sorted by id before they are sent** (§9).
+             *
+             * The frame mounts in arrival order on one chain, so the order the
+             * shell sends in is the order the plugins apply in — and that order
+             * is visible twice, in whose CSS wins a tie and in how the panel
+             * cells sit. Sorting here rather than frame-side keeps the rule on
+             * the side that knows the whole set; the frame only ever sees one
+             * message at a time.
+             *
+             * Re-read rather than reusing the list that got us this far: a
+             * plugin removed while the frame was booting must not be mounted
+             * into it, and the read is cheap.
+             */
+            const wanted = [...(env.plugins?.() ?? [])].sort((left, right) =>
+              left.pluginId < right.pluginId ? -1 : left.pluginId > right.pluginId ? 1 : 0,
+            )
+            for (const plugin of wanted) {
+              mountedPlugins.add(plugin.pluginId)
+              card.mountPlugin(plugin.pluginId, plugin.version, plugin.code)
+            }
+          },
           onPhase: (scriptId, next) => {
             /*
              * Naming no script and naming an unknown one are different, and
@@ -377,11 +473,33 @@ export function startCardScripts(
       for (const card of cards) card.refreshContext(context)
     },
 
+    mountPlugin: (pluginId, version, code) => {
+      if (disposed) return
+      mountedPlugins.add(pluginId)
+      for (const card of cards) card.mountPlugin(pluginId, version, code)
+    },
+
+    unmountPlugin: pluginId => {
+      if (disposed) return
+      mountedPlugins.delete(pluginId)
+      for (const card of cards) card.unmountPlugin(pluginId)
+    },
+
     dispose: () => {
       if (disposed) return
       disposed = true
       for (const timer of timers) clearTimeout(timer as Parameters<typeof clearTimeout>[0])
       timers.length = 0
+      /*
+       * The plugins are **not** unmounted one by one here, and that is a
+       * decision rather than an omission: the frame goes with the next line, and
+       * a tree inside a removed frame is gone with it — there is no realm left
+       * for a checklist to run in. Asking for a teardown whose six items would
+       * run against a document nobody can see would produce `dispose-failed`
+       * rows for a perfectly ordinary chat switch, which is the kind of noise
+       * that teaches a reader to skip the whole list.
+       */
+      mountedPlugins.clear()
       for (const card of cards) card.dispose()
       cards.length = 0
     },

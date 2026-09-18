@@ -387,6 +387,20 @@ export interface FrameSandbox {
   readonly shadowed: readonly string[]
   /** Last viewport the shell reported. */
   viewport: () => { width: number, height: number }
+  /**
+   * The whole card surface, bound to one owner.
+   *
+   * The `identity` members answer for `owner`; the `shared` ones are the same
+   * objects every caller gets. This is what a card script already receives —
+   * `MEMBER_KINDS`'s members, bound the way the preamble binds them per script —
+   * exposed under a name because a **sandbox plugin** is a second kind of owner
+   * (`docs/SANDBOX-PLUGINS.md` §5.3) and has to be bound the same way. Binding
+   * per plugin is not tidiness: it is the precondition for teardown item 5,
+   * because a shared surface cannot take back what it cannot attribute.
+   * @param owner - the script id or plugin id asking.
+   * @returns the bound surface.
+   */
+  cardSurface: (owner: string) => Record<string, unknown>
 }
 
 /** Bind a function so calling it off the proxy does not trip an illegal invocation. */
@@ -3120,5 +3134,19 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   // subresources having settled, and this module deliberately knows nothing about
   // the document it is installed into.
 
-  return { shadowed, viewport: readViewport }
+  return {
+    shadowed,
+    viewport: readViewport,
+    /*
+     * The shared surface first, then the owner's bound copies over it.
+     *
+     * That order is the whole of it: `tavernHelper` is the `shared` half — one
+     * object per member, the same for everyone, which is what `identity.ts`
+     * decided — and `viewFor` returns exactly the `identity` half plus the
+     * coordination pair. Spreading the bound half **second** is what makes
+     * `eventOn` and `replaceScriptButtons` answer for this owner rather than for
+     * whoever ran last, which is the failure `identity.ts` exists to prevent.
+     */
+    cardSurface: owner => ({ ...tavernHelper, ...viewFor(owner) }),
+  }
 }

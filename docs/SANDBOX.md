@@ -939,6 +939,54 @@ table. No directive widens, and the argument in "The bootstrap split does not
 add a trust boundary" covers this file the same way it covers the other two —
 same origin, same write boundary, same manifest-gated naming.
 
+## A third class of code in the frame: sandbox plugins
+
+Since PR-A of the sandbox-plugin feature (2026-09-19) a card-script frame can run
+code from **three** sources, and they are three rather than one because they
+arrive by three different routes with three different lifetimes:
+
+| | where it comes from | when it arrives | how it goes |
+| --- | --- | --- | --- |
+| **card scripts** | the card, over `run` | once, after `ready` | with the frame |
+| **a plugin's members** | `/plugins/<id>/client.js`, a tag in the srcdoc | at parse | with the frame — `registerPluginMembers` has no revoke |
+| **sandbox plugins** | a `plugin:mount` message | any time the frame is alive | on a `plugin:unmount`, by a six-item checklist |
+
+The design is [SANDBOX-PLUGINS.md](SANDBOX-PLUGINS.md); what belongs *here* is
+only the part that is a sandbox policy, and it is four things.
+
+**Nothing about the freeze policy changes, and nothing about the CSP changes.**
+A plugin is compiled with `new Function`, which needs the `'unsafe-eval'` this
+frame's `script-src` has carried for card scripts since the beginning
+(`framePolicy`), and it is evaluated in the frame's own realm, which is the
+realm a card script already has. No directive widens by a character, the sandbox
+attribute is untouched, and the shell's own CSP is not consulted because nothing
+of this reaches the shell's page.
+
+**The facade is not a boundary, and this document has said so before in another
+voice.** A plugin's factory takes one parameter — `{ id, styles, panel, card }`
+— and a plugin that writes `Function('return this')()` walks straight past it to
+the frame's globals. That is the same sentence this file already makes about
+shadowed globals: *shadowing is a compatibility layer, not a wall.* The wall is
+the opaque-origin iframe, and what a plugin can reach through it is exactly what
+a card script can reach, which is the point rather than a concession — a plugin
+is meant to be able to do what the card can do.
+
+**The code travels on the message channel, never in the srcdoc.** That is worth
+a sentence here because the srcdoc is a whole HTML page the shell assembles: a
+model's output pasted into it would become a participant in building markup,
+which is an injection surface that does not exist today. A message payload is
+only ever a JavaScript string. It also means a card with no plugins produces a
+**byte-identical** srcdoc to the one it produced before this feature existed,
+which is pinned by a test.
+
+**A synchronous infinite loop in a plugin freezes the frame, and no deadline
+changes that.** `apply` has three seconds and the batch has ten, but a deadline
+is a promise race and a promise race cannot interrupt synchronous code — the
+browser will not preempt it either. What the deadline buys is that the *shell*
+stops waiting and records `mount-timeout`; the frame comes back when the loop
+does. This is the honest reading of the PR-A acceptance check that mounts
+`while(true){}`, and it is recorded rather than worked around.
+
 ## The shell's CSP floor
 
 The frame's policy is not the only one that reaches a frame, and the reason is a

@@ -50,6 +50,11 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
   /** Cards that were told to re-read their viewport. */
   const resized: string[] = []
   const failures: ScriptRunState[] = []
+  /** Sandbox plugins the controller asked the frame for, as `id@version`. */
+  const mountedPlugins: string[] = []
+  const unmountedPlugins: string[] = []
+  /** The frame's `ready`, held so a test fires it where the browser would. */
+  let announceReady: (() => void) | undefined
   let latest: readonly ScriptRunState[] = []
 
   const env: CardScriptsEnv = {
@@ -60,6 +65,10 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
     start: input => {
       // One frame for the card's whole set now, so the harness records the set.
       for (const script of input.scripts) started.push(script.id ?? '')
+      // Held rather than called: in a browser `ready` arrives after the frame is
+      // in the document, and a harness that fired it during `start` would let a
+      // mount be recorded against a frame that was never attached.
+      announceReady = input.onReady
       return {
         // Models the DOM's own answer, so the controller's check is exercised
         // rather than skipped for want of the property.
@@ -67,6 +76,9 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
         emit: () => undefined,
         refreshContext: context => refreshed.push(context),
         resize: () => resized.push('card-frame'),
+        mountPlugin: (pluginId, version) => mountedPlugins.push(`${pluginId}@${version}`),
+        unmountPlugin: pluginId => unmountedPlugins.push(pluginId),
+        setPluginPanelVisible: () => undefined,
         dispose: () => disposed.push('card-frame'),
       }
     },
@@ -93,6 +105,12 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
     refreshed,
     resized,
     failures,
+    mountedPlugins,
+    unmountedPlugins,
+    /** Fire the frame's `ready`, as the runner would. */
+    ready: () => announceReady?.(),
+    /** Whether a frame was ever built at all. */
+    framesBuilt: () => (announceReady === undefined ? 0 : 1),
     states: () => latest,
   }
 }
@@ -322,6 +340,9 @@ test('a frame that did report ready is never called silent', async () => {
         emit: () => undefined,
         refreshContext: () => undefined,
         resize: () => undefined,
+        mountPlugin: () => undefined,
+        unmountPlugin: () => undefined,
+        setPluginPanelVisible: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -516,6 +537,9 @@ test('a report that belongs to the frame rather than a script still arrives', as
         emit: () => undefined,
         refreshContext: () => undefined,
         resize: () => undefined,
+        mountPlugin: () => undefined,
+        unmountPlugin: () => undefined,
+        setPluginPanelVisible: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -538,6 +562,9 @@ test('an outcome naming a script this card does not have is still dropped', asyn
         emit: () => undefined,
         refreshContext: () => undefined,
         resize: () => undefined,
+        mountPlugin: () => undefined,
+        unmountPlugin: () => undefined,
+        setPluginPanelVisible: () => undefined,
         dispose: () => undefined,
       }
     },
@@ -670,4 +697,83 @@ test('a refresh with no snapshot pushes nothing rather than an empty one', async
   await running.refresh()
   assert.equal(bench.refreshed.length, 0, 'an absent snapshot was pushed as if it were one')
   running.dispose()
+})
+
+/*
+ * The condition `docs/SANDBOX-PLUGINS.md` §0.4 is about.
+ *
+ * `if (loaded.length === 0) return` was the one line standing between a sandbox
+ * plugin and the most ordinary card in the corpus — one with an interface and no
+ * scripts. Both directions are asserted, because only one of them is new and the
+ * other is the rule that must not have been widened by accident.
+ */
+test('a card with no runnable scripts still gets a frame when a plugin wants one', async () => {
+  const bench = harness({
+    resolve: async () => ({ scripts: [], documentGranted: false }),
+    plugins: () => [{ pluginId: '1-dark', version: 1, code: 'return {}' }],
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.equal(bench.framesBuilt(), 1, 'the frame is the thing a plugin lives in')
+  bench.ready()
+  assert.deepEqual(bench.mountedPlugins, ['1-dark@1'])
+})
+
+test('a card with no runnable scripts and no plugins still gets no frame', async () => {
+  /*
+   * The half that must not move. An empty frame reports a readiness that means
+   * nothing, and the original rule is what stops every card in the library
+   * building one — so the new clause has to be an `&&`, not a replacement.
+   */
+  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false }) })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+
+  assert.equal(bench.framesBuilt(), 0)
+  assert.deepEqual(bench.attached, [])
+})
+
+test('plugins are sent in id order, whatever order the list is in', async () => {
+  // §9. The frame applies them in the order they arrive, so the sort has to
+  // happen on the side that can see the whole set.
+  const bench = harness({
+    plugins: () => [
+      { pluginId: '3-c', version: 1, code: '' },
+      { pluginId: '1-a', version: 2, code: '' },
+      { pluginId: '2-b', version: 1, code: '' },
+    ],
+  })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  bench.ready()
+
+  assert.deepEqual(bench.mountedPlugins, ['1-a@2', '2-b@1', '3-c@1'])
+})
+
+test('a plugin removed while the frame was booting is not mounted into it', async () => {
+  /*
+   * The list is read twice — once to decide whether a frame is needed, once at
+   * `ready` — and it has to be the second reading that is sent. A card's frame
+   * takes seconds to boot, so a reader removing a plugin during that window is
+   * ordinary, and mounting it anyway would be a removal that did not take.
+   */
+  let list = [{ pluginId: '1-a', version: 1, code: '' }]
+  const bench = harness({ plugins: () => list })
+  startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  list = []
+  bench.ready()
+
+  assert.deepEqual(bench.mountedPlugins, [])
+})
+
+test('a mount after the set is disposed reaches nothing', async () => {
+  const bench = harness()
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  running.dispose()
+  running.mountPlugin('1-a', 1, '')
+
+  assert.deepEqual(bench.mountedPlugins, [], 'every door into a torn-down set is a no-op')
 })

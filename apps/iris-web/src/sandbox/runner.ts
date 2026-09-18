@@ -15,7 +15,7 @@
  * @module iris-web/sandbox/runner
  */
 
-import type { ScriptContext } from '@iris/protocol'
+import type { ScriptContext, SandboxPluginFailureState } from '@iris/protocol'
 
 import { frameSandbox } from './policy.ts'
 import type { PopupAnswer, PopupPlan } from './popup.ts'
@@ -191,6 +191,46 @@ export interface RunnerHost {
    */
   onBlocked: (host: string, directive: string, detail?: string, covered?: string) => void
   /**
+   * A sandbox plugin mounted, with how long its `apply` took.
+   *
+   * Optional, because most hosts never mount one: a message frame cannot hold a
+   * plugin at all (§5.1 rejects it — a plugin there would live and die with the
+   * reading window), and the probe runs a single body. A host that mounts
+   * plugins and does not implement this would be a host that cannot tell a
+   * mounted plugin from one that never answered.
+   * @param pluginId - which plugin.
+   * @param version - which version of it.
+   * @param ms - how long `apply` took.
+   */
+  onPluginMounted?: (pluginId: string, version: number, ms: number) => void
+  /**
+   * A sandbox plugin did not mount, or did not come away cleanly.
+   *
+   * `state` is one of the seven named states, already validated: the shell
+   * grades a report from it, and a spelling it has no grade for would file as a
+   * row nobody can act on.
+   * @param pluginId - which plugin.
+   * @param version - which version of it.
+   * @param state - the named failure.
+   * @param detail - what happened, bounded.
+   */
+  onPluginFailed?: (
+    pluginId: string,
+    version: number,
+    state: SandboxPluginFailureState,
+    detail: string,
+  ) => void
+  /**
+   * A sandbox plugin injected a stylesheet into its frame.
+   *
+   * Optional and, in PR-A, only ever read: the fan-out into this card's message
+   * frames is PR-C. It is here now because it is what makes a plugin's styles
+   * countable from outside the frame.
+   * @param pluginId - which plugin.
+   * @param css - the stylesheet text, bounded on the way in.
+   */
+  onPluginStyle?: (pluginId: string, css: string) => void
+  /**
    * The clip describing which parts of this frame may catch a click.
    *
    * Only the card-scripts host implements it: its frame is the overlay surface
@@ -353,6 +393,28 @@ export interface RunningCard {
    * A no-op once disposed, like every other door into the frame.
    */
   resize: () => void
+  /**
+   * Mount a sandbox plugin into this frame, replacing any version already up.
+   *
+   * Fire and forget: the outcome comes back as `onPluginMounted` or
+   * `onPluginFailed`, because a mount can take up to its deadline and the shell
+   * must not be holding a promise for a frame that may go away underneath it.
+   * @param pluginId - the plugin's id.
+   * @param version - which version of it.
+   * @param code - the body, as authored.
+   */
+  mountPlugin: (pluginId: string, version: number, code: string) => void
+  /**
+   * Take a sandbox plugin down. The frame runs the six-item checklist and says
+   * so through `onPluginFailed` with `dispose-failed` if anything stayed.
+   * @param pluginId - the plugin's id.
+   */
+  unmountPlugin: (pluginId: string) => void
+  /**
+   * Show or hide the frame's plugin panel container.
+   * @param visible - whether it is shown.
+   */
+  setPluginPanelVisible: (visible: boolean) => void
   /** Remove the frame and every listener it needed. Idempotent. */
   dispose: () => void
 }
@@ -801,6 +863,23 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
       case 'globals':
         host.onGlobals?.(message.published, message.refused)
         return
+      case 'plugin:mounted':
+        host.onPluginMounted?.(message.pluginId, message.version, message.ms)
+        return
+      case 'plugin:failed':
+        host.onPluginFailed?.(message.pluginId, message.version, message.state, message.detail)
+        return
+      case 'plugin:style':
+        /*
+         * Optional, and in PR-A nothing downstream of it but a reader.
+         *
+         * The fan-out into this card's message frames is PR-C. What this arm
+         * buys today is that a plugin's stylesheets are **countable from outside
+         * the frame**, which is what turns "the styles went away when it was
+         * unmounted" into an observation rather than a screenshot.
+         */
+        host.onPluginStyle?.(message.pluginId, message.css)
+        return
       default:
         return
     }
@@ -858,6 +937,27 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     resize: () => {
       if (disposed) return
       onResize()
+    },
+    /*
+     * The three plugin doors, and they are no-ops once disposed like every other
+     * door into the frame.
+     *
+     * **The code travels here**, over the channel, rather than in the srcdoc —
+     * see the `plugin:mount` arm in `protocol.ts` for the three reasons, of
+     * which the third is that the srcdoc is markup the shell assembles and a
+     * model's output has no business helping to build it.
+     */
+    mountPlugin: (pluginId, version, code) => {
+      if (disposed) return
+      post({ iris: token, type: 'plugin:mount', pluginId, version, code })
+    },
+    unmountPlugin: pluginId => {
+      if (disposed) return
+      post({ iris: token, type: 'plugin:unmount', pluginId })
+    },
+    setPluginPanelVisible: visible => {
+      if (disposed) return
+      post({ iris: token, type: 'plugin:panel', visible })
     },
     dispose: () => {
       if (disposed) return

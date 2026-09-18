@@ -4049,18 +4049,39 @@ export class IrisAppService {
        * burst that crossed one message boundary does not read as simultaneous.
        * @returns the record as stored, so the shell can see its `seq`.
        */
-      'script.report': async ({ chatId, at, level, message, scriptId, characterId }) => {
+      'script.report': async ({ chatId, at, level, message, scriptId, characterId, kind, grade }) => {
         await chats.open(chatId)
         const diagnostics = this.#options.diagnostics
         if (diagnostics === undefined) {
           throw new AppError('unsupported', 'this host retains no diagnostic reports')
         }
+        /*
+         * Two kinds on one arm, and the console half's ruling is unchanged.
+         *
+         * A console line is **always** a `note`, whatever the request says: that
+         * was the rule this arm shipped with, and it is what stops a card
+         * dressing its own output as a host fault. A sandbox plugin's row is the
+         * other case — its seven states are not one grade (`mount-failed` is a
+         * fault, `mount-timeout` a note, §8) — and the shell has already read the
+         * state off a validated frame message, so it is the side that can say
+         * which. A `grade` arriving without the plugin kind is ignored rather
+         * than refused: the console rule has to hold for a caller who sends one
+         * by accident as much as for one who sends it on purpose.
+         */
+        const isPlugin = kind === 'sandbox-plugin'
         const record: ReportContext = {
-          kind: 'card-console',
-          grade: 'note',
+          kind: isPlugin ? 'sandbox-plugin' : 'card-console',
+          grade: isPlugin ? grade ?? 'note' : 'note',
           chatId,
           at,
-          ...scriptId === undefined ? {} : { scriptId },
+          /*
+           * **No `scriptId` on a plugin row** (§8). It is a script's id, and a
+           * plugin is not a script; filing one here would attribute a model's
+           * code to whichever of the card's scripts happened to share the name.
+           * The plugin's own id is in the sentence, where the row has room for
+           * it — `DebugReport` has no `field`.
+           */
+          ...scriptId === undefined || isPlugin ? {} : { scriptId },
           ...characterId === undefined ? {} : { characterId },
         }
         // Recorded directly rather than through `#report`, because `#report`

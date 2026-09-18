@@ -386,6 +386,7 @@ export function isFrontend(content: string): boolean {
 | --- | --- | --- |
 | 1 · 分 frame 的日志视图 | **已做**（2026-09-16，owner task W7） | 沙箱 bootstrap 包裹 `console.log/info/warn/error`（`apps/iris-web/src/sandbox/console-capture.ts` 的 `installConsoleCapture` + `serializeConsole`），把参数序列化成**有界文本摘要**（深度 4 / 每条 12 项 / 单值 512 字符 / 整行 4000 字符，循环引用安全，且仍调用原 `console`）经帧→壳消息通道上送，壳转 `script.report`，宿主记进 `DiagnosticBuffer`（kind `card-console`，grade `note`，`at` 用帧自己的时钟）。诊断页 `HostReports` 按 kind 过滤即显示。每卡每秒 50 条，超出计数在下一行点名。`console.debug` 与未处理异常**不**捕（后者走 `reportAsyncFailures`） |
 | 2 · 错误点名来源 | **已做** | `DebugReport` 带 `chatId` / `characterId` / `scriptId` 三个结构化字段（`packages/iris-app-service/src/diagnostics.ts`），页面是 `apps/iris-web/src/app/HostReports.tsx` |
+| 1 之二 · 沙箱插件的失败 | **已做**（2026-09-19，[SANDBOX-PLUGINS](SANDBOX-PLUGINS.md) §8 / PR-A） | `ReportKind` 从八个变九个,新的一个是 `sandbox-plugin`(`packages/iris-app-service/src/diagnostics.ts` 的联合与 `KIND_WIRED` **两处**都改,漏一处等于向页面声明「没人在看」)。帧里的插件树报 `plugin:failed`,壳按状态定级(`mount-failed` / `syntax-failed` / `unparseable` / `orphaned` 是 `fault`,`mount-timeout` / `too-large` / `dispose-failed` 是 `note`),再经**既有的** `script.report` 进缓冲——不新开 RPC。行上**不填 `scriptId`**:那是脚本的 id,插件不是脚本,插件 id 写在句子里 |
 | 3 · 具名拒绝进面板 | **已做** | `ScriptRunPhase` 的 `refused` 带 `member`；被拒子资源经 `apps/iris-web/src/app/blocked-line.ts` 统一措辞——它单独存在的理由本身就是这条：同一条规则写两遍，会自相矛盾，而错的那半没人看 |
 | 4 · 常驻分代报告 | **部分** | `ScriptPanel` 有常驻报告列表（带 `channel`、`withdrawn`），但它挂在卡上而不是挂在「这一代加载」上 |
 | 5 · 判决可撤回且留痕 | **已做** | `withdrawn` 标记 + `ScriptRunState.lateMs`——晚到的成功改写行，但那段死寂留在记录里 |
