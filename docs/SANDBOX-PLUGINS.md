@@ -294,7 +294,7 @@ export interface SandboxPluginRecord {
 - **授权记录存在 sidecar 的插件行上**（`authorizedHashes` / `trustFutureVersions`，§3.2），**不在 settings、不在 localStorage**。理由与 [SANDBOX](SANDBOX.md)「Escalation」里那条一样：权限跟着它授权的那个对象死，而这个对象是「这段对话里的这个插件」；删掉插件、删掉对话，授权跟着消失，id 回收不继承（§10.3）。
 - **双勾不是永久信任一段代码，是永久信任一个位置。** 值得在卡上说一句：「以后这个插件改了也直接生效」。这是 dsh 的语义（`.reference/deepseek-harness/packages/extensions/tool-cordis/src/prompt.ts`），抄的时候要连它的代价一起抄。
 
-### 4.2 重开聊天（Q17，**待裁**）
+### 4.2 重开聊天（裁决 Q17）
 
 ```
  1  玩家打开这个聊天
@@ -308,7 +308,7 @@ export interface SandboxPluginRecord {
  8  [帧：按 id 字典序挨个挂（§9）]
 ```
 
-**裁决 Q17：挂载骑既有的 AUTORUN 同意门，不自带第二道门。** 推荐值，标 **待裁**。
+**裁决 Q17：挂载骑既有的 AUTORUN 同意门，不自带第二道门。** 协调人裁决（2026-09-19），采纳设计稿的推荐值；`scriptsAllowed === false` 时插件也不挂、且面板要说出来，一并成为裁决的一部分。
 
 理由：
 
@@ -636,11 +636,11 @@ id 以 `<序号>-<slug>` 开头（Q1）意味着字典序大体等于创建序�
 | **delete** | **必须 forget。** 在 `chat.delete`（`packages/iris-app-service/src/service.ts:2183`）里加一行，紧挨着既有的 `settings.forget(chatId)`（`service.ts:2186`） | **裁决，且是硬要求** |
 | **export** | **不带。** `chat.export`（`packages/iris-app-service/src/chats.ts:819`）的字节与今天逐字节相同 | 裁决（裁决 2 的直接后果） |
 | **import** | **空。** chatId 被重铸（`chats.ts:747`），落地就是一段没有插件的新对话 | 裁决 |
-| **branch** | 见下 | **待裁** |
+| **branch** | 见下：复制，带授权，标 `branchedFrom` | **裁决**（协调人，2026-09-19） |
 
 **delete 这条是硬要求，不是整洁。** `chat.delete` 里那段注释（`service.ts:2186` 附近）已经把理由写完了：chat id 是对着现存文件铸的，所以删掉之后同一个 id 可以被下一个同名对话拿到——一个留下来的 sidecar 会让**新对话开机就挂上陌生人的插件**，而且是已授权状态。`cache-trace/<chatId>/` 今天就有这个洞（没人 forget 它），它在那里的后果只是一份多余的诊断文件；在这里的后果是**执行**。所以这条要有自己的测试（§16.3）。
 
-**branch（待裁，推荐：复制，且插件标记来源）**：
+**branch（裁决：复制，且插件标记来源；协调人 2026-09-19 采纳下列推荐）**：
 
 - **推荐复制。** 玩家在一段对话里长出来的功能，分支之后消失，读起来像功能坏了——而分支在产品里的语义是「从这里换一条路继续玩」，不是「重开一局」。upstream 的 `main_chat` 与 Iris 的 `parentChatId`（`packages/iris-app-service/src/chats.ts:672`）都表示「同一条线的延续」。
 - **复制时把 `authorizedHashes` 和 `trustFutureVersions` 一起带过去**，不重新问。玩家已经对这段代码点过头，分支不是一个新的信任决定。
@@ -897,18 +897,18 @@ interface ConnectionsFile {
 | Q9 | 门面之三：卡片成员面 | 裁决：**既有的 124 个成员**，按 `pluginId` 绑定；前提更正见 §0.1 | §5.3、§0.1 |
 | Q10 | 卸载要拆掉什么 | 裁决：六格清单，漏一格记 `dispose-failed` 不假装成功 | §5.7 |
 | Q11 | sidecar 的路径与 schema | 裁决：`<profile>/sandbox-plugins/<chatId>.json`，进 `profilePaths`，`atomicWriteFile` 唯一写路径 | §10.1 |
-| Q12 | 聊天生命周期钩子 | rename/delete/export/import **已裁决**；**branch 待裁**，推荐复制并标 `branchedFrom` | §10.3 |
+| Q12 | 聊天生命周期钩子 | rename/delete/export/import **已裁决**；**branch 已裁决（2026-09-19）：复制并标 `branchedFrom` | §10.3 |
 | Q13 | 配额 | 裁决：五条上限，schema 不等即整份拒读 | §10.4 |
 | Q14 | 专用模型请求的设置形状 | 裁决：`ConnectionsFile.authoring`，引用已有档，缺席不回落 | §11.1 |
 | Q15 | 作者文档与成本可见性 | 裁决：`docs/SANDBOX-PLUGIN-AUTHORING.md`（PR-B），8 KiB 上限，记账进 `iris_side_usage` | §11.2、§11.3 |
 | Q16 | 确认卡内容与单/双勾 | 裁决：六行内容、五条硬规则、授权存插件行上 | §4.1 |
-| Q17 | 重开聊天的挂载门 | **待裁**，推荐骑既有 AUTORUN 同意门，不自带第二道 | §4.2 |
+| Q17 | 重开聊天的挂载门 | **已裁决（2026-09-19）**：骑既有 AUTORUN 同意门，不自带第二道 | §4.2 |
 | Q18 | 失败语义 | 裁决：七个具名状态，各一条 `debug.reports` | §6 |
 | Q19 | 「这个对话长了什么」面板 | 裁决：`iris.sidebar.panels` 槽；composer 的开关在 `+` 菜单里 | §12 |
 | Q20 | 账本、文档、测试与牙齿 | 裁决：两本账各一节，九项单元 + 五个浏览器场景，逐项给牙齿 | §16 |
 | Q21 | 分阶段 PR 与验收宿主检查 | 裁决：PR-A/B/C/D，各带验收表 | §15 |
 
-### 待裁清单（2 条，给协调人）
+### 待裁清单（原 2 条，均已于 2026-09-19 裁决；保留原文供追溯）
 
 1. **Q17 · 重开聊天时挂载骑既有的 AUTORUN 同意门。** 不裁决按本稿实现。若要第二道门：每次开聊天多一个唯一可行答案是 yes 的问题，[AUTORUN](AUTORUN.md) 已经写过这种问题的代价。
 2. **Q12 的 branch 那一格 · 分支是否复制这段对话的插件。** 不裁决按「复制，并在子记录上标 `branchedFrom`」实现。若选不复制：**必须在分支时说出来**（「这条分支不会带上这段对话长出来的 N 个功能」），无声的消失是两个选项里唯一不可接受的那个。
