@@ -80,6 +80,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
         unmountPlugin: pluginId => unmountedPlugins.push(pluginId),
         setPluginPanelVisible: () => undefined,
         dispose: () => disposed.push('card-frame'),
+        applyNetworkGrant: () => undefined,
       }
     },
     attach: card => {
@@ -344,6 +345,7 @@ test('a frame that did report ready is never called silent', async () => {
         unmountPlugin: () => undefined,
         setPluginPanelVisible: () => undefined,
         dispose: () => undefined,
+        applyNetworkGrant: () => undefined,
       }
     },
   })
@@ -541,6 +543,7 @@ test('a report that belongs to the frame rather than a script still arrives', as
         unmountPlugin: () => undefined,
         setPluginPanelVisible: () => undefined,
         dispose: () => undefined,
+        applyNetworkGrant: () => undefined,
       }
     },
   })
@@ -566,6 +569,7 @@ test('an outcome naming a script this card does not have is still dropped', asyn
         unmountPlugin: () => undefined,
         setPluginPanelVisible: () => undefined,
         dispose: () => undefined,
+        applyNetworkGrant: () => undefined,
       }
     },
   })

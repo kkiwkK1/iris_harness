@@ -25,7 +25,7 @@ import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { actionsOf, tapHostEvents } from '../client/store.ts'
-import { startCardScripts } from '../sandbox/card-scripts.ts'
+import { startCardScripts, type RunningCardScripts } from '../sandbox/card-scripts.ts'
 import { pluginsFor, recordStatus, registerPluginControl } from '../dev/plugin-bench.ts'
 import { cardPopupBridge } from './card-popups.ts'
 import { registerCardEmitter } from './card-bus.ts'
@@ -108,6 +108,24 @@ export function CardScriptFrames(): ReactElement {
    */
   const hasSandboxPlugins = useIris(state => state.sandboxPluginMounts.length > 0)
   const mount = useRef<HTMLDivElement>(null)
+  const networkGranted = useIris(state => state.networkGranted)
+
+  /*
+   * The live run, so the network-grant switch can reach it.
+   *
+   * A ref, not state: the run object is created by the effect below and read
+   * by the one after it, and either ordering of those two renders is legal —
+   * a state would schedule a third render whose only job was to close the
+   * race. Populated on start, cleared in the effect's own cleanup, so a grant
+   * flip landing between runs finds `null` and simply has nothing to
+   * re-navigate — the next run reads the grant fresh from the host anyway.
+   */
+  const liveRun = useRef<RunningCardScripts | null>(null)
+
+  useEffect(() => {
+    if (liveRun.current === null) return
+    liveRun.current.applyNetworkGrant(networkGranted)
+  }, [networkGranted])
 
   /*
    * What this conversation grew, asked for when it opens.
@@ -973,6 +991,15 @@ export function CardScriptFrames(): ReactElement {
       surfaceWatcher.observe(host)
     }
 
+    /*
+     * Registered for the grant switch **after** the run exists, and the guard
+     * is the run's own shape rather than a flag: `startCardScripts` returns
+     * synchronously, but its frames land one `resolve` round trip later — a
+     * flip in that window is not lost, because the frames' first build reads
+     * the host's answer that already holds the new value.
+     */
+    liveRun.current = running
+
     return () => {
       unregister()
       unregisterPlugins()
@@ -985,6 +1012,7 @@ export function CardScriptFrames(): ReactElement {
       // exactly the window in which a reader could press a button.
       popups.release()
       running.dispose()
+      liveRun.current = null
       actionsOf(store).setRunStates([])
       /*
        * And this conversation's plugin stylesheets go with the realm that wrote

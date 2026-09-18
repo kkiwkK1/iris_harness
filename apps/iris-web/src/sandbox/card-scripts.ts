@@ -202,6 +202,16 @@ export interface RunningCardScripts {
    * @param pluginId - the plugin's id.
    */
   unmountPlugin: (pluginId: string) => void
+  /**
+   * Re-navigate every frame of this card under a changed network grant.
+   *
+   * The panel's switch used to take effect on the next chat open, which meant
+   * "turn it on and the images arrive after you leave and come back" — a
+   * sentence nobody should have to be told. One srcdoc swap per live frame
+   * instead: same reload the card cannot distinguish from any other, and the
+   * grant takes effect where the reader is looking.
+   */
+  applyNetworkGrant: (granted: boolean) => void
   /** Tear every frame down. Idempotent. */
   dispose: () => void
 }
@@ -458,6 +468,11 @@ export function startCardScripts(
     emit: (event, args) => {
       if (disposed) return
       for (const card of cards) card.emit(event, [...args])
+    },
+
+    applyNetworkGrant: granted => {
+      if (disposed) return
+      for (const card of cards) card.applyNetworkGrant(granted)
     },
 
     resize: () => {
