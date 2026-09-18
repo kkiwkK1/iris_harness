@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -16,6 +15,7 @@ import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Where an assembled prompt's tokens went.
@@ -56,8 +56,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, inputTokens?: number, preset?: ChatCompletionPreset): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-itemize-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-itemize-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -174,8 +173,7 @@ test('on real data, one world-info entry is most of the prompt', {
   skip: (!existsSync(PRESET) || !existsSync(REAL_CARD))
     && `needs the real preset ${PRESET} and card ${REAL_CARD}; point IRIS_CORPUS at the install that has them`,
 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-itemize-real-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-itemize-real-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'yinqi.png'), await readFile(REAL_CARD))
 
@@ -606,8 +604,7 @@ const REGEX_CARD = JSON.stringify({
 })
 
 test('a prompt-direction regex on a floor is reported on the conversation row', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-itemize-regex-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-itemize-regex-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), REGEX_CARD, 'utf8')
 

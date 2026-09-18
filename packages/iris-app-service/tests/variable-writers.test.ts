@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -20,6 +19,7 @@ import { createTavernHelperCapability } from '../src/plugins/tavern-helper.ts'
 import { IrisAppService, type Handlers, WRITER_TIMEOUT_MS } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { SystemPluginRuntime } from '../src/system-plugins.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /*
  * The variable-writer registry: third writers through the activation scope,
@@ -126,8 +126,7 @@ interface FixtureOptions {
 }
 
 async function fixture(t: TestContext, options: FixtureOptions = {}): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-variable-writers-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-variable-writers-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -534,8 +533,7 @@ test('the MVU writer returns its engine reports under the mvu kind', async () =>
 // --- T9: an aborted partial keeps MVU and keeps the bridge out ---------------
 
 test('an aborted partial settles through MVU and never through the bridge', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-variable-writers-abort-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-variable-writers-abort-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -632,8 +630,7 @@ test('an aborted partial settles through MVU and never through the bridge', asyn
 // --- T10: no runtime at all keeps the always-on compatibility writer ---------
 
 test('a service composed without a plugin runtime still writes MVU variables', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-variable-writers-legacy-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-variable-writers-legacy-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

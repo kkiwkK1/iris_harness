@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -12,6 +11,7 @@ import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * `MessageView.key` exists for exactly one job: surviving a delete.
@@ -63,8 +63,7 @@ async function fixture(t: TestContext, replies: readonly string[]): Promise<{
   handlers: Handlers
   settled: () => Promise<void>
 }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-keys-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -140,8 +139,7 @@ test('stream.start announces the identity the settled row carries, before any de
   // Ordering is asserted rather than argued — the announcement is broadcast
   // after the driver's synchronous appends, and if a delta could overtake it
   // the client would key the row from the fallback and remount on settle.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-keys-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -180,8 +178,7 @@ test('stream.start announces the identity the settled row carries, before any de
 })
 
 test('a streaming row keeps its key when the reply settles', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-keys-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -230,8 +227,7 @@ test('a reroll announces the identity of the row it streams into', async (t) => 
   // so the identity it announces is that row's — not the slot a fresh reply
   // would have taken. Getting this wrong is invisible on the send path and
   // remounts the bubble on every regenerate.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-keys-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

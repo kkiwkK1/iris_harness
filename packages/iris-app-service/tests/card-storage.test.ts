@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -13,6 +12,7 @@ import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { removeTempDir, tempDirOwned } from './support/temp-dir.ts'
 
 /**
  * The key–value store cards use as browser storage.
@@ -46,13 +46,15 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, withStore = true): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-store-'))
-  // `maxRetries`, for the same Windows window 2b43efc documented on the
-  // transport test: a handle inside the fixture can outlive the last write by a
-  // moment, and a bare `rm` then fails the whole file with ENOTEMPTY. Seen here
-  // on a full-suite run with a second suite running beside it — the tests
-  // themselves are unaffected, only the tidy-up waits.
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  // `tempDirOwned`, not `tempDir`: this store writes on a debounce, so the
+  // removal has to come *after* `flush()`. A `tempDir` removal is registered at
+  // the moment the directory is made and would therefore run first — and then
+  // the timer would fire, `#save` would `mkdir` the parent back, and the
+  // directory would reappear holding nothing but `card-storage.json`. That is
+  // measured, not hypothetical: 8 of 18 fixtures came back that way on a
+  // full-suite run (2026-09-19), and none did on a run of this file alone,
+  // because the timer is `unref`'d and a lone file's process exits first.
+  const dir = await tempDirOwned('iris-store-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -69,6 +71,11 @@ async function fixture(t: TestContext, withStore = true): Promise<Fixture> {
     diagnostics,
     ...withStore ? { cardStorage: storage } : {},
   }).handlers()
+
+  t.after(async () => {
+    await storage.flush()
+    await removeTempDir(dir)
+  })
 
   return { handlers, storage, diagnostics, dir }
 }

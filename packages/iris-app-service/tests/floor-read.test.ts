@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import type { ChatEntry } from '../src/entry.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Reading a floor whose table was pruned, and knowing which kind of answer you got.
@@ -59,8 +59,7 @@ const CARD = JSON.stringify({
 
 /** A chat driven far enough to have prunable floors, already pruned. */
 async function pruned(t: TestContext, turns: number): Promise<{ entry: ChatEntry, newest: number }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-floorread-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-floorread-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

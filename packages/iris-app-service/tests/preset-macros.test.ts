@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -15,6 +14,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { textOf } from '../src/views.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * SillyTavern's own variable macros across one prompt assembly.
@@ -73,8 +73,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, preset: ChatCompletionPreset, card?: string): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-preset-macros-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-preset-macros-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   if (card === undefined) await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   else await copyFile(card, join(dir, 'characters', 'vox.png'))

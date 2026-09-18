@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -12,6 +11,7 @@ import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { injectedContributions, IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A card script's prompt injections, built to upstream's whole signature.
@@ -41,8 +41,7 @@ const CARD = JSON.stringify({
 async function fixture(
   t: TestContext,
 ): Promise<{ handlers: Handlers, chats: ChatStore, chatId: string, dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-inject-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-inject-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

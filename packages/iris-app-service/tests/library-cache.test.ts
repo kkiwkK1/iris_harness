@@ -34,12 +34,12 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, stat, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { CharacterLibrary } from '../src/library.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /** The mtime every fixture is pinned to, so "unchanged" is exact. */
 const PINNED = new Date(1_700_000_000_000)
@@ -59,8 +59,7 @@ async function fixture(t: TestContext, body: string): Promise<{
   library: CharacterLibrary
   path: string
 }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-library-cache-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-library-cache-')
   const characters = join(dir, 'characters')
   await mkdir(characters, { recursive: true })
   const path = join(characters, 'sable.json')

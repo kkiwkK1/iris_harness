@@ -19,8 +19,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -32,6 +31,7 @@ import { buildGitFixture, writeTree } from '../../iris-extension-installer/tests
 import { PLUGIN_TREE_LIMITS, SystemPluginInstallService, type PluginInstallSource } from '../src/plugins/install.ts'
 import { MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from '../src/plugins/builtins.ts'
 import { SystemPluginRuntime, type SystemPluginDefinition } from '../src/system-plugins.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 const PLUGIN_ID = 'demo-plugin'
 
@@ -132,10 +132,7 @@ async function harness(
   t: TestContext,
   options: { dir?: string, limits?: { maxBytes: number, maxFiles: number } } = {},
 ): Promise<Harness> {
-  const dir = options.dir ?? await mkdtemp(join(tmpdir(), 'iris-plugin-install-'))
-  if (options.dir === undefined) {
-    t.after(async () => { await rm(dir, { recursive: true, force: true }) })
-  }
+  const dir = options.dir ?? await tempDir(t, 'iris-plugin-install-')
   const catalogFile = join(dir, 'system-plugins.json')
   const installRoot = join(dir, 'system-plugins')
   const assetRoot = join(dir, 'assets', 'system-plugins')
@@ -766,8 +763,7 @@ test('a package that ships node_modules is refused, and the reason says why the 
 // ---------------------------------------------------------------------------
 
 test('a v1 catalog upgrades in place: enabled flags survive, the revision does not go backwards, and the file becomes v2', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-v1-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-plugin-v1-')
   await writeFile(join(dir, 'system-plugins.json'), `${JSON.stringify({
     version: 1,
     revision: 7,
@@ -795,8 +791,7 @@ test('a v1 catalog upgrades in place: enabled flags survive, the revision does n
 })
 
 test('a catalog version this build does not know is retained and everything fails closed', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-v9-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-plugin-v9-')
   // The same branch a v1-only reader takes when handed this build's v2 file:
   // `parseStored` accepts a closed set of versions and everything else is an
   // unreadable file. That direction is the one this tree can still execute —

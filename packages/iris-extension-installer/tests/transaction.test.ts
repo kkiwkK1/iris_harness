@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import os from 'node:os'
 
 import { Installer, InstallClaimBusyError, SourceError } from '../src/index.ts'
 import { hashTree } from '../src/hash.ts'
 import { buildZip, demoFileMap, demoZipEntries, writeTree } from './fixtures/helpers.ts'
+import { tempDir } from '../../iris-app-service/tests/support/temp-dir.ts'
 
-async function tempRoot(): Promise<string> {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'iris-installer-txn-'))
+async function tempRoot(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-installer-txn-')
 }
 
 async function writeDemoZip(root: string, files: Map<string, Buffer | string> = demoFileMap()): Promise<string> {
@@ -18,8 +18,8 @@ async function writeDemoZip(root: string, files: Map<string, Buffer | string> = 
   return zipPath
 }
 
-test('a full install transaction ends installed with a complete, disabled lock', async () => {
-  const root = await tempRoot()
+test('a full install transaction ends installed with a complete, disabled lock', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = await writeDemoZip(root)
   const installer = await Installer.create(path.join(root, 'store'))
 
@@ -48,8 +48,8 @@ test('a full install transaction ends installed with a complete, disabled lock',
   assert.deepEqual(claims, [], 'the claim is released on success')
 })
 
-test('an identical artifact re-hashes identically; a changed artifact hashes differently', async () => {
-  const root = await tempRoot()
+test('an identical artifact re-hashes identically; a changed artifact hashes differently', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = await writeDemoZip(root)
   const installer = await Installer.create(path.join(root, 'store'))
   const first = await installer.installAs('demo-ext', { kind: 'local-archive', archivePath: zipPath })
@@ -67,8 +67,8 @@ test('an identical artifact re-hashes identically; a changed artifact hashes dif
   assert.equal(stillThere?.artifactSha256, first.artifactSha256)
 })
 
-test('the same extension installing concurrently is refused, not raced', async () => {
-  const root = await tempRoot()
+test('the same extension installing concurrently is refused, not raced', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = await writeDemoZip(root)
   const installer = await Installer.create(path.join(root, 'store'))
 
@@ -99,8 +99,8 @@ test('the same extension installing concurrently is refused, not raced', async (
   )
 })
 
-test('a hostile archive fails the transaction, marks it failed, and leaves no target', async () => {
-  const root = await tempRoot()
+test('a hostile archive fails the transaction, marks it failed, and leaves no target', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const files = demoFileMap()
   files.set('escaped.js', 'x')
   const zipPath = path.join(root, 'traversal.zip')
@@ -116,8 +116,8 @@ test('a hostile archive fails the transaction, marks it failed, and leaves no ta
   assert.deepEqual(targets, [], 'a failed transaction never touches the target root')
 })
 
-test('an artifact without a usable manifest is refused before promotion', async () => {
-  const root = await tempRoot()
+test('an artifact without a usable manifest is refused before promotion', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = path.join(root, 'nomanifest.zip')
   await fsp.writeFile(zipPath, buildZip([{ name: 'index.js', data: 'export {}' }]))
   const installer = await Installer.create(path.join(root, 'store'))
@@ -126,8 +126,8 @@ test('an artifact without a usable manifest is refused before promotion', async 
   assert.deepEqual(targets, [])
 })
 
-test('directory sources hash identically to the same bytes zipped', async () => {
-  const root = await tempRoot()
+test('directory sources hash identically to the same bytes zipped', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
   const zipPath = await writeDemoZip(root)

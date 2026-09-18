@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -18,6 +17,7 @@ import {
 } from '../src/timing.ts'
 import { USAGE_FIELD } from '../src/usage.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * How long each generation took, from the stream's own chunks to the chat file
@@ -238,8 +238,7 @@ async function open(dir: string, stream: StreamFn): Promise<Omit<Fixture, 'dir'>
 
 /** A service over a fresh profile holding one card. */
 async function fixture(t: TestContext, stream: StreamFn): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-timing-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-timing-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
   return { dir, ...await open(dir, stream) }

@@ -12,8 +12,7 @@
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test, type TestContext } from 'node:test'
@@ -34,6 +33,7 @@ import {
 import { IrisAppService, presetScalarPatch, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -271,13 +271,7 @@ async function service(
   t: TestContext,
   global: Partial<GenerationSettings>,
 ): Promise<Handlers> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-model-context-'))
-  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
-  // the Windows window 2b43efc found: a write can land a moment after the
-  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
-  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
-  // which replaced one write syscall per save with a write and a rename.
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-model-context-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
@@ -383,13 +377,7 @@ test('one ceiling bounds a typed window, a reported one, and the wire', async (t
    * table, which is private: what matters is that it accepts the ceiling and
    * refuses one past it, not how it spells the range.
    */
-  const dir = await mkdtemp(join(tmpdir(), 'iris-ceiling-'))
-  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
-  // the Windows window 2b43efc found: a write can land a moment after the
-  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
-  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
-  // which replaced one write syscall per save with a write and a rename.
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-ceiling-')
   const store = new SettingsStore(join(dir, 'settings.json'), {
     provider: 'default',
     model: 'deepseek-v4-flash',

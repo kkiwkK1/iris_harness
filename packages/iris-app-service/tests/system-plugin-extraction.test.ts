@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -19,6 +17,7 @@ import {
 } from '../src/plugins/capabilities.ts'
 import { createMvuCapability, type MvuCapability } from '../src/plugins/mvu.ts'
 import { SystemPluginRuntime } from '../src/system-plugins.ts'
+import { removeTempDir, tempDirOwned } from './support/temp-dir.ts'
 
 /** A card with one declared MVU value and one greeting candidate. */
 function card(): CharacterCard {
@@ -44,7 +43,7 @@ function card(): CharacterCard {
 
 /** A real runtime backed by a test-local preference file. */
 async function runtime(t: TestContext): Promise<SystemPluginRuntime> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-extraction-'))
+  const dir = await tempDirOwned('iris-plugin-extraction-')
   const context = new Context()
   const plugins = new SystemPluginRuntime({
     context,
@@ -52,9 +51,12 @@ async function runtime(t: TestContext): Promise<SystemPluginRuntime> {
     definitions: BUILTIN_SYSTEM_PLUGIN_DEFINITIONS,
   })
   await plugins.initialize()
+  // `tempDirOwned`, not `tempDir`: the runtime has to be disposed before the
+  // directory it writes into goes away, and a `tempDir` removal would be
+  // registered first and therefore run first.
   t.after(async () => {
     await plugins.dispose()
-    await rm(dir, { recursive: true, force: true })
+    await removeTempDir(dir)
   })
   return plugins
 }

@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { decodeCardPng, normalizeCard, type CharacterCard } from '@iris/character'
 import { fromCharacterBook } from '@iris/lorebook'
@@ -13,6 +12,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { resolveCardWorldbook, WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A card's world info comes from **one** book, chosen — never from both merged.
@@ -71,8 +71,8 @@ const cardWith = (options: { world?: string, embedded?: string[] }): CharacterCa
     },
   })
 
-async function storeWith(books: Record<string, string[]>): Promise<WorldbookStore> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-src-'))
+async function storeWith(t: TestContext, books: Record<string, string[]>): Promise<WorldbookStore> {
+  const dir = await tempDir(t, 'iris-src-')
   await mkdir(join(dir, 'worlds'), { recursive: true })
   for (const [name, texts] of Object.entries(books)) {
     await writeFile(
@@ -88,8 +88,8 @@ async function storeWith(books: Record<string, string[]>): Promise<WorldbookStor
 
 // ------------------------------------------------------------ the three rules
 
-test('a binding that resolves wins over the embedded book', async () => {
-  const store = await storeWith({ Eldoria: ['named A', 'named B'] })
+test('a binding that resolves wins over the embedded book', async (t: TestContext) => {
+  const store = await storeWith(t, { Eldoria: ['named A', 'named B'] })
   const resolved = await resolveCardWorldbook(cardWith({ world: 'Eldoria', embedded: ['old A'] }), store)
 
   // Upstream's semantics, and also the copy the user edits: when the two
@@ -99,8 +99,8 @@ test('a binding that resolves wins over the embedded book', async () => {
   assert.deepEqual(resolved.entries.map(e => e.content), ['named A', 'named B'])
 })
 
-test('the two sources are never combined', async () => {
-  const store = await storeWith({ Eldoria: ['shared', 'named only'] })
+test('the two sources are never combined', async (t: TestContext) => {
+  const store = await storeWith(t, { Eldoria: ['shared', 'named only'] })
   const resolved = await resolveCardWorldbook(
     cardWith({ world: 'Eldoria', embedded: ['shared', 'embedded only'] }),
     store,
@@ -113,8 +113,8 @@ test('the two sources are never combined', async () => {
   assert.equal(resolved.entries.some(e => e.content === 'embedded only'), false)
 })
 
-test('a binding with no file behind it resolves to nothing — assembly reads one channel', async () => {
-  const store = await storeWith({ Somewhere: ['unrelated'] })
+test('a binding with no file behind it resolves to nothing — assembly reads one channel', async (t: TestContext) => {
+  const store = await storeWith(t, { Somewhere: ['unrelated'] })
   const resolved = await resolveCardWorldbook(
     cardWith({ world: 'no such book', embedded: ['still playable'] }),
     store,
@@ -139,8 +139,8 @@ test('a binding with no file behind it resolves to nothing — assembly reads on
   assert.deepEqual(resolved.entries, [])
 })
 
-test('a materialised binding outranks the name written on the card', async () => {
-  const store = await storeWith({ 'Aria (2)': ['the materialised copy'] })
+test('a materialised binding outranks the name written on the card', async (t: TestContext) => {
+  const store = await storeWith(t, { 'Aria (2)': ['the materialised copy'] })
 
   // When the wanted name collided, materialisation minted a different one and
   // recorded it. The binding table is the link between card and book, so it is
@@ -158,8 +158,8 @@ test('a materialised binding outranks the name written on the card', async () =>
   assert.deepEqual(resolved.entries.map(e => e.content), ['the materialised copy'])
 })
 
-test('a card with no books at all resolves to nothing, not to an error', async () => {
-  const store = await storeWith({})
+test('a card with no books at all resolves to nothing, not to an error', async (t: TestContext) => {
+  const store = await storeWith(t, {})
   const resolved = await resolveCardWorldbook(cardWith({}), store)
   assert.deepEqual(resolved, { entries: [], source: 'none', world: 'Aria', additional: [], global: [] })
 
@@ -258,13 +258,13 @@ test('choosing changes nothing for cards whose two books agree', {
   )
 })
 
-test('the chosen book reaches prompt assembly, not just the resolver', async () => {
+test('the chosen book reaches prompt assembly, not just the resolver', async (t: TestContext) => {
   // The resolver being right is worth nothing if nothing calls it. This is the
   // end-to-end claim: a card whose only world info is in a named book gets that
   // book's constant entry into its itemization — which, before this change,
   // was unreachable because assembly read `character_book` and that card has
   // none.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-src-e2e-'))
+  const dir = await tempDir(t, 'iris-src-e2e-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(

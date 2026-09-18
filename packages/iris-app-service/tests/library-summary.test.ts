@@ -18,14 +18,14 @@
 
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type { CharacterSummary } from '@iris/protocol'
 
 import { CharacterLibrary } from '../src/library.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /** A `.json` card body, V3-shaped, with only what a test overrides. */
 function card(data: Record<string, unknown>): string {
@@ -38,8 +38,7 @@ function card(data: Record<string, unknown>): string {
 
 /** A directory of cards, as a profile holds them. */
 async function libraryOf(t: TestContext, files: Record<string, string>): Promise<CharacterLibrary> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-summary-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-summary-')
   const characters = join(dir, 'characters')
   await mkdir(characters, { recursive: true })
   for (const [name, text] of Object.entries(files)) await writeFile(join(characters, name), text, 'utf8')

@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import type { GenerationSettings } from '@iris/protocol'
 
@@ -11,6 +10,7 @@ import { fromCharacterBook } from '@iris/lorebook'
 import { lorebookSettings } from '../src/lorebook-settings.ts'
 import { DEFAULT_PRESET, buildPrompt } from '../src/prompt.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 import {
   DEFAULT_WORLDBOOK_SETTINGS,
   activationSettingsOf,
@@ -30,8 +30,8 @@ import {
 
 const ROUTE: GenerationSettings = { provider: 'test', model: 'test-model' }
 
-async function storeWith(file: Record<string, unknown> | undefined): Promise<SettingsStore> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-wb-settings-'))
+async function storeWith(t: TestContext, file: Record<string, unknown> | undefined): Promise<SettingsStore> {
+  const dir = await tempDir(t, 'iris-wb-settings-')
   const path = join(dir, 'settings.json')
   if (file !== undefined) {
     await mkdir(dir, { recursive: true })
@@ -54,8 +54,8 @@ test('the defaults are SillyTavern’s shipped values, including matchWholeWords
   assert.deepEqual(resolveWorldbookSettings(undefined), DEFAULT_WORLDBOOK_SETTINGS)
 })
 
-test('a patch lands, persists, and survives a reload', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-wb-settings-'))
+test('a patch lands, persists, and survives a reload', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-wb-settings-')
   const store = new SettingsStore(join(dir, 'settings.json'), ROUTE)
   await store.load()
 
@@ -71,12 +71,12 @@ test('a patch lands, persists, and survives a reload', async () => {
   assert.equal(reopened.worldbookSettings().recursive, true)
 })
 
-test('a settings file carries its worldbooks section across a load', async () => {
+test('a settings file carries its worldbooks section across a load', async (t: TestContext) => {
   // **The regression.** `load` rebuilds the store's file state wholesale, and an
   // earlier version stopped at `chats` — so this section was written, read back
   // correctly while the process lived, and silently reset on the next start. A
   // user's global selection and scan knobs vanished with no error anywhere.
-  const store = await storeWith({
+  const store = await storeWith(t, {
     global: ROUTE,
     chats: {},
     worldbooks: {
@@ -90,8 +90,8 @@ test('a settings file carries its worldbooks section across a load', async () =>
   assert.equal(store.worldbookSettings().insertionStrategy, 'global_first')
 })
 
-test('a global selection write does not reset the scan settings', async () => {
-  const store = await storeWith({
+test('a global selection write does not reset the scan settings', async (t: TestContext) => {
+  const store = await storeWith(t, {
     global: ROUTE,
     chats: {},
     worldbooks: { globalSelect: ['a'], settings: { scanDepth: 9 } },
@@ -102,8 +102,8 @@ test('a global selection write does not reset the scan settings', async () => {
   assert.equal(store.worldbookSettings().scanDepth, 9)
 })
 
-test('a scan settings write does not reset the global selection', async () => {
-  const store = await storeWith({
+test('a scan settings write does not reset the global selection', async (t: TestContext) => {
+  const store = await storeWith(t, {
     global: ROUTE,
     chats: {},
     worldbooks: { globalSelect: ['a'], settings: {} },
@@ -114,8 +114,8 @@ test('a scan settings write does not reset the global selection', async () => {
   assert.equal(store.worldbookSettings().matchWholeWords, true)
 })
 
-test('a bad value is refused by name, not clamped', async () => {
-  const store = await storeWith(undefined)
+test('a bad value is refused by name, not clamped', async (t: TestContext) => {
+  const store = await storeWith(t, undefined)
   assert.throws(() => sanitizeWorldbookSettings({ scanDepth: 1.5 }), /scanDepth/)
   assert.throws(() => sanitizeWorldbookSettings({ budgetPercent: 101 }), /budgetPercent/)
   assert.throws(() => sanitizeWorldbookSettings({ insertionStrategy: 'sortednicely' }), /insertionStrategy/)
@@ -202,13 +202,13 @@ test('a name-keyed entry fires on who spoke, only when include_names is on', () 
   assert.equal(fired(false), false, 'with names off, nothing in the text says "Seraphina"')
 })
 
-test('the stored knob reaches the defaults and the card-facing table', async () => {
+test('the stored knob reaches the defaults and the card-facing table', async (t: TestContext) => {
   // Default is ST's, not ours: a book tuned on a stock install was tuned
   // against `true` (`world-info.js:74`).
   assert.equal(DEFAULT_WORLDBOOK_SETTINGS.includeNames, true)
   assert.equal(resolveWorldbookSettings(undefined).includeNames, true)
 
-  const store = await storeWith({
+  const store = await storeWith(t, {
     global: ROUTE,
     chats: {},
     worldbooks: { settings: { includeNames: false } },

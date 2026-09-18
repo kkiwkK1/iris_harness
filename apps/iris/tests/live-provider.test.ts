@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +8,8 @@ import { boot } from '@deepseek-ai/dsh-app-boot'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { historyFromSession, TurnDriver } from '@iris/turn'
 import type { Contribution } from '@iris/pipeline'
+
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * A real turn against a real provider.
@@ -60,7 +60,9 @@ before(async () => {
   // **real** composition: it defaults to 8787 and `apps/iris/data`, both of
   // which belong to whatever host the person running this has open — and the
   // app service now refuses to start on a data directory another host holds.
-  dataDir = await mkdtemp(join(tmpdir(), 'iris-live-'))
+  // `tempDirOwned`, not `tempDir`: a file-level `before` has no test context,
+  // and the host boots on this directory and holds it until the `after`.
+  dataDir = await tempDirOwned('iris-live-')
   process.env.IRIS_PORT = '0'
   process.env.IRIS_DATA_DIR = dataDir
   ctx = await boot('iris-live', fileURLToPath(new URL('../cordis.yml', import.meta.url)))
@@ -68,7 +70,7 @@ before(async () => {
 
 after(async () => {
   if (ctx !== undefined) await ctx.fiber.dispose()
-  if (dataDir !== undefined) await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  if (dataDir !== undefined) await removeTempDir(dataDir)
 })
 
 const CONTRIBUTIONS: Contribution[] = [

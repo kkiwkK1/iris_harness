@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { textOf } from '../src/views.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The floor-addressing, outlet and budget macros, on the path that sends them.
@@ -65,8 +65,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-floor-macros-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-floor-macros-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardWithOutletEntry(), 'utf8')
 

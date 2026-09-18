@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -15,6 +14,7 @@ import { CharacterLibrary } from '../../../packages/iris-app-service/src/library
 import { ChatStore } from '../../../packages/iris-app-service/src/chats.ts'
 import { IrisAppService } from '../../../packages/iris-app-service/src/service.ts'
 import { SettingsStore } from '../../../packages/iris-app-service/src/settings.ts'
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The generation kinds against a real provider.
@@ -53,7 +53,9 @@ before(async () => {
   process.env.IRIS_BASE_URL = 'https://api.deepseek.com/v1'
   process.env.IRIS_MODEL = MODEL
   process.env.IRIS_API_KEY_ENV = 'DEEPSEEK_API_KEY'
-  dir = await mkdtemp(join(tmpdir(), 'iris-live-kinds-'))
+  // `tempDirOwned`, not `tempDir`: a file-level `before` has no test context,
+  // and the host boots on this directory and holds it until the `after`.
+  dir = await tempDirOwned('iris-live-kinds-')
   // An ephemeral port and a temporary data directory, because this boots the
   // **real** composition: it defaults to 8787 and `apps/iris/data`, both of
   // which belong to whatever host the person running this has open — and the
@@ -95,7 +97,7 @@ before(async () => {
 
 after(async () => {
   if (ctx !== undefined) await ctx.fiber.dispose()
-  if (dir !== undefined) await rm(dir, { recursive: true, force: true })
+  if (dir !== undefined) await removeTempDir(dir)
 })
 
 /** Wait for one more settled generation. */

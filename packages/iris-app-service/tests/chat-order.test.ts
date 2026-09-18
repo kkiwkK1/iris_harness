@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -12,6 +11,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The order a reader put their conversations in.
@@ -37,8 +37,7 @@ import { materialisingChatStore } from './support/materialising-store.ts'
 
 /** A profile directory with a card in it, cleaned up after the test. */
 async function profileFixture(t: TestContext): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-chatorder-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-chatorder-')
   const characters = join(dir, 'characters')
   await mkdir(characters, { recursive: true })
   await writeFile(
@@ -80,8 +79,7 @@ function summary(chatId: string, updatedAt: number): ChatSummary {
 // -------------------------------------------------------------------- store
 
 test('the arrangement survives a restart, and an unused profile never gets the file', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-chatorder-store-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-chatorder-store-')
   const path = join(dir, 'chat-order.json')
 
   const store = new ChatOrderStore(path)
@@ -98,8 +96,7 @@ test('the arrangement survives a restart, and an unused profile never gets the f
 })
 
 test('a repeated id means one position, and an empty order is the way back', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-chatorder-dedupe-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-chatorder-dedupe-')
   const store = new ChatOrderStore(join(dir, 'chat-order.json'))
 
   // The panel assembles its request by concatenating roots with their
@@ -113,8 +110,7 @@ test('a repeated id means one position, and an empty order is the way back', asy
 })
 
 test('the store rewrites nothing when the order it is handed is the order it has', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-chatorder-idem-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-chatorder-idem-')
   const path = join(dir, 'chat-order.json')
   const store = new ChatOrderStore(path)
 
@@ -127,8 +123,7 @@ test('the store rewrites nothing when the order it is handed is the order it has
 })
 
 test('forgetting one id closes the gap and leaves the rest in order', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-chatorder-forget-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-chatorder-forget-')
   const store = new ChatOrderStore(join(dir, 'chat-order.json'))
   await store.set(['a', 'b', 'c'])
   await store.forget('b')

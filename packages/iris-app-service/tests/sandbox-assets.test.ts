@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { serveSandboxAsset } from '../src/sandbox-assets.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The sandbox's own build artifacts, served to an opaque-origin frame.
@@ -39,8 +39,7 @@ function request(url: string, method = 'GET'): Parameters<typeof serveSandboxAss
 }
 
 async function assets(t: TestContext, manifest?: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-sandbox-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-sandbox-')
   await mkdir(join(dir, 'sandbox'), { recursive: true })
   await writeFile(join(dir, 'sandbox', 'preset.js'), 'globalThis.Vue = {}', 'utf8')
   await writeFile(join(dir, 'sandbox', 'preset-eb451a5035b60339.js'), 'globalThis.Vue = {}', 'utf8')

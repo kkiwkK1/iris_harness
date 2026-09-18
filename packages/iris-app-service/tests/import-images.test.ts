@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -13,6 +12,7 @@ import {
 } from '@iris/character'
 
 import { CharacterLibrary } from '../src/library.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Images that carry no card, imported as empty characters.
@@ -72,10 +72,7 @@ function parametersOnlyPng(): Uint8Array {
 
 /** The library under test, in a folder that dies with the test. */
 async function libraryFor(t: TestContext): Promise<{ library: CharacterLibrary, charactersDir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-import-'))
-  t.after(async () => {
-    await rm(dir, { recursive: true, force: true })
-  })
+  const dir = await tempDir(t, 'iris-import-')
   const charactersDir = join(dir, 'characters')
   const library = new CharacterLibrary(charactersDir, '/iris/avatar')
   await library.ensure()

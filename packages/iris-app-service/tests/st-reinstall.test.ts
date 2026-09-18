@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { installedTreePresent } from '../src/st-reinstall.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The reinstall predicate. The uninstall rule keeps an extension's installed
@@ -16,8 +16,7 @@ import { installedTreePresent } from '../src/st-reinstall.ts'
  */
 
 async function treeWithLock(t: TestContext, withLock: boolean): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'iris-st-reinstall-'))
-  t.after(async () => { await rm(root, { recursive: true, force: true }) })
+  const root = await tempDir(t, 'iris-st-reinstall-')
   const dir = join(root, 'installed', 'prompt-template')
   await mkdir(dir, { recursive: true })
   if (withLock) await writeFile(join(dir, 'lock.json'), '{"artifactSha256":"a".repeat(64)}\n', 'utf8')
@@ -35,7 +34,6 @@ test('a tree without a lock (half-open transaction) is not an installed tree', a
 })
 
 test('an extensions root that does not exist yet installs fresh', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'iris-st-reinstall-'))
-  t.after(async () => { await rm(root, { recursive: true, force: true }) })
+  const root = await tempDir(t, 'iris-st-reinstall-')
   assert.equal(installedTreePresent(root, 'prompt-template'), false)
 })

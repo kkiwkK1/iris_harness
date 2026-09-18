@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import fsp from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { Installer } from '@iris/extension-installer'
 import { PLUGIN_COPY_LIMITS } from '@iris/text'
+import { tempDir } from './support/temp-dir.ts'
 
 import {
   auditPluginCopy,
@@ -32,8 +32,8 @@ import {
  * user is told to fix.
  */
 
-async function tempRoot(): Promise<string> {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'iris-plugin-manifest-'))
+async function tempRoot(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-plugin-manifest-')
 }
 
 /** A package.json object that parses clean, with one field overridden per case. */
@@ -150,8 +150,8 @@ test('every manifest-invalid result names the field, one case per field spelling
   )
 })
 
-test('a fully valid manifest parses into the declared shape', async () => {
-  const dir = await writePackage(path.join(await tempRoot(), 'pkg'), validPackage())
+test('a fully valid manifest parses into the declared shape', async (t: TestContext) => {
+  const dir = await writePackage(path.join(await tempRoot(t), 'pkg'), validPackage())
   const result = await parsePluginManifest(dir)
   assert.equal(result.ok, true, result.ok ? '' : `${result.field}: ${result.reason}`)
   if (!result.ok) return
@@ -186,8 +186,8 @@ test('the optional lists default to empty and client stays absent', () => {
 
 // --- path containment: invariant #7 ----------------------------------------
 
-test('host and client must be relative in-tree paths (§9 #7)', async () => {
-  const root = await tempRoot()
+test('host and client must be relative in-tree paths (§9 #7)', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const outside = path.join(root, 'outside.js')
   await fsp.writeFile(outside, 'export default {}\n')
 
@@ -224,8 +224,8 @@ test('host and client must be relative in-tree paths (§9 #7)', async () => {
   assert.equal(field(await parsePluginManifest(clientDir)), 'client')
 })
 
-test('an entry that does not exist, or is a directory, is refused', async () => {
-  const root = await tempRoot()
+test('an entry that does not exist, or is a directory, is refused', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const missing = await writePackage(path.join(root, 'missing'), validPackage({}, { host: 'dist/index.js' }))
   assert.equal(field(await parsePluginManifest(missing)), 'host')
 
@@ -242,8 +242,8 @@ test('an entry that does not exist, or is a directory, is refused', async () => 
 
 // --- symlinks: invariant #10 ------------------------------------------------
 
-test('an entry reached through a symlink or junction is refused (§9 #10)', async () => {
-  const root = await tempRoot()
+test('an entry reached through a symlink or junction is refused (§9 #10)', async (t: TestContext) => {
+  const root = await tempRoot(t)
 
   // A junction/symlink as an intermediate directory: `lstat` of the full path
   // would follow it, so the check walks every component. This case is the one
@@ -273,8 +273,8 @@ test('an entry reached through a symlink or junction is refused (§9 #10)', asyn
 
 // --- apiVersion and the supported range ------------------------------------
 
-test('apiVersion outside the host range is incompatible, not manifest-invalid', async () => {
-  const root = await tempRoot()
+test('apiVersion outside the host range is incompatible, not manifest-invalid', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const outOfRange = ['2.0', '0.9', '1.1', '11.0', '2.0.0-alpha.1']
   let compared = 0
   for (const declared of outOfRange) {
@@ -316,10 +316,10 @@ test('the range check is separable from the parse', () => {
   assert.equal(checkPluginApiVersion(inRange.manifest), null)
 })
 
-test('a malformed field beats an out-of-range version', async () => {
+test('a malformed field beats an out-of-range version', async (t: TestContext) => {
   // Order is observable: a host that cannot read a field has not earned an
   // opinion about the version.
-  const dir = await writePackage(path.join(await tempRoot(), 'both'), validPackage({}, { apiVersion: '9.0', id: 'NOPE' }))
+  const dir = await writePackage(path.join(await tempRoot(t), 'both'), validPackage({}, { apiVersion: '9.0', id: 'NOPE' }))
   const result = await parsePluginManifest(dir)
   assert.equal(result.ok, false)
   assert.equal(result.ok ? '' : result.state, 'manifest-invalid')
@@ -382,8 +382,8 @@ test('the vocabulary is accepted in full, and only in full', () => {
 
 // --- the installer seam, with the real contract -----------------------------
 
-test('the system-plugin contract installs a plugin tree and refuses an ST one', async () => {
-  const root = await tempRoot()
+test('the system-plugin contract installs a plugin tree and refuses an ST one', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const pkg = await writePackage(path.join(root, 'plugin-tree'), validPackage())
 
   const installer = await Installer.create(path.join(root, 'store'))
@@ -427,8 +427,8 @@ async function writeCopyPackage(root: string, en: unknown, zh: unknown): Promise
   return await writePackage(path.join(root, 'pkg'), withCopy(), extra)
 }
 
-test('the i18n entries go through the same filesystem half as host and client', async () => {
-  const root = await tempRoot()
+test('the i18n entries go through the same filesystem half as host and client', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const missingEn = await writePackage(
     path.join(root, 'missing-en'),
     withCopy(),
@@ -456,9 +456,9 @@ test('the i18n entries go through the same filesystem half as host and client', 
   assert.match(asDir.ok ? '' : asDir.reason, /not a regular file/u)
 })
 
-test('clean two-column copy audits to the total string count', async () => {
+test('clean two-column copy audits to the total string count', async (t: TestContext) => {
   const dir = await writeCopyPackage(
-    path.join(await tempRoot(), 'clean'),
+    path.join(await tempRoot(t), 'clean'),
     { greeting: 'hello {name}', send: 'Send' },
     { greeting: '你好，{name}', send: '发送' },
   )
@@ -469,9 +469,9 @@ test('clean two-column copy audits to the total string count', async () => {
   assert.deepEqual(audit, { ok: true, keys: 4 })
 })
 
-test('the content audit refuses placeholder drift, naming the key (U5 T2)', async () => {
+test('the content audit refuses placeholder drift, naming the key (U5 T2)', async (t: TestContext) => {
   const dir = await writeCopyPackage(
-    path.join(await tempRoot(), 'drift'),
+    path.join(await tempRoot(t), 'drift'),
     { greeting: 'hello {name}' },
     { greeting: '你好' },
   )
@@ -485,9 +485,9 @@ test('the content audit refuses placeholder drift, naming the key (U5 T2)', asyn
   assert.match(audit.reason, /placeholder drift on "greeting"/u)
 })
 
-test('the content audit refuses an all-English zh column (U5 T3)', async () => {
+test('the content audit refuses an all-English zh column (U5 T3)', async (t: TestContext) => {
   const dir = await writeCopyPackage(
-    path.join(await tempRoot(), 'english'),
+    path.join(await tempRoot(t), 'english'),
     { greeting: 'hello' },
     { greeting: 'hello' },
   )
@@ -501,8 +501,8 @@ test('the content audit refuses an all-English zh column (U5 T3)', async () => {
   assert.match(audit.reason, /has no Chinese/u)
 })
 
-test('the content audit refuses a broken table: bad JSON, wrong type, bad key', async () => {
-  const root = await tempRoot()
+test('the content audit refuses a broken table: bad JSON, wrong type, bad key', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const brokenJson = await writePackage(
     path.join(root, 'json'),
     withCopy(),
@@ -549,9 +549,9 @@ test('the content audit refuses a broken table: bad JSON, wrong type, bad key', 
   }
 })
 
-test('the copy ceilings are overridable so the refusals are reachable (U5 T12)', async () => {
+test('the copy ceilings are overridable so the refusals are reachable (U5 T12)', async (t: TestContext) => {
   const dir = await writeCopyPackage(
-    path.join(await tempRoot(), 'limits'),
+    path.join(await tempRoot(t), 'limits'),
     { greeting: 'hello', send: 'send' },
     { greeting: '你好', send: '发送' },
   )
@@ -574,8 +574,8 @@ test('the copy ceilings are overridable so the refusals are reachable (U5 T12)',
   }
 })
 
-test('the artifact contract refuses drifting copy before anything is hashed', async () => {
-  const root = await tempRoot()
+test('the artifact contract refuses drifting copy before anything is hashed', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const pkg = await writeCopyPackage(
     path.join(root, 'pkg'),
     { greeting: 'hello {name}' },
@@ -589,8 +589,8 @@ test('the artifact contract refuses drifting copy before anything is hashed', as
   assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'installed')), [], 'a refused tree is never promoted')
 })
 
-test('a manifest without i18n audits clean with zero keys', async () => {
-  const dir = await writePackage(path.join(await tempRoot(), 'plain'), validPackage())
+test('a manifest without i18n audits clean with zero keys', async (t: TestContext) => {
+  const dir = await writePackage(path.join(await tempRoot(t), 'plain'), validPackage())
   const parsed = await parsePluginManifest(dir)
   assert.ok(parsed.ok)
   if (!parsed.ok) return

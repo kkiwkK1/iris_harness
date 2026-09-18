@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { PresetStore } from '../src/presets.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { IrisAppService, presetScalarPatch, type Handlers } from '../src/service.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The preset switch and the prompt manager, as the protocol serves them.
@@ -80,8 +80,7 @@ async function fixture(
     install?: string
   } = {},
 ): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-preset-mgr-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-preset-mgr-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -105,8 +104,7 @@ async function fixture(
 }
 
 test('preset.list names the library, the active preset and what the install offers', async (t) => {
-  const installDir = await mkdtemp(join(tmpdir(), 'iris-install-'))
-  t.after(async () => { await rm(installDir, { recursive: true, force: true }) })
+  const installDir = await tempDir(t, 'iris-install-')
   await mkdir(join(installDir, 'OpenAI Settings'), { recursive: true })
   await writeFile(join(installDir, 'OpenAI Settings', 'FromInstall.json'), JSON.stringify(OTHER_PRESET), 'utf8')
 
@@ -306,8 +304,7 @@ test('preset.read returns the file body an export downloads', async (t) => {
 })
 
 test('preset.import copies from the install and reports each skip with its reason', async (t) => {
-  const installDir = await mkdtemp(join(tmpdir(), 'iris-install-'))
-  t.after(async () => { await rm(installDir, { recursive: true, force: true }) })
+  const installDir = await tempDir(t, 'iris-install-')
   await mkdir(join(installDir, 'OpenAI Settings'), { recursive: true })
   await writeFile(join(installDir, 'OpenAI Settings', 'Good.json'), JSON.stringify(LIBRARY_PRESET), 'utf8')
   await writeFile(join(installDir, 'OpenAI Settings', 'NotOne.json'), '{"x": 1}', 'utf8')

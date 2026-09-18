@@ -4,19 +4,18 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
+
+import { tempDir } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The published contract packages work **outside** this workspace.
@@ -291,128 +290,124 @@ function stageSampleRepository(dir: string): { modules: string, out: string } {
 
 test('the published contract packages resolve and run outside the workspace', async (t) => {
   const started = Date.now()
-  const dir = mkdtempSync(join(tmpdir(), 'iris-contract-pack-'))
-  try {
-    const { modules, out } = stageSampleRepository(dir)
+  const dir = await tempDir(t, 'iris-contract-pack-')
+  const { modules, out } = stageSampleRepository(dir)
 
-    // 0. The run cleared the output it found. Both decoys are gone, and the
-    //    only tarballs present are this run's three.
-    assert.equal(existsSync(join(out, 'protocol', 'lib', 'ghost.js')), false, 'a stale emitted file survived the run')
-    assert.equal(existsSync(join(out, 'iris-protocol-0.0.1.tgz')), false, 'a stale tarball survived the run')
-    assert.deepEqual(
-      readdirSync(out).filter(entry => entry.endsWith('.tgz')).sort(),
-      PACKAGES.map(({ stage }) => `iris-${stage}-${VERSION}.tgz`).sort(),
-    )
+  // 0. The run cleared the output it found. Both decoys are gone, and the
+  //    only tarballs present are this run's three.
+  assert.equal(existsSync(join(out, 'protocol', 'lib', 'ghost.js')), false, 'a stale emitted file survived the run')
+  assert.equal(existsSync(join(out, 'iris-protocol-0.0.1.tgz')), false, 'a stale tarball survived the run')
+  assert.deepEqual(
+    readdirSync(out).filter(entry => entry.endsWith('.tgz')).sort(),
+    PACKAGES.map(({ stage }) => `iris-${stage}-${VERSION}.tgz`).sort(),
+  )
 
-    // 1. The published manifests say what they must say, read out of the
-    //    tarball rather than out of the staging directory: what a consumer
-    //    installs is the tarball.
-    for (const { stage, name } of PACKAGES) {
-      const manifest = JSON.parse(
-        readFileSync(join(modules, '@iris', stage, 'package.json'), 'utf8'),
-      ) as Record<string, unknown>
-      assert.equal(manifest['name'], name)
-      assert.equal(manifest['version'], VERSION)
-      assert.equal(manifest['private'], undefined, `${name} must not publish as private`)
-      assert.deepEqual(manifest['exports'], {
-        '.': { types: './lib/index.d.ts', default: './lib/index.js' },
-      }, `${name}'s published exports must face lib, never src`)
-      const deps = (manifest['dependencies'] ?? {}) as Record<string, string>
-      const unresolved = Object.entries(deps).filter(([, range]) => range.startsWith('workspace:'))
-      assert.deepEqual(unresolved, [], `${name} published an unresolvable workspace range`)
-      for (const [dep, range] of Object.entries(deps)) {
-        if (dep.startsWith('@iris/')) assert.equal(range, VERSION, `${name} -> ${dep}`)
-      }
-      // The framework is a peer everywhere it appears: a plugin installing its
-      // own second copy would get a second module identity and silently
-      // register its services into a registry the host never reads.
-      assert.equal(deps['@deepseek-ai/cordis'], undefined, `${name} must not depend on Cordis`)
-      assert.ok(existsSync(join(modules, '@iris', stage, 'lib', 'index.js')), `${name} lib/index.js`)
-      assert.ok(existsSync(join(modules, '@iris', stage, 'lib', 'index.d.ts')), `${name} lib/index.d.ts`)
+  // 1. The published manifests say what they must say, read out of the
+  //    tarball rather than out of the staging directory: what a consumer
+  //    installs is the tarball.
+  for (const { stage, name } of PACKAGES) {
+    const manifest = JSON.parse(
+      readFileSync(join(modules, '@iris', stage, 'package.json'), 'utf8'),
+    ) as Record<string, unknown>
+    assert.equal(manifest['name'], name)
+    assert.equal(manifest['version'], VERSION)
+    assert.equal(manifest['private'], undefined, `${name} must not publish as private`)
+    assert.deepEqual(manifest['exports'], {
+      '.': { types: './lib/index.d.ts', default: './lib/index.js' },
+    }, `${name}'s published exports must face lib, never src`)
+    const deps = (manifest['dependencies'] ?? {}) as Record<string, string>
+    const unresolved = Object.entries(deps).filter(([, range]) => range.startsWith('workspace:'))
+    assert.deepEqual(unresolved, [], `${name} published an unresolvable workspace range`)
+    for (const [dep, range] of Object.entries(deps)) {
+      if (dep.startsWith('@iris/')) assert.equal(range, VERSION, `${name} -> ${dep}`)
     }
-    const pluginApi = JSON.parse(
-      readFileSync(join(modules, '@iris', 'plugin-api', 'package.json'), 'utf8'),
-    ) as { peerDependencies?: Record<string, string> }
-    assert.equal(pluginApi.peerDependencies?.['@deepseek-ai/cordis'], '4.0.2')
-
-    // 2. No emitted JavaScript may import a `.ts` file. The type checker below
-    //    cannot see this — it reads the declarations — and the loader below
-    //    sees only the entry point's own graph, so the scan is what covers the
-    //    files neither of them reaches.
-    const survivors: string[] = []
-    for (const { stage } of PACKAGES) {
-      const lib = join(modules, '@iris', stage, 'lib')
-      for (const file of readdirSync(lib).filter(entry => entry.endsWith('.js'))) {
-        const source = readFileSync(join(lib, file), 'utf8')
-        for (const match of source.matchAll(/from ["'](\.[^"']*\.ts)["']/g)) {
-          survivors.push(`${stage}/lib/${file}: ${match[1] as string}`)
-        }
-      }
-    }
-    assert.deepEqual(survivors, [], 'a .ts specifier survived into the emitted JavaScript')
-
-    // 2b. The tarball carries no source maps. `lib` is everything that ships
-    //     and there is no `src/` beside it, so a `.d.ts.map`/`.js.map` would
-    //     point at files no consumer has — a dangling map is worse than an
-    //     absent one, because "go to definition" follows it and lands nowhere.
-    //     Both halves are asserted: the maps are absent from the extracted
-    //     tree, and the tarball's own entry list — read from the bytes rather
-    //     than from what the extractor chose to write — names no `*.map`.
-    //     `inlineSources` alone could smuggle the source text in without a map
-    //     file, so the emitted `.js`/`.d.ts` are checked for `sourceMappingURL`
-    //     too. A mutation re-enabling `declarationMap`/`sourceMap` in any pack
-    //     config reddens this.
-    const mapFiles: string[] = []
-    const mapPointers: string[] = []
-    for (const { stage } of PACKAGES) {
-      const lib = join(modules, '@iris', stage, 'lib')
-      for (const file of readdirSync(lib)) {
-        if (file.endsWith('.map')) mapFiles.push(`${stage}/lib/${file}`)
-        if (file.endsWith('.js') || file.endsWith('.d.ts')) {
-          const source = readFileSync(join(lib, file), 'utf8')
-          if (/sourceMappingURL=/.test(source)) mapPointers.push(`${stage}/lib/${file}`)
-        }
-      }
-    }
-    assert.deepEqual(mapFiles, [], 'a source map shipped in lib/, where nothing can resolve it')
-    assert.deepEqual(mapPointers, [], 'an emitted file still points at a source map that does not ship')
-
-    // 3. A plugin author's type check: the published `types` condition only,
-    //    no paths, no alias, no workspace.
-    const tsc = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc')
-    try {
-      execFileSync(process.execPath, [tsc, '-p', dir, '--noEmit'], { stdio: 'pipe', encoding: 'utf8' })
-    } catch (error) {
-      const failure = error as { stdout?: string, stderr?: string }
-      assert.fail(`the sample plugin does not typecheck against the published packages:\n${failure.stdout ?? ''}${failure.stderr ?? ''}`)
-    }
-
-    // 4. The loader's turn. `import()` with a computed specifier, so nothing
-    //    here is resolved by TypeScript at build time either.
-    const protocolEntry = pathToFileURL(join(modules, '@iris', 'protocol', 'lib', 'index.js')).href
-    const protocol = await import(protocolEntry) as { requestSchemas: Record<string, unknown> }
-    const methods = Object.keys(protocol.requestSchemas)
-    assert.ok(methods.length > 100, `expected the whole RPC surface, got ${String(methods.length)} methods`)
-    assert.ok(methods.includes('plugin.list'), 'expected the system-plugin methods')
-
-    const webEntry = pathToFileURL(join(modules, '@iris', 'plugin-web-api', 'lib', 'index.js')).href
-    const web = await import(webEntry) as {
-      parsePluginAssetManifest: (text: string) => { revision: number, plugins: Record<string, unknown> } | string
-      PLUGIN_ASSET_MANIFEST_PATH: string
-    }
-    const parsed = web.parsePluginAssetManifest(JSON.stringify({
-      revision: 3,
-      plugins: { example: { rev: '0123456789ab', client: '/plugins/example/client.js?v=0123456789ab' } },
-    }))
-    assert.notEqual(typeof parsed, 'string', `the manifest parser refused a valid manifest: ${String(parsed)}`)
-    assert.deepEqual(parsed, {
-      revision: 3,
-      plugins: { example: { rev: '0123456789ab', client: '/plugins/example/client.js?v=0123456789ab' } },
-    })
-    assert.equal(web.PLUGIN_ASSET_MANIFEST_PATH, '/plugins/manifest.json')
-
-    t.diagnostic(`contract-pack: ${String(Date.now() - started)} ms`)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
+    // The framework is a peer everywhere it appears: a plugin installing its
+    // own second copy would get a second module identity and silently
+    // register its services into a registry the host never reads.
+    assert.equal(deps['@deepseek-ai/cordis'], undefined, `${name} must not depend on Cordis`)
+    assert.ok(existsSync(join(modules, '@iris', stage, 'lib', 'index.js')), `${name} lib/index.js`)
+    assert.ok(existsSync(join(modules, '@iris', stage, 'lib', 'index.d.ts')), `${name} lib/index.d.ts`)
   }
+  const pluginApi = JSON.parse(
+    readFileSync(join(modules, '@iris', 'plugin-api', 'package.json'), 'utf8'),
+  ) as { peerDependencies?: Record<string, string> }
+  assert.equal(pluginApi.peerDependencies?.['@deepseek-ai/cordis'], '4.0.2')
+
+  // 2. No emitted JavaScript may import a `.ts` file. The type checker below
+  //    cannot see this — it reads the declarations — and the loader below
+  //    sees only the entry point's own graph, so the scan is what covers the
+  //    files neither of them reaches.
+  const survivors: string[] = []
+  for (const { stage } of PACKAGES) {
+    const lib = join(modules, '@iris', stage, 'lib')
+    for (const file of readdirSync(lib).filter(entry => entry.endsWith('.js'))) {
+      const source = readFileSync(join(lib, file), 'utf8')
+      for (const match of source.matchAll(/from ["'](\.[^"']*\.ts)["']/g)) {
+        survivors.push(`${stage}/lib/${file}: ${match[1] as string}`)
+      }
+    }
+  }
+  assert.deepEqual(survivors, [], 'a .ts specifier survived into the emitted JavaScript')
+
+  // 2b. The tarball carries no source maps. `lib` is everything that ships
+  //     and there is no `src/` beside it, so a `.d.ts.map`/`.js.map` would
+  //     point at files no consumer has — a dangling map is worse than an
+  //     absent one, because "go to definition" follows it and lands nowhere.
+  //     Both halves are asserted: the maps are absent from the extracted
+  //     tree, and the tarball's own entry list — read from the bytes rather
+  //     than from what the extractor chose to write — names no `*.map`.
+  //     `inlineSources` alone could smuggle the source text in without a map
+  //     file, so the emitted `.js`/`.d.ts` are checked for `sourceMappingURL`
+  //     too. A mutation re-enabling `declarationMap`/`sourceMap` in any pack
+  //     config reddens this.
+  const mapFiles: string[] = []
+  const mapPointers: string[] = []
+  for (const { stage } of PACKAGES) {
+    const lib = join(modules, '@iris', stage, 'lib')
+    for (const file of readdirSync(lib)) {
+      if (file.endsWith('.map')) mapFiles.push(`${stage}/lib/${file}`)
+      if (file.endsWith('.js') || file.endsWith('.d.ts')) {
+        const source = readFileSync(join(lib, file), 'utf8')
+        if (/sourceMappingURL=/.test(source)) mapPointers.push(`${stage}/lib/${file}`)
+      }
+    }
+  }
+  assert.deepEqual(mapFiles, [], 'a source map shipped in lib/, where nothing can resolve it')
+  assert.deepEqual(mapPointers, [], 'an emitted file still points at a source map that does not ship')
+
+  // 3. A plugin author's type check: the published `types` condition only,
+  //    no paths, no alias, no workspace.
+  const tsc = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc')
+  try {
+    execFileSync(process.execPath, [tsc, '-p', dir, '--noEmit'], { stdio: 'pipe', encoding: 'utf8' })
+  } catch (error) {
+    const failure = error as { stdout?: string, stderr?: string }
+    assert.fail(`the sample plugin does not typecheck against the published packages:\n${failure.stdout ?? ''}${failure.stderr ?? ''}`)
+  }
+
+  // 4. The loader's turn. `import()` with a computed specifier, so nothing
+  //    here is resolved by TypeScript at build time either.
+  const protocolEntry = pathToFileURL(join(modules, '@iris', 'protocol', 'lib', 'index.js')).href
+  const protocol = await import(protocolEntry) as { requestSchemas: Record<string, unknown> }
+  const methods = Object.keys(protocol.requestSchemas)
+  assert.ok(methods.length > 100, `expected the whole RPC surface, got ${String(methods.length)} methods`)
+  assert.ok(methods.includes('plugin.list'), 'expected the system-plugin methods')
+
+  const webEntry = pathToFileURL(join(modules, '@iris', 'plugin-web-api', 'lib', 'index.js')).href
+  const web = await import(webEntry) as {
+    parsePluginAssetManifest: (text: string) => { revision: number, plugins: Record<string, unknown> } | string
+    PLUGIN_ASSET_MANIFEST_PATH: string
+  }
+  const parsed = web.parsePluginAssetManifest(JSON.stringify({
+    revision: 3,
+    plugins: { example: { rev: '0123456789ab', client: '/plugins/example/client.js?v=0123456789ab' } },
+  }))
+  assert.notEqual(typeof parsed, 'string', `the manifest parser refused a valid manifest: ${String(parsed)}`)
+  assert.deepEqual(parsed, {
+    revision: 3,
+    plugins: { example: { rev: '0123456789ab', client: '/plugins/example/client.js?v=0123456789ab' } },
+  })
+  assert.equal(web.PLUGIN_ASSET_MANIFEST_PATH, '/plugins/manifest.json')
+
+  t.diagnostic(`contract-pack: ${String(Date.now() - started)} ms`)
 })

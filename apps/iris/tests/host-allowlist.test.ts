@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import net from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +9,8 @@ import type { Context, EffectMeta } from '@deepseek-ai/cordis'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { describeUnconfiguredBind } from '@iris/rpc-host'
+
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The DNS-rebinding exploit, fired at a booted host, and refused.
@@ -50,12 +51,14 @@ let port: number
 let rebinding: string
 
 before(async () => {
-  dataDir = await mkdtemp(join(tmpdir(), 'iris-hostguard-'))
+  // `tempDirOwned`, not `tempDir`: a file-level `before` has no test context,
+  // and the booted host holds both of these until the `after` disposes it.
+  dataDir = await tempDirOwned('iris-hostguard-')
   await mkdir(join(dataDir, 'default-user', 'characters'), { recursive: true })
 
   // A dist tree just real enough to mount the sandbox route and have one file
   // in it; the route resolves `<dirname(webDistIndex)>/sandbox`.
-  distDir = await mkdtemp(join(tmpdir(), 'iris-hostguard-dist-'))
+  distDir = await tempDirOwned('iris-hostguard-dist-')
   await mkdir(join(distDir, 'sandbox'), { recursive: true })
   await writeFile(join(distDir, 'index.html'), '<!doctype html><title>t</title>', 'utf8')
   await writeFile(join(distDir, 'sandbox', 'preset.js'), 'globalThis.x = 1\n', 'utf8')
@@ -72,8 +75,8 @@ after(async () => {
   await ctx.fiber.dispose()
   // Windows keeps a handle inside the profile for a moment after disposal; the
   // same retry the other host tests use.
-  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
-  await rm(distDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  await removeTempDir(dataDir)
+  await removeTempDir(distDir)
 })
 
 /** The real authority this host bound, i.e. what a legitimate page sends. */

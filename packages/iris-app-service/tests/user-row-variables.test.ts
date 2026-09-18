@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { ChatStore } from '../src/chats.ts'
 import { buildCardContext } from '../src/context.ts'
 import { CharacterLibrary } from '../src/library.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A user row's own variable table survives into the snapshot.
@@ -51,8 +51,7 @@ const CARD = JSON.stringify({
  * two rows that cannot tell the implementations apart.
  */
 async function chatWithBoth(t: TestContext): Promise<ChatStore> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-urv-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-urv-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'chats'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')

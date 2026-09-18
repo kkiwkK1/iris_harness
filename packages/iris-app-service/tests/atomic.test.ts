@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import {
   atomicWriteFile, quarantineCorruptFile, quarantineUnparsable, readJsonStore,
 } from '../src/atomic.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The replace-or-leave-alone helper every store in this package writes through.
@@ -31,9 +31,7 @@ import {
 
 /** A fresh directory, removed when the test ends. */
 async function scratch(t: TestContext): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-atomic-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
-  return dir
+  return await tempDir(t, 'iris-atomic-')
 }
 
 /** Everything in the directory that looks like one of this helper's temporaries. */

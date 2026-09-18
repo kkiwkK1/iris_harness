@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 import { HOST_LOCK_FILE } from '@iris/app-service'
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * A booted host takes its data directory, and the second one does not start.
@@ -25,7 +25,7 @@ import { HOST_LOCK_FILE } from '@iris/app-service'
  * `--dataRoot` — the configuration that actually cost this repository three
  * rounds of misdiagnosis. Two ephemeral ports, one directory, refused.
  *
- * Every directory is an `mkdtemp`; nothing here goes near `apps/iris/data`.
+ * Every directory comes from `tempDirOwned`; nothing here goes near `apps/iris/data`.
  *
  * @module apps/iris/tests/host-lock
  */
@@ -38,13 +38,16 @@ const made: string[] = []
 
 after(async () => {
   for (const ctx of open.reverse()) await ctx.fiber.dispose().catch(() => undefined)
-  // Windows keeps a handle inside the profile for a moment after disposal.
-  for (const dir of made) await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  // `tempDirOwned`, not `tempDir`: a booted host holds its data directory, so
+  // the removal has to come after every fiber above has been disposed — which
+  // is a file-level `after`, not a per-test one. Windows keeps a handle inside
+  // the profile for a moment after disposal; `removeTempDir` carries the retry.
+  for (const dir of made) await removeTempDir(dir)
 })
 
 /** A data directory nobody else has, with the profile the app service expects. */
 async function dataDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-lockboot-'))
+  const dir = await tempDirOwned('iris-lockboot-')
   made.push(dir)
   await mkdir(join(dir, 'default-user', 'characters'), { recursive: true })
   return dir

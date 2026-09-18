@@ -14,6 +14,7 @@ import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
 import { WorldbookBindingStore } from '../src/materialise.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The character manager: rename, duplicate, tags, export, favorites.
@@ -91,8 +92,7 @@ function sablePng(): Uint8Array {
 
 /** A directory of cards, as a user's profile holds them. */
 async function libraryFixture(t: TestContext, files: Record<string, Uint8Array | string> = {}): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-charops-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-charops-')
   const characters = join(dir, 'characters')
   await mkdir(characters, { recursive: true })
   for (const [name, bytes] of Object.entries(files)) {
@@ -277,8 +277,7 @@ test('export refuses the format a file cannot be', async (t) => {
 // ---------------------------------------------------------------- favorites
 
 test('the favorite store stars, unstarrs, persists, and forgets', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-favs-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-favs-')
   const path = join(dir, 'favorites.json')
 
   const store = new FavoriteStore(path)
@@ -380,13 +379,13 @@ test('a duplicate shares its source\'s materialised book, like a shared binding 
   assert.equal(copied.name, 'Lighthouse Lore', 'the duplicate minted its own book')
 })
 
-test('an import whose id differs from an existing card only by case does not take it', async () => {
+test('an import whose id differs from an existing card only by case does not take it', async (t: TestContext) => {
   // An id is a filename, and on Windows and macOS `sable.json` and `Sable.json`
   // are the same file: minting `Sable` beside an existing `sable` would
   // overwrite that card there and sit next to it on Linux. The library folds
   // case when it asks what is taken, so both systems mint the same id - and it
   // is the suffixed one.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-case-'))
+  const dir = await tempDir(t, 'iris-case-')
   const characters = join(dir, 'characters')
   await mkdir(characters, { recursive: true })
   const body = JSON.stringify({ spec: 'chara_card_v3', spec_version: '3.0', data: cardBody() })

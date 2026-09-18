@@ -134,6 +134,49 @@ Get-ChildItem $env:TEMP -Directory -Filter 'iris-*' | Remove-Item -Recurse -Forc
 `notes/st-compat/acceptance/pilot-host.mjs` 与 `seed.mjs` 也还没动:它们把数据目录的路径
 **打到 stdout 给驱动用**,退出即删会改掉那个约定,要连验收脚本一起改才算数。
 
+**另一笔账当天就结了。** 上面那句「前者是另一笔账,还没动」说的单元测试,来源被逐点数清:
+`packages/*/tests`、`apps/*/tests`、`tests/` 里一共 **203 处 `mkdtemp` 调用**,其中 **179 处
+本来就写了 `t.after` 的删除,只有 24 处没写**。漏掉的不是一条错的行,是一条**不存在的行**,
+评审看不见 —— 所以修法不是补那 24 处,而是让第一行自己带上第二行:新的
+`packages/iris-app-service/tests/support/temp-dir.ts` 导出 `tempDir(t, prefix)`,建目录的同时
+就把删除挂到 `t.after` 上;203 处全部改走它,这三棵测试树里 `mkdtemp` 一处不剩。它**镜像**
+`qa/chrome-profile.mjs` 的删除语义(同一份 30 × 200 ms 重试预算、同一套 rename-aside 兜底)
+而不是 import 它:`qa/` 不在根 `tsconfig.json` 的 `include` 里且是 JSDoc 标注的 JS,而那边的
+`tempDir` 返回的是一个装了 `process.on('exit')` / `SIGINT` 处理器、还要认领子进程的 handle ——
+那是给 `process.exit()` 收尾的扁平脚本用的契约,`node:test` 既不需要也用不上。
+
+少数目录活得比一个测试长(文件级 `before()` 里建的,或者被 booted host / headless Chrome
+占着的),走 `tempDirOwned` + `removeTempDir`,由调用方在**停掉那个东西之后**自己删 ——
+因为 `t.after` 按注册顺序跑,建目录时挂上的删除会跑在 dispose **前面**。这 14 个文件每个都要
+写明为什么不是 `tempDir`,门禁会数它们。
+
+第 14 个是这次改动**量出来的**,不是设计出来的:`card-storage.test.ts` 改成 `tempDir` 之后,
+整套跑完 18 个 fixture 里有 **8 个目录又回来了**,里面只有一个 `card-storage.json`、没有
+`characters/` —— 因为 `CardStorageStore` 的写是 debounce 的,定时器在删除**之后**才响,
+`#save` 里的 `mkdir(…, {recursive:true})` 把父目录又建了回去。单跑这个文件一次都不漏,因为
+那个定时器 `unref` 过,单文件的进程在它响之前就退了。所以它现在先 `flush()` 再删。
+**这不是这次改动引入的**:main 上那一版 `t.after` + `rm` 有同一个竞态,只是没人对着 `%TEMP%`
+数过。
+
+同一次测量还纠正了一个方法学前提:`%TEMP%` 是**跨会话共享**的,并发的 peer 会话会往里写
+(量的时候就抓到过 `iris-qa-cdp-*` 和 `iris-sandbox-plugins-b-qa-*`)。所以「增量为 0」这个
+判据要在**隔离的 TEMP** 下复现才算数 —— `TEMP=<临时根> TMP=<临时根> npm test`,`os.tmpdir()`
+在 Windows 上就认这两个变量。上面那 8 个目录正是这样才认定是自己的而不是别人的。
+
+门禁还是 `apps/iris/tests/temp-dir-discipline.test.ts`,尾部多了一块只管测试树的断言:扫到的
+文件数有下界(写这条时 391 个),**import 了这个 helper 的文件数也有下界**(122 个 —— 空集
+同样满足「没有违规者」,所以要有阳性对照),`tempDirOwned` 的用量有上界。验证方式是在一个
+测试里塞回一行裸 `mkdtempSync` 看它变红,再撤掉看它变绿。
+
+**数字**:origin/main 上跑一趟 `npm test`(`fail 0`,4344 个测试),`%TEMP%` 里 `iris-*` 目录
+1969 → 2345,**+376**;改完之后连跑两趟(`fail 0`,4352 个测试),3108 → 3107 → 3107,
+**两趟新增的 `iris-*` 目录都是 0 个**(那 −1 是别的会话的目录被清掉了,不是这边的)。隔离
+TEMP 下的对照也是 0。
+
+历史堆积的那几万条不在这次清理范围内 —— helper **不扫**兄弟目录:`qa/chrome-profile.mjs` 敢扫
+是因为它的前缀属于单个脚本,而测试的前缀在并发的会话之间是共用的,按前缀扫会删掉别人正在
+跑的 fixture。那批存量由操作者按前缀手工删。
+
 ---
 
 ## 定位:两类,不要合并成一条「不按文本」

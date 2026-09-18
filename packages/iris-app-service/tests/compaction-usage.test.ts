@@ -18,8 +18,7 @@
  * @module @iris/app-service/tests/compaction-usage
  */
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -34,6 +33,7 @@ import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { compactionUsage, readSideUsage, scriptUsage, SIDE_USAGE_FIELD } from '../src/side-usage.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /** A plain card: nothing here is about world info. */
 const CARD = JSON.stringify({
@@ -77,8 +77,7 @@ interface Fixture {
  * @returns the fixture.
  */
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-compaction-usage-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-compaction-usage-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -282,8 +281,7 @@ test('a summary the provider fails still leaves nothing to a conversation that w
    * is the other half of the rule — no usage reported means no record at all,
    * rather than a zero-filled one that claims a generation nobody measured.
    */
-  const dir = await mkdtemp(join(tmpdir(), 'iris-compaction-usage-fail-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-compaction-usage-fail-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')

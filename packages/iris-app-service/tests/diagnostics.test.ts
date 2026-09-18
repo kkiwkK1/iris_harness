@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -12,6 +11,7 @@ import { DiagnosticBuffer, WIRED_KINDS, type ReportKind } from '../src/diagnosti
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Retention for the diagnostic bus, and the read surface over it.
@@ -65,8 +65,7 @@ interface Fixture {
  * @returns the handlers, the buffer, and a settle barrier.
  */
 async function fixture(t: TestContext, withBuffer = true): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-diag-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-diag-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

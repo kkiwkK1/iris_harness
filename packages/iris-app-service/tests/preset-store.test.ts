@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -8,6 +7,7 @@ import type { ChatCompletionPreset } from '@iris/preset'
 
 import { AppError } from '../src/errors.ts'
 import { PresetStore, asPreset, sanitizePresetName } from '../src/presets.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The profile's preset files.
@@ -34,8 +34,7 @@ const PRESET: ChatCompletionPreset = {
 } as unknown as ChatCompletionPreset
 
 async function mkStore(t: TestContext): Promise<{ store: PresetStore, dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-presets-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-presets-')
   return { store: new PresetStore(join(dir, 'presets')), dir }
 }
 
@@ -112,12 +111,8 @@ test('save refuses a body with no prompts array: a library of non-presets is wor
 })
 
 test('importFrom copies from the install read-only and reports each name’s outcome', async (t) => {
-  const source = await mkdtemp(join(tmpdir(), 'iris-install-'))
-  const lib = await mkdtemp(join(tmpdir(), 'iris-presets-'))
-  t.after(async () => {
-    await rm(source, { recursive: true, force: true })
-    await rm(lib, { recursive: true, force: true })
-  })
+  const source = await tempDir(t, 'iris-install-')
+  const lib = await tempDir(t, 'iris-presets-')
   await mkdir(join(source, 'OpenAI Settings'), { recursive: true })
   await writeFile(join(source, 'OpenAI Settings', 'Real.json'), JSON.stringify(PRESET), 'utf8')
   await writeFile(join(source, 'OpenAI Settings', 'NotPreset.json'), '{"x": 1}', 'utf8')
@@ -135,12 +130,8 @@ test('importFrom copies from the install read-only and reports each name’s out
 })
 
 test('importFrom overwrites a name already in the library: an import is a re-read of the source', async (t) => {
-  const source = await mkdtemp(join(tmpdir(), 'iris-install-'))
-  const lib = await mkdtemp(join(tmpdir(), 'iris-presets-'))
-  t.after(async () => {
-    await rm(source, { recursive: true, force: true })
-    await rm(lib, { recursive: true, force: true })
-  })
+  const source = await tempDir(t, 'iris-install-')
+  const lib = await tempDir(t, 'iris-presets-')
   await mkdir(join(source, 'OpenAI Settings'), { recursive: true })
   await writeFile(join(source, 'OpenAI Settings', 'Same.json'), JSON.stringify(PRESET), 'utf8')
 
@@ -154,12 +145,8 @@ test('importFrom overwrites a name already in the library: an import is a re-rea
 })
 
 test('importFrom names each reason a preset could not come over', async (t) => {
-  const source = await mkdtemp(join(tmpdir(), 'iris-install-'))
-  const lib = await mkdtemp(join(tmpdir(), 'iris-presets-'))
-  t.after(async () => {
-    await rm(source, { recursive: true, force: true })
-    await rm(lib, { recursive: true, force: true })
-  })
+  const source = await tempDir(t, 'iris-install-')
+  const lib = await tempDir(t, 'iris-presets-')
   // A profile directory with no OpenAI Settings at all.
   await mkdir(source, { recursive: true })
 

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, mkdir, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { materialisingChatStore } from './support/materialising-store.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A new chat's message 0 carries the card's declared starting state.
@@ -42,8 +42,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-seed-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-seed-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await copyFile(CARD, join(dir, 'characters', '爱衣.png'))
 

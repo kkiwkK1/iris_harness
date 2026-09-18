@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { ScriptLibraryStore } from '../src/script-library.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The user's own script library.
@@ -73,8 +73,7 @@ async function fixture(t: TestContext): Promise<{
   library: ScriptLibraryStore
   policy: ScriptPolicyStore
 }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-script-library-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-script-library-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
 
@@ -328,8 +327,7 @@ test('a library script’s switch is written to the library, a card script’s t
 })
 
 test('a host with no library refuses every library method rather than answering empty', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-no-library-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-no-library-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardFile(), 'utf8')
   const characters = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -16,6 +15,7 @@ import { ScriptPolicyStore } from '../src/scripts.ts'
 import type { FetchLike } from '../src/remote-fetch.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The user's decisions about card scripts, and the fetch whitelist at the
@@ -51,8 +51,7 @@ const NOTHING: StreamFn = async function* (_options: GenerateOptions): AsyncIter
 
 /** A booted service with a card library and a policy store. */
 async function fixture(t: TestContext, fetchRemote?: NonNullable<Parameters<typeof makeService>[1]>) {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   return makeService(dir, fetchRemote)
@@ -118,8 +117,7 @@ test("the user can switch on a script the card's author disabled", async (t) => 
 test('the user override survives a fresh store reading the same file', async (t) => {
   // The point of persisting it: a re-import must not revive a script the user
   // turned off, and that only holds if the decision outlives the process.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -147,8 +145,7 @@ test('an unknown script id is refused rather than stored', async (t) => {
 // ── the document grant ──────────────────────────────────────────────────────
 
 test('the document grant is denied by default and survives a restart once given', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -262,8 +259,7 @@ test("a source's own failure is reported as the source's, not as a refusal", asy
 })
 
 test('a deleted card does not leave its document grant for the next card to inherit', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   // The card is called "Aria", so the id a fresh import mints is `Aria` - and
   // the file here has to carry that exact id for the re-import to *reuse* it,
@@ -307,8 +303,7 @@ test('every per-character store forgets, not just the two that were checked', as
   // two of them. A fix asserted in part is a fix whose remainder rests on the
   // same reading that missed it the first time — and `ExtensionSettingsStore`
   // is the one whose `forget` had never had a call site at all.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -362,8 +357,7 @@ test('the run-scripts answer has three states, and "no" is not the same as "not 
 })
 
 test('a declined answer survives a restart', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -445,8 +439,7 @@ test('one script’s partition is not another’s, in the payload as in the stor
 })
 
 test('the global scope survives a restart, at upstream’s own path', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   const settingsPath = join(dir, 'extension-settings.json')

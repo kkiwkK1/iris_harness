@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -17,6 +16,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { backupsDir } from '../src/paths.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The copies the host takes in front of the irreversible.
@@ -66,8 +66,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, options?: { keep?: number, withBackups?: boolean }): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-backups-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-backups-')
   await mkdir(join(dir, 'chats'), { recursive: true })
   await setChatFile(dir, 'long', 6)
 
@@ -294,8 +293,7 @@ test('a preview reads its facts off the snapshot bytes', async (t) => {
 })
 
 test('a preview clips floor text instead of re-rendering the conversation', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-backups-preview-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-backups-preview-')
   await mkdir(join(dir, 'chats'), { recursive: true })
   const long = 'x'.repeat(500)
   await writeFile(join(dir, 'chats', 'long.jsonl'), formatChatFile({

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -21,6 +20,7 @@ import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { SystemPluginRuntime } from '../src/system-plugins.ts'
 import { arbitrateMessageVariables } from '../src/variable-arbitration.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 const CARD = JSON.stringify({
   spec: 'chara_card_v2', spec_version: '2.0',
@@ -47,8 +47,7 @@ async function fixture(
   stFloor: Record<string, unknown> | undefined,
   mvuAfter: Record<string, unknown> | undefined,
 ): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-variable-arbitration-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-variable-arbitration-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   const counts: Counts = { st: 0, mvu: 0 }

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -12,6 +11,7 @@ import {
   WorldbookBindingStore,
 } from '../src/materialise.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Materialising a card's embedded book into a named one.
@@ -41,8 +41,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-mat-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-mat-')
   return {
     dir,
     worldbooks: new WorldbookStore(join(dir, 'worlds')),
