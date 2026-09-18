@@ -183,11 +183,18 @@ export interface RunningCardScripts {
    * no frame on purpose, and a mount arriving then is a request that came before
    * the thing it is about. The caller is expected to rebuild the set, which is
    * what changing the plugin list does anyway.
+   *
+   * **It says which of the two happened**, and that is the whole reason it
+   * answers anything: a mount into no frame and a mount that was delivered look
+   * identical from here afterwards, and the first one is `orphaned` — a state
+   * the design requires a report for (§6.4 cause ①). Copying the silent drop
+   * without counting it would be behaviour parity and not diagnostic parity.
    * @param pluginId - the plugin's id.
    * @param version - which version of it.
    * @param code - the body, as authored.
+   * @returns whether a frame was there to receive it.
    */
-  mountPlugin: (pluginId: string, version: number, code: string) => void
+  mountPlugin: (pluginId: string, version: number, code: string) => boolean
   /**
    * Take a sandbox plugin down, running the six-item checklist in the frame.
    * @param pluginId - the plugin's id.
@@ -474,9 +481,13 @@ export function startCardScripts(
     },
 
     mountPlugin: (pluginId, version, code) => {
-      if (disposed) return
+      if (disposed) return false
       mountedPlugins.add(pluginId)
       for (const card of cards) card.mountPlugin(pluginId, version, code)
+      // The count, not a flag: "one frame took it" and "no frame existed" are
+      // the two states a caller has to tell apart, and `cards` is the only
+      // place that knows which one just happened.
+      return cards.length > 0
     },
 
     unmountPlugin: pluginId => {

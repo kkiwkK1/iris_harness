@@ -37,6 +37,8 @@ import type {
   RegexScriptView,
   RpcRequest,
   RpcResponse,
+  SandboxPluginVerdict,
+  SandboxPluginView,
   ScopedRegexView,
   ScriptContext,
   ScriptView,
@@ -696,6 +698,50 @@ export interface IrisState {
    * unnamed. Carries a key *source*, never a key.
    */
   hostConnection: HostDefaultConnection | undefined
+  /**
+   * Which saved profile and model write sandbox plugins.
+   *
+   * `undefined` means the setting has not been made, which is exactly what the
+   * 「创造」 entry renders as dark-with-a-sentence. **Never filled in from
+   * `activeConnectionId`** (`docs/SANDBOX-PLUGINS.md` §11.1): a fall back would
+   * spend a reader's money on a model they did not choose.
+   */
+  authoringConnection: { id: string, model: string } | undefined
+
+  /**
+   * What this conversation has grown, as the panel shows it.
+   *
+   * No source in it — `SandboxPluginView` carries none, by design — so this is
+   * safe to keep in a store the whole interface reads from.
+   */
+  sandboxPlugins: SandboxPluginView[]
+  /** Which conversation `sandboxPlugins` describes, so a stale list is never shown. */
+  sandboxPluginsFor: string | undefined
+  /**
+   * What the frame should mount, with the source, in id order.
+   *
+   * Kept apart from the list above for the reason the wire keeps them apart:
+   * this is only ever the plugins that are enabled *and* authorised, so a row
+   * waiting for an answer can never reach a frame through it.
+   */
+  sandboxPluginMounts: { pluginId: string, version: number, code: string }[]
+  /**
+   * The definition waiting for an answer, which the confirmation card is drawn from.
+   *
+   * One at a time, because the card is one card and a queue of them would be a
+   * modal stack in everything but name.
+   */
+  sandboxPluginPending: SandboxPluginView | undefined
+  /** Whether a definition request is in flight, so the composer can say so. */
+  sandboxPluginWorking: boolean
+  /**
+   * Why the last definition did not become a feature.
+   *
+   * Held rather than only raised as a notice: a notice clears itself after a
+   * few seconds, and the one thing a reader wants after a failed definition is
+   * to press 「try again」 — which needs the sentence still to be on screen.
+   */
+  sandboxPluginRefusal: { detail: string, sentence: string } | undefined
 
   /**
    * The profile's preset library, once fetched.
@@ -1201,6 +1247,39 @@ export interface IrisActions {
    */
   runCardAction(method: string, params: unknown): Promise<unknown>
   loadConnections(): Promise<void>
+  /**
+   * Choose — or clear — which saved provider and model write sandbox plugins.
+   *
+   * Its own action rather than a flag on `saveConnection`, because saving a
+   * provider and choosing what it is *for* are two acts (owner, 2026-09-09) and
+   * a control that did both would make the choice a side effect.
+   * @param next - the provider and model, or undefined to clear the setting.
+   */
+  setAuthoringConnection(next: { id: string, model: string } | undefined): Promise<void>
+  /**
+   * What this conversation has grown, and what its frame should mount.
+   * @param chatId - the conversation.
+   */
+  loadSandboxPlugins(chatId: string): Promise<void>
+  /**
+   * Turn one sentence into a plugin, and park it for the confirmation card.
+   *
+   * The **expensive** action: it spends a model call. It answers nothing —
+   * everything it produces lands in the store, because the composer that calls
+   * it is not the surface that shows the answer.
+   * @param sentence - the reader's own words.
+   * @param replaces - the plugin this rewrites, when it rewrites one.
+   */
+  defineSandboxPlugin(sentence: string, replaces?: string): Promise<void>
+  /**
+   * Answer the confirmation card, or work one of the panel's controls.
+   * @param pluginId - which plugin.
+   * @param verdict - what the reader decided.
+   * @param hash - the version the card showed, for the two authorising verdicts.
+   */
+  decideSandboxPlugin(pluginId: string, verdict: SandboxPluginVerdict, hash?: string): Promise<void>
+  /** Drop the sentence that says why the last definition failed. */
+  clearSandboxPluginRefusal(): void
   /**
    * Use one saved provider, **globally**.
    *
@@ -1738,6 +1817,13 @@ export function createIrisStore(
       connections: [],
       activeConnectionId: undefined,
       hostConnection: undefined,
+      authoringConnection: undefined,
+      sandboxPlugins: [],
+      sandboxPluginsFor: undefined,
+      sandboxPluginMounts: [],
+      sandboxPluginPending: undefined,
+      sandboxPluginWorking: false,
+      sandboxPluginRefusal: undefined,
       presets: undefined,
       activePreset: undefined,
       presetInstall: undefined,
@@ -1795,6 +1881,12 @@ export function createIrisStore(
               connections: connections.profiles,
               activeConnectionId: connections.activeId,
               hostConnection: connections.host,
+              // Read at boot rather than when the connection card is first
+              // opened, because a *different* surface depends on it: the
+              // composer's 「Grow a feature」 entry is dark until this says a
+              // model was chosen, and an entry that is dark because nobody has
+              // opened a panel is an entry that lies about the setting.
+              authoringConnection: connections.authoring,
             },
           })
           if (systemPlugins !== undefined) {
@@ -3084,8 +3176,131 @@ export function createIrisStore(
             connections: listed.profiles,
             activeConnectionId: listed.activeId,
             hostConnection: listed.host,
+            // Taken from the answer rather than left alone, so clearing it host
+            // side (deleting the profile it named) reaches the interface in the
+            // same read that shows the profile is gone.
+            authoringConnection: listed.authoring,
           })
         })
+      },
+
+      async setAuthoringConnection(next): Promise<void> {
+        await guard(async () => {
+          const answer = await client.call(
+            'connection.authoring',
+            next === undefined ? {} : { id: next.id, model: next.model },
+          )
+          set({ authoringConnection: answer.authoring })
+        })
+      },
+
+      async loadSandboxPlugins(chatId): Promise<void> {
+        // Asked once per conversation, the shape `loadScripts` has: two
+        // surfaces want this list (the frame, to mount, and the panel, to show)
+        // and neither knows about the other.
+        if (get().sandboxPluginsFor === chatId) return
+        /*
+         * Cleared first, exactly as `loadScripts` clears the script list: the
+         * previous conversation's plugins must not sit under this one's name for
+         * the length of a round trip, because "what did *this* conversation
+         * grow" is the only question the panel exists to answer.
+         */
+        set({ sandboxPluginsFor: chatId, sandboxPlugins: [], sandboxPluginMounts: [] })
+        try {
+          const listed = await client.call('sandboxPlugin.list', { chatId })
+          if (get().sandboxPluginsFor !== chatId) return
+          set({ sandboxPlugins: listed.plugins, sandboxPluginMounts: listed.mounts })
+        } catch {
+          /*
+           * **Swallowed, unlike every other action here.** A host composed
+           * without the store refuses this by name, and that refusal is a fact
+           * about the host rather than about the reader's last act — raising it
+           * as an error notice would put a red bar over every conversation
+           * opened on such a host. The panel says the same thing quietly,
+           * because it can see the empty list and the refusal together.
+           */
+          if (get().sandboxPluginsFor === chatId) set({ sandboxPlugins: [], sandboxPluginMounts: [] })
+        }
+      },
+
+      async defineSandboxPlugin(sentence, replaces): Promise<void> {
+        const chatId = get().chatId
+        const characterId = get().view?.characterId
+        if (chatId === undefined || characterId === undefined) return
+        set({ sandboxPluginWorking: true, sandboxPluginRefusal: undefined })
+        try {
+          const answer = await client.call('sandboxPlugin.define', {
+            chatId,
+            characterId,
+            sentence,
+            ...replaces === undefined ? {} : { replaces },
+          })
+          // A definition takes a model call, which is long enough to change
+          // conversations; the answer belongs to the one it was asked about.
+          if (get().chatId !== chatId) return
+          set({
+            sandboxPlugins: answer.plugins,
+            sandboxPluginMounts: answer.mounts,
+            sandboxPluginsFor: chatId,
+            sandboxPluginPending: answer.pending,
+          })
+        } catch (error: unknown) {
+          if (get().chatId !== chatId) return
+          /*
+           * Kept on the store **and** raised. The notice is how a reader who is
+           * looking elsewhere finds out; the stored sentence is what the retry
+           * entry hangs off, and a notice that clears itself after a few seconds
+           * cannot carry a control.
+           */
+          /*
+           * **The host's own sentence, not the general one for its code.**
+           *
+           * `describeError` prefers the general copy for `invalid-request`,
+           * because there the detail is usually an identifier ("no chat
+           * \"chat-7\""). Here it is the opposite and measured: the acceptance
+           * run's item 6 showed a reader 「Iris 不会发送这个请求」 for a refusal
+           * whose actual words were 「the model's code does not compile —
+           * SyntaxError: Unexpected token ')'」. The design asks for a sentence
+           * the player can act on (§6.1) and the general one is not it, so the
+           * detail is taken straight off the error and the general copy is only
+           * the fallback when there is no detail at all.
+           */
+          const raw = asRpcError(error, getLanguage())
+          const detail = raw.message.trim() === '' ? describeError(error, getLanguage()) : raw.message
+          set({ sandboxPluginRefusal: { detail, sentence } })
+          set(raise('error', translate(getLanguage(), 'createFailed', { detail })))
+        } finally {
+          if (get().chatId === chatId) set({ sandboxPluginWorking: false })
+        }
+      },
+
+      async decideSandboxPlugin(pluginId, verdict, hash): Promise<void> {
+        const chatId = get().chatId
+        const characterId = get().view?.characterId
+        if (chatId === undefined || characterId === undefined) return
+        await guard(async () => {
+          const answer = await client.call('sandboxPlugin.decide', {
+            chatId,
+            characterId,
+            pluginId,
+            verdict,
+            ...hash === undefined ? {} : { hash },
+          })
+          if (get().chatId !== chatId) return
+          set({
+            sandboxPlugins: answer.plugins,
+            sandboxPluginMounts: answer.mounts,
+            sandboxPluginsFor: chatId,
+            // The card is answered, whichever way. Held open for a plugin that
+            // is still unauthorised would be a card the reader already dealt
+            // with asking the same question again.
+            sandboxPluginPending: undefined,
+          })
+        })
+      },
+
+      clearSandboxPluginRefusal(): void {
+        set({ sandboxPluginRefusal: undefined })
       },
 
       async activateConnection(id: string): Promise<void> {

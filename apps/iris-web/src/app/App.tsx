@@ -31,6 +31,7 @@ import { Sidebar } from './Sidebar.tsx'
 import type { SidebarTab } from './Sidebar.tsx'
 import { CardScriptFrames } from './useCardScripts.tsx'
 import { ConsentAsk } from './ConsentAsk.tsx'
+import { SandboxPluginConfirm } from './SandboxPluginConfirm.tsx'
 import { CardPopup } from './CardPopup.tsx'
 import { CleanupOffer } from './CleanupOffer.tsx'
 import { StatePanel } from './StatePanel.tsx'
@@ -193,6 +194,15 @@ export function App(): ReactElement {
           it does not expire — a question that times out has answered itself.
         */}
         <ConsentAsk />
+
+        {/*
+          And the other question of the same kind: a model has written a plugin
+          for this conversation and it is parked, unable to mount, until this is
+          answered. Beside `ConsentAsk` because it obeys the same five rules and
+          for the same reason — a question about whether to run code has to be
+          where the reader is, and it must not expire.
+        */}
+        <SandboxPluginConfirm />
 
         {notice === undefined ? null : (
           <div className={`iris-notice iris-notice--${notice.kind}`} role="status" key={notice.seq}>

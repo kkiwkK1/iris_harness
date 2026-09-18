@@ -248,6 +248,74 @@ export const en = {
   composerMore: 'Prompt and commands',
   composerSlash: 'Slash commands',
 
+  /*
+   * Sandbox plugins: the conversation growing a feature of its own.
+   *
+   * The wording throughout is by consequence rather than by API — "changes how
+   * this card looks", never "injects CSS" — which is `docs/AUTORUN.md` §1's
+   * rule for the consent card, carried here because this card is the same kind
+   * of question asked about a different piece of code.
+   */
+  composerCreate: 'Grow a feature',
+  composerCreateOff: 'Back to writing',
+  /** Why the entry is dark. Never hidden: an absent entry teaches nobody. */
+  composerCreateNoModel: 'Choose a model for this in the connection card first',
+  createPlaceholder: 'Say one sentence, and this card grows a feature…',
+  createSend: 'Grow it',
+  createWorking: 'The model is writing it…',
+  createRetry: 'Try again',
+  createFailed: 'That did not become a feature: {detail}',
+
+  pluginConfirmTitle: 'This conversation is about to grow a new feature',
+  pluginConfirmName: 'Name',
+  pluginConfirmPurpose: 'What it does',
+  pluginConfirmDeclares: 'It says it will register:',
+  pluginDeclareStyle: 'Styling (it will change how this card looks)',
+  pluginDeclarePanel: 'A small panel',
+  pluginDeclareMembers: 'Members: {names}',
+  pluginDeclareNone: 'It did not say.',
+  pluginConfirmCode: 'Code',
+  pluginConfirmBytes: '{bytes} bytes (version {version})',
+  pluginConfirmSentence: 'You said',
+  /**
+   * The sandbox sentence, which is the whole of what this card can honestly
+   * promise: the code is a model's, the containment is the card's own frame,
+   * and the reach stops at this conversation.
+   */
+  pluginConfirmSandbox:
+    'This code was written by a model. It runs in the same isolated sandbox as this card’s scripts — '
+    + 'it cannot touch your page and it cannot touch another conversation.',
+  pluginAcceptVersion: '✓ This version',
+  pluginAcceptPlugin: '✓✓ And don’t ask again for this one',
+  pluginAcceptPluginNote: 'Later versions of it take effect without asking.',
+  pluginDiscard: 'No thanks',
+
+  pluginsPanelTitle: 'What this conversation grew',
+  pluginsPanelEmpty: 'This conversation has not grown anything yet. Switch to 「Grow a feature」 and say a sentence.',
+  pluginsPanelNoHost: 'This host keeps no sandbox plugins.',
+  pluginStateMounted: 'Running',
+  pluginStateDisabled: 'Off',
+  pluginStatePending: 'Waiting for your answer',
+  pluginStateFailed: 'Failed — {state}: {detail}',
+  pluginFixMountFailed: 'Say another sentence to have it rewritten.',
+  pluginFixDisposeFailed: 'Switch away from this conversation and back.',
+  pluginVersionLabel: 'v{version}',
+  pluginBranchedFrom: 'from a branch',
+  pluginEnable: 'Turn on',
+  pluginDisable: 'Turn off',
+  pluginRemove: 'Delete',
+  /** Said on the script panel when the card was refused, per AUTORUN. */
+  pluginsDeclined: '{count} feature(s) this conversation grew will not run either.',
+
+  /** The connection card's one new row (owner ruling, `docs/SANDBOX-PLUGINS.md` §11.1). */
+  authoringRowLabel: 'Writes plugins',
+  authoringUnset: 'Not set, so 「Grow a feature」 is off. It is deliberately not the model this conversation uses.',
+  authoringPick: 'Provider',
+  authoringNone: '— none —',
+  authoringSave: 'Use for writing plugins',
+  authoringClear: 'Clear',
+  authoringSet: '{model} on {provider}',
+
   /** The bar's preset control and the menu behind it. */
   presetMenuHead: 'Preset in force',
   presetMenuOpen: 'Switch the preset ({preset} now)',
@@ -1989,6 +2057,59 @@ export const zh: Record<StringKey, string> = {
   /** 底栏的「+」与它打开的两件事。按钮本身只有一个 32px 的圆和一个十字，所以名字要说清里面有什么。 */
   composerMore: '提示词与命令',
   composerSlash: '斜杠命令',
+
+  /* 沙箱插件：这段对话自己长出来的功能。措辞一律按后果，不按 API。 */
+  composerCreate: '创造',
+  composerCreateOff: '回到写作',
+  composerCreateNoModel: '先在连接卡里选一个写插件用的模型',
+  createPlaceholder: '说一句话，让这张卡长出一个功能…',
+  createSend: '长出来',
+  createWorking: '模型正在写…',
+  createRetry: '再试一次',
+  createFailed: '这一句没有变成一个功能：{detail}',
+
+  pluginConfirmTitle: '这段对话要长出一个新功能',
+  pluginConfirmName: '名字',
+  pluginConfirmPurpose: '它做什么',
+  pluginConfirmDeclares: '它说它会注册：',
+  pluginDeclareStyle: '样式（会改这张卡的外观）',
+  pluginDeclarePanel: '一个小面板',
+  pluginDeclareMembers: '成员：{names}',
+  pluginDeclareNone: '它没有说。',
+  pluginConfirmCode: '代码',
+  pluginConfirmBytes: '{bytes} 字节（版本 {version}）',
+  pluginConfirmSentence: '这句话',
+  pluginConfirmSandbox:
+    '这段代码是模型写的，和这张卡的脚本跑在同一个隔离沙箱里，碰不到你的页面、碰不到别的对话。',
+  pluginAcceptVersion: '✓ 这一版',
+  pluginAcceptPlugin: '✓✓ 以后这个插件也不用问',
+  pluginAcceptPluginNote: '以后它改了也直接生效。',
+  pluginDiscard: '不要',
+
+  pluginsPanelTitle: '这个对话长了什么',
+  pluginsPanelEmpty: '这段对话还没有长出任何功能。切到「创造」说一句话试试。',
+  pluginsPanelNoHost: '这台宿主不保存沙箱插件。',
+  pluginStateMounted: '挂着',
+  pluginStateDisabled: '停用',
+  pluginStatePending: '等你回答',
+  pluginStateFailed: '失败 — {state}：{detail}',
+  pluginFixMountFailed: '再说一句话让它重写。',
+  pluginFixDisposeFailed: '切走再切回这个聊天。',
+  pluginVersionLabel: 'v{version}',
+  pluginBranchedFrom: '来自分支',
+  pluginEnable: '启用',
+  pluginDisable: '停用',
+  pluginRemove: '删除',
+  pluginsDeclined: '这段对话长出来的 {count} 个功能也不会运行。',
+
+  /* 连接卡下面新增的一行（owner 裁决，`docs/SANDBOX-PLUGINS.md` §11.1）。 */
+  authoringRowLabel: '写插件用',
+  authoringUnset: '还没设置，所以「创造」是灰的。它刻意不是这个对话在用的那个模型。',
+  authoringPick: '供应商',
+  authoringNone: '— 未设置 —',
+  authoringSave: '用它写插件',
+  authoringClear: '清除',
+  authoringSet: '{provider} 上的 {model}',
 
   /** 底栏的预设控件与它打开的菜单。 */
   presetMenuHead: '生效的预设',

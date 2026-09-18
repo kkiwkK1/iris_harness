@@ -183,3 +183,154 @@ export function precheckSandboxPluginSyntax(
     }
   }
 }
+
+/**
+ * The ceilings a whole conversation's plugins are held to, and the text fields'.
+ *
+ * Separate from {@link SANDBOX_PLUGIN_LIMITS} because the two answer different
+ * questions and are enforced in different places: those are what the **frame**
+ * and the wire have to agree about, these are what the **host** refuses before
+ * anything is stored (§10.4, §3.2 Q2). Both halves are judgements rather than
+ * measurements — there is no corpus for a feature that does not exist yet — and
+ * that is written here rather than discovered later.
+ *
+ * Seven of them, and the design's own test row says "seven ceilings, one
+ * assertion each". They are not rounded to powers of ten on purpose: `codeBytes`
+ * is 64 **KiB**, and a test exists whose only job is to go red if somebody
+ * "tidies" it to 64000.
+ */
+export const SANDBOX_PLUGIN_QUOTAS = {
+  /** How many plugins one conversation may hold. Over it, `define` refuses. */
+  plugins: 16,
+  /** Every version of every plugin in one conversation, in UTF-8 bytes. */
+  chatCodeBytes: 256 * 1024,
+  /**
+   * How many versions of one plugin are kept.
+   *
+   * The same order as `DEFAULT_CACHE_TRACE_KEEP`: enough to see what the last
+   * one looked like, not enough to become an archive. Appending past it drops
+   * the oldest **together with its entry in `authorizedHashes`** — an
+   * authorisation whose version is gone authorises nothing and would only make
+   * the list longer than the thing it describes.
+   */
+  versionsKept: 8,
+  /** A plugin's display name, in UTF-16 units as the wire measures it. */
+  nameChars: 64,
+  /** The sentence the confirmation card leads with. */
+  purposeChars: 280,
+  /** The player's own sentence, kept verbatim so "what did I say" has an answer. */
+  promptChars: 2_000,
+  /**
+   * One sidecar file, in UTF-8 bytes.
+   *
+   * A backstop rather than a working limit: the four above bite first in every
+   * ordinary case, and this one exists so a bug in any of them cannot write an
+   * unbounded file.
+   */
+  sidecarBytes: 1024 * 1024,
+} as const
+
+/**
+ * The sidecar's schema version.
+ *
+ * A mismatch **quarantines the whole file** rather than migrating it or
+ * salvaging the rows it understands (§10.4). The reason is not tidiness: what
+ * gets parsed out of this file gets executed, and a best-effort read of a
+ * plugin table is a best-effort guess about which code the player authorised.
+ */
+export const SANDBOX_PLUGIN_SIDECAR_VERSION = 1
+
+/**
+ * What a plugin says it will register.
+ *
+ * **The model's own account, not the host's guarantee.** Nothing is gated on it
+ * — the three capabilities are open to every plugin and the boundary is the
+ * iframe (§7, §14.7) — and the confirmation card is required to say so in as
+ * many words ("it says it will register"). Showing it is what lets a player
+ * notice the mismatch between "only changes some colours" and forty kilobytes
+ * of code.
+ */
+export type SandboxPluginDeclaration =
+  | { readonly kind: 'style' }
+  | { readonly kind: 'panel' }
+  | { readonly kind: 'members', readonly names: readonly string[] }
+
+/**
+ * One version of a plugin, as the wire carries it.
+ *
+ * **No `code`.** The list panel does not need the source, and putting a model's
+ * code into the answer of every `list` would be handing it a road to the shell
+ * for nothing. Reading the source is its own call (`sandboxPlugin.source`,
+ * PR-D).
+ */
+export interface SandboxPluginVersionView {
+  /** Monotonic from 1, unique within its plugin. */
+  readonly version: number
+  readonly name: string
+  readonly purpose: string
+  readonly declares: readonly SandboxPluginDeclaration[]
+  /** UTF-8 byte count of the source, so the card can show a size. */
+  readonly bytes: number
+  /** First 12 hex of the source's sha256. **The unit authorisation is recorded in.** */
+  readonly hash: string
+  /** The sentence that produced it, verbatim. */
+  readonly prompt: string
+  /** Which connection profile and model wrote it, and when. */
+  readonly authored: { readonly connectionId: string, readonly model: string, readonly at: number }
+}
+
+/**
+ * A plugin in one conversation, as the wire carries it.
+ *
+ * The projection `sandboxPlugin.list` / `define` / `decide` all answer in. It
+ * carries the **authorisation state** rather than the authorisation mechanism:
+ * a reader needs to know whether this version is waiting to be confirmed, not
+ * which hashes have been confirmed before.
+ */
+export interface SandboxPluginView {
+  readonly id: string
+  /** Every kept version, oldest first. The current one is the last. */
+  readonly versions: readonly SandboxPluginVersionView[]
+  /** Whether the player has switched it off. Off is not gone. */
+  readonly enabled: boolean
+  /** Whether the player double-ticked this id, so future versions mount unasked. */
+  readonly trustFutureVersions: boolean
+  /**
+   * Whether the **current** version may mount.
+   *
+   * Derived here rather than left to the reader to compute from a hash list:
+   * the question "is this waiting for me" has exactly one right answer and it
+   * should not be worked out twice on two sides.
+   */
+  readonly authorized: boolean
+  /** The conversation this plugin's row was copied from, when it was branched. */
+  readonly branchedFrom?: string
+  /** The last failure, cleared by a successful mount. */
+  readonly failure?: { readonly state: SandboxPluginFailureState, readonly detail: string, readonly at: number }
+}
+
+/**
+ * What `sandboxPlugin.decide` is being asked to do.
+ *
+ * One arm rather than six RPCs because every one of them is the same sentence —
+ * "the player made a decision about this plugin" — and they all answer with the
+ * same list. `version` and `plugin` are the single and the double tick of §4.1;
+ * the rest are the list panel's own controls.
+ */
+export const SANDBOX_PLUGIN_VERDICTS = [
+  /** Single tick: authorise **this hash** and mount it. The next version asks again. */
+  'version',
+  /** Double tick: `trustFutureVersions`, so this id's future versions mount unasked. */
+  'plugin',
+  /** Refuse: the row goes, and the sidecar reads as it did before the definition. */
+  'discard',
+  /** Off, kept. Torn down, the record and its authorisations stay. */
+  'disable',
+  /** On again. Not asked again — the authorisation never went anywhere. */
+  'enable',
+  /** Gone. The record and its authorisations go with it. */
+  'remove',
+] as const
+
+/** One of {@link SANDBOX_PLUGIN_VERDICTS}. */
+export type SandboxPluginVerdict = typeof SANDBOX_PLUGIN_VERDICTS[number]

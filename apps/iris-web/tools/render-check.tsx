@@ -1757,25 +1757,49 @@ async function main(): Promise<void> {
    */
   const connPanel = render(wired.store, slots.core, <ConnectionPanel />)
 
-  // 1. No resident field. The editor is a `Modal`, which renders `null` while
-  //    closed, so "no field in the panel" is structural — and this is the
-  //    assertion that goes red the day somebody puts one back in the body.
+  /*
+   * 1. **Nothing in the panel edits a provider.**
+   *
+   * The ruling this pins is 「连接折叠卡中就不需要有提供方/端点地址/模型这三个选项
+   * 常驻了」: a provider's own values are entered in the editor and nowhere else,
+   * so a resident field for one is the thing that must not creep back.
+   *
+   * The invariant is restated rather than the number bumped. The authoring row
+   * (`docs/SANDBOX-PLUGINS.md` §11.1, owner ruling 1) puts two controls in the
+   * body, and they are **not** an editor for a provider: they pick among the
+   * rows that already exist and name a model to write plugins with. So the
+   * assertion is now "no field outside the authoring block" — which still goes
+   * red the day somebody puts an endpoint or a key back in the list, and would
+   * also go red if the authoring block were removed and its controls scattered.
+   */
+  const authoringAt = connPanel.indexOf('data-block="authoring"')
+  assert.notEqual(authoringAt, -1, 'the authoring block is missing, so the exclusion below covers nothing')
+  const authoringEnd = connPanel.indexOf('data-block="test"')
+  assert.ok(authoringEnd > authoringAt, 'the authoring block should sit between 「add」 and 「test」')
+  const outsideAuthoring = connPanel.slice(0, authoringAt) + connPanel.slice(authoringEnd)
   for (const tag of ['<input', '<select', '<textarea']) {
     assert.equal(
-      (connPanel.match(new RegExp(tag, 'g')) ?? []).length,
+      (outsideAuthoring.match(new RegExp(tag, 'g')) ?? []).length,
       0,
       `the connection panel body carries a ${tag}> — the editor is the only place a provider is edited`,
     )
   }
+  // And the authoring block does carry its two controls, so the exclusion above
+  // is an exclusion of something rather than a hole that would pass on an empty
+  // block.
+  assert.ok(
+    (connPanel.slice(authoringAt, authoringEnd).match(/<select|<input/g) ?? []).length >= 2,
+    'the authoring row should carry a provider control and a model control',
+  )
 
-  // 2. Three blocks, named. The count alone would pass on three of anything, so
+  // 2. Four blocks, named. The count alone would pass on four of anything, so
   //    each one's `data-block` is checked by name and the total by count.
   assert.equal(
     (connPanel.match(/iris-conn-panel__block/g) ?? []).length,
-    3,
-    'the panel body should be exactly three blocks: the list, add, and test',
+    4,
+    'the panel body should be exactly four blocks: the list, add, authoring, and test',
   )
-  for (const block of ['providers', 'add', 'test']) {
+  for (const block of ['providers', 'add', 'authoring', 'test']) {
     assert.match(connPanel, new RegExp(`data-block="${block}"`), `the "${block}" block is missing`)
   }
 

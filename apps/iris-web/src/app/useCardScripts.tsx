@@ -95,7 +95,27 @@ export function CardScriptFrames(): ReactElement {
   const mvuEnabled = pluginRuntime?.mvu === true
   const store = useIrisStore()
   const actions = useIrisActions()
+  /**
+   * Whether this conversation has any sandbox plugin to mount at all.
+   *
+   * A boolean rather than the list, because it is a **rebuild** dependency and
+   * the list is not: see the effect's dependency array below.
+   */
+  const hasSandboxPlugins = useIris(state => state.sandboxPluginMounts.length > 0)
   const mount = useRef<HTMLDivElement>(null)
+
+  /*
+   * What this conversation grew, asked for when it opens.
+   *
+   * Here rather than in the panel that shows it, because the frame needs the
+   * same answer and gets built from it — and the panel may never be looked at.
+   * The action is asked-once per conversation, so both callers sharing it costs
+   * one request.
+   */
+  useEffect(() => {
+    if (chatId === undefined) return
+    void actions.loadSandboxPlugins(chatId)
+  }, [chatId, actions])
 
   /*
    * Whether a card's frame is on the surface right now.
@@ -654,15 +674,21 @@ export function CardScriptFrames(): ReactElement {
           setOccupied(true)
         },
         /*
-         * PR-A's only source of plugins: the dev bench (§15 PR-A).
+         * Two sources, and the second one is the product's.
+         *
+         * The **sidecar**, through the store, is what a reader's confirmed
+         * plugins arrive on: `sandboxPluginMounts` holds only what is enabled
+         * and authorised, so nothing waiting for an answer can reach a frame
+         * through it. The **dev bench** stays beside it — PR-A's hand-typed
+         * source, which is how the tree is exercised without spending a model
+         * call — and answers the empty array in a production build.
          *
          * Read through a call, so it is answered when the frame is built rather
-         * than when this effect was — and unconditional, because an empty answer
-         * is exactly what a build with no bench produces. The alternative, a
-         * `import.meta.env.DEV &&` guard here, would make the production path a
-         * *different* path from the one that gets tested.
+         * than when this effect was: a plugin confirmed while the bodies were
+         * being fetched is still seen. Sorting is the shell's job and happens in
+         * `card-scripts.ts`, over both sources at once.
          */
-        plugins: () => pluginsFor(chatId),
+        plugins: () => [...store.getState().sandboxPluginMounts, ...pluginsFor(chatId)],
         onState: states => actionsOf(store).setRunStates(states),
         onFailure: state => {
           /*
@@ -799,6 +825,71 @@ export function CardScriptFrames(): ReactElement {
     })
 
     /*
+     * And the product's own source: the sidecar, watched.
+     *
+     * A confirmation, a switch-off and a delete all change
+     * `sandboxPluginMounts` and nothing else, so **the difference between two
+     * readings of that array is the whole instruction set** — mount what
+     * appeared or changed version, unmount what went. Driving it from the
+     * difference rather than from each action means the four verdicts do not
+     * each need a line here, and a reader who confirms a plugin on one page sees
+     * it mount on the page the frame is on.
+     *
+     * The frame is reached rather than rebuilt, which is the third reason the
+     * code travels over the channel: rebuilding would lose the card's own script
+     * state every time somebody switched a plugin off.
+     */
+    let mountedFromStore = new Map<string, number>()
+    const syncPlugins = (): void => {
+      const wanted = new Map(
+        store.getState().sandboxPluginMounts.map(plugin => [plugin.pluginId, plugin.version]),
+      )
+      for (const [pluginId] of mountedFromStore) {
+        if (!wanted.has(pluginId)) running.unmountPlugin(pluginId)
+      }
+      for (const plugin of store.getState().sandboxPluginMounts) {
+        if (mountedFromStore.get(plugin.pluginId) === plugin.version) continue
+        recordStatus(chatId, {
+          pluginId: plugin.pluginId,
+          version: plugin.version,
+          state: 'pending',
+          at: Date.now(),
+        })
+        if (running.mountPlugin(plugin.pluginId, plugin.version, plugin.code)) continue
+        /*
+         * **`orphaned`, named** (§6.4 cause ①): the sidecar has a row and there
+         * is no frame to put it in. Reported rather than dropped, because a
+         * mount that went nowhere and a mount that succeeded leave the reader
+         * with exactly the same screen — nothing — and only one of them is a
+         * fault.
+         */
+        const text = `sandbox plugin ${plugin.pluginId} v${String(plugin.version)} orphaned: `
+          + 'the card has no running frame to mount it into'
+        recordStatus(chatId, {
+          pluginId: plugin.pluginId,
+          version: plugin.version,
+          state: 'orphaned',
+          detail: 'the card has no running frame to mount it into',
+          at: Date.now(),
+        })
+        actionsOf(store).addCardReport(text, { grade: 'fault' })
+        void actionsOf(store).reportSandboxPlugin(text, 'fault')
+      }
+      mountedFromStore = wanted
+    }
+    /*
+     * Seeded with what the frame is about to mount at `ready`, not with an empty
+     * map. `card-scripts.ts` sends this same set when the frame answers, so an
+     * empty seed would make the first subscription callback send every one of
+     * them a second time — which the tree would answer by tearing each plugin
+     * down and putting it back up, on the open-a-chat path.
+     */
+    mountedFromStore = new Map(
+      store.getState().sandboxPluginMounts.map(plugin => [plugin.pluginId, plugin.version]),
+    )
+    const unsubscribePlugins = store.subscribe(syncPlugins)
+
+    /*
      * This card's frames are one half of the page window's audience. A window
      * event dispatched anywhere — here or in a message frame — comes back
      * through the fan-out and is emitted into the script frames exactly as a
@@ -833,6 +924,7 @@ export function CardScriptFrames(): ReactElement {
     return () => {
       unregister()
       unregisterPlugins()
+      unsubscribePlugins()
       unregisterWindowEvents()
       surfaceWatcher?.disconnect()
       untap()
@@ -896,6 +988,23 @@ export function CardScriptFrames(): ReactElement {
     tavernHelperEnabled,
     mvuEnabled,
     pluginManifest,
+    /*
+     * **Whether there are any sandbox plugins at all**, not which ones.
+     *
+     * The frame is built when a card has a runnable script *or* a plugin to
+     * mount (`card-scripts.ts`), and the sidecar arrives after this effect first
+     * runs — so a card that ships no scripts would otherwise have no frame for
+     * its plugins to live in, and the mount would go nowhere, silently.
+     *
+     * A boolean rather than the array, and that is the whole care taken here: a
+     * rebuild costs the card's scripts their memory state, so it must happen
+     * only at the 0↔1 boundary, where there is either nothing running yet (a
+     * chat opening) or nothing left to run (the last plugin deleted from a card
+     * with no scripts). Every other change — a new plugin beside an existing
+     * one, a version replaced, one switched off — reaches the live frame through
+     * the store subscription inside the effect and rebuilds nothing.
+     */
+    hasSandboxPlugins,
   ])
 
   /*

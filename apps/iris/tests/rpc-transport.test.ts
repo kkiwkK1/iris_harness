@@ -340,7 +340,29 @@ const PROBES: Record<string, unknown> = {
   'script.setVariables': { chatId: 'no-such-chat', scope: 'chat', op: 'replace', variables: {} },
   'script.swipeTo': { chatId: 'no-such-chat', messageId: 0, swipeIndex: 0 },
   'connection.list': {},
+  /*
+   * Neither field, which the arm reads as "clear the setting".
+   *
+   * The one shape a reachability probe can send without deciding which model a
+   * real profile would write plugins with — and on a probe host there has never
+   * been one to clear, so the call proves the registration and changes nothing.
+   */
+  'connection.authoring': {},
   'connection.save': { provider: 'default', model: 'mock-model' },
+  /*
+   * —— sandbox plugins ——
+   *
+   * A chat that does not exist, like the `script.*` probes above: the handler
+   * has to run to answer at all, and nothing it can do reaches a real
+   * conversation. `define` is the only method in this whole table that would
+   * spend money, and it cannot here: the probe host configures no authoring
+   * connection, so it refuses before a request is composed.
+   */
+  'sandboxPlugin.list': { chatId: 'no-such-chat' },
+  'sandboxPlugin.define': { chatId: 'no-such-chat', characterId: 'no-such-card', sentence: 'probe' },
+  'sandboxPlugin.decide': {
+    chatId: 'no-such-chat', characterId: 'no-such-card', pluginId: 'no-such-plugin', verdict: 'remove',
+  },
   'connection.delete': { id: 'no-such-profile' },
   'connection.activate': { id: 'no-such-profile' },
   // A profile that does not exist answers not-found, which proves the handler

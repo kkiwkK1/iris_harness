@@ -225,13 +225,28 @@ test('every mark-only control in the bar carries a name', () => {
   // Four controls in the bar have no words in them: the two discs, the ring and
   // the override dot. A graphic button with no accessible name is a button a
   // screen reader reads as "button".
-  for (const key of ['composerMore', 'send', 'stop'] as const) {
+  for (const key of ['composerMore', 'stop'] as const) {
     assert.match(
       COMPOSER,
       new RegExp(`aria-label=\\{t\\('${key}'\\)\\}`),
       `the ${key} control has no accessible name`,
     )
   }
+  /*
+   * The send disc names itself in **both** of its modes.
+   *
+   * The invariant is the same one — a graphic button with no accessible name
+   * reads as "button" — restated for a control that now has two names: it
+   * sends, or it grows a feature (`docs/SANDBOX-PLUGINS.md` §12). The label is
+   * also the *only* place the second mode is stated for a screen reader, since
+   * the mode's other signal is the placeholder, so pinning one of the two names
+   * would leave exactly the new case unchecked.
+   */
+  assert.match(
+    COMPOSER,
+    /aria-label=\{creating \? t\('createSend'\) : t\('send'\)\}/,
+    'the send control does not name both of its modes',
+  )
   assert.match(COMPOSER, /aria-label=\{t\('modelOverriddenHere'\)\}/, 'the override dot has no name')
   const ring = source(HERE, '..', 'src', 'app', 'ContextMeter.tsx')
   // The ring's name is the reading itself, which is the fact the capsule used to

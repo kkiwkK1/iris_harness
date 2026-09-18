@@ -218,6 +218,14 @@ const READS: { method: RpcMethod, params: (fixed: Fixture) => unknown }[] = [
   { method: 'script.getVariables', params: fixed => ({ chatId: fixed.chatId, scope: 'global' }) },
   { method: 'settings.get', params: fixed => ({ chatId: fixed.chatId }) },
   { method: 'connection.list', params: () => ({}) },
+  /*
+   * What a conversation grew. This fixture configures no sandbox-plugin store,
+   * so the call refuses — the same arm `plugin.list` below exercises, and the
+   * property most worth seeing for it is that a refusal writes as little as an
+   * answer would: a store whose reader created its own directory would leave
+   * `<profile>/sandbox-plugins/` behind for every conversation ever opened.
+   */
+  { method: 'sandboxPlugin.list', params: fixed => ({ chatId: fixed.chatId }) },
   { method: 'character.list', params: () => ({}) },
   { method: 'persona.list', params: () => ({}) },
   { method: 'persona.get', params: () => ({}) },

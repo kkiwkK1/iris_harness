@@ -261,6 +261,21 @@ export interface ProfilePaths {
    * footprint with it and leaves nothing the user cannot find.
    */
   cacheTrace: string
+  /**
+   * A conversation's sandbox plugins, one JSON file per conversation.
+   *
+   * The sidecar of `docs/SANDBOX-PLUGINS.md` §10.1: what a player grew inside
+   * one conversation by talking to a model. It is **not** SillyTavern-visible —
+   * a chat exported from Iris carries the same bytes it would if this directory
+   * did not exist — which is the same boundary the tool-loop research drew and
+   * the reason it is here rather than beside the `.jsonl` files: `chats/` holds
+   * exactly one kind of file, and `ChatStore.ids` reads a chat's id by taking
+   * `.jsonl` off a filename.
+   *
+   * A directory of its own rather than a key inside an existing store, because
+   * it is per conversation and has to be dropped when one is deleted.
+   */
+  sandboxPlugins: string
 }
 
 /**
@@ -303,6 +318,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     favorites: join(root, 'favorites.json'),
     chatOrder: join(root, 'chat-order.json'),
     cacheTrace: join(root, 'cache-trace'),
+    sandboxPlugins: join(root, 'sandbox-plugins'),
     /** Third-party ST extensions, laid out by the installer (staging/ claims/ installed/). */
     extensions: join(root, 'st-extensions'),
     /**

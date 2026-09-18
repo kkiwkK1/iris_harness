@@ -773,7 +773,39 @@ test('a mount after the set is disposed reaches nothing', async () => {
   const running = startCardScripts(bench.env, 'chat-1', 'card-1')
   await settle()
   running.dispose()
-  running.mountPlugin('1-a', 1, '')
+  const took = running.mountPlugin('1-a', 1, '')
 
   assert.deepEqual(bench.mountedPlugins, [], 'every door into a torn-down set is a no-op')
+  assert.equal(took, false, 'a no-op that reports success is a mount nobody can find afterwards')
+})
+
+test('a mount into a set with no frame says so, rather than dropping it', async () => {
+  /*
+   * **The `orphaned` signal** (`docs/SANDBOX-PLUGINS.md` §6.4 cause ①).
+   *
+   * A card with no scripts and no plugins has no frame, on purpose — and a
+   * mount arriving then goes nowhere. Behaviour parity with the silent drop is
+   * not diagnostic parity: afterwards a plugin that was delivered and one that
+   * vanished leave the reader with the same screen, and only one of them is a
+   * fault. The answer is what lets the shell file a report instead of nothing.
+   */
+  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false }) })
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  assert.equal(bench.framesBuilt(), 0, 'this test needs the no-frame case to actually happen')
+
+  assert.equal(running.mountPlugin('1-a', 1, ''), false)
+  assert.deepEqual(bench.mountedPlugins, [])
+})
+
+test('a mount into a live frame reports that it landed', async () => {
+  // The other direction, so the check above is discriminating rather than a
+  // constant `false` nobody would notice.
+  const bench = harness()
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  await settle()
+  assert.equal(bench.framesBuilt(), 1, 'this test needs a frame to actually exist')
+
+  assert.equal(running.mountPlugin('1-a', 1, ''), true)
+  assert.deepEqual(bench.mountedPlugins, ['1-a@1'])
 })

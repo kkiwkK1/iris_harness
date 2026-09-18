@@ -59,9 +59,16 @@ export {
   SANDBOX_PLUGIN_FACADE_PARAM,
   SANDBOX_PLUGIN_FAILURE_STATES,
   SANDBOX_PLUGIN_LIMITS,
+  SANDBOX_PLUGIN_QUOTAS,
+  SANDBOX_PLUGIN_SIDECAR_VERSION,
+  SANDBOX_PLUGIN_VERDICTS,
   sandboxPluginBody,
+  type SandboxPluginDeclaration,
   type SandboxPluginFailureState,
   type SandboxPluginSyntaxRefusal,
+  type SandboxPluginVerdict,
+  type SandboxPluginVersionView,
+  type SandboxPluginView,
 } from './sandbox-plugins.ts'
 
 /*

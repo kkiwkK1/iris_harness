@@ -98,8 +98,16 @@ export const SIDE_USAGE_FIELD = 'iris_side_usage'
  * A named list rather than a string union spelled at each site because it is
  * also the **read filter**: `parseSideUsage` accepts a stored `source` only
  * when it is one of these, and {@link sideShare} sums by picking one.
+ *
+ * `'plugin'` is the request that writes a **sandbox plugin** — the player's one
+ * sentence turned into code by a model (`docs/SANDBOX-PLUGINS.md` §11.3). Its
+ * own member rather than riding `'script'`: it is not a card asking for a
+ * generation, it is the host asking on the player's behalf, through a connection
+ * profile the player chose for exactly this and nothing else, so a usage panel
+ * that could not separate the two would be reporting the cost of writing plugins
+ * as the cost of running cards.
  */
-export const SIDE_SOURCES = ['script', 'compaction'] as const
+export const SIDE_SOURCES = ['script', 'compaction', 'plugin'] as const
 
 /** One of {@link SIDE_SOURCES}. */
 export type SideSource = typeof SIDE_SOURCES[number]

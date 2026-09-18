@@ -117,6 +117,40 @@ interface StoredProfile {
 interface ConnectionsFile {
   profiles: StoredProfile[]
   activeId?: string
+  /**
+   * Which saved profile, and which model on it, **writes sandbox plugins**.
+   *
+   * owner ruling 1 of `docs/SANDBOX-PLUGINS.md` §11.1: the 「创造」 sentence goes
+   * out on a request of its own rather than on the conversation's preset and
+   * provider. A field on the *file* rather than on each profile, because it
+   * names one of them; and here rather than in `GenerationSettings`, because
+   * that type is "the route and the sampling of one generation", merged per
+   * chat and range-checked — and "which model writes plugins" is neither per
+   * chat nor a sampling knob. `SettingsFile.worldbooks` is the precedent: when
+   * the type does not fit, open a section.
+   *
+   * **Absent does not fall back to `activeId`.** The 「创造」 entry is switched
+   * off with a sentence saying why. A fall back would spend a player's money on
+   * a model they never chose, and the failure it produces — a conversation model
+   * that cannot write a plugin — looks like a broken feature rather than an
+   * unfinished setting. It is the same honesty `requireProvider` already refuses
+   * with.
+   */
+  authoring?: AuthoringConnection
+}
+
+/** Which profile and model write sandbox plugins. */
+export interface AuthoringConnection {
+  /** A {@link StoredProfile}'s id. **Not a second provider list** (§11.1). */
+  readonly id: string
+  /**
+   * The model name.
+   *
+   * Free text rather than a member of the profile's probed `models`, because
+   * the model control always offers a hand-typed name (owner, 2026-09-10) and
+   * the model that writes code is very often one in closed beta.
+   */
+  readonly model: string
 }
 
 /** What a caller may set. */
@@ -492,9 +526,21 @@ export class ConnectionStore {
   async #loadOnce(): Promise<void> {
     const parsed = await readJsonStore(this.#path, this.#onProblem) as Partial<ConnectionsFile> | undefined
     if (!Array.isArray(parsed?.profiles)) return
+    const authoring = parsed.authoring
     this.#file = {
       profiles: parsed.profiles,
       ...typeof parsed.activeId === 'string' ? { activeId: parsed.activeId } : {},
+      /*
+       * Both halves or neither. A row with an id and no model is not "half
+       * configured" — it is a setting that would send a request with no model
+       * name, so it reads here as no setting at all and the 「创造」 entry stays
+       * switched off with its sentence.
+       */
+      ...authoring !== null && typeof authoring === 'object'
+        && typeof authoring.id === 'string' && authoring.id.length > 0
+        && typeof authoring.model === 'string' && authoring.model.length > 0
+        ? { authoring: { id: authoring.id, model: authoring.model } }
+        : {},
     }
     await this.#adoptKeys()
   }
@@ -696,7 +742,38 @@ export class ConnectionStore {
     await atomicWriteFile(this.#path, `${JSON.stringify({
       profiles: rows,
       ...this.#file.activeId === undefined ? {} : { activeId: this.#file.activeId },
+      ...this.#file.authoring === undefined ? {} : { authoring: this.#file.authoring },
     }, null, 2)}\n`)
+  }
+
+  /**
+   * Which profile and model write sandbox plugins, if any.
+   * @returns the setting, or undefined when there is none.
+   */
+  async authoring(): Promise<AuthoringConnection | undefined> {
+    await this.#load()
+    return this.#file.authoring
+  }
+
+  /**
+   * Set — or clear — which profile and model write sandbox plugins.
+   *
+   * **The profile has to exist.** A setting naming a row that is not there would
+   * fail at the one moment the player is least able to diagnose it: after the
+   * sentence is typed and the request is on its way.
+   * @param next - the profile id and model, or undefined to clear the setting.
+   * @throws {AppError} `not-found` when no profile has that id.
+   */
+  async setAuthoring(next: AuthoringConnection | undefined): Promise<void> {
+    await this.#load()
+    if (next === undefined) delete this.#file.authoring
+    else {
+      if (!this.#file.profiles.some(profile => profile.id === next.id)) {
+        throw notFound(`no connection profile "${next.id}"`)
+      }
+      this.#file.authoring = { id: next.id, model: next.model }
+    }
+    await this.#save()
   }
 
   /**
@@ -826,6 +903,14 @@ export class ConnectionStore {
     // The active id is cleared with it: pointing at a profile that is gone would
     // make the next read report an active connection nobody can inspect.
     if (this.#file.activeId === id) delete this.#file.activeId
+    /*
+     * And the authoring setting, for the same reason and one worse: a dangling
+     * `activeId` makes a reading wrong, a dangling `authoring` makes the
+     * 「创造」 entry look available and fail after the player has typed their
+     * sentence. Cleared here means the entry is switched off with its own
+     * sentence instead, which is the state the setting is actually in.
+     */
+    if (this.#file.authoring?.id === id) delete this.#file.authoring
     await this.#save()
     return this.list()
   }

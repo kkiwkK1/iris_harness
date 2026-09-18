@@ -24,6 +24,7 @@ import { versionRoute } from './version.ts'
 
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { CacheTraceStore, DEFAULT_CACHE_TRACE_KEEP } from './cache-trace.ts'
+import { SandboxPluginStore } from './sandbox-plugins/store.ts'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
@@ -748,6 +749,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     onError: error => { ctx.logger.warn(`cache trace: ${error.message}`) },
   })
 
+  /*
+   * What each conversation has grown (`docs/SANDBOX-PLUGINS.md` §10).
+   *
+   * `reportStoreProblem` rather than the warn-only channel `cacheTrace` above
+   * takes: a plugin table that could not be read is a set of confirmations the
+   * player made and this host can no longer honour, which belongs on the page
+   * and not only in the log.
+   */
+  const sandboxPlugins = new SandboxPluginStore(paths.sandboxPlugins, { onProblem: reportStoreProblem })
+
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
   // cannot hand a card the page document.
@@ -1098,6 +1109,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     scriptVariables,
     backups,
     cacheTrace,
+    sandboxPlugins,
     preset: storedPreset ?? await loadPreset(config.presetPath),
     ...storedPresetName === undefined ? {} : { presetName: storedPresetName },
     presets,
@@ -1202,6 +1214,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
       ctx.irisRpc.register('chat.import', handlers['chat.import']),
       ctx.irisRpc.register('chat.export', handlers['chat.export']),
+      ctx.irisRpc.register('sandboxPlugin.list', handlers['sandboxPlugin.list']),
+      ctx.irisRpc.register('sandboxPlugin.define', handlers['sandboxPlugin.define']),
+      ctx.irisRpc.register('sandboxPlugin.decide', handlers['sandboxPlugin.decide']),
       ctx.irisRpc.register('backup.list', handlers['backup.list']),
       ctx.irisRpc.register('backup.preview', handlers['backup.preview']),
       ctx.irisRpc.register('backup.restore', handlers['backup.restore']),
@@ -1213,6 +1228,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('script.swipeTo', handlers['script.swipeTo']),
       ctx.irisRpc.register('script.slash', handlers['script.slash']),
       ctx.irisRpc.register('connection.list', handlers['connection.list']),
+      ctx.irisRpc.register('connection.authoring', handlers['connection.authoring']),
       ctx.irisRpc.register('connection.save', handlers['connection.save']),
       ctx.irisRpc.register('connection.delete', handlers['connection.delete']),
       ctx.irisRpc.register('connection.activate', handlers['connection.activate']),

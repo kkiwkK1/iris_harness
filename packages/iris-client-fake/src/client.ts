@@ -1866,7 +1866,20 @@ class InMemoryClient implements FakeClient {
       case 'backup.list':
       case 'backup.preview':
       case 'backup.restore':
-      case 'backup.delete': {
+      case 'backup.delete':
+      /*
+       * Sandbox plugins need a sidecar on disk and a model to write with, and
+       * this client has neither. Refused rather than answered with an empty
+       * list, for the same reason the host refuses when it has no store: an
+       * empty list says "this conversation grew nothing", which is a claim about
+       * the conversation, and what is true is a claim about the host.
+       */
+      case 'sandboxPlugin.list':
+      case 'sandboxPlugin.define':
+      case 'sandboxPlugin.decide':
+      // And the setting that names the model: a client with no connection file
+      // cannot keep one.
+      case 'connection.authoring': {
         throw new FakeRpcError('unsupported', `the fake client does not implement ${method}`)
       }
 

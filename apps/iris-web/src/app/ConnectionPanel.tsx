@@ -129,6 +129,17 @@ function nameOf(profile: ConnectionProfile): string {
   return profile.label ?? profile.summary
 }
 
+/**
+ * A profile's name by id, or the id when the list does not carry it.
+ * @param profiles - the saved profiles.
+ * @param id - the profile's id.
+ * @returns the name, or the id.
+ */
+function nameOfOrId(profiles: readonly ConnectionProfile[], id: string): string {
+  const found = profiles.find(profile => profile.id === id)
+  return found === undefined ? id : nameOf(found)
+}
+
 /** What the editor holds while it is open. */
 interface FormState {
   /** The provider preset the form is pointed at, or `'custom'`. */
@@ -422,6 +433,19 @@ export function ConnectionPanel(): ReactElement {
   >(undefined)
   /** A model saved that the last list did not contain. A note, never a block. */
   const [offListModel, setOffListModel] = useState<string | undefined>(undefined)
+  /** Which profile and model currently write sandbox plugins, as stored. */
+  const authoring = useIris(state => state.authoringConnection)
+  /**
+   * What the authoring row's two controls hold before the button is pressed.
+   *
+   * Its own draft rather than writing straight through, because choosing a
+   * provider and choosing a model are two edits and a write on the first would
+   * store a provider with the previous provider's model — which is a
+   * combination that fails at the far end of a request nobody can see yet.
+   */
+  const [authoringDraft, setAuthoringDraft] = useState<{ id: string, model: string }>({ id: '', model: '' })
+  /** Whether the authoring row's model is being hand-typed (owner, 2026-09-10). */
+  const [authoringTyping, setAuthoringTyping] = useState(false)
   // Subscribed so a language switch re-renders the panel's words.
   useLanguage()
 
@@ -429,7 +453,27 @@ export function ConnectionPanel(): ReactElement {
     void actions.loadConnections()
   }, [actions])
 
+  /*
+   * The draft starts on what is stored, once it arrives.
+   *
+   * Only while the draft is still empty, so a reader mid-edit is not reset by a
+   * list refresh — the failure that shape produces is the worst kind for a
+   * settings control: the value silently reverts between two keystrokes.
+   */
+  useEffect(() => {
+    if (authoring === undefined) return
+    setAuthoringDraft(current => (current.id === '' && current.model === '' ? { ...authoring } : current))
+  }, [authoring])
+
   const active = profiles.find(profile => profile.id === activeId)
+  /**
+   * The model list of the profile the authoring row points at.
+   *
+   * The profile's own recorded probe, so the row opens on a dropdown when that
+   * endpoint has been tested and on a text field when it has not — the same four
+   * states the editor's control has, from the same source.
+   */
+  const authoringModels = profiles.find(profile => profile.id === authoringDraft.id)?.models ?? []
 
   /**
    * Probe one row with the key the host already holds for it.
@@ -718,6 +762,124 @@ export function ConnectionPanel(): ReactElement {
           {offListModel === undefined ? null : (
             <p className="iris-field__note">{t('modelNotInList', { model: offListModel })}</p>
           )}
+        </div>
+
+        {/*
+          ------------------------------------------------------- 2b. authoring
+
+          **Which saved provider and model write sandbox plugins**
+          (`docs/SANDBOX-PLUGINS.md` §11.1, owner ruling 1). Under the list and
+          not inside a row, because it names one of them rather than describing
+          one of them — a control on each row would make "which model writes
+          plugins" a property of every provider instead of one choice.
+
+          **This block breaks the panel's own stated rule that nothing in its
+          body is a field**, and it is worth saying rather than smuggling. The
+          rule exists so that the list is a list of facts and the one place
+          values are entered is the editor behind 「add」. The alternative here
+          was worse in both directions: a whole modal for two values, or a third
+          verb on every row. Two controls and one button, referring to rows that
+          already exist, is the smallest thing that keeps the two acts apart —
+          saving a provider and choosing what it is *for* (owner, 2026-09-09).
+
+          The model control is the **same** four-state control the editor uses,
+          including the hand-typed path, because the owner's 2026-09-10 ruling
+          holds here word for word: a model that writes code is very often one in
+          closed testing, and an endpoint does not advertise those.
+        */}
+        <div className="iris-conn-panel__block" data-block="authoring">
+          <div className="iris-field">
+            <span className="iris-field__label">{t('authoringRowLabel')}</span>
+            <span />
+            <select
+              className="iris-text iris-field__control"
+              aria-label={t('authoringPick')}
+              value={authoringDraft.id}
+              onChange={event => { setAuthoringDraft({ ...authoringDraft, id: event.target.value }) }}
+            >
+              <option value="">{t('authoringNone')}</option>
+              {profiles.map(profile => (
+                <option key={profile.id} value={profile.id}>{nameOf(profile)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="iris-field">
+            <span className="iris-field__label">{t('modelLabel')}</span>
+            <span />
+            {authoringModels.length > 0 && !authoringTyping ? (
+              <select
+                className="iris-text iris-field__control"
+                aria-label={t('modelLabel')}
+                value={authoringDraft.model}
+                onChange={event => {
+                  // The sentinel is not a model name, so it never reaches the
+                  // value: it switches the control and leaves what is there.
+                  if (event.target.value === CUSTOM_MODEL) setAuthoringTyping(true)
+                  else setAuthoringDraft({ ...authoringDraft, model: event.target.value })
+                }}
+              >
+                {authoringDraft.model === '' || authoringModels.includes(authoringDraft.model) ? null : (
+                  <option value={authoringDraft.model}>
+                    {t('modelCustomCurrent', { model: authoringDraft.model })}
+                  </option>
+                )}
+                {authoringModels.map(model => <option key={model} value={model}>{model}</option>)}
+                <option value={CUSTOM_MODEL}>{t('modelCustomOption')}</option>
+              </select>
+            ) : (
+              <input
+                className="iris-text iris-field__control"
+                type="text"
+                aria-label={t('modelLabel')}
+                value={authoringDraft.model}
+                placeholder={t('modelCustomPlaceholder')}
+                spellCheck={false}
+                onChange={event => { setAuthoringDraft({ ...authoringDraft, model: event.target.value }) }}
+              />
+            )}
+          </div>
+          <div className="iris-probe__actions">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={authoringDraft.id === '' || authoringDraft.model.trim() === ''}
+              onClick={() => void actions.setAuthoringConnection({
+                id: authoringDraft.id,
+                model: authoringDraft.model.trim(),
+              })}
+            >
+              {t('authoringSave')}
+            </Button>
+            {authoring === undefined ? null : (
+              <button
+                type="button"
+                className="iris-act"
+                onClick={() => {
+                  setAuthoringDraft({ id: '', model: '' })
+                  void actions.setAuthoringConnection(undefined)
+                }}
+              >
+                {t('authoringClear')}
+              </button>
+            )}
+          </div>
+          {/*
+            The state, always — and the absent state is a sentence rather than a
+            blank, because 「not set」 is why the composer's 「Grow a feature」
+            entry is dark and a reader standing here is the one who can fix it.
+          */}
+          <p className="iris-field__note">
+            {authoring === undefined
+              ? t('authoringUnset')
+              : t('authoringSet', {
+                model: authoring.model,
+                // The id when the row is not in the list: a profile deleted out
+                // of band clears this setting host side, so the fallback is only
+                // ever seen between that write and the next read — and an id is
+                // still a truer answer than a blank.
+                provider: nameOfOrId(profiles, authoring.id),
+              })}
+          </p>
         </div>
 
         {/*
