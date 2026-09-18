@@ -566,6 +566,13 @@ export interface IrisState {
   /** Whether that character's scripts may touch the real page. */
   documentGranted: boolean
   /**
+   * Whether that character's frames may reach the remote network.
+   *
+   * Widens `img-src`/`connect-src`/`style-src` to `https:` in the frame
+   * policy and nothing else — `script-src` never moves (`docs/SANDBOX.md`).
+   */
+  networkGranted: boolean
+  /**
    * Whether the user has answered the run-scripts question for this card.
    *
    * Three states, and the absent one is not a decline — see `sandbox/consent.ts`
@@ -1053,7 +1060,7 @@ export interface IrisActions {
    * is deleted, so a cached answer can belong to a card that no longer exists —
    * and the auto-run path has nobody watching to notice.
    */
-  resolveScripts(characterId: string): Promise<{ scripts: ScriptView[], documentGranted: boolean }>
+  resolveScripts(characterId: string): Promise<{ scripts: ScriptView[], documentGranted: boolean, networkGranted: boolean }>
   /**
    * Fetch the worldbook panel's data: book names, the global selection, and the
    * effective world-info settings.
@@ -1154,6 +1161,8 @@ export interface IrisActions {
   /** Fetch a card's remote dependency through the host, which owns the allowlist. */
   fetchScriptDependency(url: string, pluginRevision?: number): Promise<string>
   setDocumentGrant(granted: boolean): Promise<void>
+  /** Grant or revoke the open card's remote-network access; the notice says so. */
+  setNetworkGrant(granted: boolean): Promise<void>
   /**
    * The host's snapshot for one chat, or undefined when the host will not give
    * one.
@@ -1814,6 +1823,7 @@ export function createIrisStore(
       cardRun: undefined,
       runStates: [],
       documentGranted: false,
+      networkGranted: false,
       connections: [],
       activeConnectionId: undefined,
       hostConnection: undefined,
@@ -2263,6 +2273,7 @@ export function createIrisStore(
                   scripts: [],
                   scriptsFor: undefined,
                   documentGranted: false,
+                  networkGranted: false,
                   // `unasked`, not `declined`. Inheriting a decline is the worst
                   // of the three: the new card is never offered its scripts and
                   // nothing reports why.
@@ -2658,6 +2669,7 @@ export function createIrisStore(
           scripts: [],
           scriptsFor: characterId,
           documentGranted: false,
+          networkGranted: false,
           // `unknown` until the host answers. `unasked` here would put the
           // question during the round trip — including to a user whose answer is
           // already stored and about to arrive.
@@ -2671,6 +2683,7 @@ export function createIrisStore(
           set({
             scripts: listed.scripts,
             documentGranted: listed.documentGranted,
+            networkGranted: listed.networkGranted,
             // Read through `consentState`, never `?? false`: the field is absent
             // when nobody has been asked, and folding that into a decline means
             // the question is never put and scripts never start, silently.
@@ -3034,7 +3047,7 @@ export function createIrisStore(
 
       async resolveScripts(
         characterId: string,
-      ): Promise<{ scripts: ScriptView[], documentGranted: boolean }> {
+      ): Promise<{ scripts: ScriptView[], documentGranted: boolean, networkGranted: boolean }> {
         // Not wrapped in `guard`: the caller is about to decide whether to run
         // code, and a refusal turned into a notice would resolve as though the
         // host had answered.
@@ -3048,7 +3061,11 @@ export function createIrisStore(
         // the write and the read are separate round trips; what the sharing
         // does not do is widen it past the flight's own duration.
         const listed = await listScripts(characterId)
-        return { scripts: listed.scripts, documentGranted: listed.documentGranted }
+        return {
+          scripts: listed.scripts,
+          documentGranted: listed.documentGranted,
+          networkGranted: listed.networkGranted,
+        }
       },
 
       async fetchScriptDependency(url: string, pluginRevision?: number): Promise<string> {
@@ -3100,6 +3117,25 @@ export function createIrisStore(
             granted
               ? translate(getLanguage(), 'pageAccessGranted')
               : translate(getLanguage(), 'pageAccessRevoked'),
+          )
+        })
+      },
+
+      async setNetworkGrant(granted: boolean): Promise<void> {
+        const characterId = get().scriptsFor
+        if (characterId === undefined) return
+        await guard(async () => {
+          const result = await client.call('script.setNetworkGrant', { characterId, granted })
+          if (get().scriptsFor !== characterId) return
+          set({ networkGranted: result.networkGranted })
+          // Same sentence-shape as the document grant above and for the same
+          // reason: the policy a frame runs under is fixed when the frame is
+          // built, so the grant takes effect on the next run, not this one.
+          get().notify(
+            'info',
+            granted
+              ? translate(getLanguage(), 'networkAccessGranted')
+              : translate(getLanguage(), 'networkAccessRevoked'),
           )
         })
       },

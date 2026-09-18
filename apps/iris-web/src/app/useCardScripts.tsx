@@ -342,9 +342,10 @@ export function CardScriptFrames(): ReactElement {
               documentGranted: input.documentGranted,
               // Same origin as the page: the host serves both the interface and the proxy.
               bundleOrigin: window.location.origin,
-              // Not in the contract yet, and not defaulted to `true` on the way
-              // there: a grant nobody has been asked for is not a grant.
-              networkGranted: false,
+              // From the host, asked at run time by `resolve` — never from panel
+              // state, which is keyed on the character id and can belong to a
+              // card that no longer exists.
+              networkGranted: input.networkGranted,
               context: input.context,
               /*
                * **The surface's box, not the window's.**

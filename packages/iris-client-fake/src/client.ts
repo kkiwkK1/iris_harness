@@ -200,6 +200,16 @@ class InMemoryClient implements FakeClient {
   #characters: CharacterSummary[]
   /** Cards the user granted the real document, in this fake's memory only. */
   readonly #grants = new Set<string>()
+  /**
+   * Cards the user granted the remote network, in this fake's memory only.
+   *
+   * A second `Set` beside `#grants` rather than one record per card: the two
+   * grants are two decisions (`docs/SANDBOX.md` — page access is strictly the
+   * more dangerous of the pair, yet its toggle existing while this one did
+   * not was the gap), and a shared record is how one of them starts answering
+   * for the other.
+   */
+  readonly #networkGrants = new Set<string>()
 
   /**
    * Whether the user has answered the run-scripts question, per card.
@@ -1018,6 +1028,7 @@ class InMemoryClient implements FakeClient {
         return {
           scripts: this.#runnableScripts(characterId),
           documentGranted: this.#grants.has(characterId),
+          networkGranted: this.#networkGrants.has(characterId),
           // Omitted when unanswered rather than sent as `false`, because the
           // reader is expected to test presence. A `false` here would mean "was
           // asked and declined" and would suppress the first-run question
@@ -1200,6 +1211,14 @@ class InMemoryClient implements FakeClient {
         if (granted) this.#grants.add(characterId)
         else this.#grants.delete(characterId)
         return { documentGranted: this.#grants.has(characterId) }
+      }
+
+      case 'script.setNetworkGrant': {
+        const { characterId, granted } = params as RpcRequest<'script.setNetworkGrant'>
+        this.#requireCharacter(characterId)
+        if (granted) this.#networkGrants.add(characterId)
+        else this.#networkGrants.delete(characterId)
+        return { networkGranted: this.#networkGrants.has(characterId) }
       }
 
       case 'script.setScriptsAllowed': {

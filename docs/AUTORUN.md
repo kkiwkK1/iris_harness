@@ -63,7 +63,7 @@ frame 创建的那一刻,授权**从宿主现问**,不读任何以 characterId �
 缓存。开聊天就是一次主体变更(GRANTS §2):切聊天、切卡、删卡后重开,都触发
 重新解析。
 
-**三个里只有两个在契约上,这点要说清楚。** `documentGranted` 与 `scriptsAllowed`
+~~**三个里只有两个在契约上,这点要说清楚。** `documentGranted` 与 `scriptsAllowed`
 由 `script.list` 带出、由 `script.setDocumentGrant` / `script.setScriptsAllowed`
 写入;`networkGranted` **不在契约里**——两条真实运行路径
 (`apps/iris-web/src/app/useCardScripts.tsx`、`MessageInterfaces.tsx`)都把它
@@ -71,7 +71,13 @@ frame 创建的那一刻,授权**从宿主现问**,不读任何以 characterId �
 (`apps/iris-web/src/dev/SandboxProbe.tsx`,其注释写明"Dev-only until
 `networkGranted` reaches the contract")。所以今天卡片的出站 fetch 一律被 CSP
 拒绝并点名上报,那是**既定行为而不是缺口**;网络授权的策略见
-[SANDBOX.md](SANDBOX.md),但它描述的是机制,不是一个用户今天能按的开关。
+[SANDBOX.md](SANDBOX.md),但它描述的是机制,不是一个用户今天能按的开关。~~
+
+**划线于 2026-09-19:三个都在契约上了。** `networkGranted` 与另两个同路:
+由 `script.list` 带出、由 `script.setNetworkGrant` 写入,按卡存在 policy 文件里
+(撤销即删除键,删卡即遗忘),面板在文档授权旁提供同样的风险确认开关。两条运行
+路径同样在运行时刻从宿主现问。没变的部分:默认仍关闭,`script-src` 仍不随授权
+放宽,`http:` 仍拒绝。
 
 **组合需要一个主人**:`删卡 → 重导同名卡 → 开聊天` 这条路径要有一条跨越两个
 信任域的端到端检查——两半各自的测试永远绿,漏洞恰好住在缝上。**这条检查已经

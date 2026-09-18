@@ -431,6 +431,7 @@ const PROBES: Record<string, unknown> = {
   'script.setEnabled': { characterId: 'no-such-card', scriptId: 'x', enabled: true },
   'script.body': { characterId: 'no-such-card', scriptId: 'x' },
   'script.setDocumentGrant': { characterId: 'no-such-card', granted: false },
+  'script.setNetworkGrant': { characterId: 'no-such-card', granted: false },
   'script.setScriptsAllowed': { characterId: 'no-such-card', allowed: true },
   'script.fetch': { url: 'https://blocked.example/x.js' },
   'script.context': { chatId: 'no-such-chat', characterId: 'no-such-card' },
@@ -636,9 +637,11 @@ test('a reused character id inherits no answer the user gave about the card befo
   const characterId = first.character.characterId
 
   await client.call('script.setDocumentGrant', { characterId, granted: true })
+  await client.call('script.setNetworkGrant', { characterId, granted: true })
   await client.call('script.setScriptsAllowed', { characterId, allowed: true })
   const granted = await client.call('script.list', { characterId })
   assert.equal(granted.documentGranted, true)
+  assert.equal(granted.networkGranted, true)
   assert.equal(granted.scriptsAllowed, true)
 
   await client.call('character.delete', { characterId })
@@ -652,6 +655,7 @@ test('a reused character id inherits no answer the user gave about the card befo
 
   const after = await client.call('script.list', { characterId })
   assert.equal(after.documentGranted, false, 'a new card inherited page access nobody gave it')
+  assert.equal(after.networkGranted, false, 'a new card inherited network access nobody gave it')
   // Before any `setScriptsAllowed` on this card: the third state, not `false`.
   // `false` would mean the shell never asks, so the scripts never run, with
   // nothing reported anywhere — and a card may not have its consent pre-filled

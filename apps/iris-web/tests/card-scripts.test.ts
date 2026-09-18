@@ -58,7 +58,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
   let latest: readonly ScriptRunState[] = []
 
   const env: CardScriptsEnv = {
-    resolve: async () => ({ scripts: scripts(), documentGranted: false }),
+    resolve: async () => ({ scripts: scripts(), documentGranted: false, networkGranted: false }),
     context: async () => CONTEXT,
     body: async (_character, scriptId) => ({ ok: true, content: `/* ${scriptId} */` }),
     bootstrapUrl: async () => 'http://iris.test/sandbox/bootstrap-abc.js',
@@ -181,7 +181,7 @@ test('leaving the chat mid-setup starts nothing', async () => {
   const bench = harness({
     resolve: async () => {
       await Promise.resolve()
-      return { scripts: scripts(), documentGranted: false }
+      return { scripts: scripts(), documentGranted: false, networkGranted: false }
     },
   })
   const running = startCardScripts(bench.env, 'chat-1', 'card-1')
@@ -263,7 +263,7 @@ test('grants are asked of the host, not handed in', async () => {
   const bench = harness({
     resolve: async characterId => {
       asked.push(characterId)
-      return { scripts: scripts(), documentGranted: true }
+      return { scripts: scripts(), documentGranted: true, networkGranted: false }
     },
   })
   startCardScripts(bench.env, 'chat-1', 'card-1')
@@ -431,7 +431,7 @@ test('a card with nothing to run starts no frame and reports nothing', async () 
    * Tested because "no scripts" is the input least likely to be tried: it looks
    * like nothing happens, which is exactly when a wrong answer goes unnoticed.
    */
-  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false }) })
+  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false, networkGranted: false }) })
   startCardScripts(bench.env, 'chat-1', 'card-1')
   await settle()
 

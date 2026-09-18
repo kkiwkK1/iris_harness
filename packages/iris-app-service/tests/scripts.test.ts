@@ -183,6 +183,66 @@ test('a grant cannot be stored against a character that is not there', async (t)
   await assert.rejects(handlers['script.setDocumentGrant']({ characterId: 'ghost', granted: true }))
 })
 
+// ── the network grant ──────────────────────────────────────────────────────
+//
+// The second grant is the first one's mirror: same store, same absent-means-
+// denied convention, same subject. The tests are the same three sentences,
+// because a convention that drifts between two permissions over one subject
+// is a convention that no longer exists.
+
+test('the network grant is denied by default and survives a restart once given', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const first = makeService(dir)
+  assert.equal((await first.handlers['script.list']({ characterId: 'aria' })).networkGranted, false)
+
+  const granted = await first.handlers['script.setNetworkGrant']({ characterId: 'aria', granted: true })
+  assert.equal(granted.networkGranted, true)
+
+  const second = makeService(dir)
+  assert.equal((await second.handlers['script.list']({ characterId: 'aria' })).networkGranted, true)
+})
+
+test('a revoked network grant is stored as absent, not as false', async (t) => {
+  const { handlers, policyPath } = await fixture(t)
+
+  await handlers['script.setNetworkGrant']({ characterId: 'aria', granted: true })
+  await handlers['script.setNetworkGrant']({ characterId: 'aria', granted: false })
+
+  const stored: unknown = JSON.parse(await readFile(policyPath, 'utf8'))
+  const record = (stored as { characters: Record<string, Record<string, unknown>> }).characters['aria'] ?? {}
+
+  assert.equal('networkGranted' in record, false, 'the key is gone, not set to false')
+  assert.equal((await handlers['script.list']({ characterId: 'aria' })).networkGranted, false)
+})
+
+test('a network grant cannot be stored against a character that is not there', async (t) => {
+  const { handlers } = await fixture(t)
+
+  await assert.rejects(handlers['script.setNetworkGrant']({ characterId: 'ghost', granted: true }))
+})
+
+test('the two grants answer independently of each other', async (t) => {
+  // One record per card, two decisions inside it — a shared flag is how one
+  // grant starts answering for the other, and page access is strictly the
+  // more dangerous of the pair.
+  const { handlers } = await fixture(t)
+
+  await handlers['script.setNetworkGrant']({ characterId: 'aria', granted: true })
+  const listed = await handlers['script.list']({ characterId: 'aria' })
+  assert.equal(listed.networkGranted, true)
+  assert.equal(listed.documentGranted, false, 'network access must not open the page')
+
+  await handlers['script.setDocumentGrant']({ characterId: 'aria', granted: true })
+  await handlers['script.setNetworkGrant']({ characterId: 'aria', granted: false })
+  const after = await handlers['script.list']({ characterId: 'aria' })
+  assert.equal(after.documentGranted, true)
+  assert.equal(after.networkGranted, false, 'revoking the network must not touch the page grant')
+})
+
 // ── the fetch whitelist, at the boundary ────────────────────────────────────
 
 /**

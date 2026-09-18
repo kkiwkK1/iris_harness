@@ -3761,11 +3761,12 @@ export class IrisAppService {
         // list for a card that is not there reads as the caller mistake it is.
         await library.load(characterId)
         const listed = await listAllScripts(characterId)
-        if (scripts === undefined) return { scripts: listed, documentGranted: false }
+        if (scripts === undefined) return { scripts: listed, documentGranted: false, networkGranted: false }
         const allowed = await scripts.scriptsAllowed(characterId)
         return {
           scripts: listed,
           documentGranted: await scripts.documentGranted(characterId),
+          networkGranted: await scripts.networkGranted(characterId),
           // Omitted rather than sent as `undefined`, because the key's absence
           // is the third state and `exactOptionalPropertyTypes` makes the
           // difference a type error rather than a convention.
@@ -3995,6 +3996,15 @@ export class IrisAppService {
         // there — a grant outliving its card is a permission with no subject.
         await library.load(characterId)
         return { documentGranted: await scripts.setDocumentGrant(characterId, granted) }
+      },
+
+      'script.setNetworkGrant': async ({ characterId, granted }) => {
+        if (scripts === undefined) throw new AppError('unsupported', 'script policy is not configured on this host')
+        // Loaded first, for the same reason as the document grant one arm up:
+        // this is a second permission over the same subject, and `forget`
+        // clears both on delete.
+        await library.load(characterId)
+        return { networkGranted: await scripts.setNetworkGrant(characterId, granted) }
       },
 
       // The bridge surface. The wire shape is frozen so the browser runner and
