@@ -1340,8 +1340,14 @@ export const en = {
   reportsUnreadable: 'could not read the host’s reports: {detail}',
   pageAccessGranted: 'Page access granted. It takes effect the next time the card runs.',
   pageAccessRevoked: 'Page access revoked. It stops at the next run.',
-  networkAccessGranted: 'Network access granted. It takes effect the next time the card runs.',
-  networkAccessRevoked: 'Network access revoked. It stops at the next run.',
+  /*
+   * No "next run" clause, unlike the page grant beside it: a network-grant
+   * flip re-navigates the live frames (their CSP is their document's, so the
+   * switch reloads them), and promising a wait that does not happen would
+   * have the reader looking for a stale failure.
+   */
+  networkAccessGranted: 'Network access granted. The card’s panels reload in place.',
+  networkAccessRevoked: 'Network access revoked. The card’s panels reload in place.',
 
   /**
    * Token usage — the composer's session line and each reply's own reading.
@@ -3049,8 +3055,8 @@ export const zh: Record<StringKey, string> = {
   reportsUnreadable: '无法读取宿主报告：{detail}',
   pageAccessGranted: '页面访问权已授予。将在卡片下次运行时生效。',
   pageAccessRevoked: '页面访问权已撤销。将在下次运行时停止。',
-  networkAccessGranted: '网络访问权已授予。将在卡片下次运行时生效。',
-  networkAccessRevoked: '网络访问权已撤销。将在下次运行时停止。',
+  networkAccessGranted: '网络访问权已授予。卡片的界面将就地重载。',
+  networkAccessRevoked: '网络访问权已撤销。卡片的界面将就地重载。',
 
   /** 用量。数字格式三行不含中文，见 en 一侧的说明。 */
   tokensThousand: '{value}K',

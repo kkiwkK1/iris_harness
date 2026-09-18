@@ -149,6 +149,16 @@ export interface StartedInterface {
    * reason `refreshContext` is: this controller forwards, it does not interpret.
    */
   emit: (event: string, args: readonly unknown[]) => void
+  /**
+   * Re-navigate the frame under a changed network grant.
+   *
+   * Optional: a test double built before the switch existed answers the
+   * structural type without it, and a missing member simply means that frame
+   * catches the grant at its next build instead. Structural optionality is
+   * deliberate here and is the one place it is sound: the controller below
+   * never *needs* the rebuild to stay correct — it needs it only to be early.
+   */
+  applyNetworkGrant?: (granted: boolean) => void
   dispose: () => void
 }
 
@@ -251,6 +261,14 @@ export interface RunningInterfaces {
    * source; here each frame has its own bus, so the shell is the speaker.
    */
   emit: (event: string, args: readonly unknown[]) => void
+  /**
+   * Re-navigate every frame of this message under a changed network grant.
+   *
+   * Forwarded to the frames that implement it; one that does not simply
+   * catches the grant at its next build, which the swap already delivers on
+   * any text change.
+   */
+  applyNetworkGrant: (granted: boolean) => void
   dispose: () => void
 }
 
@@ -420,6 +438,11 @@ export function runMessageInterfaces(
     refresh: context => {
       if (disposed) return
       for (const card of running) card.refreshContext(context)
+    },
+
+    applyNetworkGrant: granted => {
+      if (disposed) return
+      for (const card of running) card.applyNetworkGrant?.(granted)
     },
 
     emit: (event, args) => {

@@ -44,6 +44,13 @@ export interface MessageInterfacesInput {
    */
   text: string
   /**
+   * The network grant this message's frames run under.
+   *
+   * Flipping it re-navigates the live frames — see the hook body for why the
+   * swap's parked cover is what makes that honest.
+   */
+  networkGranted: boolean
+  /**
    * Whether a frame may exist for this floor at all.
    *
    * Consent and build assets, not room: no grant, or no bootstrap yet, and
@@ -160,6 +167,25 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
   const [swapping, setSwapping] = useState(false)
 
   /*
+   * The network-grant switch, applied to the frames already built.
+   *
+   * A grant written when the frames were built is a property of their
+   * document's policy — so flipping it is a reload, and a reload is what the
+   * swap mechanism already is: the same `runMessageInterfaces` re-run the
+   * effect below performs, with the parked-set cover meaning the reader never
+   * looks at a blank rectangle. What the hook exposes for that is just the
+   * live set, so the caller's own effect can tell it; parked sets are
+   * deliberately excluded — they are mid-replacement, and the replacement
+   * reads the grant fresh.
+   */
+  const live = useRef<RunningInterfaces | undefined>(undefined)
+  const grantNow = useRef<boolean | undefined>(undefined)
+  if (input.networkGranted !== grantNow.current) {
+    grantNow.current = input.networkGranted
+    live.current?.applyNetworkGrant(input.networkGranted)
+  }
+
+  /*
    * The callbacks are held in a ref so that changing them does not restart the
    * frames. Rebuilding an interface is expensive — the sample card's block is
    * 360 KiB of markup — and a parent re-render that produced a new closure
@@ -214,6 +240,7 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
 
     if (!input.allowed) {
       adopted?.disposeNow()
+      live.current = undefined
       setSwapping(false)
       setStates([])
       return undefined
@@ -228,6 +255,7 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
     const { blocks, css } = claimMessageSurfaces(input.text)
     if (blocks.length === 0) {
       adopted?.disposeNow()
+      live.current = undefined
       setSwapping(false)
       setStates([])
       return undefined
@@ -317,6 +345,13 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
      * is constructed.
      */
     input.pluginSheets ?? [])
+
+    /*
+     * Exposed for the grant switch: this run is the one a flip should
+     * re-navigate. Parked runs are unreachable by design — they are already
+     * mid-replacement, and the replacement's build reads the grant fresh.
+     */
+    live.current = running
 
     /*
      * The chat keeps moving under a mounted interface, and an interface is a

@@ -259,3 +259,43 @@ test('the answer parser tells CANCELLED apart from a missing result', () => {
   assert.equal(open.closed, false, 'a non-closing custom button press is still an answer')
   assert.equal(open.button, 3)
 })
+
+test('flipping the network grant re-navigates the frame under the widened policy', () => {
+  /*
+   * The switch used to take effect on the next chat open: the frame's CSP is
+   * its document's, so nothing short of a reload can apply it — and leaving
+   * that to the reader's next chat switch was the "turn it on and nothing
+   * changes" failure. The runner's answer is the one navigation the card
+   * cannot tell from any other: a srcdoc swap on the same iframe, token and
+   * sandbox attribute untouched.
+   */
+  const bench = harness()
+  const before = bench.card.element.srcdoc
+  assert.match(before, /img-src data: blob:/, 'the ungranted policy is the premise')
+  assert.doesNotMatch(before, /img-src https:/)
+
+  bench.card.applyNetworkGrant(true)
+  const granted = bench.card.element.srcdoc
+  assert.notEqual(granted, before, 'a flip that changed nothing would be the old bug restated')
+  assert.match(granted, /img-src https: data: blob:/)
+  assert.match(granted, /connect-src https:/)
+  // The identity stays: the run token is the address every in-flight message
+  // is addressed to, and re-minting it would strand them.
+  assert.equal(tokenOf(granted), tokenOf(before), 'the token must not move')
+  // And the one directive the grant never touches, checked here the way the
+  // policy test checks it at the source: script origins, byte-identical.
+  const scriptSrc = (doc: string): string => /script-src ([^;]*)/.exec(doc)?.[1] ?? ''
+  assert.equal(scriptSrc(granted), scriptSrc(before))
+
+  bench.card.applyNetworkGrant(false)
+  const revoked = bench.card.element.srcdoc
+  assert.match(revoked, /img-src data: blob:/)
+  assert.doesNotMatch(revoked, /img-src https:/)
+
+  // After dispose the switch is a no-op: re-navigating a torn-down frame
+  // would resurrect a realm the shell already buried.
+  bench.card.dispose()
+  const dead = bench.card.element.srcdoc
+  bench.card.applyNetworkGrant(true)
+  assert.equal(bench.card.element.srcdoc, dead, 'a disposed frame must not be re-navigated')
+})

@@ -390,6 +390,21 @@ export interface RunningCard {
    */
   refreshContext: (context: ScriptContext) => void
   /**
+   * Re-navigate the frame under a changed network grant.
+   *
+   * A srcdoc swap IS the frame's reload: same iframe element, same sandbox
+   * attribute, and the CSP meta is read off the new document by the parser
+   * exactly as at first load — the card's scripts re-run from the bootstrap
+   * up, which is the one moment a changed policy can honestly take effect,
+   * since a CSP is a property of the document that carries it.
+   *
+   * The shell calls this when the user flips the panel's switch, so the grant
+   * takes effect where they are looking instead of on the next chat they
+   * happen to open. What the card loses is what any reload loses; its
+   * variables and storage live outside the frame.
+   */
+  applyNetworkGrant: (granted: boolean) => void
+  /**
    * Re-read the host viewport and push it, exactly as a window resize would.
    *
    * The frame's viewport is the box the shell put the frame in, and a window
@@ -437,6 +452,26 @@ export interface RunningCard {
  * @returns the frame and its disposer.
  */
 export function runCard(host: RunnerHost, document: Document): RunningCard {
+  /*
+   * The network grant is the one run input that may change *while the frame is
+   * alive*: the panel's switch takes effect on the next navigation, and a
+   * frame's whole-document reload is the navigation the card cannot distinguish
+   * from any other — the bootstrap re-runs, the card's scripts re-run, and the
+   * state they rebuild from (variables, storage) lives outside the frame. What
+   * the card loses is what a reload always loses; what the reader does not wait
+   * for is a chat switch they had no reason to make.
+   */
+  const rebuildForNetworkGrant = (granted: boolean): void => {
+    frame.srcdoc = buildSrcdoc(token, host.bootstrapUrl, {
+      networkGranted: granted,
+      libraries: host.libraries,
+      ...(host.members === undefined ? {} : { members: host.members }),
+      selfOrigin: view.location.origin,
+      ...(host.markup === undefined ? {} : { body: host.markup }),
+      ...(host.markup === undefined ? {} : { context: host.context }),
+      systemPlugins,
+    })
+  }
   const systemPlugins = host.systemPlugins ?? DEFAULT_SANDBOX_PLUGIN_RUNTIME
   const token = mintToken()
   /*
@@ -447,10 +482,11 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
    * the height and clip handlers below had never been under test: there was no
    * way to deliver a message to them without a browser. They are now.
    */
-  const view = document.defaultView
-  if (view === null) {
+  const viewMaybe = document.defaultView
+  if (viewMaybe === null) {
     throw new Error('runCard needs a document that belongs to a window')
   }
+  const view: Window = viewMaybe
   const frame = document.createElement('iframe')
 
   // Set before `srcdoc`: the sandbox attribute has to be in place when the
@@ -972,6 +1008,10 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     setPluginPanelVisible: visible => {
       if (disposed) return
       post({ iris: token, type: 'plugin:panel', visible })
+    },
+    applyNetworkGrant: granted => {
+      if (disposed) return
+      rebuildForNetworkGrant(granted)
     },
     dispose: () => {
       if (disposed) return

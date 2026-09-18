@@ -309,6 +309,14 @@ export function MessageInterfaces({
     && ready.systemPlugins.revision === pluginRevision
     && ready.systemPlugins.mvu
 
+  /*
+   * Only as *this card's* grant: the store's copy is keyed on `scriptsFor`,
+   * and reading it unattributed would apply one card's grant to another's
+   * frames — the subject-confusion the whole grant model exists to prevent.
+   */
+  const networkGranted = useIris(state =>
+    state.scriptsFor !== undefined && state.scriptsFor === state.view?.characterId
+    && state.networkGranted)
   const { states, swapping } = useMessageInterfaces({
     floor,
     // `display`, not the wrapper's body: the controller re-claims this string
@@ -316,6 +324,7 @@ export function MessageInterfaces({
     // below places slots for. Two texts here is two claims, and a card whose
     // panels sit outside the wrapper would have the controller build nothing.
     text: display,
+    networkGranted,
     refusedInstances,
     gate,
     pluginSheets: pluginStyleSheets(chatId),
