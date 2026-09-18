@@ -21,13 +21,13 @@
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Buffer } from 'node:buffer'
 
 import { readCardChunks } from '../packages/iris-character/src/index.ts'
+import { dataCopy } from './chrome-profile.mjs'
 
 // This script spawns its own host, so the port is the one it listens on rather
 // than one it must find something at; it is still a variable, because two QA
@@ -69,7 +69,10 @@ async function waitUntil(predicate, what) {
   }
 }
 
-const dataDir = await mkdtemp(join(tmpdir(), 'iris-charops-qa-'))
+// A data dir the host writes keys into, so it is removed rather than left
+// under another name; see qa/chrome-profile.mjs.
+const data = dataCopy('iris-charops-qa-')
+const dataDir = data.dir
 const profile = join(dataDir, 'default-user')
 await mkdir(join(profile, 'characters'), { recursive: true })
 await copyFile(CARD_SOURCE, join(profile, 'characters', CARD_FILE))
@@ -87,7 +90,7 @@ const worldList = async () => {
 // The host process, composed by the product's own cordis.yml — the same one a
 // user runs. Its PID is the only way it is managed.
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-const host = spawn(process.execPath, ['apps/iris/bin.ts'], {
+const host = data.adopt(spawn(process.execPath, ['apps/iris/bin.ts'], {
   cwd: repoRoot,
   env: {
     ...process.env,
@@ -96,7 +99,7 @@ const host = spawn(process.execPath, ['apps/iris/bin.ts'], {
     IRIS_USER_NAME: 'Traveller',
   },
   stdio: 'inherit',
-})
+}))
 console.log(`host process PID ${String(host.pid)} on port ${String(PORT)}`)
 try {
   await waitUntil(async () => {
@@ -194,7 +197,7 @@ try {
 } finally {
   // Managed by the recorded PID alone.
   host.kill()
-  await rm(dataDir, { recursive: true, force: true }).catch(() => {})
+  await data.dispose()
 }
 
 /** The card JSON a PNG file carries (ccv3 first, matching the reader). */

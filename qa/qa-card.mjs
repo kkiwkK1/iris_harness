@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile } from './chrome-profile.mjs'
 import { clickTabExpr } from './locators.mjs'
 import { call, rpc, eventWatcher, debugReports, BASE } from './rpc.mjs'
 
@@ -45,13 +46,13 @@ const result = { characterId, displayName, turnText: TURN_TEXT, base: BASE }
 
 // ---------- generic CDP plumbing ----------
 async function withPage(fn) {
-  const userDataDir = `${process.env.TEMP}/iris-qa-cdp-${CDP_PORT}-${Date.now()}`
-  const chrome = spawn(CHROME, [
+  const profile = chromeProfile('iris-qa-cdp-')
+  const chrome = profile.adopt(spawn(CHROME, [
     `--remote-debugging-port=${CDP_PORT}`,
-    `--user-data-dir=${userDataDir}`,
+    `--user-data-dir=${profile.dir}`,
     '--no-first-run', '--no-default-browser-check', '--headless=new',
     '--window-size=1400,900', 'about:blank',
-  ], { stdio: 'ignore' })
+  ], { stdio: 'ignore' }))
   try {
     let page
     for (let at = 0; at < 30 && page === undefined; at += 1) {
@@ -65,6 +66,7 @@ async function withPage(fn) {
     return await fn(page.webSocketDebuggerUrl)
   } finally {
     chrome.kill() // our own child handle; never by name or port
+    await profile.dispose()
     await delay(500)
   }
 }

@@ -22,6 +22,8 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { chromeProfile } from './chrome-profile.mjs'
+
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8787'
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
 
@@ -297,8 +299,8 @@ console.log(`scriptsAllowed=${String(result.scripts.allowed)} scripts=${scripts.
 // ---------------------------------------------------------------- Phase B
 let chatId
 result.browser = await (async () => {
-  const userDataDir = `${process.env.TEMP}/iris-r2-${CDP_PORT}-${Date.now()}`
-  const chrome = spawn(CHROME, [`--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`, '--no-first-run', '--no-default-browser-check', '--headless=new', '--window-size=1500,950', 'about:blank'], { stdio: 'ignore' })
+  const profile = chromeProfile('iris-r2-')
+  const chrome = profile.adopt(spawn(CHROME, [`--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile.dir}`, '--no-first-run', '--no-default-browser-check', '--headless=new', '--window-size=1500,950', 'about:blank'], { stdio: 'ignore' }))
   try {
     let page
     for (let at = 0; at < 30 && page === undefined; at += 1) {

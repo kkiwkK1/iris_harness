@@ -13,11 +13,13 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createConnection } from 'node:net'
+
+// The one temp-directory rule for everything that starts a browser.
+import { chromeProfile } from '../../../qa/chrome-profile.mjs'
 
 const here = dirname(import.meta.url)
 
@@ -67,26 +69,26 @@ export async function launchChrome({ headless = true } = {}) {
   const binary = chromeBinary()
   if (binary === undefined) throw new Error('no Chrome binary found — set CHROME_PATH')
   const port = await freePort()
-  const profile = await mkdtemp(join(tmpdir(), 'iris-cdp-'))
+  const profile = chromeProfile('iris-cdp-')
   const args = [
     `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profile}`,
+    `--user-data-dir=${profile.dir}`,
     '--no-first-run', '--no-default-browser-check',
     '--disable-extensions', '--disable-background-networking',
     '--lang=en-US',
     ...(headless ? ['--headless=new', '--window-size=1440,900'] : []),
     'about:blank',
   ]
-  const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+  const child = profile.adopt(spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] }))
   child.stderr.on('data', () => { /* Chrome writes progress noise; not ours to relay */ })
   const deadline = Date.now() + 20_000
   for (;;) {
     try {
       const version = await fetch(`http://127.0.0.1:${port}/json/version`)
-      if (version.ok) return { child, port }
+      if (version.ok) return { child, port, profile }
     } catch { /* not up yet */ }
     if (Date.now() > deadline) {
-      child.kill()
+      await profile.dispose()
       throw new Error('Chrome did not open its debugging endpoint')
     }
     await new Promise(wake => setTimeout(wake, 200))
@@ -213,10 +215,12 @@ export async function screenshot(cdp, sessionId, name) {
 
 /**
  * One scenario's scaffold: browser up, page session found, helpers bound,
- * teardown that always kills the child.
+ * teardown that always kills the child **and removes its profile** — the kill
+ * was always here, the removal was not, and each scenario used to leave a
+ * `iris-cdp-*` directory behind (qa/chrome-profile.mjs).
  */
 export async function withBrowser(run, { url, headless = true } = {}) {
-  const { child, port } = await launchChrome({ headless })
+  const { child, port, profile } = await launchChrome({ headless })
   const cdp = await Cdp.open(port)
   const sessionId = await pageSession(cdp)
   const evalInPage = expression => evaluate(cdp, sessionId, expression)
@@ -233,6 +237,6 @@ export async function withBrowser(run, { url, headless = true } = {}) {
     return await run({ cdp, sessionId, eval: evalInPage, child })
   } finally {
     cdp.close()
-    child.kill()
+    await profile.dispose()
   }
 }

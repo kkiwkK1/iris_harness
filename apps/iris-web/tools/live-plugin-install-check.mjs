@@ -24,9 +24,11 @@
  * @module iris-web/tools/live-plugin-install-check
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+// The one temp-directory rule for everything that starts a browser.
+import { chromeProfile } from '../../../qa/chrome-profile.mjs'
 
 const [appPort, devDir, outDir] = process.argv.slice(2)
 if (appPort === undefined || devDir === undefined || outDir === undefined) {
@@ -49,13 +51,13 @@ if (chromePath === undefined) {
 }
 
 const devFilesBefore = readdirSync(devDir).sort()
-const profile = mkdtempSync(join(tmpdir(), 'iris-plugin-install-check-'))
+const profile = chromeProfile('iris-plugin-install-check-')
 const cdpPort = 9333 + Math.floor(Math.random() * 500)
-const chrome = spawn(chromePath, [
+const chrome = profile.adopt(spawn(chromePath, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--window-size=1280,1600',
-  `--user-data-dir=${profile}`, `--remote-debugging-port=${String(cdpPort)}`, 'about:blank',
-], { stdio: 'ignore' })
+  `--user-data-dir=${profile.dir}`, `--remote-debugging-port=${String(cdpPort)}`, 'about:blank',
+], { stdio: 'ignore' }))
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 for (let attempt = 0; attempt < 80; attempt++) {
@@ -209,6 +211,6 @@ step('page.exceptions', exceptions, exceptions.length === 0)
 writeFileSync(join(outDir, 'steps.json'), JSON.stringify(steps, null, 2))
 ws.close()
 chrome.kill()
-try { rmSync(profile, { recursive: true, force: true }) } catch { /* a locked profile dir is Chrome's to release */ }
+await profile.dispose()
 console.log(failures === 0 ? 'live plugin install check: ok' : `live plugin install check: ${String(failures)} step(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile } from './chrome-profile.mjs'
 import { call, eventWatcher, BASE } from './rpc.mjs'
 
 const [, , characterId, turnText] = process.argv
@@ -62,12 +63,13 @@ function socket(url) {
   return { ws, opened, send, evaluate, consoleLines }
 }
 
-const chrome = spawn(CHROME, [
+const profile = chromeProfile('iris-z1-reg-')
+const chrome = profile.adopt(spawn(CHROME, [
   `--remote-debugging-port=${String(CDP_PORT)}`,
-  `--user-data-dir=${process.env.TEMP}/iris-z1-reg-${String(CDP_PORT)}-${Date.now()}`,
+  `--user-data-dir=${profile.dir}`,
   '--no-first-run', '--no-default-browser-check', '--headless=new',
   '--window-size=1600,1000', 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 
 try {
   let page

@@ -13,12 +13,12 @@
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { startMockProvider } from '../apps/iris/tests/mock-provider.ts'
+import { dataCopy } from './chrome-profile.mjs'
 
 // Spawns its own host, so the port is the one it listens on; still a variable so
 // two QA runs on one machine cannot collide.
@@ -82,7 +82,10 @@ const ARIA = JSON.stringify({
 })
 
 const mock = await startMockProvider()
-const dataDir = await mkdtemp(join(tmpdir(), 'iris-persona-qa-'))
+// A data dir the host writes keys into, so it is removed rather than left
+// under another name; see qa/chrome-profile.mjs.
+const data = dataCopy('iris-persona-qa-')
+const dataDir = data.dir
 await mkdir(join(dataDir, 'default-user', 'characters'), { recursive: true })
 await mkdir(join(dataDir, 'default-user', 'worlds'), { recursive: true })
 await writeFile(join(dataDir, 'default-user', 'characters', 'aria.json'), ARIA, 'utf8')
@@ -112,7 +115,7 @@ await copyFile(
 // The host process, composed by the product's own cordis.yml — the same one a
 // user runs. Its PID is the only way it is managed.
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
-const host = spawn(process.execPath, ['apps/iris/bin.ts'], {
+const host = data.adopt(spawn(process.execPath, ['apps/iris/bin.ts'], {
   cwd: repoRoot,
   env: {
     ...process.env,
@@ -123,7 +126,7 @@ const host = spawn(process.execPath, ['apps/iris/bin.ts'], {
     IRIS_USER_NAME: 'Traveller',
   },
   stdio: 'inherit',
-})
+}))
 console.log(`host process PID ${String(host.pid)} on port ${String(PORT)}`)
 
 // The mock keeps only the last request body, and a chat-completion body
@@ -214,5 +217,5 @@ try {
     await new Promise(resolve => { host.once('exit', resolve) })
   }
   await mock.close()
-  await rm(dataDir, { recursive: true, force: true })
+  await data.dispose()
 }

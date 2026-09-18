@@ -11,13 +11,13 @@
  * scroll position and sheet rect must not move when the drawer opens/closes.
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 
 import { answerConsentExpr } from './locators.mjs'
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile } from './chrome-profile.mjs'
 
 const CHROME = process.env.IRIS_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8825/'
@@ -84,11 +84,11 @@ if (beforeLines.length !== 3) throw new Error(`expected 3 floors after seeding, 
 
 // --- headless Chrome ----------------------------------------------------------
 
-const profile = mkdtempSync(join(tmpdir(), 'iris-chrome-'))
-const chrome = spawn(CHROME, [
-  '--headless=new', `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profile}`,
+const profile = chromeProfile('iris-chrome-')
+const chrome = profile.adopt(spawn(CHROME, [
+  '--headless=new', `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profile.dir}`,
   '--no-first-run', '--no-default-browser-check', '--window-size=1920,1080', 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 let version = null
 for (let i = 0; i < 50 && !version; i++) {
