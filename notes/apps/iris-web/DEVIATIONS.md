@@ -8263,3 +8263,72 @@ Iris 一个前端块一个不透明源帧，所以这条路是为一个上游没
 (d) `FramePlan.spent` 长出 UI 读者：那时验收该改回读面板，本节出入 2 可以删掉。
 (e) 一个对话里同时挂着很多插件、重建开始被读者感知为卡顿：那时「每张表一个 `<style>` 元素」
 与「每次发布重建一次」这两条要一起重看——今天它们分别买到了按 owner 的可清点性与实现的简单。
+
+## 115. 网络授权进了契约：机制早已在策略里，缺的是从用户到 `framePolicy` 的那条路
+
+**Kind:** deliberate divergence from upstream, completed（上游无对应物——SillyTavern
+的卡代码跑在页面本身上，远程图片、fetch、样式表对它本来就是开的，没有「授权」这个
+概念可偏离；本条记录的是 Iris 自己一侧「策略先于开关」的完成）。
+
+**起因是一条用户路径的实测。** 2026-09-19，「魔法少女的扣扣审判1」的外置状态栏里
+艾玛头像裂图：卡写死 `https://gitgud.io/.../Profile_Ema.webp`，帧策略默认
+`img-src data: blob:`，CSP 拒绝并按设计具名上报（295 条
+`blocked gitgud.io (img-src)`，见 `notes/CARD-REGRESSION-2026-09-17-rerun.md`）。
+SANDBOX.md 当时写得很诚实：**策略的两个分支都建好了、都测了，但用户够不着开关** —
+`networkGranted` 不在契约里，两条真实运行路径硬编码 `false`，只有 dev 探针面板能翻。
+
+**裁决（已存在，本次只是落地）。** 授权按卡、只能用户发起、放宽
+`img-src`/`connect-src`/`style-src` 到 `https:`，`http:` 永不，**`script-src` 永不** —
+让卡加载作者的图和让卡执行作者的代码是两个决定，授权只为第一个存在。这些原话在
+SANDBOX.md 里躺了三周；本次动的是它们之外的一切。
+
+**落地的形状，四层各一处。**
+
+- **契约**：`script.list` 在 `documentGranted` 旁带出 `networkGranted`；
+  `script.setNetworkGrant` 写入。与文档授权同表同寿命：撤销即删键（absent 与 denied
+  同一状态），写入前 `library.load` 验卡存在，删卡 `forget` 一并清。
+- **运行路径**：`useCardScripts` 与 `MessageInterfaces` 两处都从
+  `resolveScripts(characterId)` 在**运行时刻**读宿主答案，不读面板缓存 —— 面板状态以
+  characterId 为键，而删卡会把 id 让给下一张同名卡，这条规则从文档授权起就是
+  AUTORUN.md §二的正文，网络授权只是它的第二个实例。
+- **面板**：ScriptPanel 在页面访问权旁加第二个授权块，措辞按后果而不是按机制
+  （能到达什么、什么即使授权也拒绝），背后是同形 `RiskConfirmation`，确认勾选项
+  点名外泄通道本身：「我知道这张卡将能把它能看到的内容发送到它自己选择的服务器」。
+- **通知**：授予/撤销走与页面授权同形的提示句，且同样写明**下次运行生效** —
+  帧的策略在建帧那一刻就定死，期望立即生效的用户会从继续失败的卡上得出错误结论。
+
+**与页面访问权的措辞差，是有意的。** 页面授权的确认句点名「读其他对话」和「输入中的
+API 密钥」—— 那是该授权真正解锁的能力；网络授权的确认句点名的是**通道**而不是具体
+读数，因为 `img-src` 一开，帧里可见的一切（对话在内）都能随卡自选地址离开，具体会
+带走什么取决于卡，唯一不变的承诺是通道存在。两句都不能抄对方的：把页面授权的句子
+借给网络授权会承诺一个本授权并不给的能力。
+
+**没动的部分，和它各自的守卫。**
+
+- `framePolicy` 本体一字未改：两个分支三周前就在那里，且 `sandbox-srcdoc.test.ts` 的
+  「a network grant widens fetch, images and styles — and nothing else」钉住授权前后
+  `script-src` 逐字节一致 —— 那条测试先于开关存在，现在守的是开关真正翻动的东西。
+- 默认仍关。一张未授权的卡今天的行为与昨天逐字节相同，拒绝仍按域名具名上报。
+- dev 探针面板的 `networkGranted` 复选框保留原样：它是 DEV 门控的观测工具，产品
+  开关落地后它依然探针 —— 它翻的是探针自己的 frame，不是聊天里的。
+
+### 牙齿
+
+| 断言 | 在哪里 |
+| --- | --- |
+| 默认拒绝、授予后跨重启存活 | `packages/iris-app-service/tests/scripts.test.ts`「the network grant is denied by default and survives a restart once given」 |
+| 撤销存为 absent 而非 `false` | 同文件「a revoked network grant is stored as absent, not as false」（读 policy 文件本体） |
+| 不存在的卡存不下授权 | 同文件「a network grant cannot be stored against a character that is not there」 |
+| 两个授权互不应答 | 同文件「the two grants answer independently of each other」 |
+| 删卡重导同名卡不继承 | `apps/iris/tests/rpc-transport.test.ts` id 复用测试新增 `networkGranted === false` 一条腿 |
+| 契约方法真实可达线上 | 同文件 `PROBES` 表新增一行 + registration.test.ts 的注册扫描 |
+| 授权前后 `script-src` 逐字节一致 | `apps/iris-web/tests/sandbox-srcdoc.test.ts`（先于本开关存在） |
+
+### What would reopen this
+
+(a) 有人提出按主机授权（「只放行 gitgud.io」）：那是 SANDBOX.md 已裁的 per-host
+allow-list 形状，重开需要新的语料证据而不是偏好。(b) 授权想覆盖 `script-src`：
+那把这个授权变成页面授权的穷亲戚，两个授权存在的理由同时消失，需要先推翻
+「加载图片与执行代码是两个决定」这条裁决本身。(c) 第三个授权出现：届时
+「每授权一块面板 + 一份风险确认 + 一条通知句」的形状应当先被提出来共用，
+而不是第三份手写。

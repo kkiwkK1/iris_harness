@@ -331,7 +331,7 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   two different decisions, and the grant exists only for the first — pinned by
   test, granted and ungranted `script-src` identical byte for byte.
 
-  > **The policy exists; the switch does not (checked 2026-09-16).** The grant
+  > ~~**The policy exists; the switch does not (checked 2026-09-16).** The grant
   > is a parameter of `framePolicy`, and both branches are built and tested —
   > but `networkGranted` **is not in the contract**. Both real run paths pass a
   > literal `false` (`apps/iris-web/src/app/useCardScripts.tsx`,
@@ -340,7 +340,16 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   > until `networkGranted` reaches the contract."* The `false` is deliberate and
   > commented at both sites — *"a grant nobody has been asked for is not a
   > grant"* — so a card's outbound fetches are refused by CSP and named, which
-  > is the intended behaviour rather than a gap.
+  > is the intended behaviour rather than a gap.~~
+  >
+  > **Struck through 2026-09-19: the switch now exists.** The grant entered the
+  > contract as `networkGranted` on `script.list` plus `script.setNetworkGrant`,
+  > stored per card in the policy file with the document grant's convention
+  > (absent and denied one state, forgotten on delete), and the panel asks with
+  > the same risk-confirmation shape the document grant uses. Both run paths
+  > read the host's answer at run time. What did **not** change: the default is
+  > still closed, `script-src` still never widens, and `http:` stays refused
+  > under the grant.
   >
   > Written down because a policy document describing a grant in the present
   > tense reads as a feature the user can reach, and a reader debugging a card
@@ -357,6 +366,28 @@ stylesheets and fonts (`fonts.googleapis.com` — six cards), images and texture
   shell, which displays the refusal beside the frame, naming the host and the
   grant that would allow it. A refusal the user cannot see is indistinguishable
   from a bug in whatever the card does next.
+
+### The network grant, reachable (2026-09-19)
+
+The grant the sections above describe is a user-reachable switch, in the script
+panel beside the document grant. The chain, end to end:
+
+- **Contract**: `script.list` carries `networkGranted` beside `documentGranted`;
+  `script.setNetworkGrant` writes it. Same absent-and-denied convention in the
+  policy file (`networkGranted` deletes on revoke), same subject rule — the
+  write refuses a card that is not there, and `forget` clears it on delete.
+- **Run paths**: both frame builders (`useCardScripts.tsx`,
+  `MessageInterfaces.tsx`) read the host's answer at run time through
+  `resolveScripts`, never panel state — panel state is keyed on the character
+  id, and a deleted card frees its id for the next card of that name.
+- **Panel**: a second grant block under the document grant, worded by
+  consequence (what the card can reach; what stays refused even granted —
+  `http:`, and remote code off the allowlist), behind a risk-confirmation
+  dialog whose acknowledgement names the exfiltration channel.
+- **Policy, unchanged**: granted or not, `script-src` is byte-identical —
+  pinned by `sandbox-srcdoc.test.ts`'s *"a network grant widens fetch, images
+  and styles — and nothing else"*, which predates the switch and now guards the
+  thing the switch actually flips.
 
 ### Upstream has no policy here at all — and its own frames load remote stylesheets
 

@@ -81,6 +81,7 @@ export function ScriptPanel(): ReactElement | null {
   const scripts = useIris(state => state.scripts)
   const scriptsFor = useIris(state => state.scriptsFor)
   const granted = useIris(state => state.documentGranted)
+  const networkGranted = useIris(state => state.networkGranted)
   const consent = useIris(state => state.scriptsAllowed)
   const runStates = useIris(state => state.runStates)
   const cardReports = useIris(state => state.cardReports)
@@ -89,6 +90,8 @@ export function ScriptPanel(): ReactElement | null {
 
   const [asking, setAsking] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
+  const [askingNetwork, setAskingNetwork] = useState(false)
+  const [networkAcknowledged, setNetworkAcknowledged] = useState(false)
   const markupScripts = useMarkupScriptCount()
   // Subscribed so a language switch re-renders the panel's words.
   useLanguage()
@@ -289,6 +292,61 @@ export function ScriptPanel(): ReactElement | null {
         onConfirm={() => {
           setAsking(false)
           void actions.setDocumentGrant(true)
+        }}
+      />
+
+      {/*
+        The second grant, beside the document grant rather than merged into it.
+        The two widen different directives for different reasons — this one lets
+        a card whose whole UI lives on its author's host show its images and
+        styles — and one switch answering for both would be a grant nobody was
+        asked for. Wording is again by consequence: what the card can reach,
+        and what deliberately stays refused even under the grant.
+      */}
+      <div className="iris-grant">
+        <div className="iris-grant__state">
+          <span className="iris-field__label">{t('networkAccess')}</span>
+          <span className={`iris-grant__value${networkGranted ? ' iris-grant__value--on' : ''}`}>
+            {networkGranted ? t('granted') : t('off')}
+          </span>
+        </div>
+        <p className="iris-field__note">
+          {networkGranted ? t('networkGrantedNote') : t('networkOffNote')}
+        </p>
+        <p className="iris-field__note">
+          {t('onlyYouNote')}
+        </p>
+        {networkGranted ? (
+          <Button variant="outline" size="sm" onClick={() => void actions.setNetworkGrant(false)}>
+            {t('turnOffNetworkAccess')}
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setNetworkAcknowledged(false)
+              setAskingNetwork(true)
+            }}
+          >
+            {t('giveNetworkAccess')}
+          </Button>
+        )}
+      </div>
+
+      <RiskConfirmation
+        open={askingNetwork}
+        title={t('networkGrantDialogTitle')}
+        description={t('networkGrantDialogBody')}
+        acknowledgeLabel={t('networkGrantDialogAck')}
+        cancelLabel={t('networkGrantDialogCancel')}
+        confirmLabel={t('networkGrantDialogConfirm')}
+        acknowledged={networkAcknowledged}
+        onAcknowledgedChange={setNetworkAcknowledged}
+        onCancel={() => setAskingNetwork(false)}
+        onConfirm={() => {
+          setAskingNetwork(false)
+          void actions.setNetworkGrant(true)
         }}
       />
     </CollapsibleSection>

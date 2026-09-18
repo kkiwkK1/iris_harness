@@ -64,6 +64,16 @@ interface PolicyFile {
     /** Whether this card may reach the real page document. */
     documentGranted?: boolean
     /**
+     * Whether this card may reach the remote network.
+     *
+     * Same convention as `documentGranted` — absent and denied are one state,
+     * so a revoked grant is indistinguishable from one never given. What the
+     * grant widens is `img-src`/`connect-src`/`style-src` to `https:` and
+     * nothing else: `script-src` stays pinned to the measured allowlist, and
+     * `http:` stays refused under the grant (`docs/SANDBOX.md` §网络授权).
+     */
+    networkGranted?: boolean
+    /**
      * Whether the card's own regex tier may run — upstream's
      * `character_allowed_regex` membership.
      *
@@ -438,6 +448,36 @@ export class ScriptPolicyStore {
     // state, or a revoked grant reads differently from one never given and the
     // two eventually get treated differently by something downstream.
     else delete record.documentGranted
+    this.#file.characters[characterId] = record
+    await this.#save()
+    return granted
+  }
+
+  /**
+   * Whether a card may reach the remote network.
+   * @param characterId - the card.
+   * @returns the grant, defaulting to denied.
+   */
+  async networkGranted(characterId: string): Promise<boolean> {
+    await this.#load()
+    return this.#file.characters[characterId]?.networkGranted === true
+  }
+
+  /**
+   * Grant or revoke the remote network for one card.
+   * @param characterId - the card.
+   * @param granted - the new state.
+   * @returns the state as stored.
+   */
+  async setNetworkGrant(characterId: string, granted: boolean): Promise<boolean> {
+    await this.#load()
+    const record = this.#file.characters[characterId] ?? {}
+    if (granted) record.networkGranted = true
+    // Deleted on revoke, the same convention as the document grant one screen
+    // up — and the same sentence applies, because the same downstream is
+    // reading it: two spellings of denied, treated differently once, is a card
+    // that keeps a capability the user took away.
+    else delete record.networkGranted
     this.#file.characters[characterId] = record
     await this.#save()
     return granted

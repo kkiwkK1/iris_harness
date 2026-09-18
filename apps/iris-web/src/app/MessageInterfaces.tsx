@@ -147,6 +147,7 @@ export function MessageInterfaces({
     | {
         assets: SandboxAssets
         documentGranted: boolean
+        networkGranted: boolean
         context: ScriptContext
         systemPlugins: SandboxPluginRuntime
       }
@@ -204,6 +205,7 @@ export function MessageInterfaces({
           setReady({
             assets,
             documentGranted: grants.documentGranted,
+            networkGranted: grants.networkGranted,
             context: snapshot,
             systemPlugins: pluginRuntime,
           })
@@ -346,12 +348,13 @@ export function MessageInterfaces({
           markup: input.markup,
           documentGranted: current.documentGranted,
           /*
-           * Still false. Widening `connect-src` to the host origin is a separate,
-           * ruled piece of work; until it lands a card's outbound fetches are
-           * refused by CSP and reported by name, which is the intended behaviour
-           * rather than a gap.
+           * Asked of the host in the same round trip as the document grant
+           * above it — never panel state, which is keyed on the character id
+           * and can belong to a card that no longer exists. The grant widens
+           * `img-src`/`connect-src`/`style-src` only; `script-src` never
+           * moves (`docs/SANDBOX.md`).
            */
-          networkGranted: false,
+          networkGranted: current.networkGranted,
           bundleOrigin: window.location.origin,
           context: current.context,
           // The floor this interface renders in — what `getCurrentMessageId()`

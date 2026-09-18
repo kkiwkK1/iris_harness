@@ -41,6 +41,7 @@ export interface CardScriptsEnv {
   resolve: (characterId: string) => Promise<{
     scripts: readonly ScriptView[]
     documentGranted: boolean
+    networkGranted: boolean
   }>
   /** The host's snapshot for this chat. */
   context: (chatId: string, characterId: string) => Promise<ScriptContext | undefined>
@@ -72,6 +73,7 @@ export interface CardScriptsEnv {
     context: ScriptContext
     bootstrapUrl: string
     documentGranted: boolean
+    networkGranted: boolean
     /** Reports against a script by id, since one frame now speaks for several. */
     onPhase: (scriptId: string | undefined, state: Omit<ScriptRunState, 'scriptId' | 'name'>) => void
     /**
@@ -368,6 +370,7 @@ export function startCardScripts(
           context,
           bootstrapUrl,
           documentGranted: resolved.documentGranted,
+          networkGranted: resolved.networkGranted,
           onReady: () => {
             if (disposed) return
             /*

@@ -1259,6 +1259,20 @@ export const requestSchemas = {
     characterId: z.string().min(1),
     allowed: z.boolean(),
   }),
+  /**
+   * Grant or revoke one card's access to the remote network.
+   *
+   * Same shape and same lifetime as the document grant — per-card, user-driven,
+   * deleted with the card. What it buys is narrower and different in kind: the
+   * frame policy widens `img-src`/`connect-src`/`style-src` to `https:` (never
+   * `http:`, and **`script-src` never** — letting a card load its author's
+   * images and letting it execute its author's code are two different
+   * decisions, and this grant exists only for the first).
+   */
+  'script.setNetworkGrant': z.object({
+    characterId: z.string().min(1),
+    granted: z.boolean(),
+  }),
 
   /**
    * Read the host's retained diagnostic reports.
@@ -2997,11 +3011,12 @@ export interface RpcResponseMap {
    * `documentGranted`, which is a plain boolean because a revoked grant and one
    * never given are meant to be the same state.
    */
-  'script.list': { scripts: ScriptView[], documentGranted: boolean, scriptsAllowed?: boolean }
+  'script.list': { scripts: ScriptView[], documentGranted: boolean, networkGranted: boolean, scriptsAllowed?: boolean }
   'script.setEnabled': { scripts: ScriptView[] }
   'script.body': { content: string }
   'script.setDocumentGrant': { documentGranted: boolean }
   'script.setScriptsAllowed': { scriptsAllowed: boolean }
+  'script.setNetworkGrant': { networkGranted: boolean }
 
   /**
    * Retained reports, plus the three counters that make them trustworthy.
