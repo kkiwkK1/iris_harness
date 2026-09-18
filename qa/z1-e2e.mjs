@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile } from './chrome-profile.mjs'
 import { call, rpc, BASE } from './rpc.mjs'
 
 const CHARACTER = '新架空政治经济模拟器'
@@ -73,13 +74,13 @@ function socket(url) {
   return { ws, opened, send, evaluate, consoleLines }
 }
 
-const userDataDir = `${process.env.TEMP}/iris-z1-cdp-${CDP_PORT}-${Date.now()}`
-const chrome = spawn(CHROME, [
+const profile = chromeProfile('iris-z1-cdp-')
+const chrome = profile.adopt(spawn(CHROME, [
   `--remote-debugging-port=${String(CDP_PORT)}`,
-  `--user-data-dir=${userDataDir}`,
+  `--user-data-dir=${profile.dir}`,
   '--no-first-run', '--no-default-browser-check', '--headless=new',
   '--window-size=1600,1000', 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 let page
 
 try {

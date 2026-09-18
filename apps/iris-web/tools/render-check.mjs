@@ -9,18 +9,21 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 
 import { build } from 'esbuild'
 
+// The one temp-directory rule; here for the sweep and the signal handlers,
+// not because this bundle directory was ever leaking.
+import { tempDir } from '../../../qa/chrome-profile.mjs'
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const workspacePackage = name => path.join(here, '..', '..', '..', 'packages', name, 'src', 'index.ts')
 
-const out = await mkdtemp(path.join(tmpdir(), 'iris-render-'))
+const scratch = tempDir('iris-render-')
+const out = scratch.dir
 const bundle = path.join(out, 'render-check.cjs')
 
 try {
@@ -80,5 +83,5 @@ try {
   createRequire(pathToFileURL(bundle))(bundle)
   assert.ok(true)
 } finally {
-  await rm(out, { recursive: true, force: true })
+  await scratch.dispose()
 }

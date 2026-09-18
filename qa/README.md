@@ -78,6 +78,64 @@ render 就这么挂了 exit 1,换端口重跑即正常)。偏移让"再跑一趟
 
 ---
 
+## 临时目录:一律走 `qa/chrome-profile.mjs`
+
+headless Chrome 要一个 `--user-data-dir`,验收宿主要一份数据目录。这两样都是**临时**的:
+脚本跑完就该没了。**任何脚本都不再自己拼临时路径**,而是问这一个模块要:
+
+```js
+import { chromeProfile } from './chrome-profile.mjs'
+
+const profile = chromeProfile('iris-r2-')            // 建目录 + 登记清理 + 扫同前缀的陈旧兄弟
+const chrome = profile.adopt(spawn(CHROME, [         // 把浏览器交给它:先杀进程,再删目录
+  `--user-data-dir=${profile.dir}`, /* … */
+], { stdio: 'ignore' }))
+```
+
+拿回来的东西会自己清掉:正常返回、抛异常、`process.exit()`、Ctrl-C,四条路都清。
+`qa/` 里绝大多数脚本是平铺的顶层程序,末尾一句 `process.exit()`,`try/finally` 根本看不见
+那次退出,所以模块里同时挂了一个**同步**的 `'exit'` / 信号处理器 —— 这是它必须写两遍的原因。
+需要包一层函数的地方用 `withChromeProfile(prefix, async handle => …)`;数据目录用
+`dataCopy(prefix)`,它带 `connections.json`,所以**必须删掉,不能改名留着**。
+
+目录建在系统临时目录(Windows 上就是 `%TEMP%`,即 `os.tmpdir()`),名字是「前缀 + 六位随机」。
+**每次建目录也会顺手扫一遍同前缀、一小时以上没动过的兄弟目录并删掉**,所以以前漏下的那些
+会自己愈合,不需要这个模块当年就存在。那一小时是为了不误删另一份正在跑的同名脚本的
+profile —— 活着的 profile 一直在被写。想看它扫掉了多少,`IRIS_TEMP_VERBOSE=1`。
+
+要手工清干净:
+
+```powershell
+Get-ChildItem $env:TEMP -Directory -Filter 'iris-*' | Remove-Item -Recurse -Force
+```
+
+### 2026-09-19:这条规矩是 11.5 GB 换来的
+
+当天在这台机器上量:`%TEMP%` 里躺着 **321 个带 `Default/` 的 Chrome profile,合计 11.53 GB**
+(单个平均 37 MB,被驱动过的能到 120 MB),分布在 **90 个不同前缀**下,其中大多数前缀在树里
+已经找不到对应脚本 —— 都是一次性仪器留下的。没有任何一处代码删过它们。
+
+同一次普查还纠正了一个前提:`%TEMP%` 里 `iris-*` 目录的**条数**(当时 45 673 条,且在被系统
+清理持续搬走)几乎全部来自 `packages/*/tests` 与 `apps/*/tests` 的单元测试 `mkdtemp`
+(`iris-wb-write-` 10 457 条、`iris-src-` 8 553 条、`iris-persona-` 6 499 条……),
+平均 0.2–1.1 KB,合起来约 30 MB。**条数在单元测试那边,字节在 Chrome profile 这边。**
+这条规矩治的是后者;前者是另一笔账,还没动。
+
+这是工装决定,不是产品行为,所以不进 `notes/apps/iris-web/DEVIATIONS.md` —— 那份账本里
+一条 `qa/` 都没有,不该由这件事开头。守规矩的门禁是
+`apps/iris/tests/temp-dir-discipline.test.ts`:它按源码文本扫 `qa/`、`apps/iris-web/tools/`、
+`scripts/`,凡是提到 `--user-data-dir` 或 `mkdtemp` 的文件都必须 import 这个模块;
+放行名单逐条写清理由,并且会检查「这条放行是不是已经过期」。
+
+`scripts/` 下的 cache / context 探针是**具名放行**的:它们的 `mkdtemp` 建在操作者自己命名的
+`IRIS_PROBE_SCRATCH` 根下,已经在 `finally` 里删,而 `--keep` 留住一次 run 供检查是**故意的
+功能**。当天普查里它们留下 0 个目录,所以不动。
+
+`notes/st-compat/acceptance/pilot-host.mjs` 与 `seed.mjs` 也还没动:它们把数据目录的路径
+**打到 stdout 给驱动用**,退出即删会改掉那个约定,要连验收脚本一起改才算数。
+
+---
+
 ## 定位:两类,不要合并成一条「不按文本」
 
 - **界面外壳**(页签、设置按钮、同意门的两个按钮)——**绝不按可见文本定位**。那些文字会被翻译,

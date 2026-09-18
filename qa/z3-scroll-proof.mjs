@@ -4,10 +4,11 @@
  * the reader's wheel reaches the last of the card.
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { chromeProfile } from './chrome-profile.mjs'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const BASE = 'http://127.0.0.1:8823/'
@@ -18,11 +19,11 @@ const wsPath = new URL('../node_modules/.pnpm/ws@8.21.3/node_modules/ws/index.js
 const WebSocket = (await import(wsPath)).default ?? (await import(wsPath))
 mkdirSync(OUT, { recursive: true })
 
-const profile = mkdtempSync(join(tmpdir(), 'iris-z3scroll-'))
-const chrome = spawn(CHROME, [
-  '--headless=new', `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profile}`,
+const profile = chromeProfile('iris-z3scroll-')
+const chrome = profile.adopt(spawn(CHROME, [
+  '--headless=new', `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profile.dir}`,
   '--no-first-run', '--no-default-browser-check', '--window-size=1366,768', 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 let version = null
 for (let i = 0; i < 50 && !version; i++) {

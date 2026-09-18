@@ -37,14 +37,14 @@
  * Usage: node qa/sandbox-plugins-pr-a.mjs
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, rm, writeFile } from 'node:fs/promises'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile, dataCopy } from './chrome-profile.mjs'
 import { answerConsentExpr, clickTabExpr } from './locators.mjs'
 
 // Host ports go from 8791 up, one per script (qa/README.md). This is the first.
@@ -99,7 +99,8 @@ const record = (what, value) => {
  * operator's dev host. The copy's `host.lock` belongs to whatever wrote it and
  * means nothing here.
  */
-const dataDir = await mkdtemp(join(tmpdir(), 'iris-sandbox-plugins-qa-'))
+const data = dataCopy('iris-sandbox-plugins-qa-')
+const dataDir = data.dir
 /*
  * `IRIS_DATA_SOURCE` because `data/` is gitignored, so a fresh worktree has
  * none: the cards live in whichever checkout the operator actually runs. The
@@ -118,11 +119,11 @@ await rm(join(dataDir, 'host.lock'), { force: true })
 await rm(join(dataDir, 'default-user', 'host.lock'), { force: true })
 
 let hostOutput = ''
-const host = spawn(process.execPath, ['apps/iris/bin.ts'], {
+const host = data.adopt(spawn(process.execPath, ['apps/iris/bin.ts'], {
   cwd: repoRoot,
   env: { ...process.env, IRIS_PORT: String(PORT), IRIS_DATA_DIR: dataDir },
   stdio: ['ignore', 'pipe', 'pipe'],
-})
+}))
 host.stdout.on('data', chunk => { hostOutput += String(chunk) })
 host.stderr.on('data', chunk => { hostOutput += String(chunk) })
 const hostPid = host.pid
@@ -144,6 +145,9 @@ const rpc = async (method, params = {}) => {
 const HARD = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 300_000)
 
 let chrome
+// The browser's profile. Made here rather than at the spawn below so the
+// `finally` can reach it whichever way the run ends.
+const profile = chromeProfile('iris-qa-cdp-')
 try {
   // Up, or dead with its own reason. Nothing is asked of the port afterwards.
   let up = false
@@ -192,12 +196,12 @@ try {
   if (chatTitle === undefined) throw new Error('the host did not name the chat it created')
 
   // ---- the browser -------------------------------------------------------
-  chrome = spawn(CHROME, [
+  chrome = profile.adopt(spawn(CHROME, [
     `--remote-debugging-port=${CDP}`,
-    `--user-data-dir=${tmpdir()}/iris-qa-cdp-${CDP}-${String(Date.now())}`,
+    `--user-data-dir=${profile.dir}`,
     '--no-first-run', '--no-default-browser-check', '--headless=new',
     '--window-size=1480,1000', 'about:blank',
-  ], { stdio: 'ignore' })
+  ], { stdio: 'ignore' }))
 
   let version
   for (let at = 0; at < 40 && version === undefined; at += 1) {
@@ -547,7 +551,8 @@ try {
     host.kill()
     await new Promise(resolve => { host.once('exit', resolve) })
   }
-  await rm(dataDir, { recursive: true, force: true }).catch(() => undefined)
+  await profile.dispose()
+  await data.dispose()
 }
 
 process.exit(failures === 0 ? 0 : 1)

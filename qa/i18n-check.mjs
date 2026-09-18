@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile } from './chrome-profile.mjs'
 
 const BASE = process.argv[2] ?? process.env.IRIS_BASE ?? 'http://127.0.0.1:8797'
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
@@ -32,12 +33,13 @@ const check = (name, ok, detail = '') => {
 
 const HARD_DEADLINE = setTimeout(() => { console.log('HARD TIMEOUT'); process.exit(3) }, 240_000)
 
-const chrome = spawn(CHROME, [
+const profile = chromeProfile('iris-qa-cdp-')
+const chrome = profile.adopt(spawn(CHROME, [
   `--remote-debugging-port=${CDP_PORT}`,
-  `--user-data-dir=${process.env.TEMP}/iris-qa-cdp-${CDP_PORT}-${Date.now()}`,
+  `--user-data-dir=${profile.dir}`,
   '--no-first-run', '--no-default-browser-check', '--headless=new',
   `--window-size=${String(WIDTH)},${String(HEIGHT)}`, 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 
 try {
   let page

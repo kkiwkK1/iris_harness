@@ -43,6 +43,7 @@ import { createRequire } from 'node:module'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile } from './chrome-profile.mjs'
 
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8791'
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
@@ -811,13 +812,13 @@ async function drive(session, target, label, seconds) {
 }
 
 // ------------------------------------------------------------------ run
-const userDataDir = `${process.env.TEMP ?? '/tmp'}/iris-r6-${DEBUG_PORT}-${String(Date.now())}`
-const chrome = spawn(CHROME, [
+const profile = chromeProfile('iris-r6-')
+const chrome = profile.adopt(spawn(CHROME, [
   `--remote-debugging-port=${DEBUG_PORT}`,
-  `--user-data-dir=${userDataDir}`,
+  `--user-data-dir=${profile.dir}`,
   '--no-first-run', '--no-default-browser-check', '--headless=new',
   '--window-size=1500,950', 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 
 const report = { base: BASE, at: new Date().toISOString(), seconds: SECONDS, debugPort: DEBUG_PORT, runs: [] }
 try {

@@ -22,11 +22,12 @@
  *   chatKey: shibian | zhengjing | hanren
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+
+import { chromeProfile } from './chrome-profile.mjs'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const BASE = 'http://127.0.0.1:8822/'
@@ -57,16 +58,16 @@ const require = createRequire(import.meta.url)
 const wsPath = new URL('../node_modules/.pnpm/ws@8.21.3/node_modules/ws/index.js', import.meta.url).href
 const WebSocket = (await import(wsPath)).default ?? (await import(wsPath))
 
-const profile = mkdtempSync(join(tmpdir(), 'iris-chrome-'))
-const chrome = spawn(CHROME, [
+const profile = chromeProfile('iris-chrome-')
+const chrome = profile.adopt(spawn(CHROME, [
   '--headless=new',
   `--remote-debugging-port=${DEBUG_PORT}`,
-  `--user-data-dir=${profile}`,
+  `--user-data-dir=${profile.dir}`,
   '--no-first-run',
   '--no-default-browser-check',
   '--window-size=1920,1080',
   'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 

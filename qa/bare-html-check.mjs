@@ -39,6 +39,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { cdpPort } from './cdp-port.mjs'
+import { chromeProfile } from './chrome-profile.mjs'
 import { clickTabExpr, openDrawerExpr } from './locators.mjs'
 import { BASE, call, rpc } from './rpc.mjs'
 
@@ -149,13 +150,13 @@ if (mode === 'render') {
   const outDir = new URL('./results/', import.meta.url)
   mkdirSync(outDir, { recursive: true })
 
-  const userDataDir = `${process.env.TEMP}/iris-qa-cdp-${CDP_PORT}-${Date.now()}`
-  const chrome = spawn(CHROME, [
+  const profile = chromeProfile('iris-qa-cdp-')
+  const chrome = profile.adopt(spawn(CHROME, [
     `--remote-debugging-port=${CDP_PORT}`,
-    `--user-data-dir=${userDataDir}`,
+    `--user-data-dir=${profile.dir}`,
     '--no-first-run', '--no-default-browser-check', '--headless=new',
     `--window-size=${String(WIDTH)},${String(HEIGHT)}`, 'about:blank',
-  ], { stdio: 'ignore' })
+  ], { stdio: 'ignore' }))
 
   try {
     let page
@@ -463,6 +464,7 @@ if (mode === 'render') {
   } finally {
     chrome.kill()
     await delay(500)
+    await profile.dispose()
   }
   process.exit(0)
 }

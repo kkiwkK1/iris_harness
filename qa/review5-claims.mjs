@@ -27,6 +27,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { claimMessageSurfaces } from '../apps/iris-web/src/sandbox/frontend-blocks.ts'
 import { repairStrayFences } from '../apps/iris-web/src/app/stray-fences.ts'
+import { chromeProfile } from './chrome-profile.mjs'
 
 const BASE = process.env.IRIS_BASE ?? 'http://127.0.0.1:8788'
 const CHROME = process.env.IRIS_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
@@ -114,11 +115,12 @@ const READ = `(() => {
 })()`
 
 const rows = []
-const chrome = spawn(CHROME, [
+const profile = chromeProfile('iris-r5c-')
+const chrome = profile.adopt(spawn(CHROME, [
   '--remote-debugging-port=' + CDP_PORT,
-  '--user-data-dir=' + process.env.TEMP + '/iris-r5c-' + CDP_PORT + '-' + Date.now(),
+  '--user-data-dir=' + profile.dir,
   '--no-first-run', '--no-default-browser-check', '--headless=new', '--window-size=1500,950', 'about:blank',
-], { stdio: 'ignore' })
+], { stdio: 'ignore' }))
 
 try {
   let page

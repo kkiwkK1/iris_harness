@@ -29,9 +29,11 @@
  * @module iris-web/tools/live-plugin-i18n-check
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+// The one temp-directory rule for everything that starts a browser.
+import { chromeProfile } from '../../../qa/chrome-profile.mjs'
 
 const [appPort, devDir, outDir] = process.argv.slice(2)
 if (appPort === undefined || devDir === undefined || outDir === undefined) {
@@ -89,13 +91,13 @@ const fixtureCopy = (() => {
   return { count: enKeys.length + zhKeys.length, keys: enKeys }
 })()
 const devFilesBefore = readdirSync(devDir).sort()
-const profile = mkdtempSync(join(tmpdir(), 'iris-plugin-i18n-check-'))
+const profile = chromeProfile('iris-plugin-i18n-check-')
 const cdpPort = 9833 + Math.floor(Math.random() * 100)
-const chrome = spawn(chromePath, [
+const chrome = profile.adopt(spawn(chromePath, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--window-size=1280,1600',
-  `--user-data-dir=${profile}`, `--remote-debugging-port=${String(cdpPort)}`, 'about:blank',
-], { stdio: 'ignore' })
+  `--user-data-dir=${profile.dir}`, `--remote-debugging-port=${String(cdpPort)}`, 'about:blank',
+], { stdio: 'ignore' }))
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 for (let attempt = 0; attempt < 80; attempt++) {
@@ -285,5 +287,6 @@ try {
   writeFileSync(join(outDir, 'steps.json'), JSON.stringify(steps, null, 2))
   chrome.kill()
   ws.close()
+  await profile.dispose()
 }
 process.exit(failures === 0 ? 0 : 1)
