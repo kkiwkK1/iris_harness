@@ -56,6 +56,7 @@ import { installConsoleCapture } from './console-capture.ts'
 import type { Measured, Visibility } from './overlay-regions.ts'
 import { MEMBERS_GLOBAL, MEMBERS_MARKER, PLUGIN_ADMITTED_GLOBAL, type MemberTable } from './members-contract.ts'
 import { collectPluginMembers } from './plugin-members.ts'
+import { installSandboxPluginTree } from './plugin-entry.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { reportLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
@@ -1887,7 +1888,7 @@ try {
   }
   const members: MemberTable = memberTable
 
-  installSandbox({
+  const sandbox = installSandbox({
     members,
     systemPlugins: sandboxPluginSnapshot,
     /*
@@ -2362,6 +2363,39 @@ try {
       },
     )
   },
+  })
+
+  /*
+   * The **third class of code** that runs in this frame.
+   *
+   * The card's own scripts and the system plugins' member bundles were the first
+   * two; a sandbox plugin is the only one that can arrive and leave while the
+   * frame keeps running (`docs/SANDBOX-PLUGINS.md` §5). Installed for every
+   * frame, including one that mounts nothing — the tree costs a handful of empty
+   * maps and no DOM until a plugin asks for a cell, so a card with no plugins is
+   * byte-identical from outside, which is the compatibility floor this feature
+   * is held to.
+   *
+   * Nothing here changes the freeze policy, the CSP, or the sandbox attribute:
+   * `new Function` needs the `'unsafe-eval'` the frame's `script-src` already
+   * carries for card scripts, and a plugin's globals are the frame's own.
+   */
+  installSandboxPluginTree({
+    token: run,
+    document,
+    post,
+    onMessage: listener => {
+      listeners.push(message => {
+        if (message !== undefined) listener(message)
+      })
+    },
+    cardSurface: owner => sandbox.cardSurface(owner),
+    // The shell's origin, from the markup the host stamped — not
+    // `location.origin`, which reads `"null"` in an opaque-origin frame and has
+    // silently disabled a branch in this file before. It is the same value the
+    // shell used when it rewrote a card's own interface markup, which is the
+    // point: a panel's HTML string takes that path and no other.
+    origin: shellOrigin(),
   })
 
   /*

@@ -145,7 +145,7 @@ interface DebugReport {
   /** 单调递增,用作游标,也是「判决可撤回」要标记的身份。 */
   seq: number
   at: number
-  kind: ReportKind            // mvu | template | prompt | script | variables | storage | host
+  kind: ReportKind            // mvu | template | prompt | script | variables | storage | host | card-console | sandbox-plugin
   /** 哪段对话、哪张卡、哪个脚本 —— 层一第 2 条要的就是这三个。 */
   chatId?: string
   characterId?: string
@@ -165,6 +165,11 @@ interface DebugReport {
   缺省是 note 不是 fault,因为第一版把未分级的报告画成红色,而多数条目根本不是失败。)
 - **`kind` 多了 `storage`**,单列而不是折进 `script`:一次把别的卡的键也带走的
   `clear()` 是**数据被删掉**,不是脚本行为不端,而找前者的人不是在找后者。
+- **`kind` 后来又多了两个**,理由同形而不同层:`card-console`(owner task W7)是**卡自己
+  打印的**,不是宿主对卡做了什么;`sandbox-plugin`(2026-09-19,[SANDBOX-PLUGINS](SANDBOX-PLUGINS.md) §8)
+  是**模型现写的代码**在这张卡的沙箱帧里挂载失败,折进 `script` 会被读成「这张卡的作者写坏了」,
+  而读者的下一步是去怀疑卡。九个 kind 各在 `KIND_WIRED` 里占一行,漏一行等于向页面声明
+  「没人在看」。
 - 另有一个不进 `DebugReport` 而进 `ReportContext` 的字段 `irreversible?: true`:
   它说的不是报告**关于**什么,而是报告**代价**多大——被标了的记录不等页面来问,
   直接经广播推出去弹通知。

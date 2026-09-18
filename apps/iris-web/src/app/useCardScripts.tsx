@@ -26,6 +26,7 @@ import type { ReactElement } from 'react'
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import { startCardScripts } from '../sandbox/card-scripts.ts'
+import { pluginsFor, recordStatus, registerPluginControl } from '../dev/plugin-bench.ts'
 import { cardPopupBridge } from './card-popups.ts'
 import { registerCardEmitter } from './card-bus.ts'
 import { broadcastWindowEvent, registerWindowEventSink } from './window-events.ts'
@@ -473,6 +474,53 @@ export function CardScriptFrames(): ReactElement {
                */
               onReady: () => {
                 for (const script of input.scripts) input.onPhase(script.id, { phase: 'running' })
+                /*
+                 * And then the set's own readiness work, which is this
+                 * conversation's sandbox plugins. Handed back rather than done
+                 * here on purpose: **which** plugins and **in which order** is a
+                 * decision, and it lives in `card-scripts.ts` where a test can
+                 * drive it. This line is the binding, nothing more.
+                 */
+                input.onReady()
+              },
+              /*
+               * A sandbox plugin's outcome, into the same two channels a
+               * script's failure takes.
+               *
+               * The **report list** and not only a notice: the notice bar holds
+               * one entry and clears itself after eight seconds, so a plugin
+               * that failed while the reader was looking elsewhere would leave
+               * nothing behind — and "did the mount ever happen?" is the
+               * question this whole PR exists to be able to answer.
+               */
+              onPluginMounted: (pluginId, version, ms) => {
+                actionsOf(store).addCardReport(
+                  `sandbox plugin ${pluginId} v${version} mounted in ${ms}ms`,
+                )
+                recordStatus(chatId, { pluginId, version, state: 'mounted', ms, at: Date.now() })
+              },
+              onPluginFailed: (pluginId, version, state, detail) => {
+                const text = `sandbox plugin ${pluginId} v${version} ${state}: ${detail}`
+                /*
+                 * Graded by the state, the split the design writes down (§8): a
+                 * mount that failed, or a record with nothing behind it, is a
+                 * `fault`; a timeout and a teardown that left something are
+                 * notes, because the plugin is running either way and the row is
+                 * a fact about tidiness rather than about a broken card.
+                 */
+                const fault = state === 'mount-failed' || state === 'syntax-failed'
+                  || state === 'unparseable' || state === 'orphaned'
+                actionsOf(store).addCardReport(text, fault ? { grade: 'fault' as const } : {})
+                actionsOf(store).notify('error', text)
+                recordStatus(chatId, { pluginId, version, state, detail, at: Date.now() })
+                /*
+                 * And into the host's buffer, under the new `sandbox-plugin`
+                 * kind. Not awaited, for the reason the console line is not: the
+                 * frame is not waiting, and a round trip in this callback would
+                 * put the host between a plugin's failure and the panel that
+                 * has to show it.
+                 */
+                void actionsOf(store).reportSandboxPlugin(text, fault ? 'fault' : 'note')
               },
               onRan: (scriptId, lateMs) => {
                 input.onPhase(scriptId, {
@@ -605,6 +653,16 @@ export function CardScriptFrames(): ReactElement {
           // The surface has a frame on it, so the collapse control exists.
           setOccupied(true)
         },
+        /*
+         * PR-A's only source of plugins: the dev bench (§15 PR-A).
+         *
+         * Read through a call, so it is answered when the frame is built rather
+         * than when this effect was — and unconditional, because an empty answer
+         * is exactly what a build with no bench produces. The alternative, a
+         * `import.meta.env.DEV &&` guard here, would make the production path a
+         * *different* path from the one that gets tested.
+         */
+        plugins: () => pluginsFor(chatId),
         onState: states => actionsOf(store).setRunStates(states),
         onFailure: state => {
           /*
@@ -724,6 +782,23 @@ export function CardScriptFrames(): ReactElement {
     })
 
     /*
+     * The same road for sandbox plugins, and the same disposer discipline.
+     *
+     * A mount reaches the live frame rather than rebuilding it: rebuilding would
+     * lose the card's own script state, which is one of the three reasons the
+     * code travels over the channel at all (`protocol.ts`, `plugin:mount`).
+     */
+    const unregisterPlugins = registerPluginControl({
+      mount: (pluginId, version, code) => {
+        recordStatus(chatId, { pluginId, version, state: 'pending', at: Date.now() })
+        running.mountPlugin(pluginId, version, code)
+      },
+      unmount: pluginId => {
+        running.unmountPlugin(pluginId)
+      },
+    })
+
+    /*
      * This card's frames are one half of the page window's audience. A window
      * event dispatched anywhere — here or in a message frame — comes back
      * through the fan-out and is emitted into the script frames exactly as a
@@ -757,6 +832,7 @@ export function CardScriptFrames(): ReactElement {
 
     return () => {
       unregister()
+      unregisterPlugins()
       unregisterWindowEvents()
       surfaceWatcher?.disconnect()
       untap()

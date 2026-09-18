@@ -1,4 +1,5 @@
-import type { ScriptContext } from '@iris/protocol'
+import type { ScriptContext, SandboxPluginFailureState } from '@iris/protocol'
+import { isSandboxPluginFailureState, SANDBOX_PLUGIN_LIMITS } from '@iris/protocol'
 import type { PopupButtonPlan, PopupLabel, PopupPlan, PopupSlot } from './popup.ts'
 
 /**
@@ -122,6 +123,25 @@ export type ToFrame =
       button?: number
       input?: string
     }
+  /**
+   * Mount a sandbox plugin into this frame's plugin tree.
+   *
+   * **The code travels here rather than in the srcdoc**, and the third of the
+   * three reasons (`docs/SANDBOX-PLUGINS.md` §5.2) is the deciding one: the
+   * srcdoc is a whole HTML page the shell assembles (`buildSrcdoc`), so putting
+   * a model's output into it would make that output participate in building
+   * markup — an injection surface that does not exist today. A message payload
+   * is only ever a JavaScript string.
+   *
+   * The other two are why it could not have gone there anyway: a plugin may be
+   * written long after the frame came up, and replacing one must not rebuild the
+   * frame, because the card's scripts would lose their state with it.
+   */
+  | { iris: string, type: 'plugin:mount', pluginId: string, version: number, code: string }
+  /** Take a sandbox plugin down; see the six-item checklist in §5.7. */
+  | { iris: string, type: 'plugin:unmount', pluginId: string }
+  /** Show or hide the frame's plugin panel container. */
+  | { iris: string, type: 'plugin:panel', visible: boolean }
 
 /** Frame → host. */
 export type FromFrame =
@@ -326,6 +346,44 @@ export type FromFrame =
    * so its starting height becomes permanent.
    */
   | { iris: string, type: 'sizing', mode: 'viewport' }
+  /**
+   * A sandbox plugin mounted. `ms` is how long its `apply` took.
+   *
+   * The duration rides the success rather than getting an account of its own:
+   * the design refuses a third ledger for plugins (§8), so the one number worth
+   * keeping travels with the one event that has it.
+   */
+  | { iris: string, type: 'plugin:mounted', pluginId: string, version: number, ms: number }
+  /**
+   * A sandbox plugin did not mount, or did not come away cleanly.
+   *
+   * `state` is validated against the closed vocabulary rather than passed
+   * through, exactly as `sizing`'s single mode is: the frame is untrusted, and a
+   * spelling the shell has no arm for would reach a switch that cannot answer
+   * it.
+   */
+  | {
+      iris: string
+      type: 'plugin:failed'
+      pluginId: string
+      version: number
+      state: SandboxPluginFailureState
+      detail: string
+    }
+  /**
+   * A plugin injected a stylesheet.
+   *
+   * Reported because a plugin's CSS has to reach the card's **message** frames
+   * too — a "make the status bar dark" plugin runs in one realm and has to paint
+   * in another (§5.1). The shell stores it per `(chatId, pluginId)` and folds it
+   * into those frames' srcdoc; that fan-out is PR-C, and until then this arm is
+   * the frame telling the shell what it has, which is also what makes a census
+   * of a plugin's styles possible from outside the frame.
+   *
+   * **A string, never markup.** The shell must handle it the way `escapeClose`
+   * handles every other card-authored text.
+   */
+  | { iris: string, type: 'plugin:style', pluginId: string, css: string }
 
 /**
  * Validate a message arriving at the frame.
@@ -443,6 +501,41 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
     case 'fetch:error':
       return typeof message['id'] === 'string' && typeof message['message'] === 'string'
         ? { iris: token, type: 'fetch:error', id: message['id'], message: message['message'] }
+        : undefined
+    case 'plugin:mount': {
+      const pluginId = message['pluginId']
+      const version = message['version']
+      const code = message['code']
+      if (typeof pluginId !== 'string' || pluginId === '') return undefined
+      if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) return undefined
+      if (typeof code !== 'string') return undefined
+      /*
+       * **Refused over the ceiling, not truncated**, and this is the one arm
+       * where the difference is not stylistic. Cutting a plugin's source at
+       * 64 KiB produces a source with a syntax error, and the frame would then
+       * report `mount-failed` with a parse message — sending a reader to look at
+       * the model's code for a fault the transport introduced. The design says
+       * the same thing about the host-side ceiling (§3.2): the refusal has to
+       * name the size, so it cannot be spelled as a truncation.
+       */
+      if (code.length > SANDBOX_PLUGIN_LIMITS.codeBytes) return undefined
+      if (pluginId.length > SANDBOX_PLUGIN_LIMITS.idChars) return undefined
+      return { iris: token, type: 'plugin:mount', pluginId, version, code }
+    }
+    case 'plugin:unmount': {
+      const pluginId = message['pluginId']
+      return typeof pluginId === 'string'
+        && pluginId !== ''
+        && pluginId.length <= SANDBOX_PLUGIN_LIMITS.idChars
+        ? { iris: token, type: 'plugin:unmount', pluginId }
+        : undefined
+    }
+    case 'plugin:panel':
+      // `=== true` rather than a truthiness read: the shell is not trusted here
+      // either, and a `visible: 'no'` that read as shown would be a state the
+      // panel could not be argued out of.
+      return typeof message['visible'] === 'boolean'
+        ? { iris: token, type: 'plugin:panel', visible: message['visible'] }
         : undefined
     default:
       return undefined
@@ -791,6 +884,61 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
       // has no arm for it.
       if (message['mode'] !== 'viewport') return undefined
       return { iris: token, type: 'sizing', mode: 'viewport' }
+    }
+    case 'plugin:mounted': {
+      const pluginId = message['pluginId']
+      const version = message['version']
+      const ms = message['ms']
+      if (typeof pluginId !== 'string' || pluginId === '') return undefined
+      if (typeof version !== 'number' || !Number.isInteger(version)) return undefined
+      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return undefined
+      return {
+        iris: token,
+        type: 'plugin:mounted',
+        pluginId: pluginId.slice(0, SANDBOX_PLUGIN_LIMITS.idChars),
+        version,
+        ms: Math.round(ms),
+      }
+    }
+    case 'plugin:failed': {
+      const pluginId = message['pluginId']
+      const version = message['version']
+      const state = message['state']
+      const detail = message['detail']
+      if (typeof pluginId !== 'string' || pluginId === '') return undefined
+      if (typeof version !== 'number' || !Number.isInteger(version)) return undefined
+      // The closed vocabulary, checked rather than cast. A state the shell has
+      // no grade for would file as a report nobody can act on.
+      if (!isSandboxPluginFailureState(state)) return undefined
+      if (typeof detail !== 'string') return undefined
+      return {
+        iris: token,
+        type: 'plugin:failed',
+        pluginId: pluginId.slice(0, SANDBOX_PLUGIN_LIMITS.idChars),
+        version,
+        state,
+        detail: detail.slice(0, SANDBOX_PLUGIN_LIMITS.detailChars),
+      }
+    }
+    case 'plugin:style': {
+      const pluginId = message['pluginId']
+      const css = message['css']
+      if (typeof pluginId !== 'string' || pluginId === '') return undefined
+      if (typeof css !== 'string') return undefined
+      /*
+       * Bounded like every other frame-authored string, and **refused** over
+       * the ceiling rather than cut: half a stylesheet is a stylesheet that
+       * paints something nobody wrote, whereas a refusal is a fact the panel can
+       * state. The frame already keeps its own copy, so a refusal here costs the
+       * fan-out, not the plugin.
+       */
+      if (css.length > SANDBOX_PLUGIN_LIMITS.cssChars) return undefined
+      return {
+        iris: token,
+        type: 'plugin:style',
+        pluginId: pluginId.slice(0, SANDBOX_PLUGIN_LIMITS.idChars),
+        css,
+      }
     }
     default:
       return undefined

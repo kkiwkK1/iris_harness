@@ -34,6 +34,7 @@ import { ScriptPanel } from './ScriptPanel.tsx'
 import { UsagePanel } from './UsagePanel.tsx'
 import { WorldbookPanel } from './WorldbookPanel.tsx'
 import { SandboxProbe } from '../dev/SandboxProbe.tsx'
+import { SandboxPluginBench } from '../dev/SandboxPluginBench.tsx'
 import { RailPreview } from '../dev/RailPreview.tsx'
 
 export interface ReadingControl {
@@ -153,7 +154,7 @@ export function SettingsDrawer({ open, onClose, control }: {
         <SettingsPage route="plugins" active={route === 'plugins'}><PluginCenter active={open && route === 'plugins'} /><PluginSettings lang={lang} /></SettingsPage>
         <SettingsPage route="diagnostics" active={route === 'diagnostics'}>
           <HostReports /><NoticeLog /><DemoActionsSection />
-          {import.meta.env.DEV ? <SandboxProbe /> : null}{import.meta.env.DEV ? <RailPreview /> : null}
+          {import.meta.env.DEV ? <SandboxProbe /> : null}{import.meta.env.DEV ? <SandboxPluginBench /> : null}{import.meta.env.DEV ? <RailPreview /> : null}
         </SettingsPage>
         <SettingsPage route="about" active={route === 'about'}><AboutCard control={control} /></SettingsPage>
       </SettingsPageSections.Provider>

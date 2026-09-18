@@ -981,6 +981,21 @@ export interface IrisActions {
    * @param scriptId - the last `run` message's id, when the frame knew one.
    */
   reportCardConsole(level: 'log' | 'info' | 'warn' | 'error', message: string, at: number, scriptId: string | undefined): Promise<void>
+  /**
+   * File a sandbox plugin's named failure with the host.
+   *
+   * The same hop `reportCardConsole` makes and the **same RPC** — the design
+   * opens no new one for this (`docs/SANDBOX-PLUGINS.md` §8) — but under kind
+   * `sandbox-plugin` and with a grade, because the seven states are not one
+   * grade and this is the side that read which one arrived.
+   *
+   * No `scriptId` is sent: a plugin is not a script, and a row filed under one
+   * would attribute a model's code to the card's author.
+   * @param message - the sentence, already carrying the plugin id and the state.
+   * @param grade - `fault` for a mount that failed, `note` for a plugin that is
+   *   up and merely untidy.
+   */
+  reportSandboxPlugin(message: string, grade: 'fault' | 'note'): Promise<void>
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
   /**
@@ -2706,6 +2721,35 @@ export function createIrisStore(
           get().addCardReport(
             `a card's console output could not be filed with the host: ${error instanceof Error ? error.message : String(error)}`,
             { grade: 'fault', channel: 'card-console' },
+          )
+        }
+      },
+
+      async reportSandboxPlugin(message, grade): Promise<void> {
+        const chatId = get().chatId
+        // Same rule as the console line above: a report naming a chat that does
+        // not exist is refused by the host, and a plugin only ever runs inside
+        // one. Dropped rather than filed under the wrong conversation.
+        if (chatId === undefined) return
+        try {
+          await client.call('script.report', {
+            chatId,
+            /*
+             * `error` for a fault and `warn` for a note. The field is not what
+             * grades the row — the host reads `grade` for that — but it is what
+             * a reader of the wire sees, and the two disagreeing would be one
+             * more thing to reconcile at the worst moment.
+             */
+            level: grade === 'fault' ? 'error' : 'warn',
+            message,
+            at: Date.now(),
+            kind: 'sandbox-plugin',
+            grade,
+          })
+        } catch (error: unknown) {
+          get().addCardReport(
+            `a sandbox plugin's failure could not be filed with the host: ${error instanceof Error ? error.message : String(error)}`,
+            { grade: 'fault' },
           )
         }
       },

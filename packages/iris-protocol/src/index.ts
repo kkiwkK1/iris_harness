@@ -45,6 +45,26 @@ export type {
 } from './system-plugins.ts'
 
 /*
+ * The sandbox-plugin contract's shared half.
+ *
+ * In the contract because the syntax precheck runs in the host and the mount
+ * runs in a browser frame, and the two have to compile the **same bytes** — a
+ * wrapper assembled twice is the failure `docs/SANDBOX-PLUGINS.md` §6.1 refuses
+ * to ship. The limits ride along for the reason the bundle route does: a ceiling
+ * enforced on one side only is a ceiling the other side has to guess at.
+ */
+export {
+  isSandboxPluginFailureState,
+  precheckSandboxPluginSyntax,
+  SANDBOX_PLUGIN_FACADE_PARAM,
+  SANDBOX_PLUGIN_FAILURE_STATES,
+  SANDBOX_PLUGIN_LIMITS,
+  sandboxPluginBody,
+  type SandboxPluginFailureState,
+  type SandboxPluginSyntaxRefusal,
+} from './sandbox-plugins.ts'
+
+/*
  * The entry-listing mapper, in the contract for the reason the specifier walker
  * above is: the host derives digests from real books and the fake client from
  * its own seeded ones, and a page reading both must not be able to tell them
