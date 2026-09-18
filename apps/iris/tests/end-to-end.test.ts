@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getActiveResourcesInfo } from 'node:process'
 import { after, before, test } from 'node:test'
@@ -16,6 +14,7 @@ import { assemble, type HistoryEntry } from '@iris/pipeline'
 import { resolvePreset, type ChatCompletionPreset } from '@iris/preset'
 
 import { startMockProvider, type MockProvider } from './mock-provider.ts'
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The whole product spine in one test: a preset and a character become a
@@ -42,7 +41,10 @@ before(async () => {
   // directory, so an unset `IRIS_DATA_DIR` would make this suite either refuse
   // to boot beside a running `pnpm start` or write into its profile — which is
   // the incident the lock exists to close, performed by the test suite.
-  dataDir = await mkdtemp(join(tmpdir(), 'iris-e2e-'))
+  // `tempDirOwned`, not `tempDir`: this is a file-level `before`, where there
+  // is no test context, and the booted host runs out of this directory until
+  // the `after` below has quiesced it. The removal is that `after`'s last line.
+  dataDir = await tempDirOwned('iris-e2e-')
   process.env.IRIS_DATA_DIR = dataDir
   // Headless: no interface, which keeps the static row out of the tree.
   delete process.env.IRIS_WEB_DIST
@@ -61,7 +63,7 @@ after(async () => {
   // loop run down to stdio alone first; a forced exit then finds nothing
   // mid-close, the way every sibling file's exit already is.
   await quiesce()
-  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  await removeTempDir(dataDir)
 })
 
 /**

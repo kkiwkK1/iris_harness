@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -15,6 +14,7 @@ import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { readSideUsage, SIDE_USAGE_FIELD } from '../src/side-usage.ts'
 import { textOf } from '../src/views.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * `script.generate`: a real assembly that is not a turn.
@@ -63,13 +63,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, reply = 'A reply.'): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-side-generate-'))
-  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
-  // the Windows window 2b43efc found: a write can land a moment after the
-  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
-  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
-  // which replaced one write syscall per save with a write and a rename.
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-side-generate-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -435,13 +429,7 @@ test('a provider that reports nothing leaves no record', async (t) => {
    * would enter the summary's `turns` and drag a hit rate down with a cost of
    * `0`. This stream is the fixture's minus its `usage` chunk.
    */
-  const dir = await mkdtemp(join(tmpdir(), 'iris-side-silent-'))
-  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
-  // the Windows window 2b43efc found: a write can land a moment after the
-  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
-  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
-  // which replaced one write syscall per save with a write and a rename.
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-side-silent-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')

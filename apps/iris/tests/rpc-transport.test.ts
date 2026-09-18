@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +11,7 @@ import { requestSchemas, type IrisEvent } from '@iris/protocol'
 import { IrisHttpClient } from '@iris/rpc-client'
 
 import { startMockProvider, type MockProvider } from './mock-provider.ts'
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The browser half against a real host process.
@@ -94,7 +94,9 @@ async function waitUntil(predicate: () => boolean, what: string): Promise<void> 
 
 before(async () => {
   mock = await startMockProvider()
-  dataDir = await mkdtemp(join(tmpdir(), 'iris-transport-'))
+  // `tempDirOwned`, not `tempDir`: a file-level `before` has no test context,
+  // and the booted host holds this directory until the `after` disposes it.
+  dataDir = await tempDirOwned('iris-transport-')
   // Under the profile segment: storage is profile-scoped, and the default
   // profile matches SillyTavern's own `data/<user>/` layout.
   await mkdir(join(dataDir, 'default-user', 'characters'), { recursive: true })
@@ -142,13 +144,14 @@ after(async () => {
   client.close()
   await ctx.fiber.dispose()
   await mock.close()
-  // Windows can still hold a handle inside `default-user` for a moment after
-  // the fiber is disposed (the store's last write closing, an antivirus scan
-  // of the fresh chat file), and a bare `rm` then fails the whole file with
-  // ENOTEMPTY - seen on three separate full-suite runs here, never on Linux.
-  // `maxRetries` is Node's own answer for exactly this window; the tests
-  // themselves are unaffected, only the tidy-up waits.
-  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  // After the fiber: the host has to have let go of the data directory before
+  // anything removes it, which is what the owned form above is for. Windows
+  // can still hold a handle inside `default-user` for a moment after the
+  // dispose (the store's last write closing, an antivirus scan of the fresh
+  // chat file) — seen on three separate full-suite runs here, never on Linux;
+  // `removeTempDir` carries the retry for that window, and only the tidy-up
+  // waits.
+  await removeTempDir(dataDir)
 })
 
 test('the composition mounts both rows and answers a method', async () => {

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -18,6 +17,7 @@ import {
 import { ChatEntry, createSession } from '../src/entry.ts'
 import { seedGreeting } from '../src/chats.ts'
 import type { SillyTavernChatHeader } from '@iris/persistence'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The host half of the `parent.*` bridge.
@@ -123,8 +123,7 @@ test('a value the chat file could not hold is refused where it enters', () => {
 })
 
 test('one card cannot read or overwrite another card’s settings', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-ext-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-ext-')
   const store = new ExtensionSettingsStore(join(dir, 'extension-settings.json'))
 
   await store.set('aria', { theme: 'dark', token: 'aria-only' })

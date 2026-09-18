@@ -12,7 +12,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -25,6 +25,7 @@ import { AppError } from '../src/errors.ts'
 import { SystemPluginInstallService } from '../src/plugins/install.ts'
 import { MAX_PLUGIN_STORE_BYTES, MAX_PLUGIN_VALUE_BYTES, PluginDataStore } from '../src/plugins/storage.ts'
 import { SystemPluginRuntime, type SystemPluginDefinition } from '../src/system-plugins.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The moment every quarantine name in this file carries — injected through
@@ -46,8 +47,7 @@ async function storeHarness(
   t: TestContext,
   options: { limits?: { valueBytes?: number, storeBytes?: number } } = {},
 ): Promise<StoreHarness> {
-  const root = await mkdtemp(join(tmpdir(), 'iris-plugin-storage-'))
-  t.after(async () => { await rm(root, { recursive: true, force: true }) })
+  const root = await tempDir(t, 'iris-plugin-storage-')
   const problems: string[] = []
   const errors: Error[] = []
   const store = new PluginDataStore({
@@ -256,8 +256,7 @@ async function runtimeHarness(
   t: TestContext,
   options: { withRoot?: boolean } = {},
 ): Promise<RuntimeHarness> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-storage-runtime-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-plugin-storage-runtime-')
   const runtime = new SystemPluginRuntime({
     context: new Context(),
     file: join(dir, 'system-plugins.json'),
@@ -397,8 +396,7 @@ test('T12: after the disable completes, a write is refused as unsupported, not i
 // ---------------------------------------------------------------------------
 
 test('T7: uninstall removes the plugin and not one byte of its data', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-storage-install-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-plugin-storage-install-')
   const runtime = new SystemPluginRuntime({
     context: new Context(),
     file: join(dir, 'system-plugins.json'),
@@ -499,8 +497,7 @@ async function demoPluginHarness(
   t: TestContext,
   options: { removeData?: (pluginId: string) => Promise<{ removed: true } | { removed: false, leftover: string, reason: string }> } = {},
 ): Promise<{ runtime: SystemPluginRuntime, installer: SystemPluginInstallService, dataDir: string, pluginDir: string, errors: Error[] }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-storage-removedata-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-plugin-storage-removedata-')
   const errors: Error[] = []
   const runtime = new SystemPluginRuntime({
     context: new Context(),

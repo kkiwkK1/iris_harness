@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import os from 'node:os'
 
 import { Installer, ST_EXTENSION_ARTIFACT_CONTRACT, type ArtifactContract } from '../src/index.ts'
 import { writeTree, demoFileMap } from './fixtures/helpers.ts'
+import { tempDir } from '../../iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The artifact gate is injected, and injecting it is the whole difference
@@ -24,8 +24,8 @@ import { writeTree, demoFileMap } from './fixtures/helpers.ts'
  * `Installer` in `packages/iris-app-service/tests/plugin-manifest.test.ts`.
  */
 
-async function tempRoot(): Promise<string> {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'iris-installer-contract-'))
+async function tempRoot(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-installer-contract-')
 }
 
 class ContractRefusal extends Error {}
@@ -42,8 +42,8 @@ function pluginJsonContract(seen: string[]): ArtifactContract {
   }
 }
 
-test('a tree the ST contract accepts is refused by an injected contract that wants something else', async () => {
-  const root = await tempRoot()
+test('a tree the ST contract accepts is refused by an injected contract that wants something else', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'st-shaped')
   await writeTree(src, demoFileMap()) // manifest.json + js entry: valid ST
   const installer = await Installer.create(path.join(root, 'store'))
@@ -65,8 +65,8 @@ test('a tree the ST contract accepts is refused by an injected contract that wan
   assert.deepEqual(await fsp.readdir(path.join(root, 'store2', 'claims')), [], 'the gate runs before the claim is taken')
 })
 
-test('a tree the ST contract refuses installs under the injected contract that accepts it', async () => {
-  const root = await tempRoot()
+test('a tree the ST contract refuses installs under the injected contract that accepts it', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'plugin-shaped')
   await writeTree(src, new Map([
     ['plugin.json', '{"name":"demo"}\n'],
@@ -99,8 +99,8 @@ test('a tree the ST contract refuses installs under the injected contract that a
   assert.ok(staged.startsWith(path.join(root, 'store2', 'staging') + path.sep), `contract saw ${staged}`)
 })
 
-test('the exported ST contract is the default the installer applies', async () => {
-  const root = await tempRoot()
+test('the exported ST contract is the default the installer applies', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'st-shaped')
   await writeTree(src, demoFileMap())
 

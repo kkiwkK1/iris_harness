@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -19,6 +18,7 @@ import { ScriptVariableStore } from '../src/script-variables.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A method that reads must not write.
@@ -90,8 +90,7 @@ async function seedPersona(path: string): Promise<PersonaStore> {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-reads-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-reads-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   // A real book, so `worldbook.get` below performs an actual read. Pointed at a

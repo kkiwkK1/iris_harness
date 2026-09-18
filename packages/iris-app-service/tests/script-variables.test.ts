@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -9,6 +8,7 @@ import { decodeCardPng, normalizeCard, type CharacterCard } from '@iris/characte
 import { extractScripts } from '@iris/script'
 
 import { ScriptVariableStore, scriptIdOf } from '../src/script-variables.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Where a card script's own variables live, and what that choice costs.
@@ -25,8 +25,7 @@ const CHARACTERS = `${(process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern
 
 /** A throwaway store. */
 async function store(t: TestContext): Promise<{ store: ScriptVariableStore, path: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-script-vars-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-script-vars-')
   const path = join(dir, 'script-variables.json')
   return { store: new ScriptVariableStore(path), path }
 }
@@ -203,8 +202,7 @@ test('no card on this machine accumulates runtime state in its script data', {
 })
 
 test('a corrupt store is not silently the same as a first run', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-script-vars-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-script-vars-')
   const path = join(dir, 'script-variables.json')
   const { writeFile } = await import('node:fs/promises')
 

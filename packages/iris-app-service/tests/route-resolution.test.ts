@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type ConnectionEndpoint, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Which route a generation actually goes out on.
@@ -157,8 +157,7 @@ async function fixture(
   t: TestContext,
   options: { requireProvider?: boolean } = {},
 ): Promise<Host & { dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-route-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-route-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   return { dir, ...await host(dir, options) }
@@ -526,8 +525,7 @@ test('the route restored at boot is not installed a second time by the first gen
 })
 
 test('a host with no installer refuses the route rather than reporting it served', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-route-bare-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-route-bare-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

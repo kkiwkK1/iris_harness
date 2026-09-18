@@ -10,14 +10,12 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { Context } from '@deepseek-ai/cordis'
 import { parseRequest, requestSchemas } from '@iris/protocol'
-
 
 import { CharacterLibrary } from '../src/library.ts'
 import { ChatStore } from '../src/chats.ts'
@@ -27,6 +25,7 @@ import { SystemPluginInstallService } from '../src/plugins/install.ts'
 import { MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from '../src/plugins/builtins.ts'
 import { SystemPluginRuntime, type SystemPluginDefinition } from '../src/system-plugins.ts'
 import { buildGitFixture, writeTree } from '../../iris-extension-installer/tests/fixtures/helpers.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 const INSTALL_METHODS = [
   'plugin.previewInstall',
@@ -54,8 +53,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, options: { withInstaller?: boolean } = {}): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-install-rpc-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-plugin-install-rpc-')
   await mkdir(join(dir, 'characters'), { recursive: true })
 
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')

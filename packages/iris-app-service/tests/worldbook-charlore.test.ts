@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -13,6 +12,7 @@ import { scanEntriesOf } from '../src/prompt.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { charWorldbookNames, resolveCardWorldbook, WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The books a user binds to a character **through the host** — upstream's
@@ -55,8 +55,8 @@ const cardWith = (world?: string): CharacterCard => normalizeCard({
   },
 })
 
-async function storeWith(books: Record<string, string[]>): Promise<{ store: WorldbookStore, dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-charlore-'))
+async function storeWith(t: TestContext, books: Record<string, string[]>): Promise<{ store: WorldbookStore, dir: string }> {
+  const dir = await tempDir(t, 'iris-charlore-')
   await mkdir(join(dir, 'worlds'), { recursive: true })
   for (const [name, comments] of Object.entries(books)) {
     await writeFile(
@@ -77,8 +77,7 @@ const entry = (uid: number, comment: string, extra: Partial<LorebookEntry> = {})
 // ------------------------------------------------------------------- storage
 
 test('bound extras persist with the profile, in upstream’s own file shape', async (t: TestContext) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-charlore-store-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-charlore-store-')
   const path = join(dir, 'settings.json')
   const settings = new SettingsStore(path, { provider: 'test', model: 'm' })
 
@@ -102,16 +101,15 @@ test('bound extras persist with the profile, in upstream’s own file shape', as
   assert.deepEqual(reopened.charBooks('aria'), ['创世回廊1.3', '啊不吃'])
 })
 
-test('duplicate names collapse to their first occurrence', async () => {
-  const settings = new SettingsStore(join(await mkdtemp(join(tmpdir(), 'iris-charlore-dup-')), 'settings.json'),
+test('duplicate names collapse to their first occurrence', async (t: TestContext) => {
+  const settings = new SettingsStore(join(await tempDir(t, 'iris-charlore-dup-'), 'settings.json'),
     { provider: 'test', model: 'm' })
   assert.deepEqual(await settings.setCharBooks('aria', ['One', 'Two', 'One']), ['One', 'Two'])
   assert.deepEqual(settings.charBooks('aria'), ['One', 'Two'])
 })
 
 test('unbinding removes the whole row — no residual key', async (t: TestContext) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-charlore-unbind-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-charlore-unbind-')
   const path = join(dir, 'settings.json')
   const settings = new SettingsStore(path, { provider: 'test', model: 'm' })
   await settings.setGlobalSelect(['Global'])
@@ -143,8 +141,7 @@ test('unbinding removes the whole row — no residual key', async (t: TestContex
 })
 
 test('a global re-selection and a settings patch preserve the bindings', async (t: TestContext) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-charlore-preserve-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-charlore-preserve-')
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'm' })
   await settings.setCharBooks('aria', ['One'])
   await settings.setWorldbookSettings({ scanDepth: 4 })
@@ -156,16 +153,16 @@ test('a global re-selection and a settings patch preserve the bindings', async (
   assert.equal(settings.worldbookSettings().scanDepth, 4)
 })
 
-test('a character with no row reads as unbound, not as an error', async () => {
-  const settings = new SettingsStore(join(await mkdtemp(join(tmpdir(), 'iris-charlore-none-')), 'settings.json'),
+test('a character with no row reads as unbound, not as an error', async (t: TestContext) => {
+  const settings = new SettingsStore(join(await tempDir(t, 'iris-charlore-none-'), 'settings.json'),
     { provider: 'test', model: 'm' })
   assert.deepEqual(settings.charBooks('nobody'), [])
 })
 
 // ------------------------------------------------------- resolution and scan
 
-test('bound extras join the primary in the scan, each under its own name', async () => {
-  const { store } = await storeWith({
+test('bound extras join the primary in the scan, each under its own name', async (t: TestContext) => {
+  const { store } = await storeWith(t, {
     Own: ['own entry'],
     'Extra One': ['extra one entry'],
     'Extra Two': ['extra two entry'],
@@ -187,8 +184,8 @@ test('bound extras join the primary in the scan, each under its own name', async
   assert.equal(scanned.find(e => e.comment === 'global entry')?.world, 'Global')
 })
 
-test('the never-combine ruling still holds: extras add, they do not merge channels', async () => {
-  const { store } = await storeWith({ Eldoria: ['named A', 'named B'], Extra: ['extra entry'] })
+test('the never-combine ruling still holds: extras add, they do not merge channels', async (t: TestContext) => {
+  const { store } = await storeWith(t, { Eldoria: ['named A', 'named B'], Extra: ['extra entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Eldoria'), store, [], undefined, ['Extra'])
 
   // The primary is still chosen by the old rules — one channel, the bound name.
@@ -199,8 +196,8 @@ test('the never-combine ruling still holds: extras add, they do not merge channe
   assert.deepEqual(resolved.additional[0]?.entries.map(e => e.comment), ['extra entry'])
 })
 
-test('an extra that duplicates the primary contributes once', async () => {
-  const { store } = await storeWith({ Own: ['own entry'] })
+test('an extra that duplicates the primary contributes once', async (t: TestContext) => {
+  const { store } = await storeWith(t, { Own: ['own entry'] })
   // Upstream builds one Set with both names (`world-info.js:4376`), so a user
   // binding the card's own book as an extra gets one copy, not two.
   const resolved = await resolveCardWorldbook(cardWith('Own'), store, [], undefined, ['Own'])
@@ -208,8 +205,8 @@ test('an extra that duplicates the primary contributes once', async () => {
   assert.deepEqual(scanEntriesOf(undefined, resolved).map(e => e.comment), ['own entry'])
 })
 
-test('an extra that is globally selected is skipped — global wins that overlap', async () => {
-  const { store } = await storeWith({ Own: ['own entry'], Shared: ['shared entry'] })
+test('an extra that is globally selected is skipped — global wins that overlap', async (t: TestContext) => {
+  const { store } = await storeWith(t, { Own: ['own entry'], Shared: ['shared entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Own'), store, ['Shared'], undefined, ['Shared'])
 
   // The per-book guard from `getCharacterLore` (`world-info.js:4387`): "already
@@ -225,16 +222,16 @@ test('an extra that is globally selected is skipped — global wins that overlap
   assert.deepEqual(scanned.filter(e => e.comment === 'own entry').map(e => e.world), ['Own'])
 })
 
-test('a dangling extra binding is skipped, not fatal, like a dangling global one', async () => {
-  const { store } = await storeWith({ Own: ['own entry'] })
+test('a dangling extra binding is skipped, not fatal, like a dangling global one', async (t: TestContext) => {
+  const { store } = await storeWith(t, { Own: ['own entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Own'), store, [], undefined, ['deleted book', 'Own'])
 
   assert.deepEqual(resolved.additional, [])
   assert.deepEqual(scanEntriesOf(undefined, resolved).map(e => e.comment), ['own entry'])
 })
 
-test('the primary losing its guard does not take the extras down with it', async () => {
-  const { store } = await storeWith({ Shared: ['shared entry'], Extra: ['extra entry'] })
+test('the primary losing its guard does not take the extras down with it', async (t: TestContext) => {
+  const { store } = await storeWith(t, { Shared: ['shared entry'], Extra: ['extra entry'] })
   // The card binds the globally selected book: the primary contributes nothing
   // (`world-info.js:4387` again), and the extras are judged on their own turn
   // through the loop.
@@ -303,8 +300,7 @@ interface Fixture {
 }
 
 async function serviceFixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-charlore-svc-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-charlore-svc-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(

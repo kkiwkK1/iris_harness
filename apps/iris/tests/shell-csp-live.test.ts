@@ -3,9 +3,8 @@ import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import net from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +12,8 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The shell's Content-Security-Policy, in a real browser, on a real host.
@@ -410,7 +411,10 @@ async function violations(session: string): Promise<string[]> {
 before(async () => {
   if (!asked) return
 
-  dataDir = await mkdtemp(join(tmpdir(), 'iris-shellcsp-'))
+  // `tempDirOwned`, not `tempDir`: these are file-level hooks with no test
+  // context, and a booted host and a live Chrome hold the two directories
+  // until the `after` below has stopped both.
+  dataDir = await tempDirOwned('iris-shellcsp-')
   await mkdir(join(dataDir, 'default-user', 'characters'), { recursive: true })
 
   process.env.IRIS_TEST_DATA_DIR = dataDir
@@ -426,7 +430,7 @@ before(async () => {
   const binary = chromeBinary()
   if (binary === undefined) return
 
-  profile = await mkdtemp(join(tmpdir(), 'iris-shellcsp-profile-'))
+  profile = await tempDirOwned('iris-shellcsp-profile-')
   const debugPort = await freePort()
   chrome = spawn(binary, [
     '--headless=new',
@@ -454,8 +458,8 @@ after(async () => {
   chrome?.kill()
   fixture?.close()
   if (ctx !== undefined) await ctx.fiber.dispose()
-  if (profile !== '') await rm(profile, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
-  if (dataDir !== '') await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  if (profile !== '') await removeTempDir(profile)
+  if (dataDir !== '') await removeTempDir(dataDir)
 })
 
 /** The two preconditions that are failures rather than skips once asked for. */

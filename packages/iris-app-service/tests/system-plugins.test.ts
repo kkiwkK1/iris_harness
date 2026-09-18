@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -11,6 +10,7 @@ import {
   SystemPluginRuntime,
   type SystemPluginDefinition,
 } from '../src/system-plugins.ts'
+import { removeTempDir, tempDirOwned } from './support/temp-dir.ts'
 
 interface Harness {
   dir: string
@@ -24,13 +24,16 @@ async function harness(
   definitions: readonly SystemPluginDefinition[],
   defaultEnabled: readonly string[] = definitions.map(row => row.id),
 ): Promise<Harness> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-system-plugins-'))
+  const dir = await tempDirOwned('iris-system-plugins-')
   const file = join(dir, 'system-plugins.json')
   const context = new Context()
   const runtime = new SystemPluginRuntime({ context, file, definitions, defaultEnabled })
+  // `tempDirOwned`, not `tempDir`: the runtime has to be disposed before the
+  // directory it writes into goes away, and a `tempDir` removal would be
+  // registered first and therefore run first.
   t.after(async () => {
     await runtime.dispose()
-    await rm(dir, { recursive: true, force: true })
+    await removeTempDir(dir)
   })
   return { dir, file, context, runtime }
 }
@@ -219,7 +222,7 @@ test('corrupt existing preferences are retained and every capability fails close
 
 test('a throwing change observer cannot roll back or reject a durable transition', async (t) => {
   const reports: Error[] = []
-  const dir = await mkdtemp(join(tmpdir(), 'iris-system-plugin-listener-'))
+  const dir = await tempDirOwned('iris-system-plugin-listener-')
   const runtime = new SystemPluginRuntime({
     context: new Context(),
     file: join(dir, 'system-plugins.json'),
@@ -229,7 +232,7 @@ test('a throwing change observer cannot roll back or reject a durable transition
   })
   t.after(async () => {
     await runtime.dispose()
-    await rm(dir, { recursive: true, force: true })
+    await removeTempDir(dir)
   })
   await runtime.initialize()
   runtime.onChange(() => { throw new Error('observer exploded') })

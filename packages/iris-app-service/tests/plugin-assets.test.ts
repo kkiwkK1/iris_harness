@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type { PluginAssetManifest } from '@iris/plugin-web-api'
 import { PluginAssetStore, type PluginAssetState, type PluginAssetStateView } from '../src/plugin-assets.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The plugin-asset route: the aggregate manifest and the enabled plugin
@@ -66,8 +66,7 @@ function revOf(bytes: string): string {
 
 /** An install directory with one plugin's client directory, plus a secret outside it. */
 async function installDir(t: TestContext): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugins-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-plugins-')
   await mkdir(join(dir, 'demo', 'client'), { recursive: true })
   await mkdir(join(dir, 'other', 'client'), { recursive: true })
   await writeFile(join(dir, 'demo', 'client', 'client.js'), 'globalThis.demo = 1', 'utf8')

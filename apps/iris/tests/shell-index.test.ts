@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { copyFileSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +9,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { SHELL_CSP_DIRECTIVES } from '@iris/app-service'
+
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The shell page as the browser actually receives it, from a booted host.
@@ -34,10 +35,12 @@ let distDir: string
 let port: number
 
 before(async () => {
-  dataDir = await mkdtemp(join(tmpdir(), 'iris-shellindex-'))
+  // `tempDirOwned`, not `tempDir`: a file-level `before` has no test context,
+  // and the booted host holds both of these until the `after` disposes it.
+  dataDir = await tempDirOwned('iris-shellindex-')
   await mkdir(join(dataDir, 'default-user', 'characters'), { recursive: true })
 
-  distDir = await mkdtemp(join(tmpdir(), 'iris-shellindex-dist-'))
+  distDir = await tempDirOwned('iris-shellindex-dist-')
   await mkdir(join(distDir, 'sandbox'), { recursive: true })
   copyFileSync(
     fileURLToPath(new URL('../../iris-web/index.html', import.meta.url)),
@@ -53,8 +56,8 @@ before(async () => {
 
 after(async () => {
   await ctx.fiber.dispose()
-  await rm(dataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
-  await rm(distDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  await removeTempDir(dataDir)
+  await removeTempDir(distDir)
 })
 
 /** The index, as served. */

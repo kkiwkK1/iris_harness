@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -17,6 +16,7 @@ import { ScriptLibraryStore } from '../src/script-library.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Every JSON store in this package, held to one rule about a file it cannot read.
@@ -198,8 +198,7 @@ test('every JSON store covered here quarantines a file it cannot parse', async (
 
   for (const subject of cases) {
     await t.test(subject.name, async (inner) => {
-      const dir = await mkdtemp(join(tmpdir(), 'iris-quarantine-'))
-      inner.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+      const dir = await tempDir(inner, 'iris-quarantine-')
       const path = join(dir, subject.file)
       await writeFile(path, CORRUPT, 'utf8')
 
@@ -275,8 +274,7 @@ test('a first run is not reported and nothing is set aside', async (t) => {
   // starts treating "no file" as a problem: every profile's first run would then
   // open with twelve faults on the debug page.
   for (const subject of cases) {
-    const dir = await mkdtemp(join(tmpdir(), 'iris-quarantine-fresh-'))
-    t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+    const dir = await tempDir(t, 'iris-quarantine-fresh-')
     const path = join(dir, subject.file)
 
     const said: string[] = []

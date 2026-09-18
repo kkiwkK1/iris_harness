@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -17,6 +16,7 @@ import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { USAGE_FIELD } from '../src/usage.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The request fingerprint: which body a generation actually sent.
@@ -127,8 +127,7 @@ interface Fixture {
  */
 async function fixture(t: TestContext, reports: TurnUsage | 'silent' = CACHED): Promise<Fixture> {
   const usage = reports === 'silent' ? undefined : reports
-  const dir = await mkdtemp(join(tmpdir(), 'iris-fingerprint-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-fingerprint-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
   return { dir, ...await open(dir, usage) }

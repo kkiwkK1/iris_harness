@@ -13,23 +13,23 @@
 
 import assert from 'node:assert/strict'
 import fsp from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { Installer, PROVISIONAL_EXTENSION_ID, SourceError } from '../src/index.ts'
 import { demoFileMap, writeTree } from './fixtures/helpers.ts'
+import { tempDir } from '../../iris-app-service/tests/support/temp-dir.ts'
 
-async function tempRoot(): Promise<string> {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'iris-installer-staged-'))
+async function tempRoot(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-installer-staged-')
 }
 
 async function exists(target: string): Promise<boolean> {
   return await fsp.stat(target).then(() => true, () => false)
 }
 
-test('stage halts at hashed: the tree is in staging, the target does not exist, and no claim was taken', async () => {
-  const root = await tempRoot()
+test('stage halts at hashed: the tree is in staging, the target does not exist, and no claim was taken', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
   const installer = await Installer.create(path.join(root, 'store'))
@@ -48,8 +48,8 @@ test('stage halts at hashed: the tree is in staging, the target does not exist, 
   assert.equal(staged.txn.extensionId, PROVISIONAL_EXTENSION_ID)
 })
 
-test('promote learns the id, and the installed tree and lock carry it', async () => {
-  const root = await tempRoot()
+test('promote learns the id, and the installed tree and lock carry it', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
   const installer = await Installer.create(path.join(root, 'store'))
@@ -64,8 +64,8 @@ test('promote learns the id, and the installed tree and lock carry it', async ()
   assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'claims')), [], 'and releases its claim')
 })
 
-test('a handle that is no longer staged cannot promote, and the refusal names the phase', async () => {
-  const root = await tempRoot()
+test('a handle that is no longer staged cannot promote, and the refusal names the phase', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
   const installer = await Installer.create(path.join(root, 'store'))
@@ -90,8 +90,8 @@ test('a handle that is no longer staged cannot promote, and the refusal names th
   assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'installed')), [])
 })
 
-test('discard removes the staging tree and is safe to repeat', async () => {
-  const root = await tempRoot()
+test('discard removes the staging tree and is safe to repeat', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
   const installer = await Installer.create(path.join(root, 'store'))
@@ -106,8 +106,8 @@ test('discard removes the staging tree and is safe to repeat', async () => {
   assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'staging')), [])
 })
 
-test('promote refuses an id that is already installed, exactly as installAs does', async () => {
-  const root = await tempRoot()
+test('promote refuses an id that is already installed, exactly as installAs does', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
   const installer = await Installer.create(path.join(root, 'store'))
@@ -127,8 +127,8 @@ test('promote refuses an id that is already installed, exactly as installAs does
   assert.equal((await installer.readLock('taken'))?.extensionId, 'taken')
 })
 
-test('a staged tree that never promotes leaves nothing the recovery scan calls untrusted', async () => {
-  const root = await tempRoot()
+test('a staged tree that never promotes leaves nothing the recovery scan calls untrusted', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
   const installer = await Installer.create(path.join(root, 'store'))

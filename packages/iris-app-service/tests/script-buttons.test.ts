@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -12,6 +11,7 @@ import { effectiveButtons, ScriptButtonStore } from '../src/script-buttons.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Buttons a script rewrote at runtime.
@@ -54,8 +54,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, withStore = true): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-btn-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-btn-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -164,8 +163,7 @@ test('with no store the write is refused, not silently dropped', async (t) => {
 })
 
 test('one card cannot see another card’s overrides', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-btn-part-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-btn-part-')
   const store = new ScriptButtonStore(join(dir, 'script-buttons.json'))
 
   await store.set('aria', 'panel', [{ name: 'aria only', visible: true }])

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { decodeCardPng, normalizeCard, type CharacterCard } from '@iris/character'
 
 import { scanEntriesOf } from '../src/prompt.ts'
 import { resolveCardWorldbook, WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Globally selected books reach every character.
@@ -49,8 +49,8 @@ const cardWith = (world?: string): CharacterCard => normalizeCard({
   },
 })
 
-async function storeWith(books: Record<string, string[]>): Promise<WorldbookStore> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-global-'))
+async function storeWith(t: TestContext, books: Record<string, string[]>): Promise<WorldbookStore> {
+  const dir = await tempDir(t, 'iris-global-')
   await mkdir(join(dir, 'worlds'), { recursive: true })
   for (const [name, comments] of Object.entries(books)) {
     await writeFile(
@@ -62,8 +62,8 @@ async function storeWith(books: Record<string, string[]>): Promise<WorldbookStor
   return new WorldbookStore(join(dir, 'worlds'))
 }
 
-test('a globally selected book reaches a card that binds something else', async () => {
-  const store = await storeWith({ Own: ['own entry'], Shared: ['shared entry'] })
+test('a globally selected book reaches a card that binds something else', async (t: TestContext) => {
+  const store = await storeWith(t, { Own: ['own entry'], Shared: ['shared entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Own'), store, ['Shared'])
 
   assert.equal(resolved.source, 'named')
@@ -75,8 +75,8 @@ test('a globally selected book reaches a card that binds something else', async 
   assert.deepEqual(scanned.map(e => e.comment).sort(), ['own entry', 'shared entry'])
 })
 
-test('each book keeps its own name, because getwi matches on it', async () => {
-  const store = await storeWith({ Own: ['own entry'], Shared: ['shared entry'] })
+test('each book keeps its own name, because getwi matches on it', async (t: TestContext) => {
+  const store = await storeWith(t, { Own: ['own entry'], Shared: ['shared entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Own'), store, ['Shared'])
   const scanned = scanEntriesOf(undefined, resolved)
 
@@ -86,8 +86,8 @@ test('each book keeps its own name, because getwi matches on it', async () => {
   assert.equal(scanned.find(e => e.comment === 'shared entry')?.world, 'Shared')
 })
 
-test('the character’s own book comes first', async () => {
-  const store = await storeWith({ Own: ['own entry'], Shared: ['shared entry'] })
+test('the character’s own book comes first', async (t: TestContext) => {
+  const store = await storeWith(t, { Own: ['own entry'], Shared: ['shared entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Own'), store, ['Shared'])
 
   // `world_info_character_strategy = 1` (`character_first`) on the measured
@@ -97,8 +97,8 @@ test('the character’s own book comes first', async () => {
   assert.deepEqual(scanEntriesOf(undefined, resolved).map(e => e.comment), ['own entry', 'shared entry'])
 })
 
-test('a card binding a globally selected book does not get it twice', async () => {
-  const store = await storeWith({ Shared: ['shared entry'] })
+test('a card binding a globally selected book does not get it twice', async (t: TestContext) => {
+  const store = await storeWith(t, { Shared: ['shared entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Shared'), store, ['Shared'])
 
   // Upstream's dedup (`world-info.js:4387`): the character path is skipped for a
@@ -109,8 +109,8 @@ test('a card binding a globally selected book does not get it twice', async () =
   assert.deepEqual(scanEntriesOf(undefined, resolved).map(e => e.comment), ['shared entry'])
 })
 
-test('a selected book that no longer exists is skipped, not fatal', async () => {
-  const store = await storeWith({ Own: ['own entry'] })
+test('a selected book that no longer exists is skipped, not fatal', async (t: TestContext) => {
+  const store = await storeWith(t, { Own: ['own entry'] })
   const resolved = await resolveCardWorldbook(cardWith('Own'), store, ['deleted book'])
 
   // A user can delete a book without clearing the selection. Upstream's
@@ -120,8 +120,8 @@ test('a selected book that no longer exists is skipped, not fatal', async () => 
   assert.deepEqual(scanEntriesOf(undefined, resolved).map(e => e.comment), ['own entry'])
 })
 
-test('no selection leaves every card exactly as it was', async () => {
-  const store = await storeWith({ Own: ['own entry'], Shared: ['shared entry'] })
+test('no selection leaves every card exactly as it was', async (t: TestContext) => {
+  const store = await storeWith(t, { Own: ['own entry'], Shared: ['shared entry'] })
   const before = await resolveCardWorldbook(cardWith('Own'), store, [])
   assert.deepEqual(before.global, [])
   assert.deepEqual(scanEntriesOf(undefined, before).map(e => e.comment), ['own entry'])

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { fromWorldbookEntry, resolveUidCollisions, WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Replacing a named world book.
@@ -33,8 +33,8 @@ const entryFile = (uid: number, comment: string, extra: Record<string, unknown> 
   ...extra,
 })
 
-async function bookWith(entries: Record<string, unknown>[]): Promise<{ store: WorldbookStore, dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-wb-write-'))
+async function bookWith(t: TestContext, entries: Record<string, unknown>[]): Promise<{ store: WorldbookStore, dir: string }> {
+  const dir = await tempDir(t, 'iris-wb-write-')
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(
     join(dir, 'worlds', 'Eldoria.json'),
@@ -44,8 +44,8 @@ async function bookWith(entries: Record<string, unknown>[]): Promise<{ store: Wo
   return { store: new WorldbookStore(join(dir, 'worlds')), dir }
 }
 
-test('replacing a book deletes what the caller left out', async () => {
-  const { store } = await bookWith([entryFile(1, 'kept'), entryFile(2, 'dropped')])
+test('replacing a book deletes what the caller left out', async (t: TestContext) => {
+  const { store } = await bookWith(t, [entryFile(1, 'kept'), entryFile(2, 'dropped')])
 
   const after = await store.replace('Eldoria', [{ uid: 1, name: 'kept', content: 'kept body' }])
   assert.deepEqual(after.map(entry => entry.name), ['kept'])
@@ -56,8 +56,8 @@ test('replacing a book deletes what the caller left out', async () => {
   assert.equal(reread.length, 1)
 })
 
-test('a book that does not exist is not created by replacing it', async () => {
-  const { store, dir } = await bookWith([entryFile(1, 'a')])
+test('a book that does not exist is not created by replacing it', async (t: TestContext) => {
+  const { store, dir } = await bookWith(t, [entryFile(1, 'a')])
   await assert.rejects(() => store.replace('Nowhere', [{ uid: 1 }]), /world book/u)
 
   // Upstream's `replaceWorldbook` refuses too. Creating on write would make a
@@ -94,12 +94,12 @@ test('useProbability is written true when absent, and verbatim when sent', () =>
   assert.equal(fromWorldbookEntry({ uid: 1, useProbability: false }, 0)['useProbability'], false)
 })
 
-test('the stored shape’s remaining fields survive a whole-book save', async () => {
+test('the stored shape’s remaining fields survive a whole-book save', async (t: TestContext) => {
   // The reason the write shape grew these fields: before it did, a whole-book
   // save — the editor's one write — rebuilt every row from a field list that
   // could not name them, and an automation binding or a budget exemption was
   // dropped by the very act of saving the book it lived in.
-  const { store } = await bookWith([entryFile(1, 'seed', {
+  const { store } = await bookWith(t, [entryFile(1, 'seed', {
     automationId: 'my_quick_reply',
     useGroupScoring: true,
     ignoreBudget: true,
@@ -182,12 +182,12 @@ test('colliding uids are separated, and a missing uid is assigned one', () => {
   assert.equal(uids[0], 1, 'the first claim on a uid should keep it')
 })
 
-test('writing does not truncate the book if it is interrupted', async () => {
+test('writing does not truncate the book if it is interrupted', async (t: TestContext) => {
   // Asserted through its observable consequence: the replace goes through a
   // temporary file and a rename, so no `.tmp` is left behind and the book is
   // never briefly half-written. A direct `writeFile` would pass every other
   // test in this file and lose a 167-entry book to one crash.
-  const { store, dir } = await bookWith([entryFile(1, 'a')])
+  const { store, dir } = await bookWith(t, [entryFile(1, 'a')])
   await store.replace('Eldoria', [{ uid: 1, name: 'a' }, { uid: 2, name: 'b' }])
 
   const leftovers = (await readdir(join(dir, 'worlds'))).filter(name => name.includes('.tmp'))
@@ -197,8 +197,8 @@ test('writing does not truncate the book if it is interrupted', async () => {
   assert.equal(Object.keys(raw.entries).length, 2)
 })
 
-test('a written book reads back through the same reader', async () => {
-  const { store } = await bookWith([entryFile(1, 'original')])
+test('a written book reads back through the same reader', async (t: TestContext) => {
+  const { store } = await bookWith(t, [entryFile(1, 'original')])
   await store.replace('Eldoria', [{
     uid: 42,
     name: 'Tower',
@@ -227,14 +227,14 @@ test('a written book reads back through the same reader', async () => {
   assert.equal(entry.effect.cooldown, null)
 })
 
-test('a name may not escape the worlds directory on the way in', async () => {
-  const { store } = await bookWith([entryFile(1, 'a')])
+test('a name may not escape the worlds directory on the way in', async (t: TestContext) => {
+  const { store } = await bookWith(t, [entryFile(1, 'a')])
   // The write path has to refuse what the read path refuses. A guard on reads
   // alone is the shape of a directory traversal that only works one way.
   await assert.rejects(() => store.replace('../settings', [{ uid: 1 }]), /not a valid identifier/u)
 })
 
-test('regex-shaped keys survive the disk leg byte for byte', async () => {
+test('regex-shaped keys survive the disk leg byte for byte', async (t: TestContext) => {
   // The other half of a round trip whose frame half f7 pinned. A card's key can
   // make three crossings — host → frame (revived to `RegExp`), frame → host
   // (flattened back to `/pattern/flags`), and host → disk → host, which is this
@@ -281,7 +281,7 @@ test('regex-shaped keys survive the disk leg byte for byte', async () => {
   // wrong strings also have.
   assert.equal(ESCAPED.length, 6, 'the escaped-delimiter fixture lost its backslash again')
   assert.equal(ESCAPED.charCodeAt(2), 92, 'the third character must be a backslash, or this is just /a/b/')
-  const { store } = await bookWith([entryFile(1, 'seed')])
+  const { store } = await bookWith(t, [entryFile(1, 'seed')])
 
   const [written] = await store.replace('Eldoria', [{
     uid: 1,

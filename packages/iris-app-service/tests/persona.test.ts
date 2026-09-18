@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import type { CharacterCard } from '@iris/character'
 import type { LorebookEntry } from '@iris/lorebook'
 
 import { buildPrompt, DEFAULT_PRESET } from '../src/prompt.ts'
 import { PersonaStore } from '../src/persona.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Personas: the store's file semantics and the assembler's three positions.
@@ -127,8 +127,8 @@ function assemble(persona?: { description: string, position: 'inprompt' | 'atdep
 
 // --------------------------------------------------------------------- store
 
-test('a persona is created, activated and edited in place', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-persona-'))
+test('a persona is created, activated and edited in place', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-persona-')
   const store = new PersonaStore(join(dir, 'personas.json'))
 
   const created = await store.upsert({ name: 'Wanderer', description: 'A hooded traveller.', active: true })
@@ -145,8 +145,8 @@ test('a persona is created, activated and edited in place', async () => {
   assert.equal((await store.active())?.description, 'A hooded traveller with a map.')
 })
 
-test('an absent description on an edit keeps what is stored', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-persona-'))
+test('an absent description on an edit keeps what is stored', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-persona-')
   const store = new PersonaStore(join(dir, 'personas.json'))
   const { personas } = await store.upsert({ name: 'Wanderer', description: 'Kept.' })
   const keptId = personas[0]?.id ?? ''
@@ -155,8 +155,8 @@ test('an absent description on an edit keeps what is stored', async () => {
     'a rename must not blank the description it was never shown')
 })
 
-test('the store persists across instances', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-persona-'))
+test('the store persists across instances', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-persona-')
   const path = join(dir, 'personas.json')
   const first = new PersonaStore(path)
   const { personas } = await first.upsert({ name: 'Wanderer', description: 'Hooded.', active: true })
@@ -169,8 +169,8 @@ test('the store persists across instances', async () => {
   assert.equal(body.personas.length, 1)
 })
 
-test('removing the active persona clears the activation', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-persona-'))
+test('removing the active persona clears the activation', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-persona-')
   const store = new PersonaStore(join(dir, 'personas.json'))
   const first = await store.upsert({ name: 'One', active: true })
   const one = first.personas[0]?.id ?? ''
@@ -190,8 +190,8 @@ test('removing the active persona clears the activation', async () => {
   await assert.rejects(store.remove('no-such-persona'), /no persona/)
 })
 
-test('an empty description is no persona', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-persona-'))
+test('an empty description is no persona', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-persona-')
   const store = new PersonaStore(join(dir, 'personas.json'))
   await store.upsert({ name: 'Wanderer', description: '   ', active: true })
 
@@ -200,8 +200,8 @@ test('an empty description is no persona', async () => {
   assert.equal(await store.active(), undefined)
 })
 
-test('a malformed persona is refused by name', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-persona-'))
+test('a malformed persona is refused by name', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-persona-')
   const store = new PersonaStore(join(dir, 'personas.json'))
   await assert.rejects(store.upsert({ name: '   ' }), /name/)
   await assert.rejects(store.upsert({ name: 'X', depth: -1 }), /depth/)

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -18,6 +17,7 @@ import { attributeResidualMacros, residualMacros } from '../src/prompt.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { textOf } from '../src/views.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Tavern Helper's variable macros, on the path that actually sends them.
@@ -74,8 +74,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-helper-macros-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-helper-macros-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), cardWithStatusEntry(), 'utf8')
 
@@ -242,8 +241,7 @@ test('a model saying "nothing changed" is not reported as an unreadable reply', 
 })
 
 test('a scope with no store is named, not rendered as emptiness', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scope-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scope-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   // `character` is one of upstream's five scopes and Iris has no store for it.
   // Rendered, it becomes `null` — indistinguishable from a store that exists and

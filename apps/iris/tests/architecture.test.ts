@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { tempDir } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The dependency rules from `docs/ARCHITECTURE.md`, enforced.
@@ -157,7 +157,7 @@ test('the browser sees the contract and nothing else', async () => {
   assert.deepEqual(forbidden, [], `the browser may only import ${[...allowed].join(', ')}`)
 })
 
-test('the import scanner sees a package reached through a subpath', async () => {
+test('the import scanner sees a package reached through a subpath', async (t: TestContext) => {
   /*
    * A guard on the guard, because the one above cannot fail for this on its own.
    *
@@ -172,28 +172,24 @@ test('the import scanner sees a package reached through a subpath', async () => 
    * has written on purpose and asks what the scanner saw, which is the only
    * question whose answer distinguishes the two cases.
    */
-  const dir = await mkdtemp(join(tmpdir(), 'iris-arch-'))
-  try {
-    await writeFile(
-      join(dir, 'sample.ts'),
-      [
-        "import { a } from '@iris/protocol'",
-        "import { b } from '@iris/persistence/src/anything.ts'",
-        "import type { C } from '@iris/lorebook/src/matching.ts'",
-      ].join('\n'),
-      'utf8',
-    )
+  const dir = await tempDir(t, 'iris-arch-')
+  await writeFile(
+    join(dir, 'sample.ts'),
+    [
+      "import { a } from '@iris/protocol'",
+      "import { b } from '@iris/persistence/src/anything.ts'",
+      "import type { C } from '@iris/lorebook/src/matching.ts'",
+    ].join('\n'),
+    'utf8',
+  )
 
-    const seen = await sourceImports(dir)
+  const seen = await sourceImports(dir)
 
-    assert.deepEqual(
-      [...seen].sort(),
-      ['@iris/lorebook', '@iris/persistence', '@iris/protocol'],
-      'a subpath import must be attributed to the package that owns it — otherwise the allowlist never hears about it',
-    )
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
+  assert.deepEqual(
+    [...seen].sort(),
+    ['@iris/lorebook', '@iris/persistence', '@iris/protocol'],
+    'a subpath import must be attributed to the package that owns it — otherwise the allowlist never hears about it',
+  )
 })
 
 test('nothing depends upward on the host or the composition root', async () => {

@@ -71,8 +71,6 @@ import { test } from 'node:test'
 import { createServer, type Server } from 'node:http'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createConnection } from 'node:net'
@@ -81,6 +79,7 @@ import { buildSrcdoc } from '../src/sandbox/srcdoc.ts'
 import { frameSandbox } from '../src/sandbox/policy.ts'
 import { parseSandboxManifest } from '../src/sandbox/asset-manifest.ts'
 import { BOOTSTRAP_MISSING_MARK, BOOTSTRAP_SWALLOW_MARK } from '../src/sandbox/bootstrap-contract.ts'
+import { removeTempDir, tempDirOwned } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /** Where the sandbox build writes. */
 const SANDBOX_DIR = fileURLToPath(new URL('../public/sandbox', import.meta.url))
@@ -387,7 +386,10 @@ test(
 
     const { server, port } = await serveFixture(page)
     const origin = `http://127.0.0.1:${port}`
-    const profile = await mkdtemp(join(tmpdir(), 'iris-frame-probe-'))
+    // `tempDirOwned`, not `tempDir`: Chrome is still running out of this
+    // profile until the `finally` below has killed it, and a `tempDir`
+    // removal would be scheduled to run before that.
+    const profile = await tempDirOwned('iris-frame-probe-')
     const debugPort = await freePort()
 
     let chrome: ChildProcess | undefined
@@ -716,7 +718,7 @@ test(
           resolve()
         })
       })
-      await rm(profile, { recursive: true, force: true }).catch(() => undefined)
+      await removeTempDir(profile)
     }
   },
 )

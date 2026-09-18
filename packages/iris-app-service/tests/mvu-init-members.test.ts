@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -13,6 +12,7 @@ import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The two members MVU's chat-level init calls, built to upstream's signatures.
@@ -50,8 +50,7 @@ interface Fixture {
 
 /** A host with one book on disk and one open chat. */
 async function fixture(t: TestContext, withWorldbooks = true): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-mvuinit-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-mvuinit-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')

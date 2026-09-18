@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import os from 'node:os'
 
 import { Installer, SourceError, validateExtensionSource } from '../src/index.ts'
 import { assertPinnedCommit } from '../src/source.ts'
 import { buildGitFixture, demoFileMap, writeTree } from './fixtures/helpers.ts'
+import { tempDir } from '../../iris-app-service/tests/support/temp-dir.ts'
 
-async function tempRoot(): Promise<string> {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'iris-installer-source-'))
+async function tempRoot(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-installer-source-')
 }
 
 test('git sources accept only https (or file:// under the test-only option) and full 40-hex pins', () => {
@@ -64,8 +64,8 @@ test('git sources accept only https (or file:// under the test-only option) and 
   )
 })
 
-test('git materialization fetches the pinned commit and proves HEAD equals the pin', async () => {
-  const root = await tempRoot()
+test('git materialization fetches the pinned commit and proves HEAD equals the pin', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const base = path.join(root, 'src')
   await fsp.mkdir(base, { recursive: true })
   const fixture = await buildGitFixture(base, demoFileMap())
@@ -92,8 +92,8 @@ test('git materialization fetches the pinned commit and proves HEAD equals the p
   assert.deepEqual(staging, [])
 })
 
-test('local-directory source materializes the guarded tree; a junction inside it is refused', async () => {
-  const root = await tempRoot()
+test('local-directory source materializes the guarded tree; a junction inside it is refused', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const src = path.join(root, 'src-tree')
   await writeTree(src, demoFileMap())
 
@@ -116,8 +116,8 @@ test('local-directory source materializes the guarded tree; a junction inside it
   }
 })
 
-test('archive source copies bytes into staging before anything is unpacked', async () => {
-  const root = await tempRoot()
+test('archive source copies bytes into staging before anything is unpacked', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const installer = await Installer.create(path.join(root, 'store'))
   await assert.rejects(
     installer.installAs('demo-ext', { kind: 'local-archive', archivePath: path.join(root, 'missing.zip') }),
@@ -140,8 +140,8 @@ test('archive source copies bytes into staging before anything is unpacked', asy
 
 // --- 缺陷二：来源无关的合同 ---------------------------------------------
 
-test('a git repository without a manifest is refused by the same gate as any other source', async () => {
-  const root = await tempRoot()
+test('a git repository without a manifest is refused by the same gate as any other source', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const base = path.join(root, 'src')
   await fsp.mkdir(base, { recursive: true })
   // The fixture writes dist/index.js etc. but no manifest.json.
@@ -159,8 +159,8 @@ test('a git repository without a manifest is refused by the same gate as any oth
   assert.deepEqual(await fsp.readdir(path.join(root, 'store', 'installed')), [])
 })
 
-test('different clone metadata, identical working tree: the same artifact hash, and no .git in the installed tree', async () => {
-  const root = await tempRoot()
+test('different clone metadata, identical working tree: the same artifact hash, and no .git in the installed tree', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const base = path.join(root, 'src')
   await fsp.mkdir(base, { recursive: true })
 

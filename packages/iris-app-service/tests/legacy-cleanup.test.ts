@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -17,6 +16,7 @@ import { backupsDir } from '../src/paths.ts'
 import { DEFAULT_PRUNE, IGNORE_CLEANUP_KEY } from '../src/prune.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The one-time offer, and the two answers that are not "clean".
@@ -88,8 +88,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, userRowTable = true): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-legacy-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-legacy-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'chats'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
@@ -264,8 +263,7 @@ test('a refusal already in the file is read, without this host having written it
   // writes and the gate reads, so a pair that is wrong in the same way stays
   // green. Here the key arrives from outside — as it would on a chat carried in
   // from SillyTavern — and only the read is under test.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-legacy-read-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-legacy-read-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'chats'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
@@ -357,8 +355,7 @@ test('cleanup is off by default, and the offer is still made', async (t) => {
   // automatic sweep would make "we do not delete without asking" quietly mean
   // "we never ask", which is the version of this that loses the feature rather
   // than the data.
-  const dir = await mkdtemp(join(tmpdir(), 'iris-legacy-off-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-legacy-off-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'chats'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')

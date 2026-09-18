@@ -23,10 +23,9 @@
  * @module @iris/app-service/tests/usage-summary
  */
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import type { TurnUsage, UsageTotals } from '@iris/protocol'
 
@@ -38,6 +37,7 @@ import {
 } from '../src/usage-summary.ts'
 import { SIDE_USAGE_FIELD } from '../src/side-usage.ts'
 import { USAGE_FIELD } from '../src/usage.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /** A moment with a known local calendar position, so bucket tests do not depend on the runner's zone. */
 const NOON = new Date(2026, 8, 8, 12, 30, 0, 0).getTime()
@@ -277,40 +277,36 @@ test('a non-finite or negative count cannot turn a whole summary into NaN', () =
 
 /* ------------------------------------------------- the file scan itself */
 
-test('the scan reads the usage arrays a chat file carries, and dates them', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-usage-'))
-  try {
-    const text = chatFile({ chatId: 'one', title: 'One', updatedAt: NEXT_DAY }, [
-      // Turn one: two swipes, one of which reported nothing — the `null` is the
-      // ordinary case and says "generated, and the provider was silent".
-      [
-        { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900, model: 'deepseek-chat', provider: 'deepseek', at: NOON },
-        null,
-      ],
-      // Turn two: written before the identity fields existed. This is the shape
-      // all 12 records in the real corpus are in.
-      [{ inputTokens: 200, outputTokens: 20, cacheReadTokens: 0 }],
-    ])
-    await writeFile(join(dir, 'one.jsonl'), text, 'utf8')
+test('the scan reads the usage arrays a chat file carries, and dates them', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-usage-')
+  const text = chatFile({ chatId: 'one', title: 'One', updatedAt: NEXT_DAY }, [
+    // Turn one: two swipes, one of which reported nothing — the `null` is the
+    // ordinary case and says "generated, and the provider was silent".
+    [
+      { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900, model: 'deepseek-chat', provider: 'deepseek', at: NOON },
+      null,
+    ],
+    // Turn two: written before the identity fields existed. This is the shape
+    // all 12 records in the real corpus are in.
+    [{ inputTokens: 200, outputTokens: 20, cacheReadTokens: 0 }],
+  ])
+  await writeFile(join(dir, 'one.jsonl'), text, 'utf8')
 
-    const read = readChatUsage('one', text)
-    assert.ok(read !== undefined)
-    assert.equal(read.records.length, 2, 'the null entry is not a record')
-    assert.equal(read.updatedAt, NEXT_DAY)
+  const read = readChatUsage('one', text)
+  assert.ok(read !== undefined)
+  assert.equal(read.records.length, 2, 'the null entry is not a record')
+  assert.equal(read.updatedAt, NEXT_DAY)
 
-    const dated = read.records.find(one => !one.undated)
-    assert.ok(dated !== undefined, 'the record carrying its own moment was not read as dated')
-    assert.equal(dated.at, NOON)
-    assert.equal(dated.model, 'deepseek-chat')
-    assert.equal(dated.usage.provider, 'deepseek')
+  const dated = read.records.find(one => !one.undated)
+  assert.ok(dated !== undefined, 'the record carrying its own moment was not read as dated')
+  assert.equal(dated.at, NOON)
+  assert.equal(dated.model, 'deepseek-chat')
+  assert.equal(dated.usage.provider, 'deepseek')
 
-    const undated = read.records.find(one => one.undated)
-    assert.ok(undated !== undefined, 'the record with no moment was not flagged')
-    assert.equal(undated.at, NEXT_DAY, 'an undated record is placed at the conversation last activity')
-    assert.equal(undated.model, undefined)
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
+  const undated = read.records.find(one => one.undated)
+  assert.ok(undated !== undefined, 'the record with no moment was not flagged')
+  assert.equal(undated.at, NEXT_DAY, 'an undated record is placed at the conversation last activity')
+  assert.equal(undated.model, undefined)
 })
 
 test('undated generations are counted as reconstructed, per bucket and overall', () => {
@@ -414,8 +410,7 @@ test('the store scans a whole profile of files, and counts what it could not rea
    * never billed at all. The last two are the pair a summary has to keep apart,
    * because "not counted" and "counted as nothing" are different answers.
    */
-  const dir = await mkdtemp(join(tmpdir(), 'iris-usage-store-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-usage-store-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const chatsDir = join(dir, 'chats')

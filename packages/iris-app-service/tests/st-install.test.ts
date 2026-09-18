@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { refuseOverlappingInstall, StInstall, stFileName } from '../src/st-install.ts'
 import { toId } from '../src/paths.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Reading a book out of the user's own SillyTavern installation.
@@ -93,8 +93,7 @@ test('the 255 limit is bytes, not characters', () => {
 
 /** A fake install: the point is the rule, not the user's real files. */
 async function install(t: TestContext): Promise<{ dir: string, st: StInstall }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-st-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-st-')
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(
     join(dir, 'worlds', '爱衣妹妹v1.1.json'),

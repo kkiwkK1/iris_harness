@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -16,6 +15,7 @@ import { scriptsOf } from '../src/regex.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The card's own regex tier, and the two switches over it.
@@ -102,14 +102,7 @@ async function fixture(t: TestContext, options: { rules?: unknown } = {}): Promi
   chatId: string
   events: IrisEvent[]
 }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scoped-regex-'))
-  // `maxRetries`/`retryDelay`, the tidy-up hardening `card-storage.test.ts`
-  // documents: on Windows a handle inside `chats/` survives `settle()` by a
-  // moment, and a bare recursive `rm` then fails the whole file with EBUSY or
-  // ENOTEMPTY — *after* every assertion passed, which is what made this test
-  // look like a racy assertion under parallel load. Measured: 7/24 parallel
-  // runs failed this way before the retry, 0 after.
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-scoped-regex-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   // `'rules' in options`, not `?? RULES`: a caller that passes `undefined`
   // deliberately means "a card with no tier at all", and a defaulting `??`

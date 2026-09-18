@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { normalizeCard, type CharacterCard } from '@iris/character'
 
 import { cardWorldbookDigest, WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The character page's world book listing: every book a card involves, entry by
@@ -91,8 +91,7 @@ async function storeWith(
   t: TestContext,
   books: Record<string, Record<string, unknown>[]>,
 ): Promise<WorldbookStore> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-digest-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-digest-')
   await mkdir(join(dir, 'worlds'), { recursive: true })
   for (const [name, entries] of Object.entries(books)) {
     await writeFile(

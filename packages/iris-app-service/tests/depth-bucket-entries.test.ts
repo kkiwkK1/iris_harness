@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -18,6 +17,7 @@ import { buildPrompt, DEFAULT_PRESET } from '../src/prompt.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
+import { removeTempDir, tempDir, tempDirOwned } from './support/temp-dir.ts'
 
 /**
  * A world-info depth bucket, classified and placed entry by entry.
@@ -154,11 +154,13 @@ const ASSISTANT_BUCKET = 'worldInfo.depth.0.2'
  * the wire view, which is not what the scan takes.
  */
 const ENTRIES = await (async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-depth-members-book-'))
+  // `tempDirOwned`, not `tempDir`: this runs at module scope, where there is
+  // no test context to hang a removal on, and the removal is three lines down.
+  const dir = await tempDirOwned('iris-depth-members-book-')
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(join(dir, 'worlds', 'atlas.json'), JSON.stringify(BOOK), 'utf8')
   const book = await new WorldbookStore(join(dir, 'worlds')).read('atlas')
-  await rm(dir, { recursive: true, force: true })
+  await removeTempDir(dir)
   return Object.values(book.entries)
 })()
 
@@ -307,8 +309,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-depth-members-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-depth-members-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')

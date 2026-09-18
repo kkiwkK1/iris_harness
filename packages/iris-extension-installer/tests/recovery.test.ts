@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import os from 'node:os'
 
 import { Installer, SourceError } from '../src/index.ts'
 import { recoverInstallations } from '../src/recovery.ts'
 import { TransactionStore, type ExtensionInstallTransaction } from '../src/transaction.ts'
 import { buildZip, demoFileMap, writeTree } from './fixtures/helpers.ts'
+import { tempDir } from '../../iris-app-service/tests/support/temp-dir.ts'
 
-async function tempRoot(): Promise<string> {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'iris-installer-recovery-'))
+async function tempRoot(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-installer-recovery-')
 }
 
 async function writeDemoZip(root: string): Promise<string> {
@@ -39,8 +39,8 @@ async function stageCrashedTxn(root: string, phase: ExtensionInstallTransaction[
 const PHASES_BEFORE_PROMOTION = ['downloading', 'staged', 'validated', 'hashed'] as const
 
 for (const phase of PHASES_BEFORE_PROMOTION) {
-  test(`crash during ${phase}: recovery rolls the transaction back and touches nothing installed`, async () => {
-    const root = await tempRoot()
+  test(`crash during ${phase}: recovery rolls the transaction back and touches nothing installed`, async (t: TestContext) => {
+    const root = await tempRoot(t)
     const { txn, storeRoot } = await stageCrashedTxn(root, phase)
     const actions = await recoverInstallations(storeRoot)
     const mine = actions.filter(a => a.transactionId === txn.transactionId)
@@ -54,8 +54,8 @@ for (const phase of PHASES_BEFORE_PROMOTION) {
   })
 }
 
-test('crash after rename but before lock: recovery removes the lockless target and rolls back', async () => {
-  const root = await tempRoot()
+test('crash after rename but before lock: recovery removes the lockless target and rolls back', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const { txn, storeRoot } = await stageCrashedTxn(root, 'promoting')
   // Simulate the exact window: the material was renamed to the target, the
   // lock write never happened.
@@ -71,8 +71,8 @@ test('crash after rename but before lock: recovery removes the lockless target a
   assert.deepEqual(stagingDirs, [])
 })
 
-test('crash after lock but before staging cleanup: recovery confirms the install, clears staging', async () => {
-  const root = await tempRoot()
+test('crash after lock but before staging cleanup: recovery confirms the install, clears staging', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = await writeDemoZip(root)
   const storeRoot = path.join(root, 'store')
   const installer = await Installer.create(storeRoot)
@@ -100,8 +100,8 @@ test('crash after lock but before staging cleanup: recovery confirms the install
   assert.equal(stillInstalled?.artifactSha256, result.artifactSha256, 'a completed install is never undone by recovery')
 })
 
-test('crash where the promotion fully landed (lock valid) but the txn still says promoting: recovery completes it', async () => {
-  const root = await tempRoot()
+test('crash where the promotion fully landed (lock valid) but the txn still says promoting: recovery completes it', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const storeRoot = path.join(root, 'store')
   const { store, txn } = await stageCrashedTxn(root, 'promoting', 'demo-ext')
   void store
@@ -122,8 +122,8 @@ test('crash where the promotion fully landed (lock valid) but the txn still says
   assert.deepEqual(targets, ['demo-ext'], 'the fully-locked install survives recovery')
 })
 
-test('orphaned staging (no readable txn.json) is removed, never adopted', async () => {
-  const root = await tempRoot()
+test('orphaned staging (no readable txn.json) is removed, never adopted', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const storeRoot = path.join(root, 'store')
   const stagingDir = path.join(storeRoot, 'staging', 'some-crashed-txn')
   await fsp.mkdir(stagingDir, { recursive: true })
@@ -133,8 +133,8 @@ test('orphaned staging (no readable txn.json) is removed, never adopted', async 
   assert.deepEqual(await fsp.readdir(path.join(storeRoot, 'staging')), [])
 })
 
-test('a failed transaction\u2019s leftover staging is cleaned, marked already-failed', async () => {
-  const root = await tempRoot()
+test('a failed transaction\u2019s leftover staging is cleaned, marked already-failed', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const { txn, storeRoot } = await stageCrashedTxn(root, 'failed')
   const actions = await recoverInstallations(storeRoot)
   const mine = actions.filter(a => a.transactionId === txn.transactionId)
@@ -142,8 +142,8 @@ test('a failed transaction\u2019s leftover staging is cleaned, marked already-fa
   assert.deepEqual(await fsp.readdir(path.join(storeRoot, 'staging')), [])
 })
 
-test('a lockless target with no transaction is removed; a lockful target is left alone', async () => {
-  const root = await tempRoot()
+test('a lockless target with no transaction is removed; a lockful target is left alone', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const storeRoot = path.join(root, 'store')
   await fsp.mkdir(path.join(storeRoot, 'installed', 'ghost-ext'), { recursive: true })
   await fsp.writeFile(path.join(storeRoot, 'installed', 'ghost-ext', 'index.js'), 'not installed, just bytes')
@@ -161,8 +161,8 @@ test('a lockless target with no transaction is removed; a lockful target is left
   assert.deepEqual(targets, ['real-ext'])
 })
 
-test('a stale claim (owner staging gone) is recovered so the extension is not wedged forever', async () => {
-  const root = await tempRoot()
+test('a stale claim (owner staging gone) is recovered so the extension is not wedged forever', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const storeRoot = path.join(root, 'store')
   const claimsDir = path.join(storeRoot, 'claims')
   await fsp.mkdir(claimsDir, { recursive: true })
@@ -173,8 +173,8 @@ test('a stale claim (owner staging gone) is recovered so the extension is not we
   assert.deepEqual(await fsp.readdir(claimsDir), [])
 })
 
-test('after recovery cleans a crashed claim, the extension installs again', async () => {
-  const root = await tempRoot()
+test('after recovery cleans a crashed claim, the extension installs again', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = await writeDemoZip(root)
   const storeRoot = path.join(root, 'store')
   const claimsDir = path.join(storeRoot, 'claims')
@@ -186,8 +186,8 @@ test('after recovery cleans a crashed claim, the extension installs again', asyn
   assert.equal(result.extensionId, 'demo-ext')
 })
 
-test('an aborted download fails the transaction and leaves nothing behind', async () => {
-  const root = await tempRoot()
+test('an aborted download fails the transaction and leaves nothing behind', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = await writeDemoZip(root)
   const installer = await Installer.create(path.join(root, 'store'))
   const controller = new AbortController()
@@ -231,8 +231,8 @@ async function plantMaliciousTxn(options: {
   return txnDir
 }
 
-test('a forged txn.json pointing targetPath outside the install root: the sentinel survives, only staging is cleaned', async () => {
-  const root = await tempRoot()
+test('a forged txn.json pointing targetPath outside the install root: the sentinel survives, only staging is cleaned', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const storeRoot = path.join(root, 'store')
   await fsp.mkdir(path.join(storeRoot, 'installed'), { recursive: true })
 
@@ -266,8 +266,8 @@ test('a forged txn.json pointing targetPath outside the install root: the sentin
   assert.deepEqual(targets, [], 'and the derived target (installed/demo-ext) never existed, so nothing else was touched')
 })
 
-test('a forged txn.json with an invalid extensionId is quarantined, not followed', async () => {
-  const root = await tempRoot()
+test('a forged txn.json with an invalid extensionId is quarantined, not followed', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const storeRoot = path.join(root, 'store')
   await fsp.mkdir(path.join(storeRoot, 'installed'), { recursive: true })
 
@@ -291,8 +291,8 @@ test('a forged txn.json with an invalid extensionId is quarantined, not followed
   assert.deepEqual(await fsp.readdir(path.join(storeRoot, 'staging')), [])
 })
 
-test('a forged promoting txn cannot have a lock-外目录 confirmed as an install', async () => {
-  const root = await tempRoot()
+test('a forged promoting txn cannot have a lock-外目录 confirmed as an install', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const storeRoot = path.join(root, 'store')
   await fsp.mkdir(path.join(storeRoot, 'installed'), { recursive: true })
 

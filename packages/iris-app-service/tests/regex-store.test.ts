@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -16,6 +15,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { scriptsOf } from '../src/regex.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The global regex tier.
@@ -101,13 +101,7 @@ async function fixture(t: TestContext, options: {
   sink: ReturnType<typeof collector>
   chatId: string
 }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-regex-'))
-  // `maxRetries`, the tidy-up hardening `card-storage.test.ts` documents for
-  // the Windows window 2b43efc found: a write can land a moment after the
-  // last assertion, and a bare `rm` then fails the whole file with ENOTEMPTY.
-  // Seen on full-suite runs after the atomic-write change of 2026-09-11,
-  // which replaced one write syscall per save with a write and a rename.
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
+  const dir = await tempDir(t, 'iris-regex-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), options.card ?? cardFile(), 'utf8')
 

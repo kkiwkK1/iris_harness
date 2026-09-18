@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { DEFAULT_PROFILE, profilePaths } from '../src/paths.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Profile isolation.
@@ -102,8 +102,7 @@ test('a profile name that would escape the data directory is refused', () => {
 })
 
 test('two profiles in one data directory do not see each other', async (t) => {
-  const dataDir = await mkdtemp(join(tmpdir(), 'iris-profiles-'))
-  t.after(async () => { await rm(dataDir, { recursive: true, force: true }) })
+  const dataDir = await tempDir(t, 'iris-profiles-')
 
   const first = await serviceFor(dataDir, 'alice')
   const second = await serviceFor(dataDir, 'bob')
@@ -129,8 +128,7 @@ test('two profiles in one data directory do not see each other', async (t) => {
 })
 
 test('opening another profile’s chat by id finds nothing', async (t) => {
-  const dataDir = await mkdtemp(join(tmpdir(), 'iris-profiles-'))
-  t.after(async () => { await rm(dataDir, { recursive: true, force: true }) })
+  const dataDir = await tempDir(t, 'iris-profiles-')
 
   const first = await serviceFor(dataDir, 'alice')
   const second = await serviceFor(dataDir, 'bob')

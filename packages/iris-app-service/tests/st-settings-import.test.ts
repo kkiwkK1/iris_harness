@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -10,6 +9,7 @@ import { StInstall } from '../src/st-install.ts'
 import {
   DEFAULT_WORLDBOOK_SETTINGS, IMPORTED_WORLDBOOK_KEYS, importWorldbookSettings,
 } from '../src/worldbook-settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A brand-new profile takes its world-info scan knobs from the user's install.
@@ -73,12 +73,8 @@ async function fixture(t: TestContext, settings?: unknown): Promise<{
   st: StInstall
   store: () => SettingsStore
 }> {
-  const install = await mkdtemp(join(tmpdir(), 'iris-st-import-'))
-  const profile = await mkdtemp(join(tmpdir(), 'iris-profile-import-'))
-  t.after(async () => {
-    await rm(install, { recursive: true, force: true })
-    await rm(profile, { recursive: true, force: true })
-  })
+  const install = await tempDir(t, 'iris-st-import-')
+  const profile = await tempDir(t, 'iris-profile-import-')
   if (settings !== undefined) {
     await writeFile(join(install, 'settings.json'), JSON.stringify(settings), 'utf8')
   }

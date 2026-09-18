@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
 import { DEFAULT_THRESHOLD_RATIO, compactionSpec, frameSummary, summaryEntry } from '../src/compaction.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The conversation part of the request must not change behind the newest
@@ -143,8 +143,7 @@ function sharedRows(left: GenerateOptions, right: GenerateOptions): number {
 }
 
 async function fixture(t: TestContext, options: { squash?: boolean } = {}): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-history-stability-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-history-stability-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')

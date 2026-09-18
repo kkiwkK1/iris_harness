@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -15,6 +14,7 @@ import { DEFAULT_PRUNE } from '../src/prune.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The one report that cannot wait to be asked for.
@@ -64,8 +64,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, lines: number): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-report-event-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-report-event-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'chats'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')

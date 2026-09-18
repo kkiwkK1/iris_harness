@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -15,6 +14,7 @@ import { DEFAULT_MAX_BYTES, MAX_HOPS, fetchAllowedRemote, type FetchLike } from 
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { fakeRemote } from './support/fake-remote.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * `script.fetch` and the executor underneath it.
@@ -39,8 +39,7 @@ const NOTHING: StreamFn = async function* (_options: GenerateOptions): AsyncIter
 
 /** A booted service whose one interesting option is the transport. */
 async function fixture(t: TestContext, fetchRemote: FetchLike): Promise<Handlers> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-script-fetch-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-script-fetch-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   return new IrisAppService({

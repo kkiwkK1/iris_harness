@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import os from 'node:os'
 
 import { Installer, LOCK_FILE_NAME, hashTree } from '../src/index.ts'
 import { demoFileMap, writeTree } from './fixtures/helpers.ts'
+import { tempDir } from '../../iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * §9 #5 — git never brings submodule content into the installed tree.
@@ -99,8 +99,8 @@ async function buildSubmoduleFixture(base: string, files: Map<string, Buffer | s
   return { repoUrl: `file://${outer.replace(/\\/gu, '/')}`, commit }
 }
 
-test('a gitlink in the fetched commit brings no submodule content into the tree, and .gitmodules itself stays and hashes', async () => {
-  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'iris-installer-submodule-'))
+test('a gitlink in the fetched commit brings no submodule content into the tree, and .gitmodules itself stays and hashes', async (t: TestContext) => {
+  const root = await tempDir(t, 'iris-installer-submodule-')
   const fixture = await buildSubmoduleFixture(path.join(root, 'src'), demoFileMap())
 
   const installer = await Installer.create(path.join(root, 'store'))

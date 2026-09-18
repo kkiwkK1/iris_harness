@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -8,6 +7,7 @@ import { cacheKey, ScriptCache } from '../src/script-cache.ts'
 import { nodeFetch } from '../src/remote-fetch.ts'
 import { fakeRemote } from './support/fake-remote.ts'
 import { listenOnFetchablePort } from './support/fetchable-port.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The host-side half of the remote-bundle proxy.
@@ -33,8 +33,7 @@ async function cacheIn(
   routes: Record<string, { status: number, body?: string, location?: string }>,
   options: { maxBytes?: number, ttlSeconds?: number, maxCacheBytes?: number } = {},
 ): Promise<{ cache: ScriptCache, asked: string[], dir: string, errors: string[] }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-bundles-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-bundles-')
   const { fetch, asked } = upstream(routes)
   const errors: string[] = []
   const cache = new ScriptCache({
@@ -361,8 +360,7 @@ test('the cache stops growing at its budget instead of evicting', async (t) => {
 })
 
 test('a throw from the fetch does not claim to know it was the network', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-bundles-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-bundles-')
   const errors: string[] = []
   const cache = new ScriptCache({
     dir,
@@ -432,8 +430,7 @@ test('a stylesheet is served as CSS with its faces moved onto the route', async 
 
 test('a stylesheet reference off the allowlist is reported and left as written', async (t) => {
   const sheet = '@font-face{font-family:"x";src:url(https://fontsapi.zeoseven.com/292/result.woff2);}'
-  const dir = await mkdtemp(join(tmpdir(), 'iris-bundles-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-bundles-')
   const reports: string[] = []
   const cache = new ScriptCache({
     dir,

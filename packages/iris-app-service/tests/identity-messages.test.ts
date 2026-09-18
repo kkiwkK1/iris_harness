@@ -21,8 +21,7 @@
  * @module @iris/app-service/tests/identity-messages
  */
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -35,6 +34,7 @@ import { PersonaStore } from '../src/persona.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A description longer than the 200 code points `CharacterSummary` clips at.
@@ -173,8 +173,7 @@ interface Fixture {
  * @returns the fixture.
  */
 async function fixture(t: TestContext, withPersonas = true): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-identity-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-identity-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), ARIA, 'utf8')
   await writeFile(join(dir, 'characters', 'bella.json'), BELLA, 'utf8')

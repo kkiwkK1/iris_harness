@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -9,6 +7,7 @@ import { parseRequest, registerRequestSchema } from '@iris/protocol'
 
 import { SystemPluginRuntime } from '../src/system-plugins.ts'
 import type { SystemPluginDefinition } from '@iris/plugin-api'
+import { removeTempDir, tempDirOwned } from './support/temp-dir.ts'
 
 /**
  * `scope.registerRpc`'s lifecycle, exercised through the real runtime: the
@@ -50,7 +49,7 @@ async function harness(
   definitions: readonly SystemPluginDefinition[],
   defaultEnabled: readonly string[] = definitions.map(row => row.id),
 ): Promise<Harness> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-plugin-rpc-'))
+  const dir = await tempDirOwned('iris-plugin-rpc-')
   const context = new Context()
   const registrar = registrarStub()
   context.provide('irisRpc', registrar)
@@ -60,9 +59,12 @@ async function harness(
     definitions,
     defaultEnabled,
   })
+  // `tempDirOwned`, not `tempDir`: the runtime has to be disposed before the
+  // directory it writes into goes away, and a `tempDir` removal would be
+  // registered first and therefore run first.
   t.after(async () => {
     await runtime.dispose()
-    await rm(dir, { recursive: true, force: true })
+    await removeTempDir(dir)
   })
   return { runtime, registrar }
 }

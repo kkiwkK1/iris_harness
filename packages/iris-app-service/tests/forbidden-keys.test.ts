@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import type { CharacterCard } from '@iris/character'
@@ -18,6 +17,7 @@ import { assertStorable } from '../src/context.ts'
 import { ChatEntry, createSession } from '../src/entry.ts'
 import { seedGreeting } from '../src/chats.ts'
 import { applyOps, writePath } from '../src/template.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Every face that turns an untrusted string into a variable key.
@@ -230,38 +230,34 @@ test('every store partitioned by a string from outside this process uses wireKey
   )
 })
 
-test('card storage keyed by a card\'s own string stores a key instead of moving a prototype', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-keys-'))
-  try {
-    const store = new CardStorageStore(join(dir, 'card-storage.json'))
-    // A card calling `localStorage.setItem('__proto__', …)`.
-    await store.set('__proto__', 'polluted', { characterId: 'luoluo' })
-    await store.set('ordinary', 'value', { characterId: 'luoluo' })
+test('card storage keyed by a card\'s own string stores a key instead of moving a prototype', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-keys-')
+  const store = new CardStorageStore(join(dir, 'card-storage.json'))
+  // A card calling `localStorage.setItem('__proto__', …)`.
+  await store.set('__proto__', 'polluted', { characterId: 'luoluo' })
+  await store.set('ordinary', 'value', { characterId: 'luoluo' })
 
-    const snapshot = await store.snapshot()
-    assert.equal(snapshot['__proto__'], 'polluted', 'the key is stored as a key')
-    assert.equal(snapshot['ordinary'], 'value')
-    assert.equal(({} as Record<string, unknown>)['polluted'], undefined)
+  const snapshot = await store.snapshot()
+  assert.equal(snapshot['__proto__'], 'polluted', 'the key is stored as a key')
+  assert.equal(snapshot['ordinary'], 'value')
+  assert.equal(({} as Record<string, unknown>)['polluted'], undefined)
 
-    // And a key nobody wrote is absent rather than inherited: before the table
-    // was null-prototyped this answered a `LastWriter`-shaped object built out
-    // of `Object.prototype.constructor`.
-    assert.equal(await store.lastWriter('constructor'), undefined)
-    assert.equal(await store.lastWriter('toString'), undefined)
-    assert.equal((await store.lastWriter('ordinary'))?.characterId, 'luoluo')
+  // And a key nobody wrote is absent rather than inherited: before the table
+  // was null-prototyped this answered a `LastWriter`-shaped object built out
+  // of `Object.prototype.constructor`.
+  assert.equal(await store.lastWriter('constructor'), undefined)
+  assert.equal(await store.lastWriter('toString'), undefined)
+  assert.equal((await store.lastWriter('ordinary'))?.characterId, 'luoluo')
 
-    // And the same thing coming back off disk, which is the half a live store
-    // cannot show: `JSON.parse` creates `"__proto__"` as a real own key, so a
-    // store that adopted the parsed object would take the value as its
-    // prototype the moment the file was read.
-    const file = join(dir, 'restored.json')
-    await writeFile(file, '{"__proto__":{"value":"polluted"},"ordinary":{"value":"v","at":1}}', 'utf8')
-    const restored = new CardStorageStore(file)
-    const back = await restored.snapshot()
-    assert.equal(back['ordinary'], 'v')
-    assert.equal(await restored.lastWriter('constructor'), undefined, 'a restored table must inherit nothing')
-    assert.equal(({} as Record<string, unknown>)['value'], undefined)
-  } finally {
-    await rm(dir, { recursive: true, force: true, maxRetries: 5 })
-  }
+  // And the same thing coming back off disk, which is the half a live store
+  // cannot show: `JSON.parse` creates `"__proto__"` as a real own key, so a
+  // store that adopted the parsed object would take the value as its
+  // prototype the moment the file was read.
+  const file = join(dir, 'restored.json')
+  await writeFile(file, '{"__proto__":{"value":"polluted"},"ordinary":{"value":"v","at":1}}', 'utf8')
+  const restored = new CardStorageStore(file)
+  const back = await restored.snapshot()
+  assert.equal(back['ordinary'], 'v')
+  assert.equal(await restored.lastWriter('constructor'), undefined, 'a restored table must inherit nothing')
+  assert.equal(({} as Record<string, unknown>)['value'], undefined)
 })

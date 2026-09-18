@@ -21,7 +21,7 @@
 
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -35,6 +35,7 @@ import { WorldbookBindingStore } from '../src/materialise.ts'
 import { IrisAppService } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 const entryJson = (uid: number, comment: string): Record<string, unknown> => ({
   uid, key: [], keysecondary: [], comment, content: `${comment} body`,
@@ -66,8 +67,7 @@ async function fixture(t: TestContext): Promise<{
   bindings: WorldbookBindingStore
   dir: string
 }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-wb-delete-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-wb-delete-')
 
   await mkdir(join(dir, 'worlds'), { recursive: true })
   for (const name of ['Own', 'Extra', 'Global']) {
@@ -227,8 +227,8 @@ test('a name that climbs out of the directory is refused', async (t: TestContext
   assert.equal(existsSync(outside), true, 'a traversal deleted a file outside worlds/')
 })
 
-test('a host with no book store refuses rather than answering false', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-wb-delete-bare-'))
+test('a host with no book store refuses rather than answering false', async (t: TestContext) => {
+  const dir = await tempDir(t, 'iris-wb-delete-bare-')
   const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
   const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'm' })
   const handlers = new IrisAppService({

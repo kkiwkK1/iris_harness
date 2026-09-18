@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { ScriptVariableStore } from '../src/script-variables.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The unload path: the queued writes land, and nothing writes after them.
@@ -28,8 +28,7 @@ import { ScriptVariableStore } from '../src/script-variables.ts'
 
 /** A throwaway store over its own file. */
 async function store(t: TestContext): Promise<{ store: ScriptVariableStore, path: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-script-vars-flush-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-script-vars-flush-')
   const path = join(dir, 'script-variables.json')
   return { store: new ScriptVariableStore(path), path }
 }

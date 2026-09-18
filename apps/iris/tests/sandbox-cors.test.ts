@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { serveSandboxAsset } from '../../../packages/iris-app-service/src/sandbox-assets.ts'
+import { tempDir } from '../../../packages/iris-app-service/tests/support/temp-dir.ts'
 
 /**
  * The sandbox CORS pair, asserted from the one place that can see both halves.
@@ -67,8 +67,8 @@ async function serviceSource(): Promise<string> {
  * a stub response captures what a browser would receive.
  * @returns the status and headers of a successful asset response.
  */
-async function serveOnce(): Promise<{ status: number, headers: Record<string, unknown> }> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-sandbox-cors-'))
+async function serveOnce(t: TestContext): Promise<{ status: number, headers: Record<string, unknown> }> {
+  const dir = await tempDir(t, 'iris-sandbox-cors-')
   await writeFile(join(dir, 'preset.js'), 'globalThis.x = 1', 'utf8')
 
   let status = 0
@@ -130,10 +130,10 @@ function code(source: string): string {
     .join(NEWLINE)
 }
 
-test('the frame asks for CORS and the host answers it, or neither does', async () => {
+test('the frame asks for CORS and the host answers it, or neither does', async (t: TestContext) => {
   const asks = code(await srcdocSource()).includes('crossorigin="anonymous"')
 
-  const served = await serveOnce()
+  const served = await serveOnce(t)
   assert.equal(served.status, 200, 'the route did not serve a file it should have served')
   const answers = served.headers['access-control-allow-origin'] === '*'
 
@@ -188,7 +188,7 @@ test('the route that sends the header is actually mounted', async () => {
   )
 })
 
-test('the host serves the sandbox route without a long-lived cache entry', async () => {
+test('the host serves the sandbox route without a long-lived cache entry', async (t: TestContext) => {
   /*
    * The companion lesson, and it belongs beside the pair because it is how the
    * pair failed in practice rather than in principle.
@@ -202,7 +202,7 @@ test('the host serves the sandbox route without a long-lived cache entry', async
    * A response whose correctness depends on a header must not be held long
    * enough for the header to change underneath it.
    */
-  const served = await serveOnce()
+  const served = await serveOnce(t)
   const cache = String(served.headers['cache-control'] ?? '')
   assert.ok(
     cache.includes('no-cache') || cache.includes('max-age=0'),

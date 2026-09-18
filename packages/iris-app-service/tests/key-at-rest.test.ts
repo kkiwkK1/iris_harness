@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { readdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { ConnectionStore, keyFilePathFor } from '../src/connections.ts'
 import {
@@ -18,6 +17,7 @@ import {
   type EncryptedValue,
   type KeyProtector,
 } from '../src/key-protection.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * A provider key is not in the profile folder in the clear.
@@ -54,10 +54,8 @@ function refusingProtector(): KeyProtector {
   }
 }
 
-async function scratch(t: { after: (fn: () => Promise<void>) => void }): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-key-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }) })
-  return dir
+async function scratch(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-key-')
 }
 
 /** The stored rows, as the file has them. */

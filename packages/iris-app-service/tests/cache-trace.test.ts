@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -21,6 +21,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * The record that makes a cache miss answerable, and the arithmetic over it.
@@ -618,8 +619,7 @@ test('a credential quoted into a failure does not reach the trace file', () => {
 })
 
 test('the store keeps the newest N and deletes only its own files', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-trace-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-trace-')
   const store = new CacheTraceStore(dir, { keep: 3 })
 
   const options = request('系统', 'q', 'a')
@@ -644,8 +644,7 @@ test('the store keeps the newest N and deletes only its own files', async (t) =>
 })
 
 test('a retention of zero records nothing at all', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-trace-off-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-trace-off-')
   const store = new CacheTraceStore(dir, { keep: 0 })
 
   assert.equal(store.enabled, false)
@@ -664,8 +663,7 @@ test('a chat id cannot name a file outside the trace directory', async (t) => {
   // guard is broken, leave a stray directory in the machine's temp folder that
   // no cleanup removes — and every later run of this test would then fail on
   // debris from an earlier one. (Measured: it did.)
-  const root = await mkdtemp(join(tmpdir(), 'iris-trace-guard-'))
-  t.after(async () => { await rm(root, { recursive: true, force: true }) })
+  const root = await tempDir(t, 'iris-trace-guard-')
   const dir = join(root, 'cache-trace')
   const store = new CacheTraceStore(dir, { keep: 4 })
 
@@ -685,8 +683,7 @@ test('a chat id cannot name a file outside the trace directory', async (t) => {
 })
 
 test('a file from another version is refused rather than read with today\'s meanings', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-trace-version-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-trace-version-')
   const store = new CacheTraceStore(dir, { keep: 4 })
   await mkdir(join(dir, 'c'), { recursive: true })
   await writeFile(join(dir, 'c', '0.json'), JSON.stringify({ version: 99, body: '{}', spans: [] }), 'utf8')
@@ -717,8 +714,7 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext, keep = 8): Promise<Fixture> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-trace-host-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-trace-host-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
@@ -979,8 +975,7 @@ test('a card\'s own generation is recorded too, labelled as not a turn', async (
 })
 
 test('a host with no trace store answers with no comparison rather than failing', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-trace-none-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-trace-none-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
@@ -1041,8 +1036,7 @@ test('an interrupted turn records the failure on the trace, and never a zero for
    * keeps, and the absent usage stays absent — zero would be a measurement of a
    * bill that never arrived.
    */
-  const dir = await mkdtemp(join(tmpdir(), 'iris-trace-interrupted-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-trace-interrupted-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')

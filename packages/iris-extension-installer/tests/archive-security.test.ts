@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import os from 'node:os'
 
 import { ArchiveSecurityError, extractZipSafely, guardEntryName } from '../src/archive.ts'
 import { buildZip, demoZipEntries, type ZipInputEntry } from './fixtures/helpers.ts'
+import { tempDir } from '../../iris-app-service/tests/support/temp-dir.ts'
 
-async function tempRoot(): Promise<string> {
-  return fsp.mkdtemp(path.join(os.tmpdir(), 'iris-installer-archive-'))
+async function tempRoot(t: TestContext): Promise<string> {
+  return await tempDir(t, 'iris-installer-archive-')
 }
 
-async function extract(entries: ZipInputEntry[]): Promise<string> {
-  const root = await tempRoot()
+async function extract(t: TestContext, entries: ZipInputEntry[]): Promise<string> {
+  const root = await tempRoot(t)
   const zipPath = path.join(root, 'attack.zip')
   await fsp.writeFile(zipPath, buildZip(entries))
   const dest = path.join(root, 'out')
@@ -20,7 +20,7 @@ async function extract(entries: ZipInputEntry[]): Promise<string> {
   return path.join(dest, ...written)
 }
 
-test('the named traversal attacks are each refused with their own reason', async () => {
+test('the named traversal attacks are each refused with their own reason', async (t: TestContext) => {
   const attacks: { name: string; code: string }[] = [
     { name: '../../outside.js', code: 'traversal' },
     { name: 'a/../../outside.js', code: 'traversal' },
@@ -38,23 +38,23 @@ test('the named traversal attacks are each refused with their own reason', async
   for (const { name, code } of attacks) {
     assert.throws(() => guardEntryName(name), (err: ArchiveSecurityError) => err.code === code, name)
     await assert.rejects(
-      extract([{ name: 'manifest.json', data: '{}' }, { name, data: 'x' }]),
+      extract(t, [{ name: 'manifest.json', data: '{}' }, { name, data: 'x' }]),
       (err: ArchiveSecurityError) => err.code === code,
       name,
     )
   }
 })
 
-test('zip case collisions and duplicate names are refused before the volume can be raced', async () => {
+test('zip case collisions and duplicate names are refused before the volume can be raced', async (t: TestContext) => {
   await assert.rejects(
-    extract([
+    extract(t, [
       { name: 'dist/index.js', data: 'a' },
       { name: 'dist/INDEX.js', data: 'b' },
     ]),
     (err: ArchiveSecurityError) => err.code === 'case-collision',
   )
   await assert.rejects(
-    extract([
+    extract(t, [
       { name: 'dist/index.js', data: 'a' },
       { name: 'dist/index.js', data: 'b' },
     ]),
@@ -62,8 +62,8 @@ test('zip case collisions and duplicate names are refused before the volume can 
   )
 })
 
-test('symlink entries are refused without creation', async () => {
-  const root = await tempRoot()
+test('symlink entries are refused without creation', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = path.join(root, 'symlink.zip')
   await fsp.writeFile(zipPath, buildZip([
     { name: 'manifest.json', data: '{}' },
@@ -77,11 +77,11 @@ test('symlink entries are refused without creation', async () => {
   assert.ok(!out.includes('link'), 'the symlink must never be created, even dead')
 })
 
-test('a hostile archive cannot place a file outside staging (containment audit backstop)', async () => {
+test('a hostile archive cannot place a file outside staging (containment audit backstop)', async (t: TestContext) => {
   // The guards refuse traversal names up front; this test drives a legal-named
   // archive to completion and audits that reality agrees — nothing landed
   // outside `out` even though the temp root sits right next to it.
-  const root = await tempRoot()
+  const root = await tempRoot(t)
   const zipPath = path.join(root, 'ok.zip')
   await fsp.writeFile(zipPath, buildZip(demoZipEntries()))
   const dest = path.join(root, 'out')
@@ -91,8 +91,8 @@ test('a hostile archive cannot place a file outside staging (containment audit b
   assert.deepEqual(outside.filter(n => n !== 'ok.zip' && n !== 'out'), [])
 })
 
-test('zip bomb geometry is refused: a declared size that the data cannot satisfy is caught', async () => {
-  const root = await tempRoot()
+test('zip bomb geometry is refused: a declared size that the data cannot satisfy is caught', async (t: TestContext) => {
+  const root = await tempRoot(t)
   const zipPath = path.join(root, 'bomb.zip')
   // A small deflate entry whose central directory claims 300 MB uncompressed —
   // the classic geometry lie. The decode must refuse it, not allocate it.
@@ -117,8 +117,8 @@ test('zip bomb geometry is refused: a declared size that the data cannot satisfy
   )
 })
 
-test('non-zip bytes and encrypted entries are refused, not guessed at', async () => {
-  const root = await tempRoot()
+test('non-zip bytes and encrypted entries are refused, not guessed at', async (t: TestContext) => {
+  const root = await tempRoot(t)
   await fsp.writeFile(path.join(root, 'x.zip'), Buffer.from('this is not a zip file'))
   await assert.rejects(
     extractZipSafely(path.join(root, 'x.zip'), path.join(root, 'out')),

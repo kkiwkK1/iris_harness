@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -14,6 +13,7 @@ import { DiagnosticBuffer } from '../src/diagnostics.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * What a page is told when the reply was generated and could not be stored.
@@ -87,8 +87,7 @@ interface Host {
  * @returns the host's handlers and what it recorded.
  */
 async function fixture(t: TestContext, options: { throwing?: boolean } = {}): Promise<Host> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-settle-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 3 }) })
+  const dir = await tempDir(t, 'iris-settle-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 

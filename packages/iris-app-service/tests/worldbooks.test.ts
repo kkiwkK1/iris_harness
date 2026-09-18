@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import { isSafeId, toId } from '../src/paths.ts'
 import { charWorldbookNames, toWorldbookEntry, WorldbookStore } from '../src/worldbooks.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Named world books — the ones in their own files rather than inside a card.
@@ -70,9 +71,8 @@ async function fixture(
   t: TestContext,
   books: Record<string, Record<string, unknown>>,
 ): Promise<WorldbookStore> {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-worlds-'))
+  const dir = await tempDir(t, 'iris-worlds-')
   created.push(dir)
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
   await mkdir(join(dir, 'worlds'), { recursive: true })
   for (const [name, entries] of Object.entries(books)) {
     await writeFile(join(dir, 'worlds', `${name}.json`), JSON.stringify({ entries }), 'utf8')
@@ -258,9 +258,10 @@ test('cards bind books by a name the store can resolve', { skip: NO_CORPUS }, as
 test('this file leaves none of its own fixtures behind', async () => {
   /*
    * Runs last, and asks only about the directories `fixture` created in *this*
-   * process. Each one is removed by the `t.after` of the test that made it, and
-   * node's runner finishes a file's top-level tests in order, so by the time
-   * this one runs every earlier fixture's cleanup has already happened.
+   * process. Each one is removed by the `t.after` that `tempDir` registered for
+   * the test that made it, and node's runner finishes a file's top-level tests
+   * in order, so by the time this one runs every earlier fixture's cleanup has
+   * already happened.
    *
    * **What this used to do was sweep `tmpdir()` for the `iris-worlds-` prefix
    * and delete everything it found.** As a cleanup that worked; as a *test* it
@@ -275,7 +276,7 @@ test('this file leaves none of its own fixtures behind', async () => {
   assert.deepEqual(
     survivors,
     [],
-    'these fixture directories outlived the test that created them; something skipped its `t.after`',
+    'these fixture directories outlived the test that created them; something skipped the `tempDir` cleanup',
   )
   // The caliper: an empty `created` would satisfy the assertion above for the
   // wrong reason — no fixture was ever registered, so nothing could survive.
