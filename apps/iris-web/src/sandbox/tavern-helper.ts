@@ -61,6 +61,7 @@ import { buttonEventName } from './button-event.ts'
 import { UnsupportedApiError } from './errors.ts'
 // —— family④: lorebook / worldbook ——
 import {
+  assignEntryUids,
   assignLorebookUids,
   fromLorebookEntry,
   lorebookSettingsPatch,
@@ -499,9 +500,16 @@ function flattenKeys(keys: unknown): unknown {
  *
  * Written defensively against `unknown` rather than against `WorldbookEntry`,
  * because what arrives here is whatever a card's updater returned: upstream types
- * it `PartialDeep`, every field but `uid` may be missing, and nothing has
- * validated it yet. Copied rather than mutated so a card that keeps a reference
- * to what it returned does not watch its own objects change underneath it.
+ * it `PartialDeep`, every field may be missing — `uid` included — and nothing
+ * has validated it yet. Copied rather than mutated so a card that keeps a
+ * reference to what it returned does not watch its own objects change
+ * underneath it.
+ *
+ * **This is the single-entry half only.** `uid` cannot be minted here: upstream's
+ * collision probe needs the set of uids already claimed *in this write*, so a
+ * per-entry function has nothing to probe against. Use
+ * {@link prepareWorldbookEntries} at every call site; this stays separate so the
+ * flattening is testable on its own.
  * @param entry - one entry as a card produced it.
  * @returns the same entry with its key lists flattened.
  */
@@ -524,6 +532,32 @@ function flattenWorldbookEntry(entry: unknown): unknown {
 
   copy['strategy'] = strategyCopy
   return copy
+}
+
+/**
+ * Prepare a whole card-supplied entry list for the wire.
+ *
+ * Flattening plus uid assignment, in that order, and **every worldbook write
+ * goes through here**. The uid half is the fix for a real card (2026-09-19):
+ * `updateWorldbookWith` hands the updater the book's revived entries, the
+ * updater appends one it just built (`{name, content}`, no uid — which is what
+ * upstream's `PartialDeep` entry type allows), and the request was then refused
+ * with `entries[n].uid: expected number, received undefined`.
+ *
+ * The old lorebook family already filled uids in the frame (`assignLorebookUids`,
+ * whose docblock names this exact transport defect) and the new family did not,
+ * so one vocabulary worked and the other broke on the same card shape. Both call
+ * the same algorithm now, so they cannot disagree about how a uid is minted or
+ * how a collision is probed.
+ *
+ * The host still fills one in if a caller sends none — the wire allows it, and a
+ * stored book must not depend on which side minted the number — but doing it here
+ * too means the ordinary card path never depends on that second line of defence.
+ * @param entries - the entries as a card supplied them.
+ * @returns the same entries, flattened and each carrying a uid, in order.
+ */
+function prepareWorldbookEntries(entries: readonly unknown[]): unknown[] {
+  return assignEntryUids(entries.map(entry => flattenWorldbookEntry(entry)) as { uid?: number }[])
 }
 
 /**
@@ -1171,7 +1205,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
   const createBook = async (name: string, entries: readonly unknown[] = []): Promise<boolean> => {
     const answer = await host.call('createWorldbook', {
       name,
-      entries: entries.map(entry => flattenWorldbookEntry(entry)),
+      entries: prepareWorldbookEntries(entries),
     })
     return (answer as { created?: boolean } | undefined)?.created === true
   }
@@ -2894,7 +2928,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
     ): Promise<void> => {
       await host.call('replaceWorldbook', {
         name,
-        entries: entries.map(entry => flattenWorldbookEntry(entry)),
+        entries: prepareWorldbookEntries(entries),
       })
     },
 
@@ -2940,7 +2974,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
        */
       const answer = await host.call('replaceWorldbook', {
         name,
-        entries: next.map(entry => flattenWorldbookEntry(entry)),
+        entries: prepareWorldbookEntries(next),
         ...(options?.render === undefined ? {} : { render: options.render }),
       })
       const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
@@ -3079,7 +3113,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       const sliceStart = current.length
       const answer = await host.call('replaceWorldbook', {
         name,
-        entries: [...current, ...newEntries].map(entry => flattenWorldbookEntry(entry)),
+        entries: prepareWorldbookEntries([...current, ...newEntries]),
       })
       const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []
       const worldbook = stored.map(entry => reviveWorldbookKeys(entry))
@@ -3706,7 +3740,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       if (await createBook(name, worldbook)) return true
       await host.call('replaceWorldbook', {
         name,
-        entries: worldbook.map(entry => flattenWorldbookEntry(entry)),
+        entries: prepareWorldbookEntries(worldbook),
       })
       return false
     },
@@ -3756,7 +3790,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       })
       const answer = await host.call('replaceWorldbook', {
         name,
-        entries: kept.map(entry => flattenWorldbookEntry(entry)),
+        entries: prepareWorldbookEntries(kept),
         ...(options?.render === undefined ? {} : { render: options.render }),
       })
       const stored = (answer as { entries?: WorldbookEntry[] } | undefined)?.entries ?? []

@@ -281,22 +281,75 @@ export async function materialiseEmbeddedBook(
   const existing = await bindings.get(characterId)
 
   if (existing !== undefined) {
+    /*
+     * Read the file once, and keep **three** answers apart rather than two:
+     * what we wrote, what the user edited, and what is not a book we can use.
+     *
+     * Folding the third into the second is what this used to do, and it is the
+     * failure this shape exists to stop. `readRaw` answers `undefined` for a
+     * missing book, so `current !== undefined && sha256(...) === hash`
+     * evaluated to "the user edited it" for a file that had simply gone — and a
+     * binding table that still named it meant nothing ever rewrote it. A real
+     * chat then failed on every turn: MVU could not read the card's lorebook,
+     * `getWorldbook` answered "it is not there any more", and the only repair on
+     * offer was one nobody would guess, because the reports said the book had
+     * been *edited* rather than lost.
+     *
+     * **Existence is asked of the directory, not of `readRaw`.** That function
+     * collapses "absent", "unreadable" and "not JSON" into one `undefined`, and
+     * the three want different treatment here: a lost file is safe to write
+     * again (there are no edits to lose), while a file that is present and
+     * unreadable must **not** be — `create` refuses a name that exists, so
+     * healing over a corrupt file would turn a report into an exception, and
+     * overwriting one would destroy the only copy of whatever it holds.
+     */
+    const present = (await worldbooks.names()).includes(existing.name)
+    const current = present ? await worldbooks.readRaw(existing.name) : undefined
+    const unreadable = present && current === undefined
+    const untouched = current !== undefined
+      && sha256(JSON.stringify(current, null, 2)) === existing.materialisedHash
+
+    if (!present) {
+      const text = await worldbooks.create(existing.name, entries)
+      await bindings.set(characterId, {
+        name: existing.name,
+        sourceHash,
+        materialisedHash: sha256(text),
+        origin: existing.origin,
+        at: Date.now(),
+      })
+      reports.push(
+        `the world book "${existing.name}" was missing from disk, so Iris wrote it again from the`
+        + ' embedded copy the card carries',
+      )
+      return { name: existing.name, reports }
+    }
+
+    if (unreadable) {
+      // Left exactly as it is, and named as unreadable rather than as edited.
+      // Replacing it would need a read that just failed, so the honest move is
+      // to say which book and stop — the card is still playable, it just has no
+      // world info until someone looks at the file.
+      reports.push(
+        `the world book "${existing.name}" is there but could not be read, so it was left as it is`
+        + ' and the embedded copy the card carries was not written over it',
+      )
+      return { name: existing.name, reports }
+    }
+
     // A seed can be replaced by the real book the moment it becomes reachable —
     // the user's own copy outranks the one the card carried. Only a seed: a
     // book already imported from SillyTavern, or one the user made, is not
     // re-fetched behind their back.
     if (existing.origin === 'seeded-from-embedded' && stInstall?.configured === true) {
-      const upgraded = await upgradeFromSt(characterId, existing, worldbooks, bindings, stInstall)
+      const upgraded = await upgradeFromSt(
+        characterId, existing, untouched, worldbooks, bindings, stInstall)
       if (upgraded !== undefined) return upgraded
     }
     if (existing.sourceHash === sourceHash) return { name: existing.name, reports }
 
     // The card changed. Whether we may rewrite the book depends on one
     // question only: is the file still byte-for-byte what we wrote?
-    const current = await worldbooks.readRaw(existing.name)
-    const untouched = current !== undefined
-      && sha256(JSON.stringify(current, null, 2)) === existing.materialisedHash
-
     if (!untouched) {
       reports.push(
         `the embedded world book of "${card?.data.name ?? characterId}" has been updated, but you have`
@@ -434,6 +487,11 @@ function fetchNote(name: string, why: FetchFailure): string {
  * Replace a seed with the real book, when the user has not edited the seed.
  * @param characterId - whose card.
  * @param existing - the binding recording the seed.
+ * @param untouched - whether the file on disk is byte-for-byte what we wrote.
+ *   **Passed in rather than re-read here**, because the caller has already read
+ *   the file to tell "the user edited this" from "this is not there", and a
+ *   second read is a second answer to one question. The absence case is handled
+ *   before this is called, so this is only ever asked about a file that exists.
  * @param worldbooks - where named books live.
  * @param bindings - the binding table.
  * @param stInstall - the user's installation.
@@ -442,6 +500,7 @@ function fetchNote(name: string, why: FetchFailure): string {
 async function upgradeFromSt(
   characterId: string,
   existing: MaterialisedBinding,
+  untouched: boolean,
   worldbooks: WorldbookStore,
   bindings: WorldbookBindingStore,
   stInstall: StInstall,
@@ -449,9 +508,6 @@ async function upgradeFromSt(
   const fetched = await stInstall.book(existing.name)
   if (!fetched.found) return undefined
 
-  const current = await worldbooks.readRaw(existing.name)
-  const untouched = current !== undefined
-    && sha256(JSON.stringify(current, null, 2)) === existing.materialisedHash
   if (!untouched) {
     // The same two-legitimate-claims case as a card update: the user has worked
     // on the copy we seeded, so the install's version is not more authoritative

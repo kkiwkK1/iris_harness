@@ -756,3 +756,44 @@ test('a non-current chat or book argument is refused by name', async () => {
   const bind = scope.api['rebindChatWorldbook'] as (chat: 'current', name: string | null) => Promise<void>
   await assert.rejects(bind('other chat' as 'current', 'x'), /current/u)
 })
+
+test('an entry appended through updateWorldbookWith reaches the wire with a uid', async () => {
+  /*
+   * The card shape that failed (黑兽's opening page, 2026-09-19): read the book,
+   * append an entry built fresh (`{name, content}`, no uid — upstream's entry
+   * type is `PartialDeep`), send the whole array back. The host's request schema
+   * used to require a uid, so the write was refused at `entries[110].uid` and the
+   * player's opening page did nothing.
+   *
+   * Asserted on **what went over the wire**, not on a helper's return value: the
+   * frame is where the uid has to exist for the request to pass validation, and a
+   * test of the helper alone would stay green while a call site stopped using it.
+   */
+  const stored = [entry(['a']), entry(['b'])]
+  const scope = withSnapshot({})
+  scope.answer('getWorldbook', { entries: stored })
+  scope.answer('replaceWorldbook', { entries: stored })
+
+  const appended = { name: '开局档案·玩家', content: '【玩家档案】' }
+  await (scope.api['updateWorldbookWith'] as (
+    name: string,
+    updater: (book: unknown[]) => unknown[],
+  ) => Promise<unknown[]>)('BOOK', book => [...book, appended])
+
+  const replace = scope.calls.find(call => call.method === 'replaceWorldbook')
+  assert.ok(replace !== undefined, 'the write never reached the wire')
+  const entries = (replace.params as { entries: { uid?: unknown }[] }).entries
+  assert.equal(entries.length, 3, 'the appended entry is missing from the write')
+  for (const [index, row] of entries.entries()) {
+    assert.equal(
+      typeof row.uid === 'number',
+      true,
+      `entries[${String(index)}] reached the wire without a uid, which the request schema refuses`,
+    )
+  }
+  assert.equal(
+    new Set(entries.map(row => row.uid)).size,
+    3,
+    'two entries share a uid, so one would collapse into the other in the file',
+  )
+})

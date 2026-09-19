@@ -155,7 +155,17 @@ const ROLE_CODES: Record<'system' | 'user' | 'assistant', number> = {
  * matters here, and a mapped type hides it.
  */
 export interface PartialWorldbookEntry {
-  uid: number
+  /**
+   * The entry's identity, or absent for one the caller is creating.
+   *
+   * **Optional, matching upstream's `PartialDeep<WorldbookEntry>` and this
+   * host's own writer.** `resolveUidCollisions` below already reads
+   * `entry.uid ?? <random>`, so an entry that arrives without one is a case the
+   * writer was built for; making the type require it would only be a second
+   * copy of the request schema's old mistake. A card that appends an entry it
+   * just built is the ordinary caller of that branch.
+   */
+  uid?: number | undefined
   name?: string | undefined
   enabled?: boolean | undefined
   strategy?: {

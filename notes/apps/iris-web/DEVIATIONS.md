@@ -8536,7 +8536,6 @@ store 按什么给文件命名。这正是这条断言真正依赖的东西：id
 `loadSandboxPlugins` 里那段注释同时要改——它今天描述的是一件面板做不到的事。
 (e) 面板从侧栏搬走：两个身份属性（`data-panel` / `data-plugin-id`）是给 `qa/` 用的，
 搬家时要跟着，否则验收脚本会以一种看起来像产品缺陷的方式失败。
-
 ## 117. 授权问在拒绝发生的地方，而不只在设置里
 
 **Kind:** deliberate divergence from upstream（上游无对应物）。SillyTavern 的卡代码跑在页面
@@ -8599,3 +8598,126 @@ owner 说得很准：一个埋在设置里的开关，对「眼前这张图的�
 措辞（今天不能：文本来自 `describeRefusal` 自己的模板，按钮标签是壳的固定字符串），那么
 「入口不是卡片文案的延伸」这条要重新论证，因为一个能被卡片措辞装饰的授权入口，就是 §115
 里被删掉的那句「卡无从请求」。
+
+---
+
+## 117. 帧沙箱带上 `allow-forms`，提交由帧自己吃掉 —— 上游根本没有 `sandbox` 属性
+
+**Kind:** deliberate divergence from upstream, in the permissive direction（上游
+的卡帧没有 `sandbox` 属性，所以「允许表单提交」对它不是一个决定；Iris 加了沙箱，
+就必须把这条一并补上，否则补出的是一个上游不存在的行为差异）。
+
+**起因是一张真卡的按钮点了没反应。** 2026-09-19，「黑兽」的开局页是一张真
+`<form>`，提交按钮靠卡自己的 `submit` 处理器 `preventDefault()`。Iris 帧的属性是
+`sandbox="allow-scripts"`，**没有 `allow-forms`**，于是浏览器在**任何卡代码运行之前**
+就把提交拦掉——卡还没来得及装监听器——用户看到的是「点击毫无反应」，而控制台只有
+一句 `Blocked form submission to '' ... 'allow-forms' permission is not set`，
+**Iris 的三条上报通道（`window.onerror`、控制台捕获、`onError`）一条都接不到**，
+因为它发生在帧安装之前。
+
+**上游为什么没有这个问题。** TavernHelper 构造消息帧文档
+（`[TH] src/panel/render/iframe.ts:78-103`）时不写 `sandbox` 属性，`sandbox` 与
+`csp` 在 `src/panel/render/` 与 `src/panel/script/` 里一次都不出现
+（`docs/SANDBOX.md`「The message frame does not add one either」逐条记过）。
+没有沙箱，提交自然被允许，随后被卡自己的 JS 拦下。**Iris 的沙箱是一处有意的
+加固，而加固漏掉了一个旗标，就凭空造出了一种「上游能跑、这里不能」的卡。**
+
+**修法两层，缺一不可。**
+
+- **`policy.ts`**：两个分支都带上 `allow-forms`。这不是放宽访问，是把上游的
+  「没有这层限制」补回来。
+- **`frame-entry.ts`**：在 bootstrap 自己的执行流里（阻塞式 classic `<script src>`，
+  保证在 body 解析之前跑完）注册一个**捕获期** `preventDefault`。**只有旗标是不够
+  的**：它会让真实提交导航走一个 `srcdoc` 帧，把卡自己的文档换掉。
+
+上游的等价物是它的 `form-action` CSP——禁止导航、不碰事件。Iris 特意不发
+`form-action`（`docs/SANDBOX.md`「The shell's CSP floor」：`srcdoc` 帧继承壳层策略，
+而壳层只发三条），所以等价物只能是帧内的捕获期 `preventDefault`。捕获有两个理由：
+它必须在卡的冒泡期处理器之前跑，而且必须在卡**根本没装**处理器时也生效。事件照常
+到达每一个卡的监听器，只有导航没有了；卡自己调 `preventDefault()` 时发现
+`defaultPrevented` 已经是 true，正是上游 CSP 留给它的状态。
+
+### 牙齿
+
+| 断言 | 在哪里 |
+| --- | --- |
+| 两个分支都带 `allow-forms` | `apps/iris-web/tests/sandbox-policy.test.ts` |
+| 捕获期、且 `true` 是第三参数（不是冒泡期） | `apps/iris-web/tests/sandbox-forms.test.ts`「the frame neutralises submissions in the capture phase」 |
+| 兜底装在 `announceReady` 之前（解析期就要在位） | 同文件「the neutraliser is installed before the document body parses」 |
+
+源级的后两条是**配对锁**：旗标在 `policy.ts`、兜底在 `frame-entry.ts`，两个文件互相
+看不见，任一侧被重构掉，另一侧的测试仍然全绿 —— 而单边失效分别是「静默无反应」和
+「帧被导航走」。两次牙齿检查都做过：拆掉帧内兜底，两条转红。
+
+### What would overturn this
+
+(a) 上游给卡帧加上 `sandbox` 并带上 `allow-forms`：那时本条从「补齐上游」变成
+「与上游一致」，两层修法都保留，理由改写。(b) Iris 开始发 `form-action`：帧内兜底
+就可以撤掉，回到上游那种「策略管导航」的形状——但壳层 CSP 的取舍
+（`docs/SANDBOX.md`）要先被推翻。(c) 一张卡依赖提交真的发生（例如靠
+`target=_blank` 提交到自己的服务器）：那是一种 Iris 不打算支持的形态，届时要写的是
+拒绝理由而不是放开旗标。
+
+## 118. `uid` 从请求 schema 的必填变成可选，并把新词表那六个写入点补上补号
+
+**Kind:** transport-level technicality, fixed at the schema；上游的声明本来就允许
+
+**起因是同一张卡的下一步。** 开局页点「以此启程」后，卡走
+`updateWorldbookWith`：读回整本书，追加一条它刚构造的条目（`{name, content}`，
+**没有 `uid`**），整组发回。请求被 schema 拒成
+`entries[110].uid: expected number, received undefined`。
+
+**这是运输层的技术性缺陷，而仓库已经在一处认出过它。**
+`apps/iris-web/src/sandbox/lorebook-aliases.ts` 的 `assignLorebookUids` 文档里写着：
+
+> **It has to happen here rather than being left to the host** … `uid` is the one
+> *required* field of the wire's entry shape, so an entry that reached the wire
+> without one would be rejected at validation — a card that wrote exactly what
+> upstream's declaration allows (`Partial<LorebookEntry>[]`, every field
+> optional) failing on a technicality of this transport.
+
+也就是说：Iris 知道「uid 必填」是运输层的毛病，并**只为旧的 lorebook 词表**在帧里
+绕过了它。**新的 worldbook 词表六个写入点全都没有补号**，而宿主
+`worldbooks.ts` 的 `resolveUidCollisions` 第一行就是
+`entry.uid ?? Math.floor(Math.random() * MAX_UID)` —— 与上游
+`handleLorebookEntriesCollision`（`lorebook_entry.ts:311`）同一算法，
+**但请求 schema 让这个分支成了死代码**。
+
+**修法两层（同一条论证的两半）。**
+
+- **schema（运输层缺陷本身）**：`worldbookEntriesPatch.uid` 改为 `.optional()`，
+  非负整数约束在有值时保留。这修的是**所有调用方**，不只是某一个词表。
+  同一个 commit 里 `PartialWorldbookEntry.uid` 也改为可选——它自称是上游的
+  `PartialDeep`，被要求必填是我的 schema 的错，不该让类型当第二份拷贝。
+- **帧侧（与旧词表对称）**：把算法抽成通用 `assignEntryUids<T>`，
+  `assignLorebookUids` 成为它的旧词汇别名，**一份实现两处用**，两个词表不会就
+  「uid 怎么铸、碰撞怎么探」产生分歧；新增 `prepareWorldbookEntries`（压平 + 补号）
+  并让**六个写入点全部改用它**。
+
+**两层都留着的理由。** schema 放宽让宿主能接住任何调用方的无 uid 条目（
+`resolveUidCollisions` 重新可达，这是它被写出来时就该有的状态）；帧侧补号让**普通
+的卡路径不依赖第二道防线**。少任何一层都能跑通这张卡，但少 schema 那层就留下一个
+「换个客户端又撞」的缺口，少帧侧那层就让一个已知缺陷继续由宿主兜着。
+
+`uid` 的可选性不改变任何有 uid 的写入：有值时仍校验非负整数、仍按上游的二次探测
+去重，写盘仍按数组位置编 `displayIndex`。
+
+### 牙齿
+
+| 断言 | 在哪里 |
+| --- | --- |
+| 无 uid 的整书写入合法、有 uid 时仍校验边界 | `packages/iris-protocol/tests/rpc.test.ts`「an entry with no uid is a valid book write, because the host mints one」/「a uid that is present is still bounded」 |
+| 整本书追加一条无 uid 条目后写盘：条目数正确、uid 唯一 | `packages/iris-app-service/tests/worldbook-write.test.ts`「a new entry appended to a whole book is written without the caller minting a uid」 |
+| **实际发出的 wire 请求**里每条都有 uid | `apps/iris-web/tests/worldbook-facade.test.ts`「an entry appended through updateWorldbookWith reaches the wire with a uid」 |
+
+最后一条断言的是**过线的东西**，不是某个 helper 的返回值：帧才是 uid 必须存在的地方
+（请求要过校验），只测 helper 会在某个调用点不再用它时依然全绿。牙齿检查做过——
+去掉帧侧补号，该条转红并报出 `entries[2] reached the wire without a uid`。
+
+### What would overturn this
+
+(a) 上游收紧 `PartialDeep` 让 `uid` 成为必填：那时帧侧补号成为唯一正确的做法，schema
+那层要改回必填，而六个写入点已经有了补号。(b) `uid` 的含义改变（例如由宿主统一铸造
+并且必须回传以标识已有条目）：那要重新区分「新建条目」与「已有条目」，可能值得一个
+显式的判别字段而不是可选性。(c) 出现第三个词表：`assignEntryUids` 就是它该复用的
+那一个，再写第二份补号实现之前先读这一节。

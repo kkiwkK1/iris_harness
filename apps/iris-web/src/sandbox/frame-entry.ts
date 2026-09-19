@@ -2412,6 +2412,41 @@ try {
    * be held back, so the refusal cannot prevent anything — what it does there is
    * put the attribution first, ahead of the errors it is about to cause.
    */
+  /*
+   * Neutralise form submissions before any card handler sees one.
+   *
+   * `frameSandbox` carries `allow-forms`, because upstream's frames have no
+   * `sandbox` attribute at all and a whole class of cards builds its opening
+   * page as a real `<form>` whose `submit` handler calls `preventDefault()`.
+   * With the flag withheld the browser blocked the submission *before* any card
+   * code ran — the frame had no listener yet — and the click did nothing, on no
+   * channel Iris watches. With the flag granted but nothing else, a real
+   * submission would navigate a `srcdoc` frame away from the card's own
+   * document.
+   *
+   * Upstream's answer is its `form-action` CSP, which forbids the navigation
+   * while leaving the event alone; Iris deliberately ships no `form-action`
+   * directive (`docs/SANDBOX.md`), so the equivalent here is a capture-phase
+   * `preventDefault` of our own. Capture, because it must run before the card's
+   * bubble-phase handler and must survive the card never having installed one —
+   * and because a card that *did* call `preventDefault()` simply finds
+   * `defaultPrevented` already true, which is what upstream's CSP leaves it.
+   * The event still reaches every card listener; only the navigation is gone.
+   *
+   * Registered here, in the bootstrap's own execution — which a blocking
+   * classic `<script src>` guarantees runs before the document body parses, so
+   * even an interface frame's inline markup (and the first form a reader
+   * touches) is covered. A listener installed after `load` would miss it.
+   */
+  document.addEventListener(
+    'submit',
+    event => {
+      event.preventDefault()
+    },
+    // Capture: this has to run before the card's own bubble-phase handler, so
+    // that a form whose card never installed one still cannot navigate.
+    true,
+  )
   reportAsyncFailures(run, post, () => bodyStarted)
   /*
    * Only where there is a surface to clip. An interface frame is laid out inside

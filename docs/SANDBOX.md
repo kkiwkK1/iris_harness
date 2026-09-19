@@ -749,6 +749,17 @@ frames — reopens this decision before it reopens anything else.
   at 50 lines/second and the drops are counted on the next admitted line.
   Local only: `DiagnosticBuffer` does not persist, so nothing reaches a log
   file.
+- **The frame sandbox carries `allow-forms`, because upstream's frames have no
+  `sandbox` attribute at all** (`[TH] src/panel/render/iframe.ts` — see "The
+  message frame does not add one either" above). A whole class of cards builds
+  its opening page as a real `<form>` and relies on its own `submit` handler
+  calling `preventDefault()`; withholding the flag made the browser block the
+  submission *before* any card code ran, so the click did nothing on no channel
+  Iris watches. The flag is paired with a capture-phase `preventDefault` inside
+  the frame (`frame-entry.ts`), which is Iris's stand-in for the `form-action`
+  CSP upstream relies on and Iris deliberately does not ship: the event still
+  reaches every card handler, and the navigation that would walk a `srcdoc`
+  frame away from its own document never happens.
 
 ## Remote imports
 

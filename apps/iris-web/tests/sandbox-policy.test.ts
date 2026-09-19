@@ -17,13 +17,16 @@ test('an ungranted card gets an opaque origin', () => {
   // The whole boundary. Without `allow-same-origin` the browser refuses the
   // card's reach into the host page before any Iris code is consulted, so
   // shadowing `parent` is only a compatibility layer and evading it fails closed.
-  assert.equal(frameSandbox(false), 'allow-scripts')
+  // `allow-forms` rides along on both branches: upstream's frames carry no
+  // `sandbox` attribute at all, and the submission itself is neutralised inside
+  // the frame — see `policy.ts` and `frame-entry.ts`.
+  assert.equal(frameSandbox(false), 'allow-scripts allow-forms')
 })
 
 test('a grant is spelled out as the one dangerous combination it is', () => {
   // `allow-scripts allow-same-origin` together is not a sandbox. That is what a
   // grant means, and it lives in one function so it appears once in the product.
-  assert.equal(frameSandbox(true), 'allow-scripts allow-same-origin')
+  assert.equal(frameSandbox(true), 'allow-scripts allow-same-origin allow-forms')
 })
 
 test('the remote allowlist admits the measured hosts and nothing adjacent', () => {
