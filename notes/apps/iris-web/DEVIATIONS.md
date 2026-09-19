@@ -8835,3 +8835,130 @@ profile（两个模型，第一个 `deepseek-flash`）。连跑两趟，11/11 PA
 按钮的必要条件，`disabled` 与本节的修法要一起重讲；
 (d) 「创造」 条目改成真的 `disabled`：验收里那两条按 note 与模式变化的读法要跟着改，
 否则它们会在一个真的被禁用的控件上继续报绿。
+
+## 121. 引号里的对白有了颜色：上游的 `<q>` 规则搬到渲染之后的那一层
+
+**Kind:** compatibility floor closed, with one seam moved；规则照抄，落点不同
+
+**上游是两行东西。** `messageFormatting` 里一条正则把六种引号包进 `<q>…</q>`
+（`[ST] public/script.js:1845-1871`），引号本身留在元素里面（`:1850` 起每个分支都是
+`` `<q>"${p1.slice(1, -1)}"</q>` `` 这个形状）；样式表里
+`.mes_text q { color: var(--SmartThemeQuoteColor) }`（`[ST] style.css:554-556`），
+默认值 `rgb(225, 138, 36)`（`:74`）。就这些。
+
+**那条正则的每一个部件都在说一件事，按上游的原文抄下来：**
+
+```js
+/<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`|(".*?")|(“.*?”)|(«.*?»)|(「.*?」)|(『.*?』)|(＂.*?＂)/gim
+```
+
+- **前五个分支不是装饰，是「别进代码」。** `<style>`、``` ```、`~~~`、``` `` ```、
+  ``` ` ``` 各自整段匹配并**原样返回**（`:1866-1868` 的 `else` 分支），所以代码里的引号
+  永远走不到后面六个捕获组。
+- **没有 `s` 标志。** `.` 不跨行，于是 `".*?"` 不可能跨一行——一个没有闭合的引号被留在
+  原地，而不是一路吃到消息末尾。这是这条规则敢作用在没人校对过的文本上的原因。
+- **`.*?` 允许匹配空**：`""` 也是一段对白，上游会包。
+- **六种引号的顺序**：`"…"`、`“…”`、`«…»`、`「…」`、`『…』`、`＂…＂`。
+
+**门是一条，只有一条。** 整块代码在 `if (!isSystem)` 里（`:1837`），
+**没有任何 `power_user` 开关**能关掉它，**也从不问 `isUser`**——读者自己写的那行里的
+对白，上游一样上色。而 `:1770-1777` 还在这条门之前把 comment 消息和隐藏消息的
+`isSystem` **清成 false**，所以真正被跳过的只剩 `systemUserName` 说的话。
+
+**还有一条与之配套、容易漏读的保护。** `:1839-1843`：在扫描之前，
+把 `<…>` **标签内部**的 `"` 换成 U+FFFE，扫完再换回来（`:1874-1876`），
+免得 `<div class="panel">` 的属性值被当成对白上色。它挂在
+`!power_user.encode_tags` 上，而 `encode_tags` 的默认值就是 `false`
+（`[ST] public/scripts/power-user.js:301`），所以默认路径上这条保护**是开着的**。
+
+**在流水线里的位置**：正则跑在 `converter.makeHtml(mes)`（`:1880`）**之前**，
+也就是作用在**原始文本**上；`<q>` 是随后交给 showdown 和 DOMPurify 的字符串的一部分。
+
+---
+
+**Iris 抄不了这个机制，因为散文渲染器收的是文本。** `MarkdownText` 明写着
+raw HTML 一律当字面文本渲染（"raw HTML renders as literal text (no HTML enters the
+DOM)"，`@deepseek-ai/dsh-client-ui-primitives` 的 `markdown/render.tsx` 模块注释），
+并且没有任何行内装饰的扩展点。按上游那样把 `<q>` 塞进字符串，结果是读者在页面上
+**看见 `<q>` 这四个字符**，正好是这件事想要的反面。
+
+**所以规则照抄，落点后移一个接缝**：`apps/iris-web/src/app/quoted-dialogue.ts`
+把上面那条正则（连同标签保护、连同少一个 `s`）原样搬过来，作用在**渲染完的散文**上——
+一遍走 `.iris-msg__text` 自己的文本节点，把命中的区间包进 `<q>`。样式则与上游同形：
+`.iris-msg__text q { color: var(--SmartThemeQuoteColor) }`，加上
+`q::before/::after { content: '' }`（上游是 `[ST] style.css:1208-1211` 的
+`.mes q:before/.mes q:after`）——浏览器默认样式表会**自己再加一对引号**，而该给读者看的
+引号是模型写的那一对，它们在元素**里面**。
+
+**接缝移了，就得说清代价。三处，都是量过的：**
+
+| 上游 | Iris | 为什么 |
+| --- | --- | --- |
+| 跨行内标记的一段引号是**一个** `<q>` | 是**每个文本节点一个** `<q>` | `"hello *world*"` 在上游是先包 `<q>` 再交给 showdown，`<em>` 长在 `<q>` 里面；这边 `<em>` 已经存在，一个元素包不住横跨它的区间。同样的字符、同样的颜色，元素个数不同 |
+| 逐 token 重跑整条 `messageFormatting` | **只在回复落定后上色** | 上游那条路测下来没有任何节流；这条流水线在每一个正对着它的接缝上都拒绝过这笔交易（消息界面的 claim 就在同一道门后面）。代价是对白的颜色在回复写完的那一刻才出现 |
+| `<code>` 里的引号被正则**整段吃掉** | `<code>` 子树在扫描里是**一个占位符** U+FFFC | 渲染之后代码就是元素了，扫不进去；用一个占位字符而不是换行，是因为上游的扫描会**读穿**行内代码（`"` 开在反引号之前时，`(".*?")` 这个分支先命中），换行会把上游连起来的那段引号切断 |
+
+**段落边界补了一个换行，这是「少一个 `s`」在渲染之后的活法。** 上游扫的是**写出来的
+消息**，两段就是两行，引号跨不过去；渲染树把那些换行扔了。所以扁平化的时候在每个
+块级元素的进出各补一个 `\n`，`<br>` 也补一个——`.` 依旧过不去，两段之间依旧不成一句
+对白。
+
+**上游有、这里没有的一条：`.mes_reasoning q`**（`[ST] style.css:558-560`，把同一个颜色
+按 `--reasoning-saturation` 降饱和）。思维链在 Iris 是 `Reasoning` 自己的容器，不在
+`.iris-msg__text` 里，这一遍不走它。这是**已知的缺口**，不是被否掉的做法。
+
+**一个实现细节值得写下来，因为它是这遍 DOM 操作唯一危险的地方。** React 持着那些文本
+节点，下一次提交会往**同一个节点**里写新的读数。所以这遍不切 React 的节点：它把宿主
+节点**清空**，把装饰过的副本挂在它右边，并记下清空前的原文。撤销的时候，
+**「宿主还是空的」就是判据**——还是空的，说明最后写它的是这一遍，原文该还回去；不是空的，
+说明 React 已经提交过新值，那些副本就是旧读数的残留，只能删掉、并且不许碰 React 的值。
+`useLayoutEffect` 的依赖表因此必须是**完备**的而不是保守的：一次没被听见的提交，就是一段
+挂在新读数旁边的旧对白。
+
+**服务端渲染会为此多叫 305 声。** `check:render` 是 `renderToString`，
+`useLayoutEffect` 在那里什么都不做并会说出来（仓库里本来就有 274 声，Composer 那两处）。
+这条警告说的是实话——这遍上色本来就只在客户端发生——`check:render` 仍然 ok。
+
+### 牙齿
+
+| 断言 | 在哪里 | 掰断它的改动 |
+| --- | --- | --- |
+| 六种引号都包，引号在元素里面 | `quoted-dialogue.test.ts`「the six quote kinds upstream wraps, marks and all」 | 把 `＂…＂` 那一组换成别的字符 |
+| 一行里两段对白是两段，中间的叙述不是 | 同上「two quoted runs on one line are two runs」 | `(".*?")` 改贪婪 |
+| 空引号 `""` 也是对白 | 同上「an empty quotation is still a quotation」 | `.*?` 改 `.+?` |
+| 引号跨不了行 | 同上「a quotation cannot cross a line」 | 给正则加 `s` 标志 |
+| 落单的引号不包；奇数个只包成对的那一对 | 同上「an unbalanced quote mark is left alone」 | `(".*?")` 改贪婪 |
+| 嵌套取外层，扫描从取走的区间之后继续 | 同上「nesting is the outer pair」 | 每次匹配后把 `lastIndex` 退回 `index + 1` |
+| 五种代码写法里的引号都不是对白 | 同上「quotes inside code are not dialogue」 | 删掉正则前五个分支 |
+| 标签属性里的引号不是对白 | 同上「quotes inside a tag are attribute values」 | 去掉 U+FFFE 那层遮罩 |
+| 门是 `!isSystem` 加 Iris 的 streaming | 同上「the gate is upstream's one condition」 | `marksQuotedDialogue` 只返回 `!streaming` |
+| 渲染后的散文里，一段对白变成一个 `<q>`，引号在里面 | 同上「a quoted run in rendered prose becomes a `<q>`」 | 包的时候把引号切掉 |
+| 跨行内标记的对白整段都上色 | 同上「a quote that spans inline markup」 | 只取完全落在一个节点内的区间 |
+| `<code>` / `<pre>` 子树不进扫描 | 同上「a code span is opaque」「a fenced block is opaque too」 | 去掉 `OPAQUE_TAGS` 那半条件 |
+| 两个段落之间不成一句对白；`<br>` 同理 | 同上「a quote opened in one paragraph」「a `<br>` is a line break」 | 去掉块级换行 / 去掉 `<br>` 的换行 |
+| 界面槽位与折叠的脚手架不是散文 | 同上「an interface slot and a folded scaffold are not prose」 | 去掉 `OPAQUE_CLASSES` 那半条件 |
+| 上两次等于上一次 | 同上「marking twice is marking once」 | 去掉入口处的 `clearQuotedDialogue` |
+| 撤销把树还原成 React 建的那棵（节点同一性） | 同上「clearing puts the tree back exactly as React built it」 | 撤销时不删副本 |
+| React 改写过宿主之后，撤销删副本、留 React 的值 | 同上「when React has rewritten the host」 | 撤销时无条件写回原文 |
+| 没有对白的消息，节点一个不动 | 同上「a message with no dialogue keeps the exact nodes React built」 | 同时去掉 `runs.length === 0` 与 `overlapping.length === 0` 两道早退 |
+| 三个主题下引号色都还读得动（4.5:1），且与正文墨色**不同** | `contrast.test.ts`「quoted dialogue stays readable in …」「…is a different colour from the prose around it in …」 | 把 `--SmartThemeQuoteColor` 指到 `--iris-ink`（后一条红），或直接用上游的 `#e18a24`（雪 2.46:1、宣 2.11:1，前一条红） |
+
+最后一行那条是这一节唯一改了既有文件的断言，值得说明它**为什么是两条**：一个既过
+4.5:1 又恰好等于正文墨色的 token，会让这里别的每一条都报绿，而屏幕上什么都没发生。
+
+量出来的读数（`tokens.css`，WCAG）：雪 `#8a6420` 纸上 **4.93:1**、与墨 3.02:1；
+墨 `#d9b46a` 纸上 **8.80:1**、与墨 1.60:1；宣 `#7d5c1e` 纸上 **4.86:1**、与墨 2.49:1。
+上游那支 `#e18a24` 在雪的纸上是 **2.46:1**——三个主题不照搬上游 hex 的理由，是这个数，
+不是品味。
+
+### What would overturn this
+
+(a) `MarkdownText` 长出行内装饰的扩展点（或 Iris 自己接管 mdast→React 那一步）：那时
+整条规则应当回到**渲染之前**，跨行内标记的对白重新变成一个 `<q>`，上表第一行的分歧消失，
+而这一遍的 DOM 操作连同它的撤销判据都该删掉。
+(b) 上游把这条正则挪到 markdown 之后，或给它加上 `s`：那是上游改了规则，照抄的一方要跟着改，
+并且本节的三行分歧要重新量一遍。
+(c) 思维链要上色：`.mes_reasoning q` 是上游的做法（降饱和），落点是 `Reasoning` 自己的容器，
+不是把 `.iris-msg__text` 的选择器放宽——放宽会把壳里别的 `<q>` 一起染了。
+(d) 流式期间也要上色：那要先回答上游那笔「每 token 重跑整条格式化」的账，本仓库在别处
+已经拒过三次；真要做，应当是增量的，而不是把这遍整树重扫挂到每个 token 上。

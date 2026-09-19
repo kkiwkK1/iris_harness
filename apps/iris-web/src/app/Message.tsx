@@ -10,7 +10,7 @@
  * @module iris-web/app/Message
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -19,6 +19,12 @@ import { MessageInterfaces } from './MessageInterfaces.tsx'
 import type { MessageView } from '@iris/protocol'
 
 import { Slot } from '../slots/Slot.tsx'
+import { getBodyTag, subscribeBodyTag } from './body-tag.ts'
+import {
+  clearQuotedDialogue,
+  markQuotedDialogue,
+  marksQuotedDialogue,
+} from './quoted-dialogue.ts'
 import { Reasoning } from './Reasoning.tsx'
 import { UsagePopover } from './UsagePopover.tsx'
 import { VariantRail } from './VariantRail.tsx'
@@ -69,6 +75,46 @@ export function Message({
   const streaming = message.streaming === true
   const swipes = message.swipes
   const turn = message.turn
+
+  /*
+   * Quoted dialogue in the theme's quote colour — upstream's `<q>` wrap
+   * (`public/script.js:1845-1871`) applied to the rendered prose, because the
+   * prose renderer here takes text and lets no HTML into the DOM. The rule and
+   * the seam are `app/quoted-dialogue.ts`; the divergence is §121.
+   *
+   * On the row's own container, not inside `MessageInterfaces`: that component
+   * returns a fragment on purpose, and this pass needs one element to walk.
+   * The walk skips the interface slots and the scaffolding folds by class, so
+   * "prose only" does not depend on where in the fragment a segment landed.
+   *
+   * **Gated the way upstream gates it, plus one.** Upstream runs the whole
+   * block under `if (!isSystem)`, and on nothing else — a user's own line gets
+   * its dialogue coloured there, so it does here. The extra gate is streaming:
+   * upstream re-formats the entire message per token with no throttling, and
+   * this pipeline has declined that bargain everywhere else it appears (the
+   * interface claim above is behind the same gate). Dialogue therefore takes
+   * its colour when the reply settles.
+   *
+   * The dependency list is every input the prose DOM is a function of. It has
+   * to be complete rather than conservative: a commit this effect does not
+   * hear about is one where React has rewritten a text node this pass had
+   * emptied, and the `<q>` elements left beside it would then be a stale copy
+   * of the previous reading.
+   */
+  const prose = useRef<HTMLDivElement>(null)
+  const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag, getBodyTag)
+  // `editing` is not part of the upstream rule: the container simply is not
+  // rendered while the textarea is, and leaving it out of this would mean the
+  // effect never re-runs for the row that comes back when the edit is over.
+  const marked = marksQuotedDialogue(message.role, streaming) && !editing
+  useLayoutEffect(() => {
+    const root = prose.current
+    if (root === null || !marked) return undefined
+    markQuotedDialogue(root)
+    return () => {
+      clearQuotedDialogue(root)
+    }
+  }, [marked, message.text, message.role, bodyTag, swipes?.index])
 
   const beginEdit = (): void => {
     setDraft(message.text)
@@ -136,7 +182,11 @@ export function Message({
               rather than toggled by a class, so it cannot get out of step with
               the state, and streaming (same key throughout) never replays it.
             */}
-            <div key={swipes?.index ?? 0} className="iris-msg__text iris-msg__text--enter">
+            <div
+              key={swipes?.index ?? 0}
+              ref={prose}
+              className="iris-msg__text iris-msg__text--enter"
+            >
               {/*
                 * Every body goes through `MessageInterfaces`, which renders the
                 * prose itself and puts a card interface **in place of** the

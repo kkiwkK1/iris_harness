@@ -227,6 +227,34 @@
 }
 
 /*
+ * Dialogue, in the theme's quote colour.
+ *
+ * Upstream's rule is `.mes_text q { color: var(--SmartThemeQuoteColor) }`
+ * (`style.css:554`), scoped to the message text and to nothing else; this is
+ * the same scope one class name over. The token is already defined per theme
+ * in `theme/tokens.css` — it has been since the theme aliases landed — and
+ * what was missing was anything that rendered a `<q>`. That is
+ * `app/quoted-dialogue.ts` now.
+ *
+ * The two empty pseudo-elements are upstream's as well (`style.css:1208`):
+ * a browser's default stylesheet puts its own quotation marks around `<q>`,
+ * and the marks the reader should see are the ones the model wrote — they are
+ * inside the element, because upstream's replacement keeps them there. Without
+ * this the dialogue arrives double-quoted. `quotes: none` says the same thing
+ * through the property invented for it; both are here because `content` is the
+ * one that also silences a `quotes` value set further up.
+ */
+.iris-msg__text q {
+  color: var(--SmartThemeQuoteColor);
+  quotes: none;
+}
+
+.iris-msg__text q::before,
+.iris-msg__text q::after {
+  content: '';
+}
+
+/*
  * The reader's own line: a note laid on the page, not a line of the prose.
  *
  * The first plum pass set it as "an editor's query in the margin" - 15px sans,
