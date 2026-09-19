@@ -835,6 +835,9 @@ interface ConnectionsFile {
 
 ### PR-D · 打磨
 
+> **落地：PR #148**（2026-09-19）。账本见 [notes/apps/iris-web/DEVIATIONS.md](../notes/apps/iris-web/DEVIATIONS.md) §116
+> 与 [notes/packages/iris-app-service/DEVIATIONS.md](../notes/packages/iris-app-service/DEVIATIONS.md) §98。
+
 版本表的「看代码」只读视图、分支复制（Q12 裁决之后）、`iris_side_usage` 的 `'plugin'` 成员与用量面板的那一行、空状态文案、双语文案审计。
 
 **其中两项在 PR-B 就已落地**，读这一节的人不必再去做：**分支复制**（连授权带 `branchedFrom`，宿主账 §97 决定四）与 `SIDE_SOURCES` 的 `'plugin'` 成员本身（同 §97 决定七）。PR-D 这一半剩下的是**把那笔钱显示出来**——`UsageTotals.plugin`、合计的折叠、以及用量页上与另外两条并列的那一行。
