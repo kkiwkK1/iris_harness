@@ -1,379 +1,92 @@
-# Contributing to Iris
+<p align="center">
+  <img src="assets/brand/iris-story-seal-variant-c-transparent-v1.png" width="72" alt="Iris">
+</p>
 
-> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+<h1 align="center">参与贡献</h1>
 
-Iris is a SillyTavern-compatible roleplay host on the Cordis plugin
-architecture. **Compatibility is the floor, not the ceiling**: a card that
-works in SillyTavern must work here, and where Iris deliberately does something
-better, that is a documented feature rather than an accident.
+<p align="center">把改动做小，把行为说明白，把验证留在代码旁。</p>
 
-## The one rule everything else follows from
+<p align="center">
+  <a href="README.md">项目首页</a> ·
+  <a href="docs/README.md">文档目录</a> ·
+  <a href="docs/USER-GUIDE.md">使用手册</a>
+</p>
 
-> **Fixtures and code come from the same belief, so a fixture can only confirm
-> you. Only files other people wrote can prove you wrong.**
+---
 
-Test against real cards, real chat files and a real SillyTavern install
-wherever the claim is about upstream behaviour. A green suite built entirely
-out of your own fixtures says only that you were consistent.
+## 开始之前
 
-## Branches and pull requests
+Iris 面向真实角色卡和本地聊天数据。兼容性改动需要说明对应的上游行为，并尽量留下可重跑的测试；只有夹具通过，还不足以证明真实卡片可用。
 
-- **`main` takes pull requests and nothing else.** Nobody pushes to `main`
-  directly — not maintainers, not the person coordinating a batch of work, not
-  the person who wrote the rule. A rule with exceptions decays, because the
-  exceptions become the habit and nobody re-checks who qualifies as one; a rule
-  without them makes a violation visible. `main` is protected by a repository
-  ruleset; the enforcement is not a convention you can talk your way past.
-- Work happens on **`dev/<topic>`** branches (`dev/post-merge-followups`,
-  `dev/feat-character-mgmt`). One topic per branch.
-- Rebase onto `main` before opening the PR, so the diff is what you changed.
-- One PR is one change with one argument behind it. A refactor riding along
-  with a behaviour change makes both unreviewable.
-- **Delete the branch — local and origin — once the PR is merged**, and read
-  the merge state rather than remembering it (`gh pr view <N> --json state`
-  must say `MERGED`). A red CI that became a closed PR has already cost this
-  repository a deleted remote branch that had to be recovered from a sha.
+需要 Node.js 24+、pnpm 10 和 npm。根工作区使用 pnpm，Web 子项目使用 npm；不要互换锁文件。
 
-### One worktree per branch
-
-Several people and agents share one checkout, so a branch gets its own
-directory rather than a `git checkout` in the shared one:
-
-```
-git worktree add ../iris-<topic> -b dev/<topic> origin/main
-cd ../iris-<topic>
-pnpm install --frozen-lockfile --offline
-npm install --offline && npm run build      # in apps/iris-web
+```sh
+pnpm install --frozen-lockfile
+npm --prefix apps/iris-web ci
+pnpm build:web
+pnpm start
 ```
 
-`--offline` is the normal case: the store already has every package. It is
-**not** the case when your change moves a dependency edge — pnpm's
-supply-chain check wants metadata it cannot fetch offline and dies with
-`ERR_PNPM_NO_OFFLINE_META`. Run one networked `pnpm install` in that worktree
-first; the lockfile it writes is part of your diff.
+前端开发见 [Web 指南](apps/iris-web/README.md)，模块边界见[项目架构](docs/ARCHITECTURE.md)。
 
-`npm run build` in `apps/iris-web` is not optional before running the suite:
-`apps/iris-web/public/sandbox/` is gitignored build output and at least one
-test reads an artifact out of it. On a machine where an earlier build left the
-directory behind, the dependency is invisible — in a fresh worktree it is the
-difference between green and red.
+## 分支与协作
 
-Push the branch as soon as it exists, empty commit and all, so whoever is
-coordinating can see it.
+- 通过 PR 合入 `main`，不直接推送 `main`；保持分支聚焦一个主题，合入前对齐最新主线。
+- 每条并行分支使用独立 worktree，及早推送，避免改动只留在本机。分支名遵循当前任务约定；人工开发可使用 `dev/<topic>`。
+- 提交前重新查看状态，只暂存本次改动的明确文件。共享工作区中不要使用 `git add .`、`git add -A` 或整目录暂存。
+- 不覆盖其他人的修改，不擅自安装依赖、重启共享宿主，或覆盖正在被服务的构建产物。
+- 确认 PR 已合并后再清理分支；检查通过不等于合并完成。
 
-## CI is the gate
+提交说明写清“为什么改”，必要时注明 AI 协作的 `Co-authored-by`。测试和提交分开执行，不让提交掩盖失败的检查。
 
-`.github/workflows/ci.yml` runs on **every push to any branch and on every
-pull request**. It is one job on `ubuntu-latest` with a 20-minute timeout, and
-it references **no secrets** — the suite is offline by construction, so a fork's
-PR can neither fail for lack of a key nor leak one. Its steps, in order:
+## 提交前检查
 
-1. `actions/checkout`, then `actions/setup-node` with Node **24.x** — the host
-   packages have no build step and load `.ts` files through Node's native type
-   stripping, so an older Node cannot load a single source file.
-2. `pnpm/action-setup` (pnpm 10), then `pnpm install --frozen-lockfile`.
-   Each of these is written as a 40-hex commit with a `# vX.Y.Z` comment
-   beside it, not as a tag — see "Security constraints" below.
-3. `npm ci` in `apps/iris-web`. Two package managers on purpose:
-   `pnpm-workspace.yaml` excludes `apps/iris-web` because pnpm cannot extract
-   esbuild in this project's environment, so the browser app is npm-managed
-   and reaches workspace code through Vite aliases.
-4. `pnpm run typecheck` (root `tsc --noEmit`).
-5. `npm run typecheck` in `apps/iris-web`.
-6. `npm run build` in `apps/iris-web` — **before the tests**, because
-   `apps/iris-web/public/sandbox/` is gitignored build output and at least one
-   test reads an artifact out of it. On a developer's machine the directory is
-   left over from an earlier build, so the dependency is invisible; on a fresh
-   checkout it is the difference between green and red. This step also runs
-   the bootstrap and preset size checks that `build:sandbox` invokes.
-7. `pnpm run test:no-corpus` — **not** `pnpm test`. It runs the same suite with
-   the corpus forced absent (`scripts/check-corpus-skips.mjs`) and then checks
-   the *shape* of the result: how many tests skipped, grouped by what gated
-   them. See "Testing" below for why.
-8. `npm run check:render` in `apps/iris-web`.
+从仓库根目录运行：
 
-**All green or it does not merge. There are no exceptions**, and "the failure
-is unrelated to my change" is a reason to fix the failure, not to merge past it.
-
-### Run the gate locally before opening the PR
-
-Six commands, and the output each one has to end with:
-
-| command | where | green looks like |
-| --- | --- | --- |
-| `pnpm run typecheck` | root | no output, exit 0 |
-| `npm run typecheck` | `apps/iris-web` | no output, exit 0 |
-| `npm run build` | `apps/iris-web` | the bootstrap and preset size checks pass |
-| `pnpm test` | root | `ℹ fail 0` |
-| `pnpm run test:no-corpus` | root | `check-corpus-skips: 40 skipped, 0 failed, as expected with no corpus present.` |
-| `npm run check:render` | `apps/iris-web` | exit 0 |
-
-`pnpm test` on your machine skips fewer than 40, because your machine has a
-SillyTavern corpus and the runner's does not — that difference is the whole
-point of running both (see "Testing"). The 40 is a **pinned** count
-(`EXPECTED_SKIPPED` in `scripts/check-corpus-skips.mjs`): a run that skips more
-means a gate started matching too much, and one that skips fewer means a corpus
-test stopped skipping — check that it still asserts something before you move
-the number.
-
-`npm run pack:contracts -- --version <v>` is not part of the gate; run it when
-you change `@iris/plugin-api`, `@iris/plugin-web-api` or `@iris/protocol`, and
-say so in the PR (`docs/PLUGIN-CONTRACT-PACKAGING.md`).
-
-Put the last lines of each in the PR description. If something failed, say so
-with the output; if you skipped a step, say that. **Never run a check and a
-commit in one command** — a green tail is what gets quoted, and a red check
-usually has more failures behind the first one.
-
-**Why two typechecks.** The root `tsconfig.json` covers `packages/*`,
-`apps/iris` and `scripts/`; `apps/iris-web` has its own config (DOM libs,
-bundler resolution, JSX) and sits outside the pnpm workspace. Neither run sees
-the other's files.
-
-**Why typecheck and test both, every time.** The test runner strips types
-rather than checking them, so a file with a real type error runs and passes.
-That is not hypothetical: a batch here shipped 974/974 green while `tsc`
-failed on the very test file the batch added. "Tests pass" is not evidence of
-a clean build, and a completion claim quotes both commands.
-
-**Why `pnpm test` and `test:no-corpus` both, when you have the corpus.** Your
-machine has a SillyTavern install, so the local run covers more. CI has none,
-which is the only condition under which a mis-guarded corpus test can be
-caught — see "Testing".
-
-## Commits
-
-Write what changed and **why**, in the repository's existing voice: one
-sentence (long is fine), present tense, naming the mechanism rather than the
-file. From `git log`:
-
-```
-chat-search test: degradation is judged against a same-process baseline ratio,
-not a wall clock; the 10 MiB case is named a smoke bound because it cannot see
-a quadratic scan
-
-GET /version answers in upstream shape with the SillyTavern version this host
-reproduces
-
-Masthead settings button carries data-control="settings" on the element that
-opens settings; no aria-label, because its visible text is its name
+```sh
+pnpm run typecheck
+npm --prefix apps/iris-web run typecheck
+pnpm build:web
+pnpm test
+pnpm run test:no-corpus
+npm --prefix apps/iris-web run check:render
 ```
 
-Not `fix bug`, not `update prompt.ts`. The subject should let someone scanning
-`git log` decide whether this commit is the one they are looking for. If a
-commit corrects an earlier decision, say which one and why it moved.
+前端构建放在相关测试之前。`test:no-corpus` 用于验证不依赖本地私有语料的路径；不要把它当成真实卡片验收的替代品。CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
-**Attribution.** A commit written with an AI assistant ends with a
-`Co-Authored-By:` trailer naming it — that is this repository's existing habit
-rather than a gate, and `git log --format=%B -100 | grep Co-Authored-By` shows
-which form the recent history uses. A human-authored commit carries no trailer.
+修改 `plugin-api`、`plugin-web-api` 或 `protocol` 后，还应按[契约打包说明](docs/PLUGIN-CONTRACT-PACKAGING.md)验证独立包消费。
 
-**A commit message is a completion claim**, so never run the check and the
-commit in the same command: the thing you would quote is the tail of a run you
-have not read.
+### 测试应说明什么
 
-### What goes in a commit
+- 覆盖正常路径，也证明拒绝、撤销、回滚等反向路径确实触发。
+- 缺少本地语料时显式跳过并说明原因，不用提前 `return` 冒充通过。
+- 时序测试优先比较比例和顺序，避免绑定某台机器的绝对耗时。
+- 真实语料测试按内容形状选择样本，不绑定活目录中的文件名或精确数量；断言不变量或有余量的下限。每次遍历还要断言实际比较数量的下限，避免空遍历假通过。精确普查数字放入带日期记录与只输出统计的脚本。
+- 不同场景使用不同夹具；验收表中每个勾选项都要有对应证据。
+- 记录实际运行的命令与结果，未运行的检查直接注明。
 
-- **Stage by path. Never `git add -A`, `git add .` or `git add <directory>`.**
-  Several people and agents share one working tree here, and a wildcard has
-  staged a colleague's half-finished work into someone else's commit — once
-  while that colleague's suite was red. The rule is about *which paths you
-  staged*, not which command you typed.
-- **Generate the list from `git status --porcelain`, taken in the same
-  moment, not from memory** — memory is the one irreproducible link.
-- **Confirm the tree is green before staging.** Nothing in a working tree
-  distinguishes "finished" from "halfway"; that judgement travels with the
-  person who made the change.
+## 不能悄悄改变的边界
 
-## What never gets committed
+| 边界 | 要求 |
+| --- | --- |
+| 网络入口 | 默认回环监听，保留 Host 检查；远程访问需另行配置认证和 HTTPS |
+| 卡片与插件 | 卡片有 iframe 边界，系统插件与宿主同权，不能混称“沙箱插件” |
+| 模板执行 | EJS 默认关闭，启用后使用独立执行路径；不得隐式开启 |
+| 变量兼容 | 不随意改变 `pruneVariables: false` 等兼容默认值 |
+| 密钥与数据 | 不提交密钥、`.env`、`data/`、`测试用卡/` 或个人聊天内容 |
+| 宿主进程 | 一个数据目录只运行一个宿主 |
+| CI 依赖 | Action 固定到完整 40 位提交，并在旁边保留可读版本说明 |
 
-`.gitignore` already refuses these; the list is here so nobody argues with it.
+构建产物、`dist/`、`public/sandbox/` 与 `.reference/` 不作为普通源码改动提交；需要更新受控产物时遵循对应目录的现有约定。
 
-- **Keys and secrets of any kind** — `key.txt`, `*.key`, `secrets.json`,
-  `.env` and `.env.*` (only `.env.example` is tracked). Not in fixtures, not in
-  commit messages, not in a test's expected output. `key.txt` is never read
-  or printed by tooling either — and that sentence has a test behind it now
-  (`apps/iris/tests/key-file.test.ts`), because it was false when it was
-  written: the demo and both live-provider tests read the file as a fallback
-  after `DEEPSEEK_API_KEY`. The environment variable is the only source a
-  provider key reaches this repository through.
-- **`data/`** — characters, chats, presets, world books, `connections.json`.
-  That is the user's content and it contains API keys.
-- **`测试用卡/`** — test cards are other people's work; the tests that read
-  them skip when the folder is absent.
-- **Build output** — `dist/`, `apps/iris-web/public/sandbox/`.
-- **`.reference/`** — the read-only harness checkout.
+## 文档与溯源
 
-## Security constraints the code holds
+工具不得读取或打印 `key.txt`；不要把本地密钥文件当作调试输入。
 
-These are decisions with tests behind them; a change to any of them is a PR
-that says so in its title.
+<!-- 保留供密钥保护检查读取的原约束：`key.txt` is never read or printed by tooling either -->
 
-- **Remote script code loads from two places only**: any hostname *under*
-  `jsdelivr.net` — a subdomain, not the bare apex, which is what the frame's
-  `https://*.jsdelivr.net` has always meant and which no card in the corpus asks
-  for — and exactly `raw.githubusercontent.com` (not the `githubusercontent.com`
-  suffix, which would also cover user-upload hosts).
-  The list is `ALLOWED` in `packages/iris-script/src/remote.ts`, and a drift
-  test compares it against the sandbox's `script-src` line.
-- **The host binds loopback.** `apps/iris/cordis.yml` sets the webserver row to
-  `127.0.0.1`; the carrier ships no TLS and no authentication. Serving Iris to
-  a network means a reverse proxy in front, never `0.0.0.0` in that file.
-- **Card templates run in a child process** with no environment, no filesystem
-  writes and no host objects in reach — and are still off unless the user
-  turns them on, because containment is not a reason to opt someone in.
-- **`pruneVariables` defaults off** and `cordis.yml` carries no row for it. The
-  sweep deletes variable tables nothing restores, so it is an opt-out written
-  into the composition, never a default; `apps/iris/tests/composition.test.ts`
-  parses the real file and holds that line.
-- **Every request is checked against a `Host` allow-list before anything else
-  about it is read**, because a loopback bind is a bind and not a door —
-  `127.0.0.1.nip.io` resolves to loopback and would otherwise be same-origin
-  with the host. A non-loopback bind refuses to start until `allowedHosts`
-  names the proxy. `packages/iris-rpc-host/src/host-guard.ts`, with the known
-  gap (the carrier's static fallback) recorded in
-  `notes/packages/iris-rpc-host/DEVIATIONS.md` §1.
-- **Provider keys are encrypted at rest** in `connections.json` (AES-256-GCM,
-  the data key sealed by DPAPI on Windows), and the key is write-only over the
-  wire — a read answers "is there one" and a mask, never the value.
-- **One host per data directory**, enforced with `<dataDir>/host.lock` and with
-  no override flag. An acceptance host therefore runs on a *copy* of the data
-  directory; two hosts sharing one directory silently overwrite each other's
-  whole-file saves.
-- **Every third-party GitHub Action is pinned to a 40-hex commit** with a
-  `# vX.Y.Z` comment beside it; `apps/iris/tests/workflow-pins.test.ts` holds
-  both halves. A major-version tag is a name its owner can repoint.
+用户可见行为改变时，同步更新 README 或对应指南；接口变化更新[接口参考](docs/INFRASTRUCTURE-INTERFACES.md)。文档入口见[文档目录](docs/README.md)。
 
-The standing record of what each 2026-09 audit finding cost and where it landed
-— **landed / accepted (with the price and the reopening trigger) / pending** —
-is `notes/SECURITY-REMEDIATION.md`. Read it before reporting one of these
-again; several of them are decisions, not bugs.
+`docs/` 写现行用法，`notes/` 保留带日期的调查与验收。不要把历史记录改成当前状态；发现旧结论有误，补充更正与证据。
 
-## Documentation
-
-Where a `.md` lives says what it is:
-
-- **Repository root**: only files a contributor or user needs first —
-  `README.md`, `CONTRIBUTING.md`, and, when present, `LICENSE`,
-  `THIRD-PARTY-NOTICES`, a top-level `DEVIATIONS`. Nothing else.
-- **`docs/`**: living documents that describe `main`, and the contracts code
-  comments cite as the reason a rule exists. Thirteen of them; one line each,
-  plus the reading order, in [`docs/README.md`](docs/README.md). A change to
-  behaviour that one of them describes changes it in the same PR.
-- **`notes/`**: dated records — investigations, upstream comparisons,
-  deviation ledgers, acceptance sheets, plans. They mirror the tree
-  (`notes/packages/iris-app-service/…`, `notes/apps/iris-web/…`). Notes are
-  records of a moment; a number in one is true of the commit and date it
-  names, and a fresh number and a rotten one are typeset identically, so **a
-  measured premise that behaviour depends on also gets a test that fails on
-  its own** when the premise stops holding.
-- **A package's own `README.md`** stays with the package.
-
-### The ledger rule
-
-**A PR that changes behaviour does two things: it updates the document that
-owns that behaviour, and it appends a section to the relevant deviation
-ledger.** They serve different readers — the document answers "what is it now",
-the ledger answers "why is it not what SillyTavern does". There are six
-ledgers, listed in [`docs/README.md`](docs/README.md); a section is numbered,
-appended at the end, and **never rewritten afterwards**. Each one names the
-upstream behaviour it read, this side's choice, and what that choice costs — a
-deviation with no cost written down is usually a preference nobody examined.
-
-A record is never edited to agree with the code. If a section turns out to be
-wrong, strike it through and say how that surfaced; silently correcting it
-deletes the only evidence of what was believed at the time.
-
-Two habits that keep prose honest:
-
-- **Corrections are struck through and kept**, with what was wrong and how it
-  surfaced. Never silently replace a wrong sentence.
-- **A sentence describing a queued fix is false the day it lands.** Ask it per
-  sentence: *is this true right now, on `main`?* A draft here once carried
-  both the warning that a config row overrode a default and, four paragraphs
-  later, the sentence that override made false.
-
-### Citing upstream
-
-- **Name the version**: `[ST 1.18.0] src/endpoints/chats.js:696`. A bare line
-  number is a measurement of one checkout, and upstream renumbers.
-- **Before correcting a line number, grep the whole tree for it** —
-  `grep -rn "chats.js:604"` — and fix every copy. Citations get copied;
-  verifying that one is wrong and finding the rest are two different actions,
-  and a thorough first is exactly what tempts you to skip the second. The tree
-  held two copies of `chats.js:604` (it is `/export`; `/import` is `:696`) and
-  three more in notes.
-
-## Testing
-
-- **A test has to be able to disagree with its author.** Assert the property,
-  not the value you happened to produce. A test that pins an incidental count
-  fails correct changes and gets its number bumped instead of read.
-- **Prove a new test can fail.** Break the code it covers and watch it go red.
-  If nothing goes red there are three explanations with opposite fixes: the
-  test asserts nothing about this, the sample cannot reach the branch, or
-  your mutation never landed.
-- **Every skip carries a reason that says what is missing and where it comes
-  from.** `{ skip: !existsSync(CORPUS) && \`no characters folder at
-  ${CORPUS}; point IRIS_CORPUS at a SillyTavern install\` }`, never
-  `{ skip: true }` or a bare `t.skip()`. `test:no-corpus` groups skips by the
-  gate their reason names and reports the unlabelled ones as their own group.
-- **A corpus test asserts an invariant or a floor, never an exact count and
-  never a named file from a live directory** (2026-09-20). The corpus is the
-  operator's own SillyTavern install: they import cards and play chats, so a
-  pinned count goes red with nothing wrong in the tree, at every landing gate,
-  while CI — which has no corpus — stays green and cannot see it. Say what
-  holds whatever the library contains: a shape, a parsed value against the raw
-  bytes it came from, a ratio, a lower bound with room for a card to be
-  deleted. Pick the population **by content shape**, not by a file name, or a
-  rename turns the gate into a silent skip. Exact numbers belong in a dated
-  record (`notes/TEST-CARDS.md`) and in a census script that prints and does
-  not judge — `npm run census:card-scripts` and its neighbours. A test whose
-  own failure message tells the reader "these are measured values, not
-  invariants" is telling you it should not be asserting them.
-- **Every walk asserts the count it actually compared, as a floor.** "No
-  problems found" is equally true of a walk that reached nothing, and the
-  floors are what make a negative result mean something. Print the counts in
-  the failure message so a red says which way the corpus moved.
-- **Gate a corpus test with a skip, never an early `return`.** A bare `return`
-  reports as a **pass** in `node --test`, so a test that asserted nothing shows
-  up green — and CI, the one environment with no corpus, is exactly where
-  nobody would notice. `pnpm run test:no-corpus` exists for this: it forces
-  `IRIS_CORPUS` (and `IRIS_SAMPLES`, for the gitignored sample folder) to
-  paths that cannot exist and pins the skip count. **Read the gate from the
-  variable**, not from a hardcoded path — a gate that ignores the variable
-  runs in the rehearsal and skips on CI, and the pinned count is one short of
-  the run it stands in for.
-- **A time bound is a ratio against a baseline measured in the same process,
-  not a wall clock.** `elapsed < 1000` is a measurement of one machine wearing
-  a constant's clothes; it goes red on a loaded runner for code that did not
-  change, and a red read as noise protects nothing. Measure something small
-  first, then bound the large case as a multiple. Say what the bound cannot
-  see — call it a smoke bound when it can only turn a hang into a failure.
-- **A check with a `continue` asserts how many samples it actually compared.**
-  A loop that skipped 22 of 26 stayed green for a long time.
-- **Where a value has two plausible sources, make the fixture give them
-  different values**, or the assertion proves they were equal rather than
-  that the code read the right one.
-
-## Refusals and reports
-
-- **Every failure gets a voice.** Returning `undefined` or `{}` where
-  something went wrong disguises a decision as missing data.
-- **A report signs its own name.** Do not say "the host refused" unless you
-  have evidence it was the host; "this app does not list it, the host was
-  never asked" is the honest sentence.
-- **A refusal names the member, the reason, and carries its evidence.**
-
-## Working alongside other people
-
-Several people and agents may share one checkout. Treat it that way:
-
-- Stage only the paths you listed.
-- Do not run installs, builds or state-changing git operations that were not
-  yours to run; `dist/` is served by whatever host is currently running.
-- Do not edit files that belong to work in flight elsewhere. If you cross into
-  someone else's area — even to add a one-line arm that unblocks a build —
-  **say so in your report**.
-- Read the file again before you edit it. The copy in your head is from
-  before your colleague's last save.
+修改上游转录代码时保留版本、来源和差异说明，并搜索所有引用它的文档与注释。新增第三方代码需更新[第三方说明](THIRD-PARTY-NOTICES.md)，不要猜测版权所有者或删去待核实项。
