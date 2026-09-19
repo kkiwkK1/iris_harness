@@ -318,6 +318,23 @@ Two habits that keep prose honest:
   ${CORPUS}; point IRIS_CORPUS at a SillyTavern install\` }`, never
   `{ skip: true }` or a bare `t.skip()`. `test:no-corpus` groups skips by the
   gate their reason names and reports the unlabelled ones as their own group.
+- **A corpus test asserts an invariant or a floor, never an exact count and
+  never a named file from a live directory** (2026-09-20). The corpus is the
+  operator's own SillyTavern install: they import cards and play chats, so a
+  pinned count goes red with nothing wrong in the tree, at every landing gate,
+  while CI — which has no corpus — stays green and cannot see it. Say what
+  holds whatever the library contains: a shape, a parsed value against the raw
+  bytes it came from, a ratio, a lower bound with room for a card to be
+  deleted. Pick the population **by content shape**, not by a file name, or a
+  rename turns the gate into a silent skip. Exact numbers belong in a dated
+  record (`notes/TEST-CARDS.md`) and in a census script that prints and does
+  not judge — `npm run census:card-scripts` and its neighbours. A test whose
+  own failure message tells the reader "these are measured values, not
+  invariants" is telling you it should not be asserting them.
+- **Every walk asserts the count it actually compared, as a floor.** "No
+  problems found" is equally true of a walk that reached nothing, and the
+  floors are what make a negative result mean something. Print the counts in
+  the failure message so a red says which way the corpus moved.
 - **Gate a corpus test with a skip, never an early `return`.** A bare `return`
   reports as a **pass** in `node --test`, so a test that asserted nothing shows
   up green — and CI, the one environment with no corpus, is exactly where

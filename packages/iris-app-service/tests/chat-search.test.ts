@@ -318,14 +318,15 @@ test('a 10 MiB-scale chat scans in proportion to its bytes', async (t) => {
 })
 
 // ---------------------------------------------------------------------------
-// The acceptance conversation: 677 real floors, 19 MiB, written by
-// SillyTavern. Copied read-only into a scratch profile — never searched in
-// place, and never written to.
+// The acceptance conversation: 677 real floors and 19 MiB when it was measured
+// (2026-01), still being played, written by SillyTavern. Copied read-only into
+// a scratch profile — never searched in place, and never written to. Nothing
+// below asserts the 677; the file is its own oracle for how long it is now.
 
 const CORPUS = process.env['IRIS_CORPUS'] ?? 'E:/sillyTavern/SillyTavern'
 const CHATS = `${CORPUS}/data/default-user/chats`
 
-/** The 677-floor conversation on this machine, if it is here. */
+/** The long acceptance conversation on this machine, if it is here. */
 async function findLongChat(): Promise<string | undefined> {
   if (!existsSync(CHATS)) return undefined
   for (const character of await readdir(CHATS)) {
@@ -344,8 +345,8 @@ async function findLongChat(): Promise<string | undefined> {
 
 const LONG_CHAT = await findLongChat()
 
-test('the real 677-floor chat is found by a message fragment, located, and scans in proportion',
-  { skip: LONG_CHAT === undefined && `no 677-floor chat under ${CHATS}; point IRIS_CORPUS at the SillyTavern install that has it` },
+test('the real acceptance chat is found by a message fragment, located, and scans in proportion',
+  { skip: LONG_CHAT === undefined && `no long acceptance chat under ${CHATS}; point IRIS_CORPUS at the SillyTavern install that has it` },
   async (t) => {
     // Two profiles, for the same reason as the synthetic test: the small
     // scan's meter must not include the real file's bytes, so the baseline
@@ -402,7 +403,14 @@ test('the real 677-floor chat is found by a message fragment, located, and scans
     const hit = hits[0]
     assert.ok(hit !== undefined)
     assert.equal(hit.chatId, chatId)
-    assert.equal(hit.messageCount, 677, 'every floor of the real file was in scope')
+    // Against the file's own floor count, not against the 677 it held when this
+    // was written: the operator plays this conversation, and a pin on today's
+    // length goes red on the next reply with nothing wrong in the store. The
+    // property is that **every** floor was in scope, and the file says how many
+    // that is; the floor below keeps "in scope" from being satisfied by a file
+    // that shrank to nothing.
+    assert.ok(chat.messages.length >= 500, `the acceptance chat is down to ${String(chat.messages.length)} floors; it is no longer the large one`)
+    assert.equal(hit.messageCount, chat.messages.length, 'every floor of the real file was in scope')
     assert.ok(
       hit.matches.some(match => match.messageId === floor),
       `floor ${String(floor)} is named as a match`,

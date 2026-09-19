@@ -240,15 +240,21 @@ test('a corrupt store is not silently the same as a first run', async (t) => {
 /**
  * Everything the corpus can say about buttons, split by what a red means.
  *
- * The two tests below look similar and fail for opposite reasons, which is the
- * whole point of separating them. A single test asserting exact counts is
- * ambiguous when it goes red: the parser may have regressed, or the user may
- * simply have added a card — and a reader with one message in front of them goes
- * to the parser first, because that is the failure a test usually means.
+ * The two tests below look similar and fail for different reasons, which is the
+ * whole point of separating them. The first reads the **raw** wrapper the card
+ * stores; the second reads what the parser made of it and holds the two against
+ * each other.
  *
- * So: **shape is a contract**, true of any library, and a red there is a real
- * regression. **Counts are a snapshot**, true of this library on this date, and
- * a red there means look at the cards before looking at the code.
+ * Neither pins a count any more. Until 2026-09-20 the second asserted the exact
+ * tuple `{scripts: 47, withButtons: 18, buttons: 89, invisible: 58, groupsOff: 1}`,
+ * measured on 2026-09-01, with a message saying in as many words that these were
+ * measured values and not invariants — and it went red on the operator's machine
+ * every time they imported a card (95 buttons on 2026-09-20). A test whose own
+ * message tells the reader to ignore it is not a test; the numbers are now a
+ * dated record in `notes/TEST-CARDS.md` and `npm run census:card-scripts` prints
+ * them on demand, while what is asserted here is what cannot move when a card
+ * arrives: **shape**, **parsed-against-raw agreement**, and **floors** under the
+ * counts so that a walk which reaches nothing cannot report success.
  */
 
 test('a button block has the shape upstream defines, whatever cards are present', {
@@ -291,27 +297,41 @@ test('a button block has the shape upstream defines, whatever cards are present'
   assert.ok(wrappers > 0 && buttons > 0, 'no buttons were examined; the walk is not reaching them')
 })
 
-test('the button census still matches the library it was taken from', {
+/**
+ * The floors under the button census, and what each one is for.
+ *
+ * Not a snapshot: the smallest numbers this library can drop to before the walk
+ * has stopped describing it. The corpus stood at 20 cards / 49 scripts / 19 with
+ * buttons / 95 buttons when these were set (2026-09-20), so each floor has room
+ * for the operator to delete a card and none for a reader that silently reaches
+ * nothing — which is the only direction that is unsafe. They are deliberately
+ * round: a floor one below the measurement is a snapshot wearing a floor's
+ * clothes and would be bumped rather than read.
+ */
+const FLOORS = { cards: 15, scripts: 40, withButtons: 12, buttons: 60 }
+
+test('the parsed button census agrees with the raw blocks it was read from', {
   skip: !existsSync(CHARACTERS) && `no characters folder at ${CHARACTERS}; point IRIS_CORPUS at a SillyTavern install`,
 }, async () => {
-  // A snapshot of **this** library, measured 2026-09-01 by two of us on
-  // independent paths — one walking the cards, one through `extractScripts` —
-  // agreeing entry for entry. The agreement is what makes it worth pinning: the
-  // oracle is somebody else's measurement rather than this author's expectation.
+  // The oracle is in the same object: `script.button` is the card's own bytes,
+  // passed through untouched for round-tripping, and `script.buttons` is the
+  // parser's read of them. Holding the two against each other catches the
+  // regression the old exact-count assertion was really there for — a parser
+  // that stops seeing one of the container shapes reports fewer buttons than
+  // the cards carry — without asserting how many buttons any card has.
   //
-  // **If this goes red, look at the card library before the parser.** These
-  // numbers are a fact about 19 particular cards; importing, updating or
-  // deleting one is supposed to move them, and that is not a regression. The
-  // shape test above is the one that cannot be moved by a new card.
-  //
-  // The message below names the tool, because telling a reader what to check
-  // without telling them what to check it with leaves them where they started —
-  // and the thing that answers it used to exist only in one session's scratchpad.
+  // Run `npm run census:card-scripts` for the numbers themselves: it prints
+  // them, the context for reading a change in them, and the shape invariants,
+  // separately, and never judges.
+  let cards = 0
   let scripts = 0
   let withButtons = 0
   let buttons = 0
   let invisible = 0
   let groupsOff = 0
+  /** Scripts whose parsed buttons were actually compared against a raw wrapper. */
+  let compared = 0
+  const problems: string[] = []
 
   for (const file of (await readdir(CHARACTERS)).filter(name => name.endsWith('.png'))) {
     let card: CharacterCard
@@ -320,25 +340,64 @@ test('the button census still matches the library it was taken from', {
     } catch {
       continue
     }
+    cards += 1
+    const ids = new Set<string>()
     for (const script of extractScripts(card).scripts) {
       scripts += 1
       if (script.buttonsEnabled === false) groupsOff += 1
+
+      // A button is identified by `(script id, position)` and nothing else, so
+      // a script that reached the shell without a usable id takes its buttons
+      // with it — and two scripts sharing one id inside a card would route each
+      // other's clicks.
+      if (script.id === '') problems.push(`${file}: a script carrying ${String(script.buttons?.length ?? 0)} button(s) has no id`)
+      else if (ids.has(script.id)) problems.push(`${file}: two scripts share the id ${JSON.stringify(script.id)}`)
+      ids.add(script.id)
+      if (script.content === '') problems.push(`${file}: ${script.id} reached the shell with no body to run when a button is pressed`)
+
+      const raw = script.button
+      if (raw !== undefined && raw !== null && typeof raw === 'object') {
+        compared += 1
+        const declared = (raw as { buttons?: unknown }).buttons
+        const rawCount = Array.isArray(declared) ? declared.length : 0
+        if ((script.buttons?.length ?? 0) !== rawCount) {
+          problems.push(
+            `${file}: ${script.id} declares ${String(rawCount)} button(s) and the parser reports `
+            + `${String(script.buttons?.length ?? 0)} — a container shape is being dropped`,
+          )
+        }
+      }
+
       if (script.buttons === undefined || script.buttons.length === 0) continue
       withButtons += 1
       buttons += script.buttons.length
-      for (const button of script.buttons) if (!button.visible) invisible += 1
+      for (const button of script.buttons) {
+        // The parsed shape, as `ScriptButton` promises it. The test above reads
+        // the same buttons' raw keys; this one reads the values, so a parser
+        // that passed a key through under a wrong type fails here and not there.
+        if (typeof button.name !== 'string' || button.name.trim() === '') problems.push(`${file}: ${script.id} has a button with no usable name`)
+        if (typeof button.visible !== 'boolean') problems.push(`${file}: ${script.id}'s button ${String(button.name)} has a non-boolean visible`)
+        if (!button.visible) invisible += 1
+      }
     }
   }
 
-  assert.deepEqual(
-    { scripts, withButtons, buttons, invisible, groupsOff },
-    { scripts: 47, withButtons: 18, buttons: 89, invisible: 58, groupsOff: 1 },
-    'the census no longer matches. Check whether the card library changed before suspecting the parser'
-    + ' — these are measured values from 2026-09-01, not invariants.'
-    + ' Run `npm run census:card-scripts` to see which group moved: it prints these numbers, the context'
-    + ' for reading a change in them, and the shape invariants, separately.',
-  )
+  assert.deepEqual(problems.slice(0, 5), [], `${String(problems.length)} button(s) or script(s) broke the shape contract`)
+
+  // Floors, not a census. The counts are printed in the failure messages so a
+  // red says which way the library moved without a second run.
+  const seen = `seen: ${JSON.stringify({ cards, scripts, withButtons, buttons, invisible, groupsOff, compared })}`
+  assert.ok(cards >= FLOORS.cards, `only ${String(cards)} cards decoded; the walk is not reaching the library — ${seen}`)
+  assert.ok(scripts >= FLOORS.scripts, `only ${String(scripts)} scripts extracted — ${seen}`)
+  assert.ok(withButtons >= FLOORS.withButtons, `only ${String(withButtons)} scripts carry buttons — ${seen}`)
+  assert.ok(buttons >= FLOORS.buttons, `only ${String(buttons)} buttons — ${seen}`)
+  // The comparison has its own floor: every `problems` check sits behind a
+  // `continue` or an `if`, and "no problems" is equally true of a loop that
+  // compared nothing.
+  assert.ok(compared >= FLOORS.withButtons, `only ${String(compared)} scripts were compared against their raw wrapper — ${seen}`)
+
   // Stated so whoever builds the panel cannot miss it: most buttons in this
-  // corpus are hidden by their own author.
-  assert.ok(invisible > buttons / 2, 'hidden is no longer the common case; a panel default may need revisiting')
+  // corpus are hidden by their own author. A ratio, so importing a card moves
+  // it only if the new card disagrees with every other one.
+  assert.ok(invisible > buttons / 2, `hidden is no longer the common case; a panel default may need revisiting — ${seen}`)
 })
