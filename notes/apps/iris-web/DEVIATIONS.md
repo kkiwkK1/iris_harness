@@ -8601,7 +8601,7 @@ owner 说得很准：一个埋在设置里的开关，对「眼前这张图的�
 
 ---
 
-## 119. 帧沙箱带上 `allow-forms`，提交由帧自己吃掉 —— 上游根本没有 `sandbox` 属性
+## 118. 帧沙箱带上 `allow-forms`，提交由帧自己吃掉 —— 上游根本没有 `sandbox` 属性
 
 **Kind:** deliberate divergence from upstream, in the permissive direction（上游
 的卡帧没有 `sandbox` 属性，所以「允许表单提交」对它不是一个决定；Iris 加了沙箱，
