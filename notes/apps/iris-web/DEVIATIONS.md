@@ -8721,3 +8721,117 @@ owner 说得很准：一个埋在设置里的开关，对「眼前这张图的�
 并且必须回传以标识已有条目）：那要重新区分「新建条目」与「已有条目」，可能值得一个
 显式的判别字段而不是可选性。(c) 出现第三个词表：`assignEntryUids` 就是它该复用的
 那一个，再写第二份补号实现之前先读这一节。
+
+---
+
+## 120. 选了供应商，「用它写插件」还是灰的：模型跟着供应商走
+
+### 背景（owner 实测，2026-09-19，`40460d7`）
+
+连接页 §11.1 的 「写插件用」 一行：选一个供应商，旁边的模型控件**当场显示出一个模型名**，
+而 「用它写插件」 仍然是灰的。把选择挪开再挪回来，按钮才亮。
+
+原因是一行。那个模型控件是**受控 `<select>`**，选项是该供应商的模型加 「自定义…」 哨兵，
+**没有一个选项的值是 `''`**；而草稿从 `{ id: '', model: '' }` 开始，改供应商时只写了 `id`。
+浏览器没有「不显示任何选项」这种状态，于是它显示第一个模型；React 的 state 仍是 `''`；
+`disabled` 读的是 state，读者读的是屏幕，**两边说的不是一回事**。
+
+这不是「按钮判据太严」。把 `disabled` 放宽成「选了供应商就算」是唯一看起来更短的修法，而它
+在另一个方向上是错的：那样按钮会在 `model` 仍是 `''` 时点亮，把半条设置送到宿主——契约那边
+`connection.authoring` 要求**两个都有或两个都没有**（`service.ts`），少一个的失败出现在
+玩家已经打完那句话之后，离引起它的控件三步远。所以修在 **state** 上。
+
+### 决定
+
+**选供应商这一步同时选模型**，判断收在 `apps/iris-web/src/app/authoring-pick.ts`：
+
+- **正在手打**（模型控件是文本框）：屏幕上就是 state 里的东西，无需调和；读者打的名字**活过
+  供应商的更换**——他打它正是因为没有列表提供它，而那种名字通常是几个端点共同前置的内测模型
+  （owner 2026-09-10 的裁决）。
+- **该供应商没有列表**（没探过，或探出来是空的）：回到文本框，手上那个模型**丢掉**——它来自
+  *上一个* 供应商的列表，带过去就等于让按钮亮在草稿本来要防的那种错配上。按钮回到灰，这是诚实的：
+  state 是空的，框也是空的。
+- **该供应商有列表**：新供应商也提供当前这个模型就留着（两个端点都服务 `gpt-4o-mini` 时，
+  切一下不该把设置悄悄改指），否则取第一个——也就是 `<select>` 马上要显示的那个。
+
+**不加 `<option value="">` 占位项。** 裁决允许加，但要拿得出「默认第一个模型是错的」的实例，
+而这里没有：列表里的每个模型都是这个端点自己广告的，这一行的按钮是 「用它写插件」 而不是一个
+破坏性动作，而且行下面那句话会把**存着的**东西念回来。两个控件用两种写法说「什么都没选」
+（这里一个空选项，供应商控件里一个 「— 未设置 —」）是更坏的形状。
+
+**`CUSTOM_MODEL` 哨兵原样保留**（owner 2026-09-10：手打永远提供）。
+
+**独立 `.ts` 而不是 `ConnectionPanel.tsx` 里的一个闭包**，理由和 `model-menu.ts` 写下的一样：
+node 的测试运行器剥类型但不转 JSX，住在 `.tsx` 里的判断**单测根本够不着**。这一条已经付过一次学费。
+
+### 验收里纠正的两个前提
+
+**一、宿主那一侧没有第二个缺陷。** 任务书里的怀疑是 `connection.list` 可能不回 `authoring`
+（store 用它设 `authoringConnection`，而那个字段是composer 「创造」 的闸）。实测（下文读数）：
+**设置之前** `connection.list` 的键是 `profiles, activeId, host`，**设置之后**是
+`profiles, activeId, host, authoring`，值就是行里存的那一对。`service.ts` 的 `connection.list`
+**未设置时刻意不带这个键**（`exactOptionalPropertyTypes` 下「缺席」与「`undefined`」是两件事），
+所以早先那次「只看见三个键」的读数不是缺陷，是**未设置**这个状态本身。`packages/iris-app-service`
+一行没动，那边的账本也就没有这一节。
+
+**二、composer 的 「创造」 不是一个 `disabled` 的控件。** `Composer.tsx` 一直渲染它，只是在
+`canAuthor` 为假时挂上 `note`（「先在连接卡里选一个写插件用的模型」）并让 `onSelect` 提前返回。
+所以「它是不是可用的」这个读数只能读**两样东西**：那条 note 在不在，以及选它之后**模式有没有
+切过去**——而模式只显示在输入框的 placeholder 与发送键的 `aria-label` 上，两者都会被翻译，
+所以判据是「它们变了」，文案只作为证据记下来。
+
+### 测试与牙齿
+
+| 断言 | 在哪里 | 破什么会红 |
+| --- | --- | --- |
+| 选了带列表的供应商后**立刻**读，按钮已亮；且草稿里的模型**等于控件显示的那个** | `apps/iris-web/tests/connection-authoring-row.test.ts`「choosing a provider with models arms the button in one move」 | B1：把 `onChange` 改回 `{ ...current, id }`（原缺陷） |
+| 没探过的供应商走手打路径，且**上一个供应商的模型不跟过来**，打字之前一直灰 | 同文件「a provider with no list keeps the hand-typed path, disabled until typed」 | B2：`authoringPick` 在无列表时返回 `{ id, model }` |
+| 存下去的就是显示的那一对（读**发出的 RPC 参数**），store 的 `authoringConnection` 与行里那句话都对得上；清掉 store 的字段后重读 `connection.list` 仍能读回来 | 同文件「what is saved is the pair that was displayed」 | B1；B5：删掉 `store.ts` `loadConnections` 里的 `authoringConnection: listed.authoring` |
+| **冷启动**（另起一个 store 走 `boot()`）也带着这个设置——刷新之后的页面走的是这条路 | 同文件「a reload reads the setting back, which is what the composer waits for」 | B6：删掉 `store.ts` boot 那句 `authoringConnection: connections.authoring` |
+| 两个供应商都提供的模型**留着**，只有旧供应商有的模型换成新列表的第一个 | `apps/iris-web/tests/authoring-pick.test.ts`「a model both providers advertise is kept rather than re-pointed」 | B3：删掉 `if (models.includes(model)) return { id, model }` |
+| 手打的名字活过供应商更换 | 同文件「a hand-typed model survives the provider moving under it」 | B4：删掉 `if (typing) return { id, model }` |
+
+六条牙齿全做过：破一条、跑红、撤回、跑绿。
+
+**其中一条第一次是假的，值得写下来。** 「重读 `connection.list` 之后设置还在」这条断言，在
+B5 之下**照样全绿**——因为写入自己的应答已经把那一对放进了 store，重读根本不需要带回什么。
+现在那一步先 `setState({ authoringConnection: undefined })` 再读，B5 才转红（红在
+「what is saved is the pair that was displayed」）。清那一行是**牙齿本身**，不是收拾屋子。
+
+**同一个文件第一次连失败都报不出来。** `ConnectionPanel.tsx` 用了 dsh primitives 的 `Button`
+与 `Modal`，那个包的入口 import 了一个 CSS module；vite 默认把依赖 externalise 给 SSR，于是
+node 被递了一个 `.css` 当模块加载，挂在挂载之前。而 teardown 是在挂载**之后**注册的，vite 服务器
+与 fake client 都吊着事件循环——所以 runner 什么都不印，一直挂到被杀。两件事都改了：
+`ssr.noExternal`（`sandbox-plugin-panel.test.ts` 为 `UsagePanel.tsx` 付过同样的过路费），以及
+**先注册 teardown 再挂载**，让坏掉的 setup 能说出自己坏在哪。
+
+### 验收读数（2026-09-20，`qa/authoring-row-acceptance.mjs`，宿主 8796，CDP 9349，不花钱）
+
+数据目录是 `apps/iris/data` 的拷贝（删掉 `host.lock`），供应商是它里面那唯一一个带探过列表的
+profile（两个模型，第一个 `deepseek-flash`）。连跑两趟，11/11 PASS，两趟读数相同：
+
+| 读数 | 值 |
+| --- | --- |
+| `connection.list` 的键（任何写入之前） | `profiles, activeId, host`；`authoring` 缺席 |
+| 「创造」 条目（未设置时，阴性对照） | note = 「先在连接卡里选一个写插件用的模型」；选它之后 placeholder 与发送键文案**没变** |
+| 行刚打开时 | 供应商 `''`、模型控件是 `INPUT`、按钮 `disabled=true` |
+| **选完供应商、同一段表达式里立刻读** | `saveDisabled=false`，模型控件 `SELECT` 显示 `deepseek-flash` |
+| 点 「用它写插件」 之后行里那句话 | 「default · … 上的 deepseek-flash」 |
+| `connection.list` 的键（保存之后） | `profiles, activeId, host, **authoring**`；值 `{id, model: 'deepseek-flash'}` |
+| 刷新之后再读那一行 | 供应商已选中、句子照旧、按钮**不碰任何东西就是亮的** |
+| 「创造」 条目（设置之后） | note 为空；选它之后 placeholder 「写下你的部分…」→「说一句话，让这张卡长出一个功能…」，发送键 「发送」→「长出来」，再开菜单 `aria-checked="true"` |
+
+「选完立刻读」是这一格的**全部意义**：以前正是「再动一次」把它治好的，所以那次改动与那次读数
+之间不能有第二次交互，脚本把改值、派发 `change`、等 React 落定、读按钮放在**同一段**
+`Runtime.evaluate` 里。
+
+### What would reopen this
+
+(a) 出现一个「默认取第一个模型」是错的实例——例如某个端点把一个昂贵或者已下线的型号排在列表
+第一位，那时 `<option value="">` 占位项重新有论据，而这一节的第二段就是要被推翻的那一段；
+(b) 模型控件不再是受控 `<select>`（例如换成可搜索的组合框）：屏幕与 state 的分岔点会换地方，
+`authoring-pick.ts` 的三个分支要按新的控件重新写一遍；
+(c) `connection.authoring` 变成可以只带供应商（宿主替你挑模型）：那样草稿里的 `model` 不再是
+按钮的必要条件，`disabled` 与本节的修法要一起重讲；
+(d) 「创造」 条目改成真的 `disabled`：验收里那两条按 note 与模式变化的读法要跟着改，
+否则它们会在一个真的被禁用的控件上继续报绿。
