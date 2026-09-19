@@ -825,6 +825,8 @@ interface ConnectionsFile {
 
 ### PR-C · 样式扇出到消息界面帧
 
+> **落地：PR #147**（2026-09-19）。账本见 [notes/apps/iris-web/DEVIATIONS.md](../notes/apps/iris-web/DEVIATIONS.md) §114。
+
 **做什么**：`plugin:style` 到壳、按 `(chatId, pluginId)` 存、折进 B 族帧的 srcdoc、移除即重建（§5.1）。
 
 **验收**：PR-B 第 4 条那个场景现在要**真的变成深色**，且删掉插件之后状态栏**恢复**；字节预算（`frame-budget.ts:230`）没有被这份 CSS 顶爆（读帧预算面板的读数，取基线与终读的差）。
