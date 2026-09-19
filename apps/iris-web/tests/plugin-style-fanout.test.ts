@@ -275,6 +275,9 @@ test('the plugin sheets reach every region frame, fenced ones included', () => {
         element: { isConnected: true } as unknown as HTMLIFrameElement,
         refreshContext: () => undefined,
         emit: () => undefined,
+        // Required by the interface since the network-grant switch: a missing
+        // member here would be a frame the grant could never reach.
+        applyNetworkGrant: () => undefined,
         dispose: () => undefined,
       }
     },

@@ -25,9 +25,11 @@
  * @module iris-web/tools/live-network-grant-check
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+
+// The one temp-directory rule for everything that starts a browser.
+import { tempDir } from '../../../qa/chrome-profile.mjs'
 
 const [appPort, characterId, chatId] = process.argv.slice(2)
 if (appPort === undefined || characterId === undefined || chatId === undefined) {
@@ -60,19 +62,20 @@ const rpc = async (method, params) => {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-const profile = mkdtempSync(join(tmpdir(), 'iris-network-grant-check-'))
+/*
+ * The profile comes from the shared helper, which adopts the browser and
+ * removes the directory on a normal return, on a thrown error, on
+ * `process.exit()` and on Ctrl-C — the paths a local `cleanup` cannot cover,
+ * since only a synchronous handler still runs once the event loop is gone.
+ */
+const profileHandle = tempDir('iris-network-grant-check-')
+const profile = profileHandle.dir
 const cdpPort = 9333 + Math.floor(Math.random() * 500)
-const chrome = spawn(chromePath, [
+const chrome = profileHandle.adopt(spawn(chromePath, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--window-size=1280,1600',
   `--user-data-dir=${profile}`, `--remote-debugging-port=${String(cdpPort)}`, 'about:blank',
-], { stdio: 'ignore' })
-
-const cleanup = () => {
-  try { chrome.kill() } catch { /* already gone */ }
-  try { rmSync(profile, { recursive: true, force: true }) } catch { /* Chrome holds files briefly */ }
-}
-process.on('exit', cleanup)
+], { stdio: 'ignore' }))
 
 for (let attempt = 0; attempt < 80; attempt++) {
   try {
@@ -227,5 +230,5 @@ try {
   process.exitCode = 1
 } finally {
   ws.close()
-  cleanup()
+  await profileHandle.dispose()
 }

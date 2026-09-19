@@ -713,7 +713,7 @@ test('a refresh with no snapshot pushes nothing rather than an empty one', async
  */
 test('a card with no runnable scripts still gets a frame when a plugin wants one', async () => {
   const bench = harness({
-    resolve: async () => ({ scripts: [], documentGranted: false }),
+    resolve: async () => ({ scripts: [], documentGranted: false, networkGranted: false }),
     plugins: () => [{ pluginId: '1-dark', version: 1, code: 'return {}' }],
   })
   startCardScripts(bench.env, 'chat-1', 'card-1')
@@ -730,7 +730,7 @@ test('a card with no runnable scripts and no plugins still gets no frame', async
    * nothing, and the original rule is what stops every card in the library
    * building one — so the new clause has to be an `&&`, not a replacement.
    */
-  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false }) })
+  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false, networkGranted: false }) })
   startCardScripts(bench.env, 'chat-1', 'card-1')
   await settle()
 
@@ -793,7 +793,7 @@ test('a mount into a set with no frame says so, rather than dropping it', async 
    * vanished leave the reader with the same screen, and only one of them is a
    * fault. The answer is what lets the shell file a report instead of nothing.
    */
-  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false }) })
+  const bench = harness({ resolve: async () => ({ scripts: [], documentGranted: false, networkGranted: false }) })
   const running = startCardScripts(bench.env, 'chat-1', 'card-1')
   await settle()
   assert.equal(bench.framesBuilt(), 0, 'this test needs the no-frame case to actually happen')

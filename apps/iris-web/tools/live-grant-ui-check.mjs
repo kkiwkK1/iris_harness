@@ -11,9 +11,12 @@
  * @module iris-web/tools/live-grant-ui-check
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+// The one temp-directory rule for everything that starts a browser.
+import { tempDir } from '../../../qa/chrome-profile.mjs'
 
 const [appPort, titleFragment = '扣扣审判'] = process.argv.slice(2)
 if (appPort === undefined) { console.error('usage: node tools/live-grant-ui-check.mjs <appPort> [titleFragment]'); process.exit(2) }
@@ -37,15 +40,21 @@ const rpc = async (method, params) => {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-const profile = mkdtempSync(join(tmpdir(), 'iris-grant-ui-'))
+/*
+ * The profile comes from the one shared helper, which adopts the browser and
+ * removes the directory on a normal return, on a thrown error, on
+ * `process.exit()` and on Ctrl-C — the last three of which a local `cleanup`
+ * here could not cover, because the synchronous `exit` handler is the only one
+ * that still runs once the event loop is gone.
+ */
+const profileHandle = tempDir('iris-grant-ui-')
+const profile = profileHandle.dir
 const port = 9333 + Math.floor(Math.random() * 400)
-const chrome = spawn(chromePath, [
+const chrome = profileHandle.adopt(spawn(chromePath, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--window-size=1500,1900',
   `--user-data-dir=${profile}`, `--remote-debugging-port=${String(port)}`, 'about:blank',
-], { stdio: 'ignore' })
-const cleanup = () => { try { chrome.kill() } catch { /* gone */ } try { rmSync(profile, { recursive: true, force: true }) } catch { /* held */ } }
-process.on('exit', cleanup)
+], { stdio: 'ignore' }))
 
 for (let i = 0; i < 80; i++) { try { if ((await fetch(`http://127.0.0.1:${String(port)}/json/version`)).ok) break } catch { /* soon */ } await sleep(250) }
 
@@ -184,5 +193,5 @@ try {
   process.exitCode = 1
 } finally {
   ws.close()
-  cleanup()
+  await profileHandle.dispose()
 }

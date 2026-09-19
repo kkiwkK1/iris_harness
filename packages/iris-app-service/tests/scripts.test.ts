@@ -191,8 +191,7 @@ test('a grant cannot be stored against a character that is not there', async (t)
 // is a convention that no longer exists.
 
 test('the network grant is denied by default and survives a restart once given', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'iris-scripts-'))
-  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const dir = await tempDir(t, 'iris-scripts-')
   await mkdir(join(dir, 'characters'), { recursive: true })
   await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
 
