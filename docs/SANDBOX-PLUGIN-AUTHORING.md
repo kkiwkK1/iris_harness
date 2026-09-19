@@ -52,6 +52,15 @@ change how something looks — and it has a cost: if two plugins style the same
 selector, the one mounted later wins. Plugins mount in id order, recomputed every
 time.
 
+Your sheet reaches **every message-interface frame of this conversation**, not
+only the card's own frame — so a status bar drawn inside a message is yours to
+restyle. Once it arrives it **competes normally with the card's own CSS**: your
+sheet is in the document head, the card's markup comes after it, and the cascade
+decides. A plain `body > *` rule (0-0-1) loses to the card's `.card` (0-1-0);
+the same rule with `!important` wins. So write selectors that name what you were
+asked to change, and when the player asked you to override how the card looks,
+reach for `!important` on purpose rather than hoping.
+
 **`iris.panel`** — one cell of your own in the frame's panel strip.
 `mount(node)` takes an element or a string of HTML and replaces what is in your
 cell; it returns a function that empties it. One cell per plugin.

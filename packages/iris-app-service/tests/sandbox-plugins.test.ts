@@ -13,7 +13,7 @@ import { CharacterLibrary } from '../src/library.ts'
 import { ScriptVariableStore } from '../src/script-variables.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
-import { SandboxPluginStore } from '../src/sandbox-plugins/store.ts'
+import { hashOfPluginCode, SandboxPluginStore } from '../src/sandbox-plugins/store.ts'
 import {
   parseSandboxPluginFences,
   parseSandboxPluginToolCall,
@@ -477,4 +477,95 @@ test('a chat exports the same bytes whether or not it has grown anything', async
   const after = await fixed.handlers['chat.export']({ chatId: fixed.chatId })
   assert.equal(after.content, before.content)
   assert.equal(after.filename, before.filename)
+})
+
+/**
+ * `sandboxPlugin.source` — the one read that carries a model's code.
+ *
+ * Four properties, and three of them are about what it **refuses**, because the
+ * failure this door can have is not "it did not answer" but "it answered with
+ * the wrong bytes". A reader opens this view to hold the source against the hash
+ * the confirmation card showed them; a call that quietly substituted the current
+ * version for a missing one, or answered for a plugin belonging to another
+ * conversation, would render a screen that is wrong in a way nothing on it says.
+ */
+test('one version\'s source is readable by name, and nothing else is', async (t) => {
+  const fixed = await fixture(t)
+  const defined = await fixed.handlers['sandboxPlugin.define']({
+    chatId: fixed.chatId, characterId: 'aria', sentence: 'make the status bar dark',
+  })
+  const pluginId = defined.pending.id
+  const first = defined.pending.versions.at(-1)
+  assert.ok(first !== undefined)
+
+  /*
+   * A second version, appended through the store rather than through a second
+   * model reply: the fixture answers one scripted reply, so two `define` calls
+   * would produce two byte-identical versions and the assertion below — that
+   * v1 and v2 answer *different* bytes — would pass on a handler that ignored
+   * `version` entirely.
+   */
+  const SECOND_CODE = "return { apply() { iris.styles.insert('body{color:blue}') } }"
+  await fixed.plugins.mutate(fixed.chatId, 'aria', records => records.map(record => record.id === pluginId
+    ? {
+        ...record,
+        versions: [...record.versions, {
+          ...first,
+          version: first.version + 1,
+          code: SECOND_CODE,
+          bytes: Buffer.byteLength(SECOND_CODE, 'utf8'),
+          hash: hashOfPluginCode(SECOND_CODE),
+        }],
+      }
+    : record))
+
+  // No version asked for: the current one, named in the answer rather than left
+  // for the caller to assume.
+  const current = await fixed.handlers['sandboxPlugin.source']({ chatId: fixed.chatId, pluginId })
+  assert.equal(current.code, SECOND_CODE)
+  assert.equal(current.version, first.version + 1)
+  assert.equal(current.hash, hashOfPluginCode(SECOND_CODE))
+
+  // A kept earlier one, by number — the bytes the model actually wrote, and the
+  // hash the confirmation card recorded the authorisation under.
+  const earlier = await fixed.handlers['sandboxPlugin.source']({
+    chatId: fixed.chatId, pluginId, version: first.version,
+  })
+  assert.equal(earlier.code, GOOD_CODE)
+  assert.equal(earlier.version, first.version)
+  assert.equal(earlier.hash, first.hash)
+  assert.notEqual(earlier.hash, current.hash, 'the two versions must differ, or this test compares one version twice')
+
+  // A version that is not kept is refused **by name**, and the sentence says
+  // which ones are — the usual cause is that the oldest was dropped, not that
+  // the number never existed.
+  await assert.rejects(
+    fixed.handlers['sandboxPlugin.source']({ chatId: fixed.chatId, pluginId, version: 7 }),
+    (error: unknown) => {
+      const message = (error as Error).message
+      return (error as { code?: string }).code === 'not-found'
+        && message.includes('version 7')
+        && message.includes('v1')
+    },
+  )
+
+  // A plugin this conversation does not have.
+  await assert.rejects(
+    fixed.handlers['sandboxPlugin.source']({ chatId: fixed.chatId, pluginId: 'no-such-plugin' }),
+    (error: unknown) => (error as { code?: string }).code === 'not-found'
+      && (error as Error).message.includes('no-such-plugin'),
+  )
+
+  /*
+   * **The id scoping, which is the one refusal a reader cannot see for
+   * themselves.** The other conversation exists, the plugin id is real, and the
+   * only thing wrong is whose it is. A handler that looked the plugin up in a
+   * table keyed by id alone would answer this one happily.
+   */
+  const other = await fixed.handlers['chat.create']({ characterId: 'aria' })
+  assert.notEqual(other.view.chatId, fixed.chatId)
+  await assert.rejects(
+    fixed.handlers['sandboxPlugin.source']({ chatId: other.view.chatId, pluginId }),
+    (error: unknown) => (error as { code?: string }).code === 'not-found',
+  )
 })

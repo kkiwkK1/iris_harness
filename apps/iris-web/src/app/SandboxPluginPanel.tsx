@@ -16,13 +16,22 @@
  *   reader can do about it, because the two failures they will actually meet
  *   have different answers: `mount-failed` is fixed by saying another sentence,
  *   `dispose-failed` by leaving the conversation and coming back.
- * - **「see the code」 is read-only** — and is PR-D, so it is not here. Editing a
- *   model's code would mint a version nobody authorised, and authorisation is by
- *   hash, so one changed character would ask the reader to re-confirm something
- *   they wrote themselves.
+ * - **「see the code」 is read-only.** The block is a `<pre>` and there is no
+ *   editable element in this file — not a disabled `<textarea>`, which is an
+ *   edit control that happens to be off and reads as one. Editing a model's code
+ *   would mint a version nobody authorised, and authorisation is by hash, so one
+ *   changed character would ask the reader to re-confirm something they wrote
+ *   themselves. The note under the block says that, and says what to do instead.
  * - **Empty says a sentence.** The empty state is this feature's only entry
  *   explanation; a blank panel teaches nobody that there is a 「Grow a feature」
- *   entry in the composer.
+ *   entry in the composer — and when no authoring model is chosen, it says *that*
+ *   first, because until it is done the other sentence names a control that is
+ *   dark.
+ *
+ * The source is **not** in the list. `SandboxPluginView` carries no `code`, so
+ * opening the block is its own call (`sandboxPlugin.source`) and closing it drops
+ * the bytes. That is what keeps "this panel is open" from meaning "this
+ * conversation's code is in the page".
  *
  * @module iris-web/app/SandboxPluginPanel
  */
@@ -65,6 +74,44 @@ function fixOf(plugin: SandboxPluginView): string | undefined {
 }
 
 /**
+ * The open source, as a block under its row.
+ *
+ * **A `<pre>` and nothing else.** Not a `<textarea readonly>`, not a
+ * `contenteditable` with `false` on it: both are edit controls in a state, and a
+ * reader who meets one reasonably tries to type in it. The only element here
+ * that can hold a caret is the one that cannot keep a change.
+ *
+ * Three states in one block, because the reader is looking at the same place for
+ * all three: reading, refused, and the bytes. The head carries the version and
+ * the hash — the hash because that is the unit the authorisation was recorded
+ * in, so it is what a reader holds against what the confirmation card said.
+ * @param props.source - the open view's state.
+ * @returns the block.
+ */
+function SourceBlock({
+  source,
+}: {
+  source: { version?: number, hash?: string, code?: string, failure?: string }
+}): ReactElement {
+  useLanguage()
+  if (source.failure !== undefined) {
+    return <span className="iris-conn__meta">{t('pluginCodeFailed', { detail: source.failure })}</span>
+  }
+  if (source.code === undefined) {
+    return <span className="iris-conn__meta">{t('pluginCodeReading')}</span>
+  }
+  return (
+    <div className="iris-plugin-code">
+      <span className="iris-conn__meta">
+        {t('pluginCodeHead', { version: source.version ?? 0, hash: source.hash ?? '' })}
+      </span>
+      <pre className="iris-plugin-code__text" data-plugin-code="">{source.code}</pre>
+      <span className="iris-conn__meta">{t('pluginCodeReadOnly')}</span>
+    </div>
+  )
+}
+
+/**
  * Render the panel.
  * @returns the section.
  */
@@ -73,6 +120,8 @@ export function SandboxPluginPanel(): ReactElement | null {
   const plugins = useIris(state => state.sandboxPlugins)
   const listedFor = useIris(state => state.sandboxPluginsFor)
   const declined = useIris(state => state.scriptsAllowed) === 'declined'
+  const open = useIris(state => state.sandboxPluginSource)
+  const authoring = useIris(state => state.authoringConnection)
   const actions = useIrisActions()
   useLanguage()
 
@@ -87,8 +136,33 @@ export function SandboxPluginPanel(): ReactElement | null {
 
   return (
     <Section title={t('pluginsPanelTitle')}>
+      {/*
+        The panel's identity, for anything that has to find it from outside.
+
+        Its heading is translated, and `qa/locators.mjs`'s rule is that the
+        app's own chrome is never located by its visible text — a headless
+        Chrome comes up in Chinese here and every English locator misses. The
+        `data-tab` / `data-control` attributes exist for exactly this, and this
+        is the same need one panel further in. The row carries its plugin id for
+        the same reason `PluginCenter` rows carry theirs.
+      */}
+      <div data-panel="sandbox-plugins">
       {plugins.length === 0 ? (
-        <p className="iris-field__note">{t('pluginsPanelEmpty')}</p>
+        /*
+          The empty state, which is this feature's only entry explanation.
+
+          Two sentences when there is no authoring model, and **that one first**:
+          the other sentence tells the reader to open 「Grow a feature」, and
+          until a model is chosen that entry is dark. Instructions a reader
+          cannot follow read as a broken feature, so the reason goes in front of
+          them rather than behind a hover on a disabled control.
+        */
+        <>
+          {authoring === undefined
+            ? <p className="iris-field__note">{t('pluginsPanelNoAuthoring')}</p>
+            : null}
+          <p className="iris-field__note">{t('pluginsPanelEmpty')}</p>
+        </>
       ) : (
         <>
           {/*
@@ -104,7 +178,7 @@ export function SandboxPluginPanel(): ReactElement | null {
             const version = plugin.versions.at(-1)
             const fix = fixOf(plugin)
             return (
-              <div className="iris-conn" key={plugin.id}>
+              <div className="iris-conn" data-plugin-id={plugin.id} key={plugin.id}>
                 <div className="iris-conn__main">
                   <span className="iris-conn__name">{version?.name ?? plugin.id}</span>
                   <span className="iris-conn__summary">{version?.purpose ?? ''}</span>
@@ -119,8 +193,18 @@ export function SandboxPluginPanel(): ReactElement | null {
                     <span className="iris-conn__meta">「{version.prompt}」</span>
                   )}
                   {fix === undefined ? null : <span className="iris-conn__meta">{fix}</span>}
+                  {open?.pluginId === plugin.id ? <SourceBlock source={open} /> : null}
                 </div>
                 <div className="iris-conn__actions">
+                  <button
+                    type="button"
+                    className="iris-act"
+                    data-plugin-action="source"
+                    aria-expanded={open?.pluginId === plugin.id}
+                    onClick={() => void actions.readSandboxPluginSource(plugin.id)}
+                  >
+                    {open?.pluginId === plugin.id ? t('pluginHideCode') : t('pluginViewCode')}
+                  </button>
                   <button
                     type="button"
                     className="iris-act"
@@ -144,6 +228,7 @@ export function SandboxPluginPanel(): ReactElement | null {
           })}
         </>
       )}
+      </div>
     </Section>
   )
 }

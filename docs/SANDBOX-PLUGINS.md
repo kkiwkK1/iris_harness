@@ -613,7 +613,7 @@ id 以 `<序号>-<slug>` 开头（Q1）意味着字典序大体等于创建序�
 - **进程内串行**：一个 chatId 一条 promise 链，抄 `PluginDataStore`（`packages/iris-app-service/src/plugins/storage.ts:107`）的 `#chains` 形状。`host.lock`（`packages/iris-app-service/src/host-lock.ts:238`）保证一个 dataDir 一个进程，**不**保证一个进程内没有并发读-改-写。
 - **不承诺持久性**：`atomicWriteFile` 没有 `fsync`（`atomic.ts` 的模块头写明）。整机断电保证「旧文件完整」，不保证「新插件还在」。这句话要写进 §16 的账本条目里，因为「插件下次还在」是这个功能的卖点，而卖点与保证之间的这一格是要说清的。
 
-### 10.2 三个新 RPC
+### 10.2 `sandboxPlugin.*` 这一族
 
 宿主自己用，插件够不着（§1 非目标）。
 
@@ -622,9 +622,11 @@ id 以 `<序号>-<slug>` 开头（Q1）意味着字典序大体等于创建序�
 | `sandboxPlugin.list` | `{ chatId }` | `{ plugins: SandboxPluginView[] }` |
 | `sandboxPlugin.define` | `{ chatId, characterId, sentence, replaces?: pluginId }` | `{ pending: SandboxPluginView }` |
 | `sandboxPlugin.decide` | `{ chatId, pluginId, hash, verdict: 'version' \| 'plugin' \| 'discard' \| 'disable' \| 'enable' \| 'remove' }` | `{ plugins: SandboxPluginView[] }` |
+| `sandboxPlugin.source` | `{ chatId, pluginId, version? }` | `{ code, hash, version }`（PR-D） |
 
-- 三个都是**静态 schema**，进 `packages/iris-protocol/src/rpc.ts`（`chat.*` 那一族旁边），不走 `scope.registerRpc`——那条路 `main` 上至今没有生产使用者（[SYSTEM-PLUGINS](SYSTEM-PLUGINS.md) 末尾），这个功能不该是它的第一个。
-- `SandboxPluginView` 是线上投影：**不带 `code`**。列表面板不需要源码，而把模型写的代码放进每次 `list` 的回包是白白给它一条到壳的路。要看代码是一个单独的读（`sandboxPlugin.source`，PR-D，§15）。
+- 全部是**静态 schema**，进 `packages/iris-protocol/src/rpc.ts`（`chat.*` 那一族旁边），不走 `scope.registerRpc`——那条路 `main` 上至今没有生产使用者（[SYSTEM-PLUGINS](SYSTEM-PLUGINS.md) 末尾），这个功能不该是它的第一个。
+- **这一节的标题原来是「三个新 RPC」。** 改掉它不是因为数字变了，而是因为它本就不该是一个数字：写在表旁边的计数会无声地过期，`packages/iris-protocol/tests/method-names.test.ts` 记的正是这件事（一次对同一张表的清点用了会漏掉深层名字的模式，报出来的总数读起来是完整的）。有几个由 `requestSchemas` 的键回答；`packages/iris-protocol/tests/sandbox-plugin-methods.test.ts` 钉的是性质——这一族非空，且每一个都必须带**必填**的 `chatId`。
+- `SandboxPluginView` 是线上投影：**不带 `code`**。列表面板不需要源码，而把模型写的代码放进每次 `list` 的回包是白白给它一条到壳的路。要看代码是一个单独的读：`sandboxPlugin.source`，一次一个版本，`version` 缺席即当前版。**要不到的版本、以及不属于这段对话的插件，都具名拒绝，绝不回落到当前版**——拿着面板显示的哈希去读另一版的字节，屏幕上没有任何东西会说出这件事。
 
 ### 10.3 聊天生命周期（裁决 Q12）
 
@@ -834,6 +836,8 @@ interface ConnectionsFile {
 ### PR-D · 打磨
 
 版本表的「看代码」只读视图、分支复制（Q12 裁决之后）、`iris_side_usage` 的 `'plugin'` 成员与用量面板的那一行、空状态文案、双语文案审计。
+
+**其中两项在 PR-B 就已落地**，读这一节的人不必再去做：**分支复制**（连授权带 `branchedFrom`，宿主账 §97 决定四）与 `SIDE_SOURCES` 的 `'plugin'` 成员本身（同 §97 决定七）。PR-D 这一半剩下的是**把那笔钱显示出来**——`UsageTotals.plugin`、合计的折叠、以及用量页上与另外两条并列的那一行。
 
 **为什么这样切，而不是按能力切**（先样式、再面板、再成员）：三件能力共用同一棵树、同一份拆卸清单、同一套失败状态。按能力切会让第一个 PR 交付一棵只支持一种能力的树，而树本身（挂载队列、`pluginRunId` 收敛、拆卸清单）是不可分的那部分——切在那里会把唯一的难点切成三份各做三分之一。
 

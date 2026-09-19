@@ -136,6 +136,23 @@ export function compactionTokens(totals: UsageTotals): number {
 }
 
 /**
+ * What **writing this conversation's sandbox plugins** spent, of the figure
+ * beside it.
+ *
+ * The third of the same family, with the same `0`-where-absent rule and the
+ * same pairing — and **no chart metric**, for the reason spelled out under
+ * {@link compactionTokens} and with less to argue about: a 「create」 is a
+ * handful of requests over a conversation's life, so its series is a flat line
+ * with spikes, and the figure a reader wants ("how much of this was me asking
+ * for features") is the sentence under the total.
+ * @param totals - a cell, a conversation subtotal, or the whole range.
+ * @returns the plugin-writing share of the total, in tokens.
+ */
+export function pluginTokens(totals: UsageTotals): number {
+  return totals.plugin === undefined ? 0 : totalTokens(totals.plugin)
+}
+
+/**
  * One metric's value.
  *
  * `cacheRead` reads `0` where the bucket is absent, and that is a display

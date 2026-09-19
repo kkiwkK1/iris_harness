@@ -228,9 +228,10 @@ export interface TurnUsage {
    * threshold rather than a card.
    *
    * Not a grouping key on the wire's own summary cells: those are cut by
-   * (time, model). The splits by source are carried instead as
-   * {@link UsageTotals.script} and {@link UsageTotals.compaction}, so a surface
-   * can show a share without the cell count doubling.
+   * (time, model). The splits by source are carried instead as the optional
+   * bucket sets on {@link UsageTotals} named after the sources here — one field
+   * per source but `'turn'`, spelled the same word — so a surface can show a
+   * share without the cell count doubling.
    *
    * A `'plugin'` record is **the request that wrote a sandbox plugin**
    * (`docs/SANDBOX-PLUGINS.md` §11.3): the host asking, on the player's behalf,
@@ -2969,7 +2970,7 @@ export interface UsageTotals extends UsageBuckets {
    * zeros. `script.turns` is the count — the "how many" a header card prints.
    *
    * There is no matching `turn` field. The turn share is the enclosing figure
-   * minus this one and {@link compaction}, which is a subtraction a reader can
+   * minus the side shares beside this one, which is a subtraction a reader can
    * defend, and a stored share that must sum to the whole is one more number
    * that can disagree with it.
    */
@@ -2994,6 +2995,26 @@ export interface UsageTotals extends UsageBuckets {
    * exactly one summary per compaction with nothing naming the gap.
    */
   compaction?: UsageBuckets
+  /**
+   * The share of everything above that **writing a sandbox plugin** asked for —
+   * `TurnUsage.source` of `'plugin'` (`docs/SANDBOX-PLUGINS.md` §11.3).
+   *
+   * Same standing as {@link script} and {@link compaction}, same absence rule,
+   * and a third sibling rather than a fold into either. It is not the card's
+   * spend: nothing in the card asked for it. It is not Iris's own policy
+   * either: the player said a sentence, and it went out **on a connection
+   * profile chosen for this and nothing else**, which is the thing that makes
+   * it worth separating — a reader who thinks this number is too big changes a
+   * habit or that profile's model, and neither act touches a card or a
+   * compaction threshold.
+   *
+   * **Small and lumpy.** One request per 「create」, each carrying the author
+   * document, so a conversation that grew three features has three of these and
+   * one that grew none has the field absent. The absence is what makes the row
+   * honest on every profile that has never used the feature: nothing is drawn,
+   * rather than a zero that reads as "this cost nothing".
+   */
+  plugin?: UsageBuckets
 }
 
 /**

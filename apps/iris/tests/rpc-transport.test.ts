@@ -363,6 +363,7 @@ const PROBES: Record<string, unknown> = {
   'sandboxPlugin.decide': {
     chatId: 'no-such-chat', characterId: 'no-such-card', pluginId: 'no-such-plugin', verdict: 'remove',
   },
+  'sandboxPlugin.source': { chatId: 'no-such-chat', pluginId: 'no-such-plugin' },
   'connection.delete': { id: 'no-such-profile' },
   'connection.activate': { id: 'no-such-profile' },
   // A profile that does not exist answers not-found, which proves the handler

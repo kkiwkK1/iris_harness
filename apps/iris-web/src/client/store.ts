@@ -749,6 +749,27 @@ export interface IrisState {
    * to press 「try again」 — which needs the sentence still to be on screen.
    */
   sandboxPluginRefusal: { detail: string, sentence: string } | undefined
+  /**
+   * The one plugin version whose source is open in the panel, if any.
+   *
+   * **One at a time, and only while it is open.** This is the only place a
+   * model's source sits in the shell outside `sandboxPluginMounts`, and unlike
+   * that one it is here because a reader asked rather than because a frame
+   * needs it — so closing the view drops it, and opening another replaces it.
+   * Keeping every source a reader has ever looked at would grow a cache of
+   * untrusted text that nothing on screen accounts for.
+   *
+   * `code` absent with `pluginId` present is the in-flight state: the block is
+   * open and says it is reading, which is what distinguishes it from a plugin
+   * whose source is genuinely empty.
+   */
+  sandboxPluginSource: {
+    pluginId: string
+    version?: number
+    hash?: string
+    code?: string
+    failure?: string
+  } | undefined
 
   /**
    * The profile's preset library, once fetched.
@@ -1287,6 +1308,18 @@ export interface IrisActions {
    * @param hash - the version the card showed, for the two authorising verdicts.
    */
   decideSandboxPlugin(pluginId: string, verdict: SandboxPluginVerdict, hash?: string): Promise<void>
+  /**
+   * Open one version's source in the panel, reading it from the host.
+   *
+   * A call rather than a field of the list, because the list deliberately
+   * carries no source (§10.2). Calling it for the plugin already open closes
+   * the view — one disclosure, one control.
+   * @param pluginId - which plugin.
+   * @param version - a kept earlier version, or undefined for the current one.
+   */
+  readSandboxPluginSource(pluginId: string, version?: number): Promise<void>
+  /** Close the source view and drop the bytes it was holding. */
+  closeSandboxPluginSource(): void
   /** Drop the sentence that says why the last definition failed. */
   clearSandboxPluginRefusal(): void
   /**
@@ -1834,6 +1867,7 @@ export function createIrisStore(
       sandboxPluginPending: undefined,
       sandboxPluginWorking: false,
       sandboxPluginRefusal: undefined,
+      sandboxPluginSource: undefined,
       presets: undefined,
       activePreset: undefined,
       presetInstall: undefined,
@@ -3241,7 +3275,15 @@ export function createIrisStore(
          * the length of a round trip, because "what did *this* conversation
          * grow" is the only question the panel exists to answer.
          */
-        set({ sandboxPluginsFor: chatId, sandboxPlugins: [], sandboxPluginMounts: [] })
+        // The open source view goes with the list: it names a plugin id, and
+        // ids are per conversation, so carrying it across would put one
+        // conversation's code under another one's row.
+        set({
+          sandboxPluginsFor: chatId,
+          sandboxPlugins: [],
+          sandboxPluginMounts: [],
+          sandboxPluginSource: undefined,
+        })
         try {
           const listed = await client.call('sandboxPlugin.list', { chatId })
           if (get().sandboxPluginsFor !== chatId) return
@@ -3331,8 +3373,67 @@ export function createIrisStore(
             // is still unauthorised would be a card the reader already dealt
             // with asking the same question again.
             sandboxPluginPending: undefined,
+            /*
+             * A source view outlives a `disable` but not a `remove`. Closed
+             * whenever the plugin it was showing is no longer in the answer:
+             * leaving a deleted plugin's code on screen under a row that is
+             * gone would be the panel reading from a version of the
+             * conversation that no longer exists.
+             */
+            ...answer.plugins.some(plugin => plugin.id === get().sandboxPluginSource?.pluginId)
+              ? {}
+              : { sandboxPluginSource: undefined },
           })
         })
+      },
+
+      async readSandboxPluginSource(pluginId, version): Promise<void> {
+        const chatId = get().chatId
+        if (chatId === undefined) return
+        // Pressed on the plugin already open: this is one disclosure control,
+        // so the second press closes it rather than re-fetching the same bytes.
+        if (get().sandboxPluginSource?.pluginId === pluginId && version === undefined) {
+          set({ sandboxPluginSource: undefined })
+          return
+        }
+        set({ sandboxPluginSource: { pluginId, ...version === undefined ? {} : { version } } })
+        try {
+          const answer = await client.call('sandboxPlugin.source', {
+            chatId,
+            pluginId,
+            ...version === undefined ? {} : { version },
+          })
+          // The conversation may have moved while this was in flight, and so may
+          // the open row — the guard is on both, because a later open of another
+          // plugin must not be overwritten by an earlier answer arriving.
+          if (get().chatId !== chatId || get().sandboxPluginSource?.pluginId !== pluginId) return
+          set({
+            sandboxPluginSource: {
+              pluginId,
+              version: answer.version,
+              hash: answer.hash,
+              code: answer.code,
+            },
+          })
+        } catch (error) {
+          if (get().chatId !== chatId || get().sandboxPluginSource?.pluginId !== pluginId) return
+          /*
+           * **Said in the open block, not raised as a notice.** The reader is
+           * looking straight at the place the answer was going to appear, and a
+           * bar at the top of the window would be a second report of something
+           * already visible. The host's own sentence, for the reason
+           * `defineSandboxPlugin` takes it: the refusals here name a version
+           * that is no longer kept, which is actionable, and the general copy
+           * for the error code is not.
+           */
+          const raw = asRpcError(error, getLanguage())
+          const detail = raw.message.trim() === '' ? describeError(error, getLanguage()) : raw.message
+          set({ sandboxPluginSource: { pluginId, failure: detail } })
+        }
+      },
+
+      closeSandboxPluginSource(): void {
+        set({ sandboxPluginSource: undefined })
       },
 
       clearSandboxPluginRefusal(): void {

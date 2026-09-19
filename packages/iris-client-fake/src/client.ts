@@ -1896,6 +1896,7 @@ class InMemoryClient implements FakeClient {
       case 'sandboxPlugin.list':
       case 'sandboxPlugin.define':
       case 'sandboxPlugin.decide':
+      case 'sandboxPlugin.source':
       // And the setting that names the model: a client with no connection file
       // cannot keep one.
       case 'connection.authoring': {

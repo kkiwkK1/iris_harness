@@ -2810,6 +2810,40 @@ export class IrisAppService {
         return { plugins: plugins.map(sandboxPluginViewOf), mounts: mountsOf(plugins) }
       },
 
+      'sandboxPlugin.source': async ({ chatId, pluginId, version }) => {
+        /*
+         * **Read through the same `read(chatId)` the list goes through.** That
+         * is where the id scoping already is: a plugin belongs to the
+         * conversation whose table holds it, so asking this conversation for
+         * another one's plugin finds nothing and is refused by name. A second
+         * "does this chat own it" check written here would be a second place
+         * for that answer to come from, and the one easy to forget to keep.
+         */
+        const records = await requireSandboxPlugins().read(chatId)
+        const record = records.find(entry => entry.id === pluginId)
+        if (record === undefined) throw notFound(`this conversation has no plugin "${pluginId}"`)
+        const found = version === undefined
+          ? record.versions.at(-1)
+          : record.versions.find(entry => entry.version === version)
+        if (found === undefined) {
+          /*
+           * **Named, never a fall back to the current version.** A reader who
+           * asked for v2 and was handed v3 would be holding the wrong bytes
+           * against the hash the panel showed them, and nothing on the screen
+           * would say so. The kept versions go in the sentence because the
+           * reason is usually "that one has been dropped" (eight kept, §10.4)
+           * rather than "that number never existed".
+           */
+          const kept = record.versions.map(entry => `v${String(entry.version)}`).join(', ')
+          throw notFound(
+            `plugin "${pluginId}" has no version ${String(version)}; this conversation keeps ${kept}`,
+          )
+        }
+        // The bytes as stored, not re-wrapped: `hash` was computed over exactly
+        // these, and what the reader is being shown is what they authorised.
+        return { code: found.code, hash: found.hash, version: found.version }
+      },
+
       'prompt.itemize': async ({ chatId, turn }) => {
         const entry = await chats.open(chatId)
         // A record when there is one, a preview otherwise — including for a turn

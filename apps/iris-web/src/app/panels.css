@@ -3181,6 +3181,51 @@
   margin-top: 4px;
 }
 
+/*
+ * 「See the code」 — the read-only source under a sandbox-plugin row.
+ *
+ * The head and the note are `.iris-conn__meta`, so the block is three lines of
+ * the row's own quiet voice with the source between them rather than a panel
+ * inside a panel.
+ */
+.iris-plugin-code {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-self: stretch;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+/*
+ * The source itself.
+ *
+ * `max-height` with a scroller because a plugin may be 64 KiB and the drawer is
+ * 300-odd pixels wide: a block that grew to the code's height would push every
+ * other row off the panel, and the reader opened one row.
+ *
+ * Both axes scroll, and horizontally is deliberate — the same call
+ * `.iris-reports__stack pre` makes and for the same reason. Wrapping source at
+ * a 40-character measure changes which line a statement is on, and a reader
+ * comparing this against what a model wrote is reading structure. Confined to
+ * this box, so the panel itself still never scrolls sideways.
+ */
+.iris-plugin-code__text {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: var(--iris-radius);
+  background: var(--iris-bg-sunken);
+  font-family: var(--iris-font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--iris-ink-secondary);
+  /* The bytes as stored, including the blank lines a model left in them. */
+  white-space: pre;
+  tab-size: 2;
+}
+
 /* The editor's own measure: the primitive's card is 380px and clips, which is
    what `iris-prompt-dialog` and `iris-usage-dialog` each found separately.
    440px seats a base URL in the mono face without a scroller. */

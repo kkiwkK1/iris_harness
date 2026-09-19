@@ -851,10 +851,22 @@ export const requestSchemas = {
    *
    * What a conversation grew: code a model wrote for this one chat, at the
    * player's spoken request, mounted into the card's own sandbox frame
-   * (`docs/SANDBOX-PLUGINS.md`). Three methods, **static schemas here beside
-   * `chat.*`** rather than through `scope.registerRpc` — that road has no
-   * production user on `main` and this feature should not be its first, because
-   * a runtime-registered method is one the static vocabulary cannot keep total.
+   * (`docs/SANDBOX-PLUGINS.md`). Every `sandboxPlugin.*` method is a **static
+   * schema here beside `chat.*`** rather than one registered through
+   * `scope.registerRpc` — that road has no production user on `main` and this
+   * feature should not be its first, because a runtime-registered method is one
+   * the static vocabulary cannot keep total.
+   *
+   * That totality is the invariant, and it is deliberately **not restated here
+   * as a count**. This comment read "three methods" until `sandboxPlugin.source`
+   * made it four, and a number in prose beside the table it describes is a
+   * reading that goes stale in silence — the trap `tests/method-names.test.ts`
+   * exists about, where a survey's own total of this table read as complete and
+   * was not. How many there are is answered by counting the keys of
+   * `requestSchemas`, which is where they are;
+   * `tests/sandbox-plugin-methods.test.ts` asserts the property instead, that
+   * every method whose name begins `sandboxPlugin.` is in this static table and
+   * that the set is not empty.
    *
    * They live beside `chat.*` because that is what they are about: a sandbox
    * plugin belongs to a conversation the way its messages and its variables do,
@@ -913,6 +925,31 @@ export const requestSchemas = {
     pluginId: z.string().min(1).max(120),
     hash: z.string().min(1).max(64).optional(),
     verdict: z.enum(['version', 'plugin', 'discard', 'disable', 'enable', 'remove']),
+  }),
+
+  /**
+   * One version's source, asked for on purpose.
+   *
+   * **A separate read is the whole point.** `SandboxPluginView` carries no
+   * `code` (§10.2), so the list the panel refreshes never ships a model's
+   * source; a reader who wants to see it says so, once, and gets one version.
+   * Splitting it this way is what keeps "the panel is open" from meaning "this
+   * conversation's code is in the page".
+   *
+   * `version` picks a kept earlier one; absent means the current one. Both are
+   * refused **by name** when they do not exist, rather than falling back to the
+   * current version: a reader who asked for v2 and was quietly handed v3 would
+   * be reading the wrong bytes against the hash the panel showed them.
+   *
+   * Scoped by `chatId` like everything else here. A plugin id belongs to the
+   * conversation that minted it, so asking for another conversation's plugin is
+   * a not-found, and that is the same door the rest of this family uses rather
+   * than a check written once more.
+   */
+  'sandboxPlugin.source': z.object({
+    chatId: z.string().min(1),
+    pluginId: z.string().min(1).max(120),
+    version: z.number().int().min(1).optional(),
   }),
 
   'character.list': z.object({}),
@@ -2709,6 +2746,17 @@ export interface RpcResponseMap {
     plugins: SandboxPluginView[]
     mounts: { pluginId: string, version: number, code: string }[]
   }
+  /**
+   * One version's stored bytes, with the two facts that say which version they
+   * are.
+   *
+   * `code` is the source **as stored**, not re-wrapped: the reader is being
+   * shown what was authorised, and `hash` is computed over exactly these bytes,
+   * so a reader can hold the two against what the confirmation card said.
+   * `version` is answered rather than echoed, because the request may have
+   * omitted it and "the current one" has to be named to be useful.
+   */
+  'sandboxPlugin.source': { code: string, hash: string, version: number }
   'prompt.itemize': { itemization: PromptItemization }
   /**
    * The comparison, or `undefined` when this conversation has fewer than two
