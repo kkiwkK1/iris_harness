@@ -42,7 +42,7 @@
 | `fields.tsx` | host default / use host default | `hostDefault useHostDefault` |
 | `ConnectionPanel.tsx` | 是哪台宿主在服务这页、种子注记、空态、删除 aria、立即生效那一句 | `host seededNotReal noSavedConnections deleteNamed activationImmediate`（这一行 2026-09-09 按 CC Switch 重做，2026-09-10 又删掉了宿主环境那一行，两节都在文末） |
 | `ConnectionPanel.tsx` 测试连接判定句 | 每个失败码一句（缺密钥/401/超时/网络/地址不是 URL/密钥含请求头无法携带的字符/HTTP 错误/不是模型列表/无端点）；宿主自己的原因句（英文技术细节:尝试的地址、状态码、`ENOTFOUND` 之类）不翻译,原样显示在判定句下方 | `testErr*` |
-| `ScriptPanel.tsx` | 面板头、读取中、无脚本、已拒绝摘要、允许脚本、撤回/更早运行注记、页面访问权全部文案、授权风险对话框四条、网络访问权全部文案与其风险对话框五条（2026-09-19 随网络授权契约落地）、随卡运行/你已关闭、卡内关闭、运行它们/不运行 | `sectionCardScripts readingCard cardNoScripts declined* allowScripts runThem dontRunThem withdrawn fromEarlierRun pageAccess* grantDialog* networkAccess* networkGrantedNote networkOffNote networkGrantDialog* turnOffNetworkAccess giveNetworkAccess runsWithCard youTurnedThisOff cardOffNote` |
+| `ScriptPanel.tsx` | 面板头、读取中、无脚本、已拒绝摘要、允许脚本、撤回/更早运行注记、页面访问权全部文案、授权风险对话框四条、网络访问权全部文案与其风险对话框五条（2026-09-19 随网络授权契约落地）、拒绝行上的授权入口与「已开启」句（2026-09-19，见 web 台账 §116）、随卡运行/你已关闭、卡内关闭、运行它们/不运行 | `sectionCardScripts readingCard cardNoScripts declined* allowScripts runThem dontRunThem withdrawn fromEarlierRun pageAccess* grantDialog* networkAccess* networkGrantedNote networkOffNote networkGrantDialog* turnOffNetworkAccess giveNetworkAccess grantNetworkFromReport networkGrantAlreadyOn runsWithCard youTurnedThisOff cardOffNote` |
 | `ConsentAsk.tsx` | 区域 aria（复用 `sectionCardScripts`） | — |
 | `consent.ts` `describeConsentAsk` | 授权问句全部变体（全运行/部分运行/覆盖关闭/沙箱句） | `consent*` |
 | `script-run-state.ts` `describeRun` / `summariseRuns` | 九种运行相位句 + 汇总句五种变体 + another script | `run* runs*` |

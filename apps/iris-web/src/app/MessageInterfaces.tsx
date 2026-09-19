@@ -425,8 +425,13 @@ export function MessageInterfaces({
             actionsOf(store).notify('error', message)
           },
           onBlocked: (host, directive, detail, covered) => {
-            const refusal = describeRefusal(host, directive, detail, covered)
-            actionsOf(store).addCardReport(refusal.text, { grade: refusal.grade })
+            const refusal = describeRefusal(
+              host, directive, detail, covered, store.getState().networkGranted,
+            )
+            actionsOf(store).addCardReport(refusal.text, {
+              grade: refusal.grade,
+              grant: refusal.grant ?? 'no',
+            })
             if (refusal.notify) actionsOf(store).notify('info', refusal.text)
           },
           onNote: note => actionsOf(store).addCardReport(note),

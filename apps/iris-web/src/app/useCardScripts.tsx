@@ -479,7 +479,19 @@ export function CardScriptFrames(): ReactElement {
                 broadcastWindowEvent(event, detail)
               },
               onBlocked: (blocked, directive, detail, covered) => {
-                const refusal = describeRefusal(blocked, directive, detail, covered)
+                /*
+                 * The grant is read from the store at the moment of the report,
+                 * not captured when the frame was built.
+                 *
+                 * Captured, this would answer with the grant as it stood at
+                 * frame construction — so a refusal arriving after the reader
+                 * turned the switch on would be filed as `'offer'` and put a
+                 * button on screen offering what they had just done. The store
+                 * is the live answer; the frame's policy is the stale one.
+                 */
+                const refusal = describeRefusal(
+                  blocked, directive, detail, covered, store.getState().networkGranted,
+                )
                 /*
                  * The durable channel always, the notice bar only when it is
                  * worth interrupting for.
@@ -491,7 +503,10 @@ export function CardScriptFrames(): ReactElement {
                  * sandbox working, and the author still needs to find out which
                  * host and which directive.
                  */
-                actionsOf(store).addCardReport(refusal.text, { grade: refusal.grade })
+                actionsOf(store).addCardReport(refusal.text, {
+                  grade: refusal.grade,
+                  grant: refusal.grant ?? 'no',
+                })
                 if (refusal.notify) actionsOf(store).notify('info', refusal.text)
               },
               /*

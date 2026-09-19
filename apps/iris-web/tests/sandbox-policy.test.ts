@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { frameSandbox, isAllowedRemote, REMOTE_ALLOWLIST, UNBRIDGED_GLOBALS } from '../src/sandbox/policy.ts'
+import {
+  frameSandbox,
+  grantOffer,
+  GRANT_WIDENED_DIRECTIVES,
+  isAllowedRemote,
+  REMOTE_ALLOWLIST,
+  UNBRIDGED_GLOBALS,
+} from '../src/sandbox/policy.ts'
 import { SANDBOX_PLUGIN_LIMITS } from '@iris/protocol'
 
 import { parseFromFrame, parseToFrame } from '../src/sandbox/protocol.ts'
@@ -409,5 +416,86 @@ test('an unknown plugin arm is still refused in both directions', () => {
   assert.equal(
     parseFromFrame('tok', { iris: 'tok', type: 'plugin:asked', pluginId: 'p' }),
     undefined,
+  )
+})
+
+// ── the offer to grant, decided where the grant is decided ─────────────────
+
+test('the offer is made only for a directive the grant actually widens', () => {
+  /*
+   * The rule that keeps the button honest, and `font-src` is why it exists:
+   * `srcdoc.ts` builds `faceSources` before it reads `networkGranted`, so a
+   * font refusal is one the switch cannot reach. A button beside it would do
+   * nothing, and a reader who pressed it would conclude the grant is broken
+   * rather than that fonts are a different case.
+   */
+  assert.equal(grantOffer('img-src', false), 'offer', 'images are the case that motivated this')
+  assert.equal(grantOffer('connect-src', false), 'offer')
+  assert.equal(grantOffer('style-src', false), 'offer')
+
+  assert.equal(grantOffer('font-src', false), 'no', 'the grant has no font-src branch')
+  assert.equal(grantOffer('script-src', false), 'no', 'the grant never widens code origins')
+  assert.equal(grantOffer('frame-src', false), 'no')
+  assert.equal(grantOffer('form-action', false), 'no')
+})
+
+test('a browser’s element-specific directive name still gets its offer', () => {
+  /*
+   * Measured, not assumed: a blocked `<link>` reports `style-src-elem`, not
+   * `style-src` — CSP3 splits the element-specific directives. The first version
+   * of this function compared whole names, so every refused stylesheet lost its
+   * offer while images kept theirs, and the asymmetry would have read as a card
+   * behaving inconsistently rather than as a missing suffix strip.
+   */
+  assert.equal(grantOffer('style-src-elem', false), 'offer')
+  assert.equal(grantOffer('script-src-elem', false), 'no', 'code origins are still never offered')
+  // Only the `-elem` suffix is stripped, so an unrelated directive ending in it
+  // cannot smuggle itself in.
+  assert.equal(grantOffer('font-src-elem', false), 'no', 'font-src does not gain a branch by spelling')
+})
+
+test('a grant that is already on says so instead of offering itself', () => {
+  /*
+   * Two different problems, two different sentences. A refusal arriving while
+   * the grant is on is one the button would not fix — so it must not be a
+   * button, and it must not be silence either: silence reads as "nothing to do
+   * here" when the reader's actual question is "why is this still refused?".
+   */
+  assert.equal(grantOffer('img-src', true), 'already-on')
+  assert.equal(grantOffer('font-src', true), 'no', 'the three answers stay distinct under a grant too')
+})
+
+test('every directive the grant widens is on the list, checked against the policy', async () => {
+  /*
+   * The list in `policy.ts` and the branches in `srcdoc.ts` are two halves of one
+   * fact, and this is the assertion that keeps them one. It reads the real
+   * generated policy rather than restating the branches: build both, and every
+   * directive whose value changed is a directive the grant widens — so a
+   * directive gaining a branch without joining the list fails here instead of
+   * quietly losing its offer.
+   */
+  const { framePolicy } = await import('../src/sandbox/srcdoc.ts')
+  const off = framePolicy(false, 'http://127.0.0.1:8787')
+  const on = framePolicy(true, 'http://127.0.0.1:8787')
+
+  const directiveOf = (policy: string): Map<string, string> => {
+    const map = new Map<string, string>()
+    for (const part of policy.split(';')) {
+      const trimmed = part.trim()
+      const at = trimmed.indexOf(' ')
+      if (at > 0) map.set(trimmed.slice(0, at), trimmed.slice(at + 1))
+    }
+    return map
+  }
+
+  const before = directiveOf(off)
+  const after = directiveOf(on)
+  const widened = [...after.keys()].filter(name => before.get(name) !== after.get(name)).sort()
+
+  assert.deepEqual(
+    widened,
+    [...GRANT_WIDENED_DIRECTIVES].sort(),
+    'a directive changed under the grant without being on GRANT_WIDENED_DIRECTIVES — its refusals'
+      + ' would lose the offer, or gain one that does nothing',
   )
 })

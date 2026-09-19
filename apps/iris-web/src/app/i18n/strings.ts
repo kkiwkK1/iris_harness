@@ -1183,6 +1183,17 @@ export const en = {
   networkOffNote: 'This card’s frames load no remote images, styles or fonts and fetch nothing — a card that points at its author’s server shows a broken image there instead, and the refusal is reported by name.',
   turnOffNetworkAccess: 'Turn off network access',
   giveNetworkAccess: 'Give this card network access…',
+  /**
+   * The offer, on the refusal line it is about.
+   *
+   * Names the grant rather than saying "allow", because the reader is being
+   * asked to hand a sandboxed card a channel out and the label is the last
+   * chance to say which decision that is. Short, because it sits inside a
+   * report row beside a sentence that already names the refused host.
+   */
+  grantNetworkFromReport: 'Allow this card network access…',
+  /** Said instead of offering, when the switch is already on and it did not help. */
+  networkGrantAlreadyOn: 'network access is already on, so this is not what the switch would fix',
   networkGrantDialogTitle: 'Let this card reach the remote network?',
   networkGrantDialogBody: 'Its frames will be able to load images, styles and fonts from, and send requests to, any https host. That is what a card whose panels and portraits live on its author’s server needs — and it is also a channel out: anything a frame can see, the conversation included, can leave over a request the card chooses the address of. Plain http stays refused, and this changes nothing about what code may run: remote scripts stay on the measured allowlist. It stays on until you turn it off. Turn it on only for a card you trust and have a reason to.',
   networkGrantDialogAck: 'I understand this card will be able to send what it can see to a server it chooses',
@@ -2954,6 +2965,10 @@ export const zh: Record<StringKey, string> = {
   networkOffNote: '这张卡的界面不加载任何远程图片、样式和字体，也不发起请求——指向作者服务器的资源会显示为裂图，拒绝会按域名具名上报。',
   turnOffNetworkAccess: '关闭网络访问权',
   giveNetworkAccess: '授予这张卡网络访问权…',
+  /** 拒绝行上的入口。点名是哪个授权，因为这是最后一句说清「你在给什么」的话。 */
+  grantNetworkFromReport: '允许这张卡联网…',
+  /** 开关已开却没用时，用它代替入口。 */
+  networkGrantAlreadyOn: '网络访问权已开启，所以这不是开关能解决的问题',
   networkGrantDialogTitle: '让这张卡访问远程网络？',
   networkGrantDialogBody: '它的界面将能从任意 https 主机加载图片、样式和字体，并向其发送请求。这正是面板和头像住在作者服务器上的卡所需要的——但它同时是一条外发通道：帧能看到的一切（包括对话内容）都能通过卡自己选择的地址离开。http 一律拒绝；且这不改变任何代码规则：远程脚本始终只在白名单内。在你关闭之前一直有效。只对你信任且有理由信任的卡片开启。',
   networkGrantDialogAck: '我知道这张卡将能把它能看到的内容发送到它自己选择的服务器',
