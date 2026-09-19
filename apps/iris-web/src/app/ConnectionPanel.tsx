@@ -72,6 +72,7 @@ import {
 } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
+import { authoringPick } from './authoring-pick.ts'
 import { CollapsibleSection } from './fields.tsx'
 import { since } from './format.ts'
 import { formatTokens } from './token-format.ts'
@@ -442,6 +443,12 @@ export function ConnectionPanel(): ReactElement {
    * provider and choosing a model are two edits and a write on the first would
    * store a provider with the previous provider's model — which is a
    * combination that fails at the far end of a request nobody can see yet.
+   *
+   * Since 2026-09-19 the two edits are not independent: moving the provider
+   * also moves the model, to the first one the new provider advertises unless
+   * it advertises the current one too (`authoring-pick.ts`). That is what keeps
+   * the model `<select>` — controlled, and without a `''` option — from
+   * displaying a model the state does not hold.
    */
   const [authoringDraft, setAuthoringDraft] = useState<{ id: string, model: string }>({ id: '', model: '' })
   /** Whether the authoring row's model is being hand-typed (owner, 2026-09-10). */
@@ -795,7 +802,21 @@ export function ConnectionPanel(): ReactElement {
               className="iris-text iris-field__control"
               aria-label={t('authoringPick')}
               value={authoringDraft.id}
-              onChange={event => { setAuthoringDraft({ ...authoringDraft, id: event.target.value }) }}
+              onChange={event => {
+                /*
+                 * The model comes with the provider.
+                 *
+                 * Not `{ ...authoringDraft, id }`: that left the model at `''`
+                 * while the `<select>` beside it — controlled, and with no
+                 * option carrying `''` — displayed the provider's first model,
+                 * so the button read a state nobody could see and stayed
+                 * disabled over a row that looked complete (owner, 2026-09-19).
+                 * `authoring-pick.ts` carries the decision and the reasons.
+                 */
+                setAuthoringDraft(current => authoringPick(
+                  profiles, event.target.value, current.model, authoringTyping,
+                ))
+              }}
             >
               <option value="">{t('authoringNone')}</option>
               {profiles.map(profile => (

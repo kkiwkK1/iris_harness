@@ -243,6 +243,7 @@ TEMP 下的对照也是 0。
 | `sandbox-plugins-pr-b.mjs` | 沙箱插件 PR-B 的验收（§15 PR-B 第 1–7 条）：自起宿主 **8793**、CDP **9346**、同样的数据目录拷贝口径。**花真钱**——第 1、4、6 条各一次「创造」请求，上限由脚本里的 `SPEND_CAP = 8` 强制执行而不是写在注释里；供应商只按 id 与 label 打印，写插件用的连接**只经产品自己的 `connection.authoring` RPC** 设置，不碰任何密钥文件。第 3 条会停掉并重起**它自己起的那个**宿主。第 4 条的预期结果是「消息帧里的状态栏**没有**变深」——记成**已知边界并指向 PR-C**，不是记成通过；第 5 条的删除走面板控件而不是一句话（契约里没有那条路），第 7 条靠「同一秒内删掉再建同名对话」逼 chatId 回收，回收不到就记成边界并指向那条确定性的单元测试。硬失败同上 |
 | `sandbox-plugins-pr-c.mjs` | 沙箱插件 PR-C 的验收（§15 PR-C）：自起宿主 **8794**、CDP **9347**、同样的数据目录拷贝口径。**不花钱**——插件源用 PR-A 那个仪器（读帧自己的 `<meta name="iris-token">`，post 一条与壳逐字节相同的 `plugin:mount`），因为 PR-B 那条路每次都要花一次 completion。量的是一张样式表**越过帧边界**：消息帧上 `[data-iris-plugin-style]` 0→N→0、状态栏计算背景的三次读数、消息帧 srcdoc 实际内联的字符数（基线/折进/终读）、以及**壳自己的文档上全程 0**（§16.3 的牙齿）。卡默认 `爱衣`（`IRIS_CARD` 可改）——它的问候楼是一个**围栏**界面，而那正是第一次跑量出缺陷的地方。每格读两次（4 s 与 9 s），因为重建会把旧帧 park 在屏幕上。**「帧预算面板」不存在**（`FramePlan.spent` 没有 UI 读者），脚本把这一句连同替代读数一起印出来。硬失败同上 |
 | `sandbox-plugins-pr-d.mjs` | 沙箱插件 PR-D 的验收（§15 PR-D）：自起宿主 **8795**、CDP **9348**、同样的数据目录拷贝口径。**不花钱**——但插件源不走 PR-A 那个仪器（面板要看的是**记录**，不是帧里的树），而是**自己把 sidecar 写进那份拷贝**：`<profile>/sandbox-plugins/<chatId>.json`，§10.1 的形状，**两个版本、字节不同、已授权**。宿主每次 `sandboxPlugin.list` 都从这个文件读，所以它下游全是产品。量的是：`sandboxPlugin.source` 按版本答字节与哈希、三种具名拒绝（没有的版本 / 没有的插件 / **别的对话的插件**）、`list` 的行里一个字节的源码都没有；面板上那一行、「看代码」里的 `<pre>` 与挂载的字节**逐字符相同**、面板里 `textarea/input/[contenteditable]` **计数为 0**；空对话的空态两句在两栏各读一次（改 `localStorage['iris.language']` 后重载）；用量页那一行——**这一格要往一个没被打开过的对话的头部塞一条 `iris_side_usage`**（`source:'plugin'`），因为写它的唯一产品路径是一次花钱的「创造」；塞不进去就**具名记成未驱动**并指向那两个确定性单测，不算通过。面板与源码块都**轮询到期限**再判，因为两者都在一次往返之后才到。硬失败同上 |
+| `authoring-row-acceptance.mjs` | 连接页 「写插件用」 一行的验收（web 账本 §120）：自起宿主 **8796**、CDP **9349**、同样的数据目录拷贝口径。**不花钱**——只设置 `connection.authoring`，并把 composer 的 「创造」 切进模式再切回来，一次 completion 都不发。判据层：屏幕（按钮的 `disabled`、模型控件显示的值、行里那句话）+ RPC（`connection.list` 的 `authoring`）。**「选完供应商立刻读按钮」是全部意义所在**——改值、派发 `change`、等 React 落定、读 `disabled` 写在同一段 `Runtime.evaluate` 里，中间再插一次交互就会把缺陷治好而不是量到。「创造」 那一格按 note 在不在与**模式有没有变**判（它没有 `disabled`，而模式只显示在 placeholder 与发送键的 `aria-label` 上，两者都会被翻译，所以判「变了」不判文案）。硬失败 1 = 有检查未过、2 = 端口/数据目录问题、3 = 硬超时 |
 
 > **CDP 端口已经统一走 `qa/cdp-port.mjs` 的 `cdpPort()`。** 上表那批脚本、`z1-e2e.mjs`、
 > `z1-regression.mjs` 以及 `verify-click-shift` / `verify-widescreen` 全部按同一公式算端口,
@@ -255,7 +256,7 @@ TEMP 下的对照也是 0。
 | 脚本 | 退出码 |
 |---|---|
 | `measure-frame-fit.mjs` | **1** = 解析到的卡数低于下界,或某张卡一格都没量到;**2** = 宿主没答(与「量得不够」分开,不必读日志就能分辨);3 = 硬超时 |
-| `multibook-acceptance.mjs` / `persona-acceptance.mjs` / `character-ops-acceptance.mjs` / `i18n-check.mjs` / `r-cards-check.mjs` / `verify-click-shift.mjs` / `verify-widescreen.mjs` | 1 = 有检查未过 |
+| `multibook-acceptance.mjs` / `persona-acceptance.mjs` / `character-ops-acceptance.mjs` / `i18n-check.mjs` / `r-cards-check.mjs` / `verify-click-shift.mjs` / `verify-widescreen.mjs` / `authoring-row-acceptance.mjs` | 1 = 有检查未过 |
 | `qa-card.mjs` / `render-only.mjs` / `bare-html-check.mjs` / `notice-center-baseline.mjs` / `import-cards.mjs` | **不判 PASS/FAIL** —— 它们产读数,判读由人做 |
 
 `measure-frame-fit` 的下界断言有**两条**,缺一条都能被绕过:第一条问「解析到几张卡」
