@@ -396,6 +396,15 @@ panel beside the document grant. The chain, end to end:
   pinned by `sandbox-srcdoc.test.ts`'s *"a network grant widens fetch, images
   and styles — and nothing else"*, which predates the switch and now guards the
   thing the switch actually flips.
+- **Asked where the refusal is, not only in the panel (2026-09-19)**: a refusal
+  the grant could fix carries an offer on its own report line, opening the same
+  risk-confirmation dialog the panel's switch uses. The rule that keeps it
+  honest is that the offer appears **only for a directive the grant actually
+  widens** (`GRANT_WIDENED_DIRECTIVES` in `sandbox/policy.ts`, asserted against
+  the real generated policy) — `font-src` is the case that makes it necessary,
+  since its two branches are identical under a grant and a button beside a font
+  refusal would change nothing. A refusal arriving while the grant is already on
+  says so instead of offering itself again.
 
 **A grant cannot revive a dead URL.** Measured 2026-09-19 on the card that
 motivated the feature: its images all live under `gitgud.io/Rown/moshen`, whose

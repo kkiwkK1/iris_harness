@@ -77,6 +77,58 @@ export const UNBRIDGED_GLOBALS: readonly { name: string, sites: number, plan: st
 export const REMOTE_ALLOWLIST: readonly string[] = ['*.jsdelivr.net', 'raw.githubusercontent.com']
 
 /**
+ * The directives a network grant widens, at the source that widens them.
+ *
+ * **This list exists because the offer to grant must not describe a power the
+ * grant does not have.** The report list offers to turn the grant on beside a
+ * refusal whose directive is one of these, and the whole value of that offer is
+ * that pressing it fixes the refusal. `font-src` is the case that makes the rule
+ * necessary: its two branches are identical under a grant (see
+ * `srcdoc.ts`'s `faceSources`, which is built before the grant is read), so a
+ * font refusal is one the grant cannot reach — and an offer beside it would be a
+ * button that does nothing, which is worse than no button because the reader
+ * would conclude the grant itself is broken.
+ *
+ * A `readonly` array rather than a predicate over directive names so a reader
+ * can see the whole claim at once, and so a directive added to `srcdoc.ts`'s
+ * granted branches without being added here fails `sandbox-policy.test.ts`
+ * instead of silently losing its offer.
+ */
+export const GRANT_WIDENED_DIRECTIVES: readonly string[] = ['img-src', 'connect-src', 'style-src']
+
+/**
+ * Whether turning the network grant on could plausibly fix this refusal.
+ *
+ * The decision behind the offer, kept here rather than in the panel for the same
+ * reason every other decision in this file is: `node --test` can load this
+ * module and cannot load the `.tsx` that would otherwise hold it.
+ *
+ * **Three answers, not two**, and the third is what a guard needs to stay
+ * honest. `'no'` is a directive the grant never touches — fonts today. But a
+ * refusal can also arrive from a card whose grant is *already on*, and there the
+ * two facts are different: `'already-on'` means this exact refusal would survive
+ * the button, so it is not offered at all. Collapsing those into `false` would
+ * make `already-on` and `impossible` print the same sentence to a reader who has
+ * two different problems.
+ *
+ * @param directive - the CSP directive that refused, as the frame reported it.
+ * @param networkGranted - whether this card's grant is already on.
+ * @returns whether to offer the grant, and what to say when it is already on.
+ */
+export function grantOffer(
+  directive: string,
+  networkGranted: boolean,
+): 'offer' | 'already-on' | 'no' {
+  // Browsers report the *effective* directive, and `style-src-elem` /
+  // `script-src-elem` are what a `<link>`/`<script>` violation carries — the
+  // element-specific directives, which are separate names in CSP3 and which a
+  // suffix comparison has to admit or every blocked stylesheet loses its offer.
+  const base = directive.replace(/-elem$/, '')
+  if (!GRANT_WIDENED_DIRECTIVES.includes(base)) return 'no'
+  return networkGranted ? 'already-on' : 'offer'
+}
+
+/**
  * Whether a URL's host is on the allowlist.
  *
  * Present in the browser bundle for one reason only: to give a card a refusal

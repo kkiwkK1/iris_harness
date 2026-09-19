@@ -12,7 +12,7 @@
  * @module iris-web/client/store
  */
 
-import type { ReportGrade } from '../app/blocked-line.ts'
+import type { RefusalGrant, ReportGrade } from '../app/blocked-line.ts'
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type {
@@ -306,6 +306,21 @@ export interface CardReport {
    * arrives — but left unmarked it makes the panel mourn a card that works.
    */
   withdrawn?: boolean
+  /**
+   * The network grant this refusal was about, when one would change it.
+   *
+   * `'offer'` is what the panel turns into a button; `'already-on'` is what stops
+   * it growing one. Set from `describeRefusal`'s own judgement, which reads the
+   * directive — the panel has no directive-to-grant mapping and must not grow
+   * one. Absent means no offer: a report that is not a refusal at all (library
+   * cost, a card's own `toastr.info`) has nothing to grant.
+   *
+   * **Carried on the report rather than derived from its text.** The sentence
+   * names the host and the directive, and re-parsing a display string to decide
+   * whether to show a control is how the two come to disagree — the same
+   * mistake the `covered` field's own history records.
+   */
+  grant?: RefusalGrant
 }
 
 /**
@@ -371,6 +386,13 @@ export interface CardReportOptions {
   grade?: ReportGrade
   /** Which channel raised it, shown as a label beside the text. */
   channel?: string
+  /**
+   * What this refusal implies about the network grant, when it is one.
+   *
+   * Threaded through rather than recomputed: the refusal's own module decided
+   * it from the directive, and a second decision here would be a second answer.
+   */
+  grant?: RefusalGrant
 }
 
 export interface IrisState {
@@ -3018,7 +3040,7 @@ export function createIrisStore(
       },
 
       addCardReport(text: string, options?: CardReportOptions): void {
-        const { scriptId, grade, channel } = options ?? {}
+        const { scriptId, grade, channel, grant } = options ?? {}
         const generation = get().cardRunGeneration
         const seen = get().cardReports
 
@@ -3044,13 +3066,32 @@ export function createIrisStore(
               ...(scriptId === undefined ? {} : { scriptId }),
               ...(grade === undefined ? {} : { grade }),
               ...(channel === undefined ? {} : { channel }),
+              ...(grant === undefined ? {} : { grant }),
             }],
           })
           return
         }
         if (seen[at]?.generation === generation) return
         const updated = [...seen]
-        updated[at] = { text, generation, ...(scriptId === undefined ? {} : { scriptId }) }
+        /*
+         * The grant travels with the re-date, and that is **not** incidental.
+         *
+         * This branch fires when the same refusal recurs in a new run — which is
+         * exactly the moment the answer changed: a card refused on `img-src`
+         * while the grant was off, the reader turning it on, and the refusal
+         * arriving again from a frame built before the flip (or from the part of
+         * the card the grant does not reach). Keeping the stale `'offer'` here
+         * would leave a button offering something already true, and the reader's
+         * second press of it teaches them the switch does nothing.
+         */
+        updated[at] = {
+          text,
+          generation,
+          ...(scriptId === undefined ? {} : { scriptId }),
+          ...(grade === undefined ? {} : { grade }),
+          ...(channel === undefined ? {} : { channel }),
+          ...(grant === undefined ? {} : { grant }),
+        }
         set({ cardReports: updated })
       },
 

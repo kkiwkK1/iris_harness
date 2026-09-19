@@ -232,6 +232,40 @@ export function ScriptPanel(): ReactElement | null {
               {report.generation === generation ? null : (
                 <span className="iris-script__stale"> · {t('fromEarlierRun')}</span>
               )}
+              {/*
+                The offer, on the line it is about.
+
+                This is the whole feature: an app-Store-shaped question asked
+                *where the reader is already looking* at the thing that needs it,
+                rather than a switch buried in the panel that they have to
+                already know to look for. It appears only where the grant would
+                actually change the outcome (`grant === 'offer'`, decided from
+                the directive in `blocked-line.ts`), because a button beside a
+                refusal it cannot fix teaches the reader that the switch is
+                broken.
+
+                It opens the **same** risk-confirmation dialog the grant block
+                below uses, with the same acknowledgement: a shortcut into a
+                decision is not a way around it. Nothing here is card-authored —
+                the text is `describeRefusal`'s own sentence and the button's
+                label is a shell string — so a card cannot phrase a request for
+                its own privileges.
+              */}
+              {report.grant === 'offer' ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setNetworkAcknowledged(false)
+                    setAskingNetwork(true)
+                  }}
+                >
+                  {t('grantNetworkFromReport')}
+                </Button>
+              ) : null}
+              {report.grant === 'already-on' ? (
+                <span className="iris-script__stale"> · {t('networkGrantAlreadyOn')}</span>
+              ) : null}
             </p>
           ))}
         </div>

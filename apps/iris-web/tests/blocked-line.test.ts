@@ -81,3 +81,51 @@ test('a covered refusal from our own origin keeps its path too', () => {
   assert.match(refusal.text, /\/lib\/jquery\.min\.js from card\.js:9/)
   assert.match(refusal.text, /jQuery is already preseeded/)
 })
+
+// ── what a refusal implies about the network grant ─────────────────────────
+
+test('a refusal the grant could fix carries the offer', () => {
+  /*
+   * The offer rides on the refusal rather than being recomputed by the panel,
+   * so this is the hop that has to be asserted: a directive the grant widens
+   * produces `'offer'`, and the two callers (`useCardScripts.tsx`,
+   * `MessageInterfaces.tsx`) pass it straight through to the report.
+   */
+  assert.equal(describeRefusal('gitgud.io', 'img-src').grant, 'offer')
+  assert.equal(describeRefusal('api.example.com', 'connect-src').grant, 'offer')
+  assert.equal(describeRefusal('cdn.example.com', 'style-src-elem').grant, 'offer')
+})
+
+test('a refusal the grant cannot fix carries no offer', () => {
+  // `font-src` is the measured case: the grant has no branch for it, so an offer
+  // beside a font refusal would be a button that changes nothing.
+  assert.equal(describeRefusal('fonts.example.com', 'font-src').grant, 'no')
+  // Code origins are the deliberate exclusion the grant's whole argument rests
+  // on, and a refusal there must never suggest otherwise.
+  assert.equal(describeRefusal('cdn.example.com', 'script-src').grant, 'no')
+})
+
+test('a covered refusal is graded a note and judged for the grant independently', () => {
+  /*
+   * Two facts, and the covered case is where conflating them would bite: the
+   * grade answers "is something missing" (no — we preseed it) and the grant
+   * answers "would the switch change this outcome". A card whose guard fell back
+   * to a CDN for a library we already seed gets `note` **and** the honest grant
+   * verdict, rather than one standing in for the other.
+   */
+  const covered = describeRefusal('cdn.example.com', 'img-src', undefined, 'Vue')
+  assert.equal(covered.grade, 'note')
+  assert.equal(covered.notify, false)
+  assert.equal(covered.grant, 'offer', 'the grant question is separate from the grade')
+
+  const code = describeRefusal('cdn.example.com', 'script-src', undefined, 'Vue')
+  assert.equal(code.grade, 'note')
+  assert.equal(code.grant, 'no')
+})
+
+test('a grant already on is reported, not offered again', () => {
+  assert.equal(describeRefusal('gitgud.io', 'img-src', undefined, undefined, true).grant, 'already-on')
+  // The default is "not on", so a caller that knows nothing still gets an offer
+  // rather than silence — the panel is the only place that can be wrong here.
+  assert.equal(describeRefusal('gitgud.io', 'img-src').grant, 'offer')
+})
