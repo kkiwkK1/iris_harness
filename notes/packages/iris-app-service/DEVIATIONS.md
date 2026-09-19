@@ -9631,3 +9631,69 @@ SillyTavern 没有对应物：没有「这段对话自己长出来的代码」�
 (b) `UsageTotals` 的份额字段到第四个：见上，先回答 §97 (e)。
 (c) 出现第二个把源码交给浏览器的路：那要先回答「这两条路的收口是同一套吗」，
 今天这一条的收口是三句具名拒绝。
+## 99. 绑定表可以活得比它命名的文件久：世界书「不在」与「被改过」是两种状态
+
+**Kind:** defect found by playing a real card, fixed here; upstream has no
+corresponding bug and no corresponding safeguard（上游靠 `fileExists` 先挡，
+这一整类状态在它那里不成立 —— 详见下文）。
+
+**§12 那张表少了一行，这一节是补它。** §12 用两个哈希判两件事：`sourceHash`
+回答「卡变了没有」，`materialisedHash` 回答「用户改过这本书没有」。判据是
+`readRaw` 的返回值与 `materialisedHash` 比 —— 但 `readRaw` 把**「不存在」
+「读不动」「不是 JSON」三种情况合成同一个 `undefined`**（`worldbooks.ts` 自己
+的注释就这么写）。于是「文件不在」被读成了「用户改过这本书」：
+
+- 绑定表仍然指名这本书 → 永远走 `existing !== undefined` 分支；
+- `current === undefined` → `untouched` 为 false → 走「不覆盖，保留用户的书」；
+- **于是再也不会有人写它**，而每条报告都在说「你改过它」。
+
+**实测症状（2026-09-19，用户报的那张卡）。** `[MVU] Failed to read
+character-card configuration — Unable to read character lorebook "黑兽"` 每次开卡
+都响；`getWorldbook` 答「它已经不在了。侧栏可能过期了」；点开局按钮得到卡自己的
+兜底文案「命运之门没有回应」。**唯一有效的修法——手工清掉 `worldbook-bindings.json`
+里那一条——没有任何报告暗示过**，因为所有报告都说这本书「被编辑过」。
+
+**修法：存在性问目录，不问 `readRaw`。** 那个函数回答不了这个问题，而三种状态在
+这里要三种处置：
+
+| 文件状态 | 处置 | 为什么 |
+| --- | --- | --- |
+| **不在** | 从卡片内嵌副本重新写，出一条报告 | 没有编辑可丢，内嵌书就是最后一份 |
+| **在、读不动/坏了** | **原样不动**，报告说「它在，但读不出来」 | `create` 拒绝已存在的名字，所以「修」会把报告变成异常；覆盖更会毁掉它唯一的一份 |
+| **在、可读** | 走 §12 原有的两条（未改→重物化，改过→保留并报告） | 不变 |
+
+判据从 `readRaw` 换成 `worldbooks.names()` 的成员测试，代价是一次目录列举，
+只发生在 `existing !== undefined` 这条已经要读文件的路由上。
+
+**顺带修掉一个第二真相来源。** `upgradeFromSt` 原本**又读了一次**同一个文件来算
+`untouched`；调用方刚刚才读过，两次读是同一个问题的两个答案。现在由调用方读一次、
+把 `untouched` 传进去 —— 这不是省一次 IO，是让「这个文件还是不是我写的那个」只有
+一个来源。
+
+**heal 恢复不了的东西，实测并写下来。** 重写恢复的是**卡片内嵌**的那本书（暴露
+这个缺陷的那张卡是 110 条），运行时长出来的部分会丢：卡在开局时写进自己世界书的
+「开局档案·玩家」不在卡里，随文件一起消失，重做一次开局会再写一次。这是对的取舍
+（否则就要给「用户可能也在编辑的书」存第二份副本，正是 §12 要消除的重复），但它是
+读者看到 heal 报告时该知道的事实，而不是「全都回来了」的承诺。
+
+**一句话记住：绑定是关于「名字」的声明，不是关于「文件」的承诺。**
+
+### 牙齿
+
+| 断言 | 在哪里 |
+| --- | --- |
+| 文件丢 → 从内嵌副本重写，且报告说的是「missing from disk」而不是「edited」 | `packages/iris-app-service/tests/materialise.test.ts`「a lost book file is written again from the card, and said so」 |
+| heal 只发生一次，下一次开卡是安静的 | 同文件「a heal happens once — the next open is quiet」 |
+| 文件在但坏掉 → 原样不动（读回仍是那串坏字节） | 同文件「a book that is present but unreadable is left alone, not healed over」 |
+
+两次牙齿检查都做过：把 `if (!present)` 屏蔽掉，前两条转红；把 `if (unreadable)`
+屏蔽掉，第三条转红。`If (!present)` 那一处若退回旧行为，报告会退回
+「you have edited」，也就是这条缺陷原本的模样。
+
+### What would overturn this
+
+(a) 世界书文件被移出 `worlds/` 目录管理（例如改存数据库）：那时存在性不再由目录
+列举回答，这条判据要换，`readRaw` 的三态合并问题也要重新面对。(b) 运行时写入被
+要求可恢复：那需要给每本书留一份持久副本，先要解释它和 §12 消除的那份重复有什么
+不同。(c) 出现「在、坏掉」以外的第四种不可读状态（例如权限）：届时该按「应当修」
+还是「应当报」重新分类，而不是继续并进 `unreadable`。

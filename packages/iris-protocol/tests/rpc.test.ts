@@ -41,6 +41,32 @@ test('a negative swipe index is refused', () => {
   assert.equal(parseRequest('chat.swipe', { chatId: 'c1', turn: 0, index: 0 }).ok, true)
 })
 
+test('an entry with no uid is a valid book write, because the host mints one', () => {
+  // The transport-level defect `lorebook-aliases.ts` names for the old lorebook
+  // family, fixed at the schema for every caller: upstream's entry type is
+  // `PartialDeep`, and the host's own `resolveUidCollisions` opens with
+  // `entry.uid ?? <random>`. Requiring `uid` here made that branch unreachable
+  // and refused a real card at `entries[110].uid`.
+  const result = parseRequest('worldbook.replace', {
+    name: '黑兽',
+    entries: [{ uid: 0, name: 'existing' }, { name: '开局档案·玩家', content: '【玩家档案】' }],
+  })
+
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.params.entries.length, 2)
+})
+
+test('a uid that is present is still bounded', () => {
+  assert.equal(
+    parseRequest('worldbook.replace', { name: 'b', entries: [{ uid: -1 }] }).ok,
+    false,
+  )
+  assert.equal(
+    parseRequest('worldbook.replace', { name: 'b', entries: [{ uid: 1.5 }] }).ok,
+    false,
+  )
+})
+
 test('every method has a request schema', () => {
   // The guard against a method reaching the host without validation.
   for (const [method, schema] of Object.entries(requestSchemas)) {

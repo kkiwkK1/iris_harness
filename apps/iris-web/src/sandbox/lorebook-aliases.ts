@@ -447,12 +447,14 @@ export function mergeLorebookEntry(
  * including the quadratic probe: an absent uid becomes a random one below a
  * million, and a collision advances by `i * i` modulo the same bound.
  *
- * **It has to happen here rather than being left to the host**, even though the
- * host runs the same algorithm (`resolveUidCollisions`): `uid` is the one
- * *required* field of the wire's entry shape, so an entry that reached the wire
- * without one would be rejected at validation — a card that wrote exactly what
- * upstream's declaration allows (`Partial<LorebookEntry>[]`, every field
- * optional) failing on a technicality of this transport.
+ * **The one place this algorithm exists on the frame side**, shared by both
+ * vocabularies. The worldbook family (`tavern-helper.ts`) calls the same
+ * function for its entries: one upstream algorithm, one spelling, so the two
+ * families cannot drift about how a uid is minted or how a collision is probed.
+ * The host runs its own copy (`resolveUidCollisions`) because a client it did
+ * not write may send entries with no uid at all — the wire allows it since
+ * 2026-09-19 — and a stored book must not depend on which side filled the
+ * number in.
  *
  * Upstream's own function also assigns `display_index` from a running maximum.
  * That half is dropped: the new shape has no such field and this host numbers
@@ -461,9 +463,9 @@ export function mergeLorebookEntry(
  * @param entries - the entries as a card supplied them.
  * @returns the same entries, each with a uid, in the same order.
  */
-export function assignLorebookUids(
-  entries: readonly Partial<CardLorebookEntry>[],
-): (Partial<CardLorebookEntry> & { uid: number })[] {
+export function assignEntryUids<T extends { uid?: number }>(
+  entries: readonly T[],
+): (T & { uid: number })[] {
   const MAX_UID = 1_000_000
   const taken = new Set<number>()
   return entries.map((entry) => {
@@ -476,6 +478,23 @@ export function assignLorebookUids(
     taken.add(candidate)
     return { ...entry, uid: candidate }
   })
+}
+
+/**
+ * The old vocabulary's spelling of {@link assignEntryUids}.
+ *
+ * Kept as its own name because the call site reads as the old API's own
+ * operation there, and because the type it narrows to (`Partial<CardLorebookEntry>`)
+ * is the one its caller holds. `uid` is the one *required* field of the wire's
+ * entry shape only in the sense that the host used to demand it; both families
+ * now fill it in here, and the schema accepts an entry without one.
+ * @param entries - the entries as a card supplied them.
+ * @returns the same entries, each with a uid, in the same order.
+ */
+export function assignLorebookUids(
+  entries: readonly Partial<CardLorebookEntry>[],
+): (Partial<CardLorebookEntry> & { uid: number })[] {
+  return assignEntryUids(entries)
 }
 
 /**

@@ -39,7 +39,22 @@ export function frameSandbox(documentGranted: boolean): string {
   // the user deciding this card may have the page. It is spelled out here rather
   // than assembled at the call site so that the one dangerous combination in the
   // product appears in exactly one place.
-  return documentGranted ? 'allow-scripts allow-same-origin' : 'allow-scripts'
+  //
+  // `allow-forms` rides along on both, for parity rather than for access.
+  // Upstream's frame carries **no `sandbox` attribute at all**
+  // (`[TH] src/panel/render/iframe.ts` — recorded in `docs/SANDBOX.md`), so a
+  // whole class of cards builds its opening page as a real `<form>` and relies
+  // on its own `submit` handler calling `preventDefault()`. With the flag
+  // withheld the browser blocks the submission *before* any card code runs — the
+  // frame has no listener yet — and the click simply does nothing, with no error
+  // on any channel Iris watches.
+  //
+  // The flag alone is not enough: it would let a real submission navigate a
+  // `srcdoc` frame away from the card's own document. `frame-entry.ts` pairs it
+  // with a capture-phase `preventDefault`, which is Iris's stand-in for the
+  // `form-action` CSP upstream relies on and Iris deliberately does not ship.
+  const forms = 'allow-forms'
+  return documentGranted ? `allow-scripts allow-same-origin ${forms}` : `allow-scripts ${forms}`
 }
 
 /**

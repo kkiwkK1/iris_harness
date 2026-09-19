@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -137,6 +137,90 @@ test('a changed card re-materialises when nobody has edited the book', async (t)
   assert.deepEqual(
     (await fixed.worldbooks.get('Eldoria')).map(e => e.content),
     ['v1', 'v2 added by the author'],
+  )
+})
+
+test('a lost book file is written again from the card, and said so', async (t) => {
+  /*
+   * The heal. A binding is a claim about a **name**, not a promise about a
+   * file: the chat file and this table both still name the book, and the file
+   * behind it has gone (a deletion, a half-restored profile, a sync that lost
+   * one side). Nothing is at risk — there are no edits to protect — so the
+   * embedded copy the card carries is written again.
+   *
+   * Measured from a real chat that hit this: MVU failed to read the card's
+   * lorebook on every turn, `getWorldbook` answered "it is not there any
+   * more", and the repair nobody could guess was that the binding table had to
+   * be cleared by hand. Before this, the branch that ran reported the book as
+   * **edited** — because `readRaw`'s `undefined` was read as "the user changed
+   * it" — which sent the reader to look for an edit that never happened.
+   */
+  const fixed = await fixture(t)
+  const card = cardWith(['lore'], 'Eldoria')
+  await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+
+  // The file goes; the binding stays.
+  await unlink(join(fixed.dir, 'worlds', 'Eldoria.json'))
+
+  const done = await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+
+  assert.equal(done?.name, 'Eldoria', 'the binding still names the book the card owns')
+  assert.equal(done?.reports.length, 1, 'a self-heal is a fact the reader is owed')
+  assert.match(done?.reports[0] ?? '', /missing from disk/u)
+  assert.doesNotMatch(done?.reports[0] ?? '', /edited/u, 'a lost book is not an edited one')
+  assert.deepEqual(
+    (await fixed.worldbooks.get('Eldoria')).map(e => e.content),
+    ['lore'],
+    'the embedded copy was not written back',
+  )
+  // The record has to move with the file, or the next open compares against a
+  // hash of bytes that are no longer there — and then reads a healthy book as
+  // "the user edited it" on every subsequent open. Asserted through behaviour
+  // rather than by re-deriving the hash: a lost-then-healed book must be quiet
+  // on the next open, which is exactly what a stale record would break.
+  const reopened = await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+  assert.deepEqual(reopened?.reports, [], 'the healed book was rewritten again on the next open')
+})
+
+test('a heal happens once — the next open is quiet', async (t) => {
+  const fixed = await fixture(t)
+  const card = cardWith(['lore'], 'Eldoria')
+  await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+  await unlink(join(fixed.dir, 'worlds', 'Eldoria.json'))
+
+  const healed = await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+  const again = await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+
+  assert.equal(healed?.reports.length, 1)
+  assert.deepEqual(again?.reports, [], 'the repair repeated on an already-healed book')
+})
+
+test('a book that is present but unreadable is left alone, not healed over', async (t) => {
+  /*
+   * The distinction the whole branch exists for. A truncated file is *there*:
+   * overwriting it would destroy the only copy of whatever it holds, and
+   * `create` would refuse the name anyway, turning a report into an exception.
+   * So it is named as unreadable — which is a different repair from "the user
+   * edited this" and a different one from "the file is gone".
+   */
+  const fixed = await fixture(t)
+  const card = cardWith(['lore'], 'Eldoria')
+  await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+
+  const path = join(fixed.dir, 'worlds', 'Eldoria.json')
+  const corrupt = '{"entries": {"0": {"uid": 0,'
+  await writeFile(path, corrupt, 'utf8')
+
+  const done = await materialiseEmbeddedBook('aria', card, fixed.worldbooks, fixed.bindings)
+
+  assert.equal(done?.name, 'Eldoria')
+  assert.equal(done?.reports.length, 1)
+  assert.match(done?.reports[0] ?? '', /could not be read/u)
+  assert.doesNotMatch(done?.reports[0] ?? '', /missing from disk/u)
+  assert.equal(
+    await readFile(path, 'utf8'),
+    corrupt,
+    'the unreadable file was overwritten, which loses whatever it held',
   )
 })
 

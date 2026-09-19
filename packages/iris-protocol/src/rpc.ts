@@ -31,9 +31,34 @@ import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
  * Shared by `worldbook.replace` and `worldbook.create`: both build a stored
  * book from the same shape, and a second copy of an eight-nested-field schema
  * is exactly how the two halves drift.
+ *
+ * **`uid` is optional, and that is the fix for a real card (2026-09-19).** Both
+ * writers already tolerate an absent uid — `resolveUidCollisions` in
+ * `worldbooks.ts` opens with `entry.uid ?? Math.floor(Math.random() * MAX_UID)`,
+ * copied from upstream's own collision handler — but the request schema used to
+ * require it, so the branch that fills one in was **unreachable**. A card that
+ * appends an entry it just built (`{name, content}`, no uid — which is what
+ * upstream's `PartialDeep` entry type allows) was refused at validation with
+ * `entries[n].uid: expected number, received undefined`, naming a field the
+ * card had no reason to set.
+ *
+ * This is the transport-level defect `lorebook-aliases.ts` already names for
+ * the **old** lorebook family ("a card that wrote exactly what upstream's
+ * declaration allows ... failing on a technicality of this transport"); that
+ * family works around it in the frame (`assignLorebookUids`). Relaxing the
+ * schema fixes it for every caller instead of one family, and the frame-side
+ * pairing is kept as well so a stored book never depends on which side filled
+ * the number in.
  */
 const worldbookEntriesPatch = z.array(z.object({
-  uid: z.number().int().min(0),
+  /**
+   * The entry's identity, or absent for one the caller is creating.
+   *
+   * Still bounded when present: upstream's collision probe and this host's copy
+   * both work modulo a million, and a negative uid has never been written by
+   * anything (`resolveUidCollisions` treats a non-number the same as absent).
+   */
+  uid: z.number().int().min(0).optional(),
   name: z.string().max(500).optional(),
   enabled: z.boolean().optional(),
   strategy: z.object({
@@ -2002,7 +2027,8 @@ export const requestSchemas = {
    *
    * Every field but `uid` is optional, and **omitting `strategy` does not mean
    * "leave it alone"** — it means `constant: true`, an always-on entry. That is
-   * upstream's default and this host copies it; see `worldbooks.ts`.
+   * upstream's default and this host copies it; see `worldbooks.ts`. `uid` is
+   * optional too — see the schema above for why, and for what fills it in.
    */
   /**
    * The books injected into every chat, whatever character is playing.

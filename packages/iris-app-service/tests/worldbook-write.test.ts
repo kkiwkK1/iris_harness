@@ -182,6 +182,38 @@ test('colliding uids are separated, and a missing uid is assigned one', () => {
   assert.equal(uids[0], 1, 'the first claim on a uid should keep it')
 })
 
+test('a new entry appended to a whole book is written without the caller minting a uid', async (t: TestContext) => {
+  // The shape a real card produced (黑兽's opening page, 2026-09-19): read the
+  // book through `updateWorldbookWith`, append an entry it just built, send the
+  // whole array back. Upstream's entry type is `PartialDeep`, so the appended
+  // entry legitimately has no `uid` — and the request schema used to demand
+  // one, which refused the write with `entries[110].uid: expected number,
+  // received undefined` before `resolveUidCollisions` could run.
+  const existing = [entryFile(0, 'a'), entryFile(1, 'b'), entryFile(2, 'c')]
+  const { store, dir } = await bookWith(t, existing)
+  const appended = { name: '开局档案·玩家', enabled: true, content: '【玩家档案】' }
+
+  await store.replace('Eldoria', [
+    { uid: 0, name: 'a' },
+    { uid: 1, name: 'b' },
+    { uid: 2, name: 'c' },
+    appended,
+  ])
+
+  const raw = JSON.parse(await readFile(join(dir, 'worlds', 'Eldoria.json'), 'utf8')) as {
+    entries: Record<string, { uid: number, content: string }>
+  }
+  const rows = Object.values(raw.entries)
+  assert.equal(rows.length, 4, 'the appended entry was dropped')
+  const uids = rows.map(row => row.uid)
+  assert.equal(new Set(uids).size, 4, `uids collided: ${uids.join(', ')}`)
+  assert.equal(
+    rows.some(row => row.content === '【玩家档案】'),
+    true,
+    'the appended entry is not in the stored book',
+  )
+})
+
 test('writing does not truncate the book if it is interrupted', async (t: TestContext) => {
   // Asserted through its observable consequence: the replace goes through a
   // temporary file and a rename, so no `.tmp` is left behind and the book is
