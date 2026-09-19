@@ -27,7 +27,7 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
   { route: 'regex', group: 'content', en: 'Regex Scripts', zh: '正则脚本', summaryEn: 'Global, preset and character rewrite rules', summaryZh: '全局、预设与角色改写规则', aliases: 'regex regular expression global preset character 正则 全局 预设 角色' },
   { route: 'worldbooks', group: 'content', en: 'Worldbooks', zh: '世界书', summaryEn: 'Lore sources used by conversations', summaryZh: '对话使用的世界设定来源', aliases: 'lore world book 世界书 知识' },
   { route: 'scripts', group: 'content', en: 'Scripts', zh: '脚本', summaryEn: 'Consent, run state and script library', summaryZh: '授权、运行状态与脚本库', aliases: 'script library card helper 酒馆助手 脚本 库' },
-  { route: 'appearance', group: 'appearance', en: 'Appearance & Reading', zh: '外观与阅读', summaryEn: 'Theme, typography, language and user CSS', summaryZh: '主题、字号、语言与用户 CSS', aliases: 'appearance reading theme css language 外观 阅读 主题 语言' },
+  { route: 'appearance', group: 'appearance', en: 'Appearance & Reading', zh: '外观与阅读', summaryEn: 'Theme, typography, language and user CSS', summaryZh: '主题、字号、语言与用户 CSS', aliases: 'appearance reading theme css language quote 外观 阅读 主题 语言 引号' },
   { route: 'backups', group: 'data', en: 'Backups', zh: '备份', summaryEn: 'Preview, restore and remove snapshots', summaryZh: '预览、恢复与删除快照', aliases: 'backup restore snapshot 备份 恢复 快照' },
   { route: 'usage', group: 'data', en: 'Usage', zh: '用量', summaryEn: 'Token use, cache hits and model totals', summaryZh: 'Token、缓存命中与模型统计', aliases: 'usage token cache cost 用量 缓存 消耗' },
   { route: 'plugins', group: 'advanced', en: 'System Plugins', zh: '系统插件', summaryEn: 'Bundled runtime capabilities and their lifecycle', summaryZh: '内置运行能力及其生命周期', aliases: 'plugin extension tavernhelper mvu runtime 插件 扩展 酒馆助手 运行' },

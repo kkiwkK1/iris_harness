@@ -24,29 +24,83 @@
  * scan is fed a string built so that a quote can no more cross a paragraph
  * here than it can cross a newline upstream.
  *
+ * **Which quote pairs count is Iris's own answer, and the second divergence**
+ * (§122, owner ruling 2026-09-20). Upstream colours six pairs alike; the
+ * default here is the three that mark speech — `"…"`, `“…”`, `«…»` — because
+ * in Chinese prose `「…」` and `『…』` mostly mark terms, titles and emphasis
+ * (「资格」转为「职责」), and colouring those reads as noise beside the
+ * dialogue. The set is a parameter, and the reader can put upstream's six
+ * back from 设置 → 外观与阅读 → 引号上色.
+ *
  * @module iris-web/app/quoted-dialogue
  */
 
 /**
- * Upstream's quote regex, transcribed character for character.
+ * The code alternatives of upstream's quote regex, transcribed.
  *
- * `public/script.js:1846`. The leading alternatives are not decoration: they
+ * `public/script.js:1846`. These leading alternatives are not decoration: they
  * are what keeps the scan out of code. A `<style>` block, a fenced block, a
  * `~~~` block, a double-backtick span and a single-backtick span each match
  * **as a whole** and return themselves unchanged, so a quotation mark inside
- * one is never seen by the six capturing alternatives that follow.
+ * one is never seen by the capturing alternatives that follow.
  *
- * The flags are upstream's too, and the one that matters is the one that is
+ * None of them captures, which is what lets {@link quotedDialogueRuns} decide
+ * "was this a quotation?" by asking whether *any* group matched — without
+ * knowing how many quote pairs the scope it was given put after these.
+ */
+const CODE_ALTERNATIVES = /<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`/
+
+/**
+ * The three pairs that mark **speech**, in upstream's order.
+ *
+ * `"…"`, `“…”`, `«…»`. Iris's default, and the divergence from upstream's six
+ * (`notes/apps/iris-web/DEVIATIONS.md` §122).
+ */
+const DIALOGUE_PAIRS = /(".*?")|(“.*?”)|(«.*?»)/
+
+/**
+ * The three further pairs upstream colours alike, transcribed.
+ *
+ * `「…」`, `『…』`, `＂…＂` — `public/script.js:1846` again. In Chinese prose
+ * the corner brackets mostly mark terms, titles and emphasis
+ * (「资格」转为「职责」) rather than speech, which is why Iris leaves them
+ * uncoloured by default and offers them back under {@link QuoteScope}
+ * `'upstream'`.
+ */
+const TYPOGRAPHIC_PAIRS = /(「.*?」)|(『.*?』)|(＂.*?＂)/
+
+/**
+ * Which quotation marks count as dialogue.
+ *
+ * `'dialogue'` — `"…"`, `“…”`, `«…»`: Iris's default.
+ * `'upstream'` — those three plus `「…」`, `『…』`, `＂…＂`, which is exactly
+ * the set SillyTavern colours.
+ */
+export type QuoteScope = 'dialogue' | 'upstream'
+
+/** The scope a reader who has expressed no preference reads under. */
+export const QUOTE_SCOPE_DEFAULT: QuoteScope = 'dialogue'
+
+/**
+ * Build the scan for one scope.
+ *
+ * The flags are upstream's, and the one that matters is the one that is
  * **not** there: without `s`, `.` does not match a newline, so `".*?"` cannot
  * reach across a line. An unclosed quote is therefore left alone rather than
  * running to the end of the message — the property that makes this rule safe
  * to apply to text nobody proof-read.
  *
- * Rebuilt per call in {@link quotedDialogueRuns} rather than shared: a `g`
- * regex carries `lastIndex`, which is state two callers can hand each other.
+ * Rebuilt per call rather than shared: a `g` regex carries `lastIndex`, which
+ * is state two callers can hand each other.
+ * @param scope - which quote pairs count.
+ * @returns the scan, fresh.
  */
-const QUOTE_SCAN
-  = /<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`|(".*?")|(“.*?”)|(«.*?»)|(「.*?」)|(『.*?』)|(＂.*?＂)/
+function quoteScan(scope: QuoteScope): RegExp {
+  const pairs = scope === 'upstream'
+    ? `${DIALOGUE_PAIRS.source}|${TYPOGRAPHIC_PAIRS.source}`
+    : DIALOGUE_PAIRS.source
+  return new RegExp(`${CODE_ALTERNATIVES.source}|${pairs}`, 'gim')
+}
 
 /**
  * Upstream's tag guard, transcribed.
@@ -81,23 +135,26 @@ export interface QuoteRun {
 /**
  * Where the quoted dialogue in a run of text is.
  *
- * The six kinds are upstream's six, in upstream's order: `"…"`, `“…”`, `«…»`,
- * `「…」`, `『…』`, `＂…＂`. The marks are part of the run, because upstream
- * keeps them inside the `<q>`.
+ * Everything about the rule is upstream's — the code alternatives, the tag
+ * guard, the missing `s` flag, the marks kept inside the run — **except which
+ * quote pairs it looks for**, which is the scope. The marks are part of the
+ * run, because upstream keeps them inside the `<q>`.
  *
  * @param text - the text to scan.
+ * @param scope - which quote pairs count; `'dialogue'` (the default) is the
+ *   three speech pairs, `'upstream'` is SillyTavern's six.
  * @returns the runs, in order, non-overlapping.
  */
-export function quotedDialogueRuns(text: string): QuoteRun[] {
+export function quotedDialogueRuns(text: string, scope: QuoteScope = QUOTE_SCOPE_DEFAULT): QuoteRun[] {
   const masked = text.replace(TAG, (_, contents: string) =>
     `<${contents.replace(/"/g, HIDDEN_QUOTE)}>`)
-  const scan = new RegExp(QUOTE_SCAN.source, 'gim')
+  const scan = quoteScan(scope)
   const runs: QuoteRun[] = []
   let found = scan.exec(masked)
   while (found !== null) {
-    // Groups 1-6 are the quote kinds; a match with none of them is one of the
-    // code alternatives, which upstream returns unchanged.
-    const quoted = found.slice(1, 7).some(group => group !== undefined)
+    // Every group in the scan is a quote kind; a match with none of them is
+    // one of the code alternatives, which upstream returns unchanged.
+    const quoted = found.slice(1).some(group => group !== undefined)
     if (quoted) runs.push({ start: found.index, end: found.index + found[0].length })
     found = scan.exec(masked)
   }
@@ -294,15 +351,17 @@ export function clearQuotedDialogue(root: Element): void {
  * Idempotent: it takes off whatever it put on last time before it looks.
  *
  * @param root - the message's prose container.
+ * @param scope - which quote pairs count; the reader's preference
+ *   ( {@link module:iris-web/app/quote-scope} ), defaulting to speech only.
  * @returns how many `<q>` elements were created, which is what a test can
  *   assert a floor on without knowing how the renderer split its text nodes.
  */
-export function markQuotedDialogue(root: Element): number {
+export function markQuotedDialogue(root: Element, scope: QuoteScope = QUOTE_SCOPE_DEFAULT): number {
   clearQuotedDialogue(root)
 
   const { text, pieces } = flatten(root)
   if (pieces.length === 0) return 0
-  const runs = quotedDialogueRuns(text)
+  const runs = quotedDialogueRuns(text, scope)
   if (runs.length === 0) return 0
 
   const document_ = root.ownerDocument

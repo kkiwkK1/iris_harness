@@ -816,6 +816,14 @@ export const en = {
   themeImported: 'Restored the theme package (palette and user.css).',
   themeTransferNote: 'The file carries the theme’s full token palette and this device’s user.css.',
   proseSize: 'Prose size',
+  /**
+   * Which quotation marks take the theme's quote colour. The first option is
+   * Iris's default and colours speech only; the second restores the six pairs
+   * SillyTavern colours (`notes/apps/iris-web/DEVIATIONS.md` §122).
+   */
+  quoteScope: 'Quote colour',
+  quoteScopeDialogue: 'Dialogue quotes',
+  quoteScopeUpstream: 'Same as SillyTavern (six kinds)',
   hostDefault: 'host default',
   useHostDefault: 'use host default',
   /** Option labels are proper names and stay in their own language everywhere. */
@@ -2624,6 +2632,9 @@ export const zh: Record<StringKey, string> = {
   themeImported: '已恢复主题包（配色与 user.css）。',
   themeTransferNote: '该文件携带主题的完整 token 配色表与本机的 user.css。',
   proseSize: '正文字号',
+  quoteScope: '引号上色',
+  quoteScopeDialogue: '对话引号',
+  quoteScopeUpstream: '与 SillyTavern 一致（六种）',
   hostDefault: '宿主默认',
   useHostDefault: '使用宿主默认',
   langEn: 'English',

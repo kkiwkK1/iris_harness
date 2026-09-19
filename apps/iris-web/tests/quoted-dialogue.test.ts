@@ -1,6 +1,5 @@
 /**
- * The quote rule, against the six kinds upstream names and the places it must
- * not reach.
+ * The quote rule, against the kinds it names and the places it must not reach.
  *
  * Two halves, because the feature has two: a **string rule** transcribed from
  * `public/script.js:1845-1871`, which can be asserted the way upstream would
@@ -8,6 +7,12 @@
  * renderer takes text and lets no HTML into the DOM, so the `<q>` elements are
  * made after rendering rather than before it (`notes/apps/iris-web/DEVIATIONS.md`
  * §121).
+ *
+ * **Everything below that does not name a scope runs under the default**, which
+ * is `'dialogue'` — the three pairs that mark speech (§122). The scope is the
+ * one thing about this rule that is Iris's rather than upstream's, so the pair
+ * of tests that pins it says both halves: what `'dialogue'` refuses, and that
+ * `'upstream'` still takes upstream's six.
  *
  * The DOM half asserts on `textContent` as often as on the elements. That is
  * the property that matters and the one a decoration pass can silently break:
@@ -29,15 +34,17 @@ import {
   markQuotedDialogue,
   marksQuotedDialogue,
   quotedDialogueRuns,
+  type QuoteScope,
 } from '../src/app/quoted-dialogue.ts'
 
 /**
  * The quoted substrings of a text, as the rule sees them.
  * @param text - the text to scan.
+ * @param scope - which quote pairs count; the default when omitted.
  * @returns each run, marks included.
  */
-function quoted(text: string): string[] {
-  return quotedDialogueRuns(text).map(run => text.slice(run.start, run.end))
+function quoted(text: string, scope?: QuoteScope): string[] {
+  return quotedDialogueRuns(text, scope).map(run => text.slice(run.start, run.end))
 }
 
 /**
@@ -52,13 +59,53 @@ function prose(html: string): Element {
   return root
 }
 
-test('the six quote kinds upstream wraps, marks and all', () => {
+test('the three speech kinds wrap by default, marks and all', () => {
   assert.deepEqual(quoted('He said "hello" softly.'), ['"hello"'])
   assert.deepEqual(quoted('He said “hello” softly.'), ['“hello”'])
   assert.deepEqual(quoted('Il dit «bonjour» doucement.'), ['«bonjour»'])
-  assert.deepEqual(quoted('「こんにちは」と言った'), ['「こんにちは」'])
-  assert.deepEqual(quoted('『こんにちは』と言った'), ['『こんにちは』'])
-  assert.deepEqual(quoted('＂hello＂ he said.'), ['＂hello＂'])
+  // And the default really is the default: the same three, named.
+  assert.deepEqual(quoted('He said “hello” softly.', 'dialogue'), ['“hello”'])
+})
+
+test('the three bracket kinds are terms, not dialogue — unless the reader asks for upstream’s six', () => {
+  /*
+   * §122, and the owner's example is the whole argument: 「资格」转为「职责」 is
+   * two terms in a sentence about duty, not two lines of speech. Colouring
+   * them paints the page and points at nothing.
+   */
+  assert.deepEqual(quoted('从「资格」转为「职责」。'), [], 'corner brackets are not speech by default')
+  assert.deepEqual(quoted('『こんにちは』と言った'), [])
+  assert.deepEqual(quoted('＂hello＂ he said.'), [])
+
+  // The compatibility floor, reachable from the settings panel: upstream's six.
+  assert.deepEqual(quoted('「こんにちは」と言った', 'upstream'), ['「こんにちは」'])
+  assert.deepEqual(quoted('『こんにちは』と言った', 'upstream'), ['『こんにちは』'])
+  assert.deepEqual(quoted('＂hello＂ he said.', 'upstream'), ['＂hello＂'])
+  // The three speech pairs are in both scopes, in upstream's order.
+  assert.deepEqual(quoted('He said "hello" softly.', 'upstream'), ['"hello"'])
+  assert.deepEqual(quoted('He said “hello” softly.', 'upstream'), ['“hello”'])
+  assert.deepEqual(quoted('Il dit «bonjour» doucement.', 'upstream'), ['«bonjour»'])
+})
+
+test('a line of speech and a bracketed term in one sentence: one run by default, two upstream', () => {
+  const line = '她说“我明白了”，然后把「资格」两个字念了一遍。'
+  assert.deepEqual(quoted(line), ['“我明白了”'])
+  assert.deepEqual(quoted(line, 'upstream'), ['“我明白了”', '「资格」'])
+})
+
+test('the scope reaches the DOM pass, and it is the same default there', () => {
+  const html = '<p>她说“我明白了”，然后把「资格」两个字念了一遍。</p>'
+  assert.equal(markQuotedDialogue(prose(html)), 1, 'the bracketed term was coloured by default')
+  assert.equal(markQuotedDialogue(prose(html), 'dialogue'), 1)
+  assert.equal(markQuotedDialogue(prose(html), 'upstream'), 2, 'upstream’s six did not reach the marking pass')
+
+  const upstream = prose(html)
+  markQuotedDialogue(upstream, 'upstream')
+  assert.deepEqual(
+    [...upstream.querySelectorAll('q')].map(mark => mark.textContent),
+    ['“我明白了”', '「资格」'],
+    'the marks are inside the elements under either scope',
+  )
 })
 
 test('two quoted runs on one line are two runs, and the prose between them is not one', () => {
