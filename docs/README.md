@@ -1,94 +1,69 @@
-# 文档地图
+<p align="center">
+  <img src="../assets/brand/iris-story-seal-variant-c-transparent-v1.png" width="72" alt="Iris">
+</p>
 
-> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。
+<h1 align="center">文档目录</h1>
 
-本目录的使用与开发文档，加上仓库根的 [README](../README.md) 与
-[CONTRIBUTING](../CONTRIBUTING.md)，是一个新读者需要的全部入口。这一页只回答两件事：
-**每份文档是干什么的**，以及**按什么顺序读**。它不复述任何一份的内容。
+<p align="center">从第一次对话，到为 Iris 添上一项能力。</p>
 
-## `docs/` 与 `notes/` 的区别
+<p align="center">
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档目录</a> ·
+  <a href="USER-GUIDE.md">使用手册</a>
+</p>
 
-**`docs/` 是活文档，描述 `main` 上现在的样子。** 一份文档里出现的每句话，都应当在当前
-提交上为真；读到一句像计划的话，那是这份文档的缺陷，不是一条待办。源码注释引用它们当作
-「为什么有这条规则」的出处，所以行为改了，同一个 PR 里就要改它。
+---
 
-**`notes/` 是有日期的记录**：调查、上游对照、验收单、计划、账本。一条记录写的是**某个时刻**
-的事实，它标的提交和日期就是它的有效范围——一个新鲜的数字和一个烂掉的数字排版完全一样，
-所以记录**永远不改成和代码一致**：错了就划掉并写清怎么发现的。目录索引见
-[notes/README.md](../notes/README.md)。
+## 从这里开始
 
-例外都写在文档自己的开头：本目录里 `GENERATION-HOOKS.md`、
-`ST-EXTENSION-DESIGN-AND-RUNBOOK.md` 与 `SANDBOX-PLUGINS.md` 是**设计稿**而不是现状，
-各自第一段就说了这件事。
-
-## 读的顺序
-
-1. [项目首页](../README.md) —— Iris 是什么、如何安装和开始使用。
-   模型连接、迁移、环境变量与数据目录见[使用手册](USER-GUIDE.md)。
-2. [ARCHITECTURE.md](ARCHITECTURE.md) —— 谁可以依赖谁，以及由测试强制的那些不变量。
-3. [SANDBOX.md](SANDBOX.md) —— 卡脚本跑在哪里。这是理解界面那一半的前提。
-4. [INFRASTRUCTURE-INTERFACES.md](INFRASTRUCTURE-INTERFACES.md) —— 今天可调用的接口面，
-   以及 §8 那张**权威缺口表**：任何「这个能用吗」的问题先查它。
-5. [SYSTEM-PLUGINS.md](SYSTEM-PLUGINS.md) → [PLUGIN-AUTHORING-RUNBOOK.md](PLUGIN-AUTHORING-RUNBOOK.md)
-   —— 插件是什么，然后怎么做一个。
-
-## 文档索引
-
-| 文档 | 它回答什么 |
+| 我想…… | 阅读 |
 | --- | --- |
-| [USER-GUIDE.md](USER-GUIDE.md) | 模型连接、兼容范围、数据迁移、运行配置与常见问题 |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 包的分层与依赖方向，以及 `apps/iris/tests/architecture.test.ts` 强制的每一条不变量 |
-| [SANDBOX.md](SANDBOX.md) | 卡脚本沙箱的冻结策略：不透明源 iframe、CSP、能力面、已接受的缺口 |
-| [AUTORUN.md](AUTORUN.md) | 卡脚本自动运行的条款：按卡记忆的同意门，以及接线前必须成立的前提 |
-| [OBSERVABILITY.md](OBSERVABILITY.md) | 「卡坏掉时谁看得见」的宪章。每条领先对着一个可复核的上游行号 |
-| [DEBUG-SURFACE.md](DEBUG-SURFACE.md) | 调试页的宿主半边：宿主已经握着什么，以及够用的最小读取面 |
-| [SETTINGS.md](SETTINGS.md) | 设置项的测量与信息架构——包括「改了却静默不生效」的那些 |
-| [INFRASTRUCTURE-INTERFACES.md](INFRASTRUCTURE-INTERFACES.md) | 基础设施接口清单：分层、所有权、每个接口的可用状态。§8 是缺口的权威表 |
-| [SYSTEM-PLUGINS.md](SYSTEM-PLUGINS.md) | 系统插件的架构裁决：插件是什么、契约包、信任模型、尚未建成的部分 |
-| [SYSTEM-PLUGIN-INSTALL.md](SYSTEM-PLUGIN-INSTALL.md) | 包外系统插件的安装路径：安装源约束、钉死的 commit、哈希锁定、具名失败态 |
-| [PLUGIN-AUTHORING-RUNBOOK.md](PLUGIN-AUTHORING-RUNBOOK.md) | 做一个插件的执行手册：先决定它跑在哪里，然后逐步交付 |
-| [PLUGIN-CONTRACT-PACKAGING.md](PLUGIN-CONTRACT-PACKAGING.md) | 三个契约包怎么变成仓库外能装的 npm 包（`npm run pack:contracts`） |
-| [ST-EXTENSION-DESIGN-AND-RUNBOOK.md](ST-EXTENSION-DESIGN-AND-RUNBOOK.md) | **设计稿**：SillyTavern 扩展兼容的设计与施工合同，不是已实现 API 文档 |
-| [GENERATION-HOOKS.md](GENERATION-HOOKS.md) | **设计稿**：`beforePrompt` / `afterReplyText` / `onSettle` 三个生成钩子，只设计不实现 |
-| [SANDBOX-PLUGINS.md](SANDBOX-PLUGINS.md) | **设计稿**：沙箱插件——玩家一句话、模型写一个插件、热挂进这张卡自己的沙箱帧、按对话持久。与同权的**系统插件**是两回事 |
-| [SANDBOX-PLUGIN-AUTHORING.md](SANDBOX-PLUGIN-AUTHORING.md) | **模型读的那一份**：写一个沙箱插件时有什么门面、没有什么、多大多久，以及两个完整例子。它是每次「创造」请求的输入，所以长度就是成本——8 KiB 上限与门面签名的一致性各由一个测试钉住 |
+| 安装并开始聊天 | [项目首页](../README.md) |
+| 配置模型、导入酒馆数据、排查使用问题 | [使用手册](USER-GUIDE.md) |
+| 了解卡片脚本什么时候运行 | [脚本授权与运行](AUTORUN.md) |
+| 确认脚本能访问什么 | [脚本沙箱](SANDBOX.md) |
+| 安装、更新或卸载系统插件 | [系统插件安装](SYSTEM-PLUGIN-INSTALL.md) |
 
-## 偏离账本
+## 开发与扩展
 
-**账本是追加写的记录**，不是文档：一次改动一节，按序号往后加，**旧的节永不重写**。
-每一节写清上游怎么做、这里怎么做、以及**代价**——没写代价的「改进」通常只是没被审视过的
-偏好。它们条目分两类：**兼容缺口**（我们不如上游，带着「补上要做什么」）与**有意改进**
-（我们故意不同，带着代价）。
-
-| 账本 | 管哪一段 |
+| 文档 | 内容 |
 | --- | --- |
-| [notes/apps/iris-web/DEVIATIONS.md](../notes/apps/iris-web/DEVIATIONS.md) | 界面与沙箱侧 |
-| [notes/packages/iris-app-service/DEVIATIONS.md](../notes/packages/iris-app-service/DEVIATIONS.md) | 宿主应用层 |
-| [notes/packages/iris-rpc-host/DEVIATIONS.md](../notes/packages/iris-rpc-host/DEVIATIONS.md) | 传输层与 `Host` 白名单 |
-| [notes/packages/iris-compat-prompt-template/DEVIATIONS.md](../notes/packages/iris-compat-prompt-template/DEVIATIONS.md) | EJS 模板兼容层 |
-| [notes/packages/iris-variables/DEVIATIONS.md](../notes/packages/iris-variables/DEVIATIONS.md) | 变量系统的写入面 |
-| [notes/DEVIATIONS.md](../notes/DEVIATIONS.md) | 预设功能（任务 M，对照 ST 1.18.0） |
+| [参与贡献](../CONTRIBUTING.md) | 开发环境、检查命令与提交约定 |
+| [项目架构](ARCHITECTURE.md) | 分层、依赖方向与运行原则 |
+| [前端开发](../apps/iris-web/README.md) | 浏览器端启动、构建、主题与调试 |
+| [插件开发指南](PLUGIN-AUTHORING-RUNBOOK.md) | 最小插件、生命周期、打包与验证 |
+| [接口参考](INFRASTRUCTURE-INTERFACES.md) | 已有接口、RPC 索引与尚未提供的能力 |
+| [系统插件](SYSTEM-PLUGINS.md) | 控制面、依赖与信任模型 |
+| [插件契约打包](PLUGIN-CONTRACT-PACKAGING.md) | 独立仓库使用的契约包 |
+| [设置](SETTINGS.md) | 设置的归属、默认值与持久化 |
+| [可观测性](OBSERVABILITY.md) · [调试入口](DEBUG-SURFACE.md) | 诊断事件、日志与排错 |
 
-前五本用 `## N. 标题` 编号（`iris-compat-prompt-template` 的十二节在 `## Deviations`
-下面一级），第六本按主题分节、节内编号。引用一节写成「host §71」「web §101」这样的短形，
-仓库里到处都是这个写法。
+第一次读代码，建议按「架构 → 对应模块 → 接口参考」的顺序；编写插件则直接从插件开发指南开始。
 
-## 维护规则
+## 沙箱插件
 
-- **改了行为的 PR，同一个 PR 里改掉管这段行为的那份文档，并追加一节账本。** 两件事都做，
-  因为它们服务不同的读者：文档回答「现在是什么样」，账本回答「为什么和上游不一样」。
-- **记录永不为了迁就代码而被改写。** 一条记录错了就划掉、写清怎么发现的；把它悄悄改对，
-  等于把「我们当时是这么想的」这条唯一的证据删掉。
-- **被行为依赖的测量前提，配一个会自己失败的测试。** 散文讲道理，测试押前提——一个烂掉的
-  数字和一个新鲜的数字在页面上长得一模一样。
-- **链接和 `路径:行号` 引用都会被检查。** `apps/iris/tests/md-references.test.ts` 扫三类
-  引用（markdown 链接、`路径:行号` 引用、源码注释里提到的 `.md`），指向树上不存在的文件
-  就红。
-- **编号的唯一性也被检查，而它曾经不被检查。** 同一个测试文件的第四条扫六本账本的
-  `## N.`：**一个号只能用一次**。2026-09-19 一次 rebase 让 `iris-web` 那本长出**两个 §119**
-  而 §118 整个消失——一行改号，过了 typecheck、全量测试、`test:no-corpus` 与
-  `check:render`，被合进了 `main`。这和它所影响的那两节描述的缺陷是同一个形状：
-  **一条只靠约定、没有强制手段的规则**，两个号各自看都对，所以评审看不出来。
-  只查唯一性，不查连续和递增：web 本在 §73 有洞、在 §60 → §59 处是降序，app-service
-  本在 §37 与 §54 有洞——号被撤销和被有意重用过，所以要求 `n+1` 的检查会在历史上转红，
-  而不是在错误上。
+[沙箱插件设计](SANDBOX-PLUGINS.md)记录设计与分阶段实现；[沙箱插件编写契约](SANDBOX-PLUGIN-AUTHORING.md)供模型编写插件时读取，包含门面、限制与示例，受 8 KiB 上限和签名一致性检查约束。沙箱插件在卡片帧内运行，与宿主同权的系统插件不同。
+
+## 设计稿与历史记录
+
+[生成钩子](GENERATION-HOOKS.md)与 [ST 扩展设计](ST-EXTENSION-DESIGN-AND-RUNBOOK.md)包含设计内容，**不代表其中的能力已经可用**。实现范围以接口参考和源码为准。账本章节编号也由文档测试检查唯一性，不要求连续或递增。
+
+`docs/` 维护当前用法；[`notes/`](../notes/README.md)保存带日期的调查、决策和验收记录。行为变化时同步更新使用文档，历史结论用补充记录更正，不改写成今天的状态。
+
+<a id="偏离账本"></a>
+
+<details>
+<summary>各模块的差异与验收记录</summary>
+
+- [前端](../notes/apps/iris-web/DEVIATIONS.md)
+- [应用服务](../notes/packages/iris-app-service/DEVIATIONS.md)
+- [RPC 宿主](../notes/packages/iris-rpc-host/DEVIATIONS.md)
+- [提示词模板](../notes/packages/iris-compat-prompt-template/DEVIATIONS.md)
+- [变量](../notes/packages/iris-variables/DEVIATIONS.md)
+- [仓库总账](../notes/DEVIATIONS.md)
+
+</details>
+
+---
+
+许可与来源见 [第三方说明](../THIRD-PARTY-NOTICES.md)；Iris 的许可证原文见 [LICENSE](../LICENSE)。
