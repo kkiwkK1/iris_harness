@@ -46,6 +46,8 @@ interface Bench {
   panelsRemoved: string[]
   tracesCleared: string[]
   publishedStyles: string[]
+  /** Plugin ids the tree asked the shell to forget the published sheets of. */
+  retractedStyles: string[]
   /** Move the fake clock and fire every deadline that has now expired. */
   advance: (ms: number) => void
 }
@@ -64,6 +66,7 @@ function bench(overrides: Partial<SandboxPluginTreeEnv> = {}): Bench {
   const panelsRemoved: string[] = []
   const tracesCleared: string[] = []
   const publishedStyles: string[] = []
+  const retractedStyles: string[] = []
   let clock = 1_000
   const timers: { at: number, fire: () => void, cancelled: boolean }[] = []
 
@@ -104,6 +107,7 @@ function bench(overrides: Partial<SandboxPluginTreeEnv> = {}): Bench {
     },
     report: outcome => outcomes.push(outcome),
     publishStyle: (pluginId, css) => publishedStyles.push(`${pluginId}:${css}`),
+    retractStyles: pluginId => retractedStyles.push(pluginId),
     note: message => notes.push(message),
     ...overrides,
   }
@@ -118,6 +122,7 @@ function bench(overrides: Partial<SandboxPluginTreeEnv> = {}): Bench {
     panelsRemoved,
     tracesCleared,
     publishedStyles,
+    retractedStyles,
     advance: ms => {
       clock += ms
       for (const timer of [...timers]) {
@@ -354,6 +359,36 @@ test('a batch mounts in id order and the styles it publishes follow it', async (
 
   assert.deepEqual(frame.inserted, ['1-a:a', '2-b:b', '3-c:c'])
   assert.deepEqual(frame.publishedStyles, ['1-a:a', '2-b:b', '3-c:c'])
+})
+
+test('the shell is told to drop a plugin’s sheets by both paths that drop them here', async () => {
+  /*
+   * Two paths, and the first is the one the shell cannot infer for itself: a
+   * plugin that calls `iris.styles.clear()` stays mounted, so no
+   * `plugin:unmount` follows and nothing outside the frame can see that its
+   * sheets are gone. The second is teardown item 4, which had only the frame's
+   * half until the fan-out existed.
+   */
+  const frame = bench()
+  const tree = createSandboxPluginTree(frame.env)
+  await tree.mount({
+    pluginId: '1-a',
+    version: 1,
+    code: 'return { apply() { iris.styles.insert(".a{}"); iris.styles.clear() } }',
+  })
+  await settle()
+  assert.deepEqual(frame.retractedStyles, ['1-a'], 'the facade’s own clear says so')
+
+  await tree.mount({ pluginId: '2-b', version: 1, code: 'return { apply() { iris.styles.insert(".b{}") } }' })
+  await settle()
+  const steps = await tree.unmount('2-b')
+  await settle()
+  assert.equal(
+    steps.find(step => step.item === 'styles-published')?.ok,
+    true,
+    'and item 4 of the checklist is where the teardown path says it',
+  )
+  assert.deepEqual(frame.retractedStyles, ['1-a', '2-b'])
 })
 
 test('a plugin whose turn comes after the batch budget is named, not dropped', async () => {

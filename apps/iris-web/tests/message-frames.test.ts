@@ -737,7 +737,22 @@ test('the hook hands the claim’s own sheet to the controller', () => {
   const from = hook.indexOf('runMessageInterfaces(')
   assert.ok(from !== -1, 'the hook no longer runs the controller')
   const call = hook.slice(from, hook.indexOf('const unwatch', from))
-  assert.match(call, /\bcss\)/u, 'the controller is handed no sheet, so every region frame goes without it')
+  /*
+   * Both sheets, and matched as **arguments** rather than by the position they
+   * happen to sit in. This used to read `/\bcss\)/`, which pinned "css is the
+   * last argument" — an incidental fact that went false the moment a second
+   * sheet was handed over, for a change that was entirely correct.
+   */
+  assert.match(
+    call,
+    /^\s*css,\s*$/mu,
+    'the controller is handed no message sheet, so every region frame goes without it',
+  )
+  assert.match(
+    call,
+    /input\.pluginSheets/u,
+    "the controller is handed no plugin sheets, so this conversation's plugins paint in one realm only",
+  )
 })
 
 test('a message with no sheet builds exactly what it built before', () => {

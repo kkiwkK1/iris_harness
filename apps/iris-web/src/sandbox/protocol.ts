@@ -376,14 +376,28 @@ export type FromFrame =
    * Reported because a plugin's CSS has to reach the card's **message** frames
    * too — a "make the status bar dark" plugin runs in one realm and has to paint
    * in another (§5.1). The shell stores it per `(chatId, pluginId)` and folds it
-   * into those frames' srcdoc; that fan-out is PR-C, and until then this arm is
-   * the frame telling the shell what it has, which is also what makes a census
-   * of a plugin's styles possible from outside the frame.
+   * into those frames' srcdoc, which is what PR-C does with it; it is also what
+   * makes a census of a plugin's styles possible from outside the frame.
    *
    * **A string, never markup.** The shell must handle it the way `escapeClose`
    * handles every other card-authored text.
    */
   | { iris: string, type: 'plugin:style', pluginId: string, css: string }
+  /**
+   * A plugin's published stylesheets are gone.
+   *
+   * The counterpart of `plugin:style`, and it has to be a message rather than
+   * something the shell works out for itself: a plugin may call
+   * `iris.styles.clear()` and go on running, and from outside the frame that is
+   * invisible. Teardown item 4 sends it too, so both paths that drop a sheet in
+   * the frame drop the shell's copy as well.
+   *
+   * **Per plugin, never "all of them".** A conversation's other plugins keep
+   * their sheets; a message asking the shell to forget everything would make one
+   * plugin's teardown take another's styling away, which reads from the outside
+   * as the wrong plugin having been removed.
+   */
+  | { iris: string, type: 'plugin:style-clear', pluginId: string }
 
 /**
  * Validate a message arriving at the frame.
@@ -939,6 +953,16 @@ export function parseFromFrame(token: string, data: unknown): FromFrame | undefi
         pluginId: pluginId.slice(0, SANDBOX_PLUGIN_LIMITS.idChars),
         css,
       }
+    }
+    case 'plugin:style-clear': {
+      const pluginId = message['pluginId']
+      // Only an id, and the same bound the other plugin arms put on one. There
+      // is nothing else to carry: "forget what this plugin published" needs no
+      // payload, and a payload it did not need would be a second thing to
+      // validate for no second decision.
+      return typeof pluginId === 'string' && pluginId !== ''
+        ? { iris: token, type: 'plugin:style-clear', pluginId: pluginId.slice(0, SANDBOX_PLUGIN_LIMITS.idChars) }
+        : undefined
     }
     default:
       return undefined

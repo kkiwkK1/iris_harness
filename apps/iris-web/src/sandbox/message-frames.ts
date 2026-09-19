@@ -48,10 +48,21 @@
  * @module iris-web/sandbox/message-frames
  */
 import type { FrontendBlock } from './frontend-blocks.ts'
-import { withMessageCss } from './srcdoc.ts'
+import { withMessageCss, withPluginCss } from './srcdoc.ts'
 import type { Language } from '../app/i18n/strings.ts'
 import { translate } from '../app/i18n/strings.ts'
 
+/**
+ * One sandbox-plugin stylesheet as this file needs to see it.
+ *
+ * Structural rather than an import of the shell's `PluginStyleSheet`: this
+ * module is below the shell and must not learn about its stores, which is the
+ * same seam `start` and `attach` are injected across.
+ */
+export interface PluginStyleSheetInput {
+  readonly pluginId: string
+  readonly css: string
+}
 
 /** Where one interface has got to. */
 export type InterfacePhase =
@@ -257,9 +268,29 @@ export interface RunningInterfaces {
  * @param blocks - the claimed blocks, from `claimFrontendBlocks`.
  * @param floor - which message these belong to.
  * @param env - the world.
+ * **A sandbox plugin's sheets go into every region frame too**, and for the same
+ * reason one frame over: a plugin runs only in the card-script frame, and "make
+ * the status bar dark" names something drawn here (§5.1). They ride the same
+ * marked prefix the message's own sheet does and are folded *after* it, so a
+ * plugin wins a tie against the card's message CSS — document order is CSS's
+ * tie-breaker, and the card's own frame settles the same tie the same way
+ * because the plugin appends its `<style>` there after the card has drawn.
+ *
+ * They reach **every** region, fenced regions included, which the message's own
+ * sheet deliberately does not. The design says every B-family frame, and the
+ * reason is the acceptance scenario itself: a card's status bar is usually a
+ * fenced interface, so a fold that copied the message sheet's population would
+ * reach none of the frames the feature exists for.
+ *
+ * @param blocks - the claimed blocks, from `claimFrontendBlocks`.
+ * @param floor - which message these belong to.
+ * @param env - the world.
  * @param messageCss - the message's confined sheet, from
  *   `claimMessageSurfaces`. Absent or empty for a message that wrote no
  *   `<style>` of its own, which is the common case and costs nothing.
+ * @param pluginSheets - this conversation's sandbox-plugin stylesheets, in
+ *   cascade order. Empty for every conversation with no plugin, which is the
+ *   case that has to stay byte-identical to the one before this feature.
  * @returns a handle that tears the whole set down.
  */
 export function runMessageInterfaces(
@@ -267,6 +298,7 @@ export function runMessageInterfaces(
   floor: number,
   env: MessageFramesEnv,
   messageCss = '',
+  pluginSheets: readonly PluginStyleSheetInput[] = [],
 ): RunningInterfaces {
   const states = new Map<number, InterfaceState>()
   const running: StartedInterface[] = []
@@ -324,7 +356,27 @@ export function runMessageInterfaces(
      * the card's.
      */
     const started = env.start({
-      markup: block.kind === 'bare-html' ? withMessageCss(block.body, messageCss) : block.body,
+      /*
+       * `[message sheet][plugin sheets][markup]`, and the nesting is what
+       * produces that order: both helpers **prefix**, so the message sheet has
+       * to be applied to the outside of the plugin sheets to end up in front of
+       * them. Getting it the other way round would silently invert the cascade —
+       * the card's own message CSS would beat the plugin the reader just asked
+       * for, and the only symptom would be "it did not work".
+       *
+       * **The two sheets reach different populations, and that is not an
+       * oversight.** The message's own sheet goes to the bare-HTML regions only,
+       * because it is a copy of what upstream's one DOM gives a floor for free
+       * and upstream's sheet does not reach inside a fenced block's iframe
+       * either. A plugin's sheet goes to **every** frame of this conversation
+       * (§5.1): what a player asks a plugin to restyle is most often a card
+       * interface in a fenced block — 爱衣's status bar is one — so a fold that
+       * stopped at the bare regions would miss the design's own acceptance
+       * scenario, which is what it did the first time this was measured.
+       */
+      markup: block.kind === 'bare-html'
+        ? withMessageCss(withPluginCss(block.body, pluginSheets), messageCss)
+        : withPluginCss(block.body, pluginSheets),
       floor,
       instance,
       onReady: () => move(instance, { phase: 'live' }),

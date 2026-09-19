@@ -217,11 +217,21 @@ export interface SandboxPluginTreeEnv {
   /** Report an outcome to the shell. */
   report: (outcome: SandboxPluginOutcome) => void
   /**
-   * Report a stylesheet a plugin injected, for the shell's fan-out (PR-C).
+   * Report a stylesheet a plugin injected, for the shell's fan-out.
    * @param pluginId - the owner.
    * @param css - the stylesheet text.
    */
   publishStyle: (pluginId: string, css: string) => void
+  /**
+   * Tell the shell a plugin's published stylesheets are gone.
+   *
+   * The other half of {@link SandboxPluginTreeEnv.publishStyle}, and it is its
+   * own call rather than `publishStyle(id, '')` because an empty sheet and no
+   * sheet are different facts: the shell keeps a list per plugin, and appending
+   * an empty string to that list is not the same request as emptying it.
+   * @param pluginId - the owner.
+   */
+  retractStyles: (pluginId: string) => void
   /**
    * Say something that is not a plugin's failure — a late rejection arriving
    * after its deadline, most of all.
@@ -436,6 +446,15 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
       clear: () => {
         env.styles.clear(pluginId)
         published.delete(pluginId)
+        /*
+         * And the shell's copies with them. A plugin that clears its sheets and
+         * goes on running is the one case the shell cannot infer: it sees no
+         * `plugin:unmount`, so without this message the message frames would go
+         * on painting a stylesheet that no longer exists in the realm that wrote
+         * it — the card's own frame and its message frames disagreeing about
+         * what the card looks like.
+         */
+        env.retractStyles(pluginId)
       },
     },
     panel: {
@@ -515,15 +534,20 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
     })
 
     /*
-     * 4 — the published copies.
+     * 4 — the published copies, **both halves**.
      *
-     * PR-A does the frame's half only: the shell dropping its `(chatId,
-     * pluginId)` CSS and rebuilding the message frames is PR-C. Forgetting here
-     * is not decoration — it is what stops a later census attributing a removed
-     * plugin's stylesheet to a plugin that no longer exists.
+     * PR-A could only do the frame's: forgetting here is what stops a later
+     * census attributing a removed plugin's stylesheet to a plugin that no
+     * longer exists. PR-C adds the other half — the shell drops its `(chatId,
+     * pluginId)` CSS and the message frames of this conversation are rebuilt
+     * without it. The rebuild is visible (the frames blink); that cost is the
+     * design's own choice and is recorded rather than worked around, because the
+     * alternative is a live-injection channel into frames the shell would then
+     * have to keep in step with their srcdoc.
      */
     await record('styles-published', async () => {
       published.delete(pluginId)
+      env.retractStyles(pluginId)
       return undefined
     })
 

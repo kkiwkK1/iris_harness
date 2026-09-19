@@ -30,6 +30,7 @@ import {
   encodeSandboxPluginRuntime,
   type SandboxPluginRuntime,
 } from '@iris/plugin-web-api'
+import { SANDBOX_PLUGIN_STYLE_ATTRIBUTE } from '@iris/protocol'
 
 /**
  * The frame's content security policy.
@@ -436,20 +437,126 @@ export function withMessageCss(markup: string, css: string): string {
 }
 
 /**
- * Take that sheet back off the body, for the head.
+ * Neutralise the two sequences that could end the element a plugin's sheet lands
+ * in.
  *
- * Only at the very start, and only the exact literal the writer emits: a card's
- * own `<style>` — wherever it sits and whatever attributes it carries — is never
- * moved, because moving a card's elements is not this function's business.
+ * `</style` is the one that can actually happen: a stylesheet lives inside a
+ * `<style>` element and a literal closer there would end it early, turning
+ * whatever followed into document content — the hole `buildSrcdoc` escapes
+ * `</script` for, one element over. `</script` is neutralised as well, and that
+ * is **defence in depth rather than a live hole**: inside a `<style>` element it
+ * ends nothing. It is here because this text is a *plugin's* — a model's — and
+ * the only thing keeping `</script` harmless is "this string is only ever put
+ * inside a `<style>`", which is a claim about every future call site rather than
+ * about the string.
+ *
+ * A separate function from the one line inside {@link withMessageCss} rather
+ * than a shared one, and deliberately: widening that escape would change the
+ * bytes of every existing card's message sheet for no defect, and a message's
+ * own CSS is not the population this reasoning is about.
+ *
+ * The escape is CSS's own: inside a string (`content: "</style>"`, the only
+ * place either sequence can legally appear) a backslash before the solidus
+ * yields the solidus, so the meaning is unchanged and nothing has to be decoded
+ * again later. Outside a string neither sequence is valid CSS in the first
+ * place, so nothing that parsed before stops parsing.
+ *
+ * The backslash is built from its code point for the reason `script-source.ts`
+ * records — a literal one has gone missing in transit here before, and the
+ * collapsed version is a silent no-op.
+ * @param css - the stylesheet text.
+ * @returns the same stylesheet with no literal element closer in it.
+ */
+function escapeSheetClosers(css: string): string {
+  const BACKSLASH = String.fromCharCode(92)
+  return css.replace(/<[/](?=style|script)/gi, `<${BACKSLASH}/`)
+}
+
+/**
+ * Attach a conversation's sandbox-plugin stylesheets to a region frame's markup.
+ *
+ * **Why the sheets travel at all**: a plugin runs in exactly one realm, the
+ * card-script frame, and what a player asks it to restyle is usually drawn
+ * somewhere else — a status bar is a message interface, one frame per claimed
+ * block per floor. Those frames are opaque-origin documents that cannot see each
+ * other, so the stylesheet crosses as text and is folded in here (§5.1).
+ *
+ * **The same road as the message's own sheet**, deliberately: one marked prefix
+ * that {@link liftMessageCss} moves into the head, so there is one transport for
+ * "CSS the shell put in this frame" rather than a second one nobody would keep
+ * in step with the first. Each sheet is its own element carrying
+ * {@link SANDBOX_PLUGIN_STYLE_ATTRIBUTE} with its owner's id — the same
+ * attribute the frame's own sink writes — which is what makes a plugin's sheets
+ * countable in a message frame the same way they are countable in the card's.
+ *
+ * **Applied after the message's own sheet**, because this function prefixes what
+ * it is given and the caller composes it inside {@link withMessageCss}. Document
+ * order is CSS's tie-breaker, so a plugin wins a tie against the message's sheet
+ * and the later plugin in id order wins against the earlier — the same rule that
+ * holds in the card's own frame, where the sheets are appended in mount order.
+ *
+ * **It stays a string.** Nothing here parses the CSS; the id goes through the
+ * attribute escape and the text through {@link escapeSheetClosers}.
+ * @param markup - the region's markup, already carrying the message's own sheet.
+ * @param sheets - the conversation's plugin sheets, in cascade order.
+ * @returns the markup with the sheets prefixed, or the markup unchanged.
+ */
+export function withPluginCss(
+  markup: string,
+  sheets: readonly { readonly pluginId: string, readonly css: string }[],
+): string {
+  /*
+   * Untouched when there is nothing to fold, and that is load-bearing rather
+   * than an optimisation: a conversation with no sandbox plugin must produce the
+   * **byte-identical** srcdoc it produced before this feature existed, and a
+   * mounted-then-removed plugin must bring the frame back to exactly that. An
+   * empty-list branch that still touched the string would make both claims
+   * false in a way no screenshot would show.
+   */
+  if (sheets.length === 0) return markup
+  const folded = sheets
+    .filter(sheet => sheet.css.trim() !== '')
+    .map(sheet =>
+      `<style ${MESSAGE_CSS_MARK} ${SANDBOX_PLUGIN_STYLE_ATTRIBUTE}="${attribute(sheet.pluginId)}">`
+      + `${escapeSheetClosers(sheet.css)}${MESSAGE_CSS_CLOSE}`)
+    .join('')
+  return `${folded}${markup}`
+}
+
+/**
+ * Take those sheets back off the body, for the head.
+ *
+ * A **run** of them, from the very start, and only elements whose opening tag
+ * begins with the mark this file writes: a card's own `<style>` — wherever it
+ * sits and whatever attributes it carries — is never moved, because moving a
+ * card's elements is not this function's business. It used to lift exactly one
+ * element and exactly one literal; it lifts a run now because a conversation can
+ * have several plugins and each one's sheet is its own element, which is what
+ * lets a reader in the frame tell them apart by owner.
  * @param body - the frame's body markup.
- * @returns the sheet's element (empty when there is none) and the rest.
+ * @returns the sheets' elements (empty when there are none) and the rest.
  */
 function liftMessageCss(body: string): { sheet: string, rest: string } {
-  if (!body.startsWith(MESSAGE_CSS_OPEN)) return { sheet: '', rest: body }
-  const close = body.indexOf(MESSAGE_CSS_CLOSE, MESSAGE_CSS_OPEN.length)
-  if (close === -1) return { sheet: '', rest: body }
-  const past = close + MESSAGE_CSS_CLOSE.length
-  return { sheet: body.slice(0, past), rest: body.slice(past) }
+  const prefix = `<style ${MESSAGE_CSS_MARK}`
+  let rest = body
+  let sheet = ''
+  for (;;) {
+    if (!rest.startsWith(prefix)) break
+    /*
+     * The opening tag ends at the first `>`, and it can: the only value in it is
+     * the plugin id, which goes through `attribute()` — so a `>` inside an id
+     * is `&gt;` by the time it is here, and the first literal `>` is the tag's
+     * own. Without that escape this scan would cut an opening tag in half.
+     */
+    const openEnd = rest.indexOf('>')
+    if (openEnd === -1) break
+    const close = rest.indexOf(MESSAGE_CSS_CLOSE, openEnd + 1)
+    if (close === -1) break
+    const past = close + MESSAGE_CSS_CLOSE.length
+    sheet += rest.slice(0, past)
+    rest = rest.slice(past)
+  }
+  return { sheet, rest }
 }
 
 /**

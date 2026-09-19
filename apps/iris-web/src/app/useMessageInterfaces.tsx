@@ -27,6 +27,7 @@ import {
   runMessageInterfaces,
   type InterfaceState,
   type MessageFramesEnv,
+  type PluginStyleSheetInput,
   type RunningInterfaces,
 } from '../sandbox/message-frames.ts'
 import { beginRetirement, type RetiringInterfaces } from './interface-swap.ts'
@@ -69,6 +70,27 @@ export interface MessageInterfacesInput {
    * that lost its budget has to go.
    */
   gate?: string
+  /**
+   * This conversation's sandbox-plugin stylesheets, in cascade order.
+   *
+   * Read inside the effect, so a frame is built with what the shell holds at the
+   * moment it is built rather than with what the last render happened to see.
+   */
+  pluginSheets?: readonly PluginStyleSheetInput[]
+  /**
+   * A stable token for those sheets, used as the effect's dependency.
+   *
+   * The same shape as `gate` and for the same reason: the list is rebuilt on
+   * every publish, so depending on it directly would rebuild every frame in the
+   * view whenever anything anywhere touched the store. The token changes exactly
+   * when this conversation's sheets do — and then a rebuild **is** the delivery
+   * mechanism: the CSS lives in the frame's `srcdoc`, so there is no way to add
+   * or drop one without building the frame again. The design accepts the visible
+   * blink that costs (§5.1); the alternative is a live-injection channel into
+   * message frames, which is a second thing the shell would have to keep in step
+   * with the first.
+   */
+  pluginCssGate?: string
   /**
    * Build one frame. Supplied by the caller so this file never touches
    * `runCard`, `window` or the srcdoc — the same seam `card-scripts.ts` uses,
@@ -287,7 +309,14 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
      * decides which characters leave the prose has to be the reading that
      * decides which frames get the CSS.
      */
-    css)
+    css,
+    /*
+     * And this conversation's plugin sheets, from the shell's fan-out store.
+     * Read here rather than captured at render time for the same reason `start`
+     * is called through a ref: what matters is the state at the moment a frame
+     * is constructed.
+     */
+    input.pluginSheets ?? [])
 
     /*
      * The chat keeps moving under a mounted interface, and an interface is a
@@ -381,7 +410,13 @@ export function useMessageInterfaces(input: MessageInterfacesInput): {
      * decisions do. See the field's own note — the difference is a rebuild of
      * every frame in the view versus a rebuild of the ones that changed.
      */
-  }, [input.floor, input.text, input.allowed, input.gate])
+    /*
+     * `input.pluginCssGate` and not `input.pluginSheets`: the list is a new
+     * array on every publish, and the token changes only when this
+     * conversation's sheets actually do. A sheet arriving or being retracted has
+     * to rebuild these frames, because the CSS is in their `srcdoc`.
+     */
+  }, [input.floor, input.text, input.allowed, input.gate, input.pluginCssGate])
 
   return { states, swapping }
 }

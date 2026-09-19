@@ -80,6 +80,24 @@ export function isSandboxPluginFailureState(value: unknown): value is SandboxPlu
 }
 
 /**
+ * The attribute that says a `<style>` element belongs to a sandbox plugin, and
+ * whose value is the owner's id.
+ *
+ * Shared because **two realms write it**: the frame's own sink puts one in the
+ * card-script frame's head when a plugin calls `iris.styles.insert`, and the
+ * shell writes the same attribute into every message frame's `srcdoc` when it
+ * folds that sheet out (§5.1). One literal, so a census — "how many of a
+ * plugin's sheets are on this document" — asks the same question of both, and so
+ * the tooth that asserts **zero** of them on the shell's own page is asserting
+ * about the same tag the fan-out actually writes.
+ *
+ * A second name rather than `data-iris-style`, which means "the message preset
+ * put this here": sharing one attribute would let either side's clean-up take
+ * the other's sheets away.
+ */
+export const SANDBOX_PLUGIN_STYLE_ATTRIBUTE = 'data-iris-plugin-style'
+
+/**
  * The ceilings, in one place because both halves enforce some of them.
  *
  * Judgements, not measurements — the design says so in as many words (§3.2 Q2).

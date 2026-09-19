@@ -44,6 +44,11 @@ import { runCard } from '../sandbox/runner.ts'
 import { sandboxPluginRuntime, type SandboxPluginRuntime } from '@iris/plugin-web-api'
 import { usePluginAssetManifest } from './use-plugin-manifest.ts'
 import { broadcastWindowEvent } from './window-events.ts'
+import {
+  pluginStyleRevision,
+  pluginStyleSheets,
+  subscribePluginStyles,
+} from './plugin-style-fanout.ts'
 import { useMessageInterfaces } from './useMessageInterfaces.tsx'
 import { repairStrayFences } from './stray-fences.ts'
 import { getBodyTag, splitBodyTag, subscribeBodyTag } from './body-tag.ts'
@@ -280,6 +285,21 @@ export function MessageInterfaces({
    * that never heard of the convention.
    */
   const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag, getBodyTag)
+
+  /*
+   * This conversation's sandbox-plugin stylesheets, as a token.
+   *
+   * A token and not the sheets: `useSyncExternalStore` compares snapshots by
+   * identity, and `pluginStyleSheets` builds a fresh array every call — which
+   * would make every one of these rows re-render on every render. The revision
+   * is a string, so it compares by value and changes exactly when the sheets do.
+   * The sheets themselves are read below, once, for the frames being built.
+   */
+  const pluginCssGate = useSyncExternalStore(
+    subscribePluginStyles,
+    () => pluginStyleRevision(chatId),
+    () => pluginStyleRevision(chatId),
+  )
   const leak = splitBodyTag(display, bodyTag)
   const bodyText = leak.body ?? display
   const currentMvuEnabled =
@@ -296,6 +316,8 @@ export function MessageInterfaces({
     text: display,
     refusedInstances,
     gate,
+    pluginSheets: pluginStyleSheets(chatId),
+    pluginCssGate,
     allowed:
       ready !== undefined
       && ready.systemPlugins.revision === pluginRevision
