@@ -1,149 +1,80 @@
-# 卡脚本自动运行 — 策略
+<p align="center">
+  <img src="../assets/brand/iris-story-seal-variant-c-transparent-v1.png" width="72" alt="Iris">
+</p>
 
-> 状态：现状文档。描述 `main` `e356771` 的现状，核对于 2026-09-16。数字与路径以该提交为证据；行号会漂移，符号名不会。
->
-> 上一版写在接线之前，全文是「接线前必须成立的条款」。**这些条款已经接线**：
-> 同意门、按卡记忆、运行时刻重解析、运行态面板都在 `main` 上。本版改成现状描述，
-> 每一条后面记它今天落在哪个符号上；仍未做的单独标出。
+<h1 align="center">脚本授权与运行</h1>
 
-把卡片脚本从 dev 面板的按钮挪进"开聊天"的路径,曾是这个项目最后一个大件。
-它的全部危险浓缩在 [notes/apps/iris-web/GRANTS.md](../notes/apps/iris-web/GRANTS.md) 开头那句:
+<p align="center">先看清脚本，再决定是否让它随角色运行。</p>
 
-> 今天卡片会跑,是因为有人打开面板按了按钮——关于权限的错误答案,是当着它
-> 涉及的那个人的面给出的。自动运行把这个决定挪到没人在看的时刻。
-> **每一条陷阱在脚本自己启动的那天都变得更安静,而不是更响。**
+<p align="center">
+  <a href="../README.md">项目首页</a> ·
+  <a href="README.md">文档目录</a> ·
+  <a href="USER-GUIDE.md">使用手册</a>
+</p>
 
-本页是这条路径今天成立的条款。GRANTS.md 是它的证据层;两份文件一起改。
+---
 
-## 一、同意门:按卡记忆的首次询问
+## 第一次打开角色
 
-**自动运行不是无条件的。** 一张带脚本的卡第一次被打开聊天时,Iris 询问一次:
+含脚本的角色卡会显示授权提示，列出脚本数量、体积和查看入口。你可以查看源码、允许运行，或拒绝；拒绝不会阻止普通聊天，脚本列表也仍然可见。
 
-> 这张卡带 N 个脚本(合计 X KB)。在隔离沙箱中运行它们吗?
-> [查看清单] [运行] [不运行]
+授权按角色保存，不是一次开启所有卡片。提示不会倒计时，卡片不能代替用户同意、预填答案或加速确认。
 
-- 决定**按卡记忆**在 `ScriptPolicyStore`(`scriptsAllowed?: boolean`,
-  `packages/iris-app-service/src/scripts.ts`),与文档/网络授权同一张权限表、
-  同一套生命周期——**删卡即遗忘,id 复用不继承**(GRANTS §1/§2)。契约侧是
-  `script.list` 带出的 `scriptsAllowed?` 与 `script.setScriptsAllowed`。
-- **没有"总是允许所有卡"的全局开关。** 那会把按卡模型整个短路,而按卡询问正是
-  上游用户已有的心智模型(实测:用户在 ST 里逐张批准了 15 张卡的正则)。
-  今天仍然如此:全树没有任何 `allowAllCards` / `alwaysAllow` 形状的开关。
-- **三态,不是布尔。** `scriptsAllowed` 缺席 = 没问过,`false` = 问过且拒绝,
-  `true` = 允许;`consentState` / `shouldAsk`(`apps/iris-web/src/sandbox/consent.ts`)
-  只在"没问过"时发问。把缺席折叠成 `false` 会把"还没问"读成"已拒绝",
-  而那正是这个门唯一不能犯的错。
-- 询问界面按后果措辞,沿用文档授权的先例;**卡不能触发、加速或预填这个询问**。
-- **问句放在读者面前,不在抽屉里。** 它是 `ConsentAsk`
-  (`apps/iris-web/src/app/ConsentAsk.tsx`),浮在对话之上、非模态、无计时器。
-  第一版只活在设置面板里,而那个面板默认关闭并在关闭时 `aria-hidden`——
-  于是"问过了"与"没人看得见"长得一模一样。
-- 回答"不运行"后,脚本面板仍列出全部脚本(可见性不随允许而变),入口文案指向
-  重新开启的位置。
-- **这道门也管沙箱插件。** 玩家在一段对话里长出来的功能
-  ([SANDBOX-PLUGINS](SANDBOX-PLUGINS.md) §4.2,协调人裁决 2026-09-19)跑在**同一个帧**里,
-  所以它骑这一道门、**不自带第二道**:重开聊天不会再问一遍。理由就是这一节自己的:
-  三态的全部代价是为了不重复提问,而每次开聊天再问一次插件,唯一可行的答案是
-  yes——那正是训练人对下一个问题也说 yes 的形状。真正的门在更前面,是每个新版本
-  一张的确认卡(§4.1);没被点过头的插件根本进不了已授权状态。
-  **`declined` 时插件也不跑**,因为拒绝的语义是"不要在这张卡上跑代码",而插件是代码;
-  侧栏的「这个对话长了什么」面板必须把这句话说出来(「这段对话长出来的 N 个功能也不会运行」),
-  否则玩家会以为插件没了。落点是 `useCardScripts.tsx` 里那一行
-  `scriptsAllowed !== 'allowed'` 的提前返回——插件与脚本共用它,没有第二个判断。
+| `scriptsAllowed` | 含义 |
+| --- | --- |
+| 未设置 | 尚未询问 |
+| `false` | 已拒绝 |
+| `true` | 已允许 |
 
-为什么不是"默认就跑"(上游行为):沙箱默认没收了文档与网络,**但运行本身消耗
-资源、执行作者代码、并可经既有授权组合放大**。EJS 的先例已立:"跑卡片作者的
-JavaScript"的默认答案必须来自部署方或用户,不来自卡的存在。为什么不是"默认
-永不跑":那是把功能做成摆设,拒绝了 14/19 真实卡片的正常工作方式。首次询问 +
-按卡记忆是两者之间唯一诚实的点。
+授权由宿主的 `ScriptPolicyStore` 管理，通过 `script.list` 查询、`script.setScriptsAllowed` 修改。删除角色会删除授权；重新导入或复用相同 id 不会继承旧许可。切换角色或准备执行时重新读取宿主状态，不以浏览器缓存作为授权依据。
 
-## 二、授权在运行时刻从宿主重新解析(GRANTS §1)
+## 运行顺序
 
-frame 创建的那一刻,授权**从宿主现问**,不读任何以 characterId 为键的浏览器
-缓存。开聊天就是一次主体变更(GRANTS §2):切聊天、切卡、删卡后重开,都触发
-重新解析。
+1. 聊天就绪后，检查角色脚本与授权。
+2. 为该角色建立共享运行环境，按顺序执行脚本；单个脚本失败不会跳过其余脚本。
+3. 显示运行状态、等待条件或错误。离开角色时销毁环境。
+4. 消息中的界面按其展示生命周期创建和清理，不与角色脚本的生命周期混为一谈。
 
-~~**三个里只有两个在契约上,这点要说清楚。** `documentGranted` 与 `scriptsAllowed`
-由 `script.list` 带出、由 `script.setDocumentGrant` / `script.setScriptsAllowed`
-写入;`networkGranted` **不在契约里**——两条真实运行路径
-(`apps/iris-web/src/app/useCardScripts.tsx`、`MessageInterfaces.tsx`)都把它
-硬编码为 `false`,唯一能翻它的是 dev 探针面板
-(`apps/iris-web/src/dev/SandboxProbe.tsx`,其注释写明"Dev-only until
-`networkGranted` reaches the contract")。所以今天卡片的出站 fetch 一律被 CSP
-拒绝并点名上报,那是**既定行为而不是缺口**;网络授权的策略见
-[SANDBOX.md](SANDBOX.md),但它描述的是机制,不是一个用户今天能按的开关。~~
+共享环境让同一卡片的脚本能够协作，例如共同使用 `Mvu`；不意味着不同卡片能共享变量或授权。
 
-**划线于 2026-09-19:三个都在契约上了。** `networkGranted` 与另两个同路:
-由 `script.list` 带出、由 `script.setNetworkGrant` 写入,按卡存在 policy 文件里
-(撤销即删除键,删卡即遗忘),面板在文档授权旁提供同样的风险确认开关。两条运行
-路径同样在运行时刻从宿主现问。没变的部分:默认仍关闭,`script-src` 仍不随授权
-放宽,`http:` 仍拒绝。
+## 如何读运行状态
 
-**组合需要一个主人**:`删卡 → 重导同名卡 → 开聊天` 这条路径要有一条跨越两个
-信任域的端到端检查——两半各自的测试永远绿,漏洞恰好住在缝上。**这条检查已经
-存在**:`apps/iris/tests/rpc-transport.test.ts` 走真实磁盘、真实 policy store、
-真实线协议,所以让 id 复用发生的那一步是真的发生的。
+| 状态 | 含义 |
+| --- | --- |
+| `dispatched` | 已派发，运行环境尚未就绪 |
+| `running` | 环境就绪，已发送脚本 |
+| `ran` | 顶层求值完成；不代表异步任务或全部功能完成 |
+| `waiting` | 等待脚本声明的全局成员 |
+| `refused` | 请求的成员被拒绝 |
+| `threw` | 脚本抛出异常，可查看详情 |
+| `bootstrap-failed` | 运行环境启动失败 |
+| `silent` | 未在期限内收到有效启动回报 |
+| `killed` | 环境已销毁 |
 
-## 三、失败出现在哪(GRANTS §4)
+错误显示在脚本面板和通知中，不伪装成角色回复，也不应让普通聊天失去响应。
 
-自动运行的脚本没有探针面板,所以策略指定失败的着陆点:
+## 授权边界
 
-1. **脚本面板显示真实运行态**,即探针结局行的语义原样搬家。
-   "2 of 2 enabled" 和 "2 of 2 running" 之间的差别,就是用户打开面板要问的
-   全部问题。词表今天是九个相(`ScriptRunPhase`,
-   `apps/iris-web/src/sandbox/script-run-state.ts`),比本页初稿列的五个多四个,
-   而多出来的四个各自堵一种"看起来在工作"的沉默:
+> [!WARNING]
+> 普通脚本授权与“访问真实页面”不是一回事。真实页面授权会解除重要的 iframe 隔离限制，只应授予你信任的脚本。
 
-   | 相 | 含义 |
-   |---|---|
-   | `dispatched` | 要过了,frame 还不存在——**不是** `running`,叫它 running 就是声称一段代码开始了而它从未被到达 |
-   | `running` | frame 答了 `ready`,body 已投出 |
-   | `ran` | body 求值完毕。**不是**"卡干完活了":注册监听后返回的卡,真正的活从生成时刻才开始 |
-   | `waiting` | 卡在等兄弟脚本发布某个全局。单列一相,因为这是**没有声音的那种失败**——抛错的会说话,等一个永不到来的 provider 的看起来像在工作 |
-   | `refused` | 沙箱拒了一个成员(带 `member`) |
-   | `threw` | body 抛了(带 `detail`) |
-   | `bootstrap-failed` | frame 根本没起来 |
-   | `silent` | 起来了,静默到静默本身成为结论 |
-   | `killed` | 聊天走了,还没跑完就被拆了 |
-2. **拒绝与错误进通知条**,沿用传输失败的先例:点名脚本、点名成员/主机、指向
-   能放行它的授权。**拒绝必须盖过卡的 fallback**(既定裁决,机制已建)。
-3. **失败的卡不能把对话带走**:frame 崩溃、悬死、被杀,聊天照常可读可写。
-   脚本是聊天的增强,不是聊天的前提。
-4. **授权提示不在运行路径上**:缺授权的卡得到的是面板里一行"未授权,在此开启",
-   不是挡在对话前的模态框。
+`script.setDocumentGrant` 管理单独的 `documentGranted` 授权；默认脚本只能访问为它准备的页面视图。具体边界见[脚本沙箱](SANDBOX.md)。
 
-## 四、运行时机与生命周期
+`networkGranted` 已进入正式契约：由 `script.list` 返回、`script.setNetworkGrant` 写入，在脚本面板中经风险确认后按角色授权。默认关闭，撤销删除许可，删卡清除记录；两条运行路径都在执行时读取宿主状态。
 
-- **时机**:聊天视图就绪之后、异步启动;绝不阻塞消息渲染或首字节。
-- **每聊天一个 frame 集合**,`ready → context → run` 沿用已验证的序;脚本按
-  卡内顺序启动,一个脚本的失败不阻止下一个(探针语义)。
-- **切走/关聊天即完整回收**(Cordis 不变量)。frame 生命周期挂在"这个聊天
-  在前台",与消息内渲染 frame 的"这条消息在显示"同构——后者写这页时是未来件,
-  今天是 `MessageInterfaces`(`apps/iris-web/src/app/MessageInterfaces.tsx`),
-  同构关系成立而不再是预期。
-- ~~文案与接线**同一次改动落地**(GRANTS §3):面板那句"Scripts do not run on
-  their own yet"在接线提交里改回,不提前不滞后。~~ 已完成——那句话在全树已无
-  出现(`grep -rn "do not run on their own" apps/iris-web/src` 为空)。
+切换网络授权会重新加载该角色的所有活跃帧，使新策略立即生效。它只放宽 HTTPS 图片、连接和样式，不放宽脚本来源或允许 HTTP；允许的脚本 URL 仍可能携带数据，因此不能把关闭授权理解成“绝不联网”。
 
-## 五、明确不在本页范围
+## 与其他扩展的区别
 
-- ~~**消息内卡片 UI 管线**(`TH-render` frame、代码块变面板)——独立立项。~~
-  已独立落地,见 `apps/iris-web/src/app/MessageInterfaces.tsx` 与
-  [notes/apps/iris-web/RENDER.md](../notes/apps/iris-web/RENDER.md);仍不由本页管。
-- 模板(`IRIS_TEMPLATES`)的默认值不因本页改变——两个开关正交:模板是宿主侧
-  求值(`apps/iris/cordis.yml` 的 `templates: IRIS_TEMPLATES === '1'`,默认关),
-  本页管浏览器侧 frame。
-- 事件拦截型钩子(`CHAT_COMPLETION_SETTINGS_READY` 一类)仍按"宁可缺,不能错发"
-  留空,见 [GENERATION-HOOKS.md](GENERATION-HOOKS.md)。
+| 能力 | 开关与位置 |
+| --- | --- |
+| 卡片脚本 | 浏览器 iframe，按角色授权 |
+| EJS 提示词模板 | 宿主侧独立开关 `IRIS_TEMPLATES=1`，默认关闭 |
+| 系统插件 | 宿主同权代码，在插件中心单独管理 |
+| 生成钩子 | 见[设计稿](GENERATION-HOOKS.md)，不要假定已提供公开接口 |
 
-## 分工(已交付,留作记录)
+## 排查顺序
 
-四块全部落地。留下这张表是因为它记的是**谁出的哪一半**,而接缝上的缺陷正是
-两半各自都绿时才出现的那种。
+先确认角色授权，再查看脚本状态与错误；遇到 `waiting`，检查被等待的成员是否真的由其他脚本发布。`ran` 只说明顶层代码完成，不能据此判断卡片功能正常。
 
-| 块 | 归属 | 今天落在 |
-|---|---|---|
-| `scriptsAllowed` 进 `ScriptPolicyStore` + 契约(`script.list` 带出;`script.setScriptsAllowed`) | 72 | `packages/iris-app-service/src/scripts.ts`、`packages/iris-protocol/src/rpc.ts` |
-| 首次询问 UI、运行态面板、失败着陆(通知条/结局行语义搬家) | f7 | `ConsentAsk.tsx`、`ScriptPanel.tsx`、`sandbox/script-run-state.ts` |
-| frame 集合生命周期挂聊天前台、运行时刻重新解析授权 | f7 | `apps/iris-web/src/sandbox/runner.ts`、`frame.ts` |
-| 跨信任域端到端检查(删卡→重导→开聊天) | 72 出宿主半,f7 出浏览器半,接缝测试放 `apps/iris` | `apps/iris/tests/rpc-transport.test.ts` |
+运行环境、远程导入与 CSP 问题见[脚本沙箱](SANDBOX.md)；实现差异和验收记录见[前端记录](../notes/apps/iris-web/DEVIATIONS.md)。
