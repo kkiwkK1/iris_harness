@@ -76,6 +76,14 @@ function harness(options?: {
    * then gets its neighbour's markup with nothing reporting anything.
    */
   started: () => { instance: number, markup: string }[]
+  /**
+   * Every network-grant flip the controller forwarded, in order.
+   *
+   * A flip must reach **every** frame: a partial sweep leaves the card's own
+   * images refused in whichever frames it missed, and nothing on screen says
+   * which. Asserted per instance rather than as a count for that reason.
+   */
+  regranted: () => { instance: number, granted: boolean }[]
 } {
   let latest: InterfaceState[] = []
   let attachedCount = 0
@@ -88,6 +96,8 @@ function harness(options?: {
   const paints = new Map<number, (() => void)[]>()
   /** What the controller told the env about first layouts, in order. */
   const envPainted: number[] = []
+  /** Every grant flip the controller forwarded, per instance. */
+  const regranted: { instance: number, granted: boolean }[] = []
 
   const env: MessageFramesEnv = {
     start: input => {
@@ -104,6 +114,9 @@ function harness(options?: {
         refreshContext: context => pushed.push({ instance: input.instance, context }),
         emit: (event, args) =>
           delivered.push({ instance: input.instance, event, args: [...args] }),
+        // Recorded rather than ignored, so the controller's forwarding of a
+        // grant flip is observable here and not only in a browser.
+        applyNetworkGrant: granted => regranted.push({ instance: input.instance, granted }),
         dispose: () => undefined,
       }
     },
@@ -134,11 +147,11 @@ function harness(options?: {
     refreshed: () => pushed,
     emitted: () => delivered,
     started: () => startedWith,
+    regranted: () => regranted,
   }
 }
 
-test('each claimed block becomes its own frame, reported before it can be ready', () => {
-  const blocks = claimFrontendBlocks([oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL))
+test('each claimed block becomes its own frame, reported before it can be ready', () => {  const blocks = claimFrontendBlocks([oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL))
   assert.equal(blocks.length, 2, 'the fixture should contain two interfaces')
 
   const scope = harness()
@@ -791,4 +804,48 @@ test('a details element opening is a change the height reporter can see', () => 
   const options = observer[1] ?? ''
   assert.match(options, /subtree: true/u, 'a toggle inside the body would be invisible')
   assert.match(options, /attributes: true/u, 'a <details> open flips an attribute and nothing else')
+})
+
+test('a grant flip reaches EVERY frame of the message, not just one', () => {
+  /*
+   * The defect this pins, measured on a real chat page: the script frame
+   * beside the message frames re-navigated under the widened policy while the
+   * message frames did not, so one card on one screen ran two frames under two
+   * different policies and the cover image in the message frame stayed
+   * refused. The cause was upstream of this controller — the shell's `runCard`
+   * wrapper simply did not implement `applyNetworkGrant`, and the member was
+   * declared optional so the typecheck said nothing and the call site's `?.()`
+   * swallowed it. The member is required now; this asserts the forwarding.
+   *
+   * Every instance, because a message with three interfaces is three frames and
+   * a partial sweep would leave some of the card's own images refused with no
+   * way for the reader to tell which.
+   */
+  const blocks = claimFrontendBlocks([oneInterface('<body>one'), '', oneInterface('<body>two')].join(NL))
+  const scope = harness()
+  const running = runMessageInterfaces(blocks, 7, scope.env)
+  assert.equal(scope.regranted().length, 0, 'no grant movement before the flip')
+
+  running.applyNetworkGrant(true)
+
+  assert.deepEqual(
+    scope.regranted().sort((a, b) => a.instance - b.instance),
+    [{ instance: 0, granted: true }, { instance: 1, granted: true }],
+    'the flip must reach every frame, so no frame is left on the old policy',
+  )
+
+  // And a revocation is forwarded just as completely: a one-way sweep would
+  // leave a revoked card's frames able to reach the network, which is the
+  // failure that matters most.
+  running.applyNetworkGrant(false)
+  assert.deepEqual(
+    scope.regranted().slice(2).sort((a, b) => a.instance - b.instance),
+    [{ instance: 0, granted: false }, { instance: 1, granted: false }],
+  )
+
+  // A disposed run forwards nothing: re-navigating a torn-down frame would
+  // resurrect a realm the shell already buried.
+  running.dispose()
+  running.applyNetworkGrant(true)
+  assert.equal(scope.regranted().length, 4, 'a disposed controller must not re-navigate anything')
 })

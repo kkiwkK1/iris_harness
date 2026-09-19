@@ -487,6 +487,19 @@ export function MessageInterfaces({
         emit: (event, args) => {
           card.emit(event, [...args])
         },
+        /*
+         * Forwarded, and **required** by the interface rather than optional.
+         *
+         * It was drafted as an optional member, and that leniency is what let
+         * this wrapper omit it entirely: the typecheck stayed green, the
+         * controller's `?.()` call became a silent no-op, and the card's cover
+         * image kept being refused by the old policy while the script frame
+         * beside it re-navigated. Both frames of one card on one screen ran
+         * under different policies, and nothing said so.
+         */
+        applyNetworkGrant: granted => {
+          card.applyNetworkGrant(granted)
+        },
         dispose: () => {
           // The queue first: a dialog on screen for a disposed frame is one the
           // reader can still press.
