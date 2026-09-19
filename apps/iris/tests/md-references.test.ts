@@ -163,3 +163,66 @@ test('every .md a source comment mentions exists', () => {
   assert.ok(checked >= 50, `only ${checked} .md mentions found in source; the mention scan is broken`)
   assert.deepEqual(broken, [], `${broken.length} .md mention(s) in source name a file that is not in the tree:\n  ${broken.join('\n  ')}`)
 })
+
+/**
+ * The six deviation ledgers are numbered, and a number is used once.
+ *
+ * `docs/README.md` states the rule for these files: a section is numbered,
+ * appended at the end, and never rewritten. Nothing checked it, and on
+ * 2026-09-19 a rebase left `notes/apps/iris-web/DEVIATIONS.md` with **two §119
+ * sections** — one about the frame sandbox's `allow-forms`, one about `uid`
+ * becoming optional — while §118 was skipped entirely. The change was a
+ * one-line renumber made while resolving a conflict, it passed typecheck, the
+ * full suite, `test:no-corpus` and `check:render`, and it was merged.
+ *
+ * That is the same shape as the defects the affected sections describe: **a
+ * rule held by convention and enforced by nothing**, whose violation is
+ * invisible in review because each half looks right on its own. A duplicate
+ * number defeats the thing the numbering is for — `§119` no longer identifies
+ * one section, and a citation to it is ambiguous.
+ *
+ * **Uniqueness, not contiguity or order.** All three of the weaker-looking
+ * invariants are false of the real ledgers, which is why this asserts only the
+ * one that holds: the web ledger has a gap at §73 and a descending pair
+ * (§60 → §59), and the app-service ledger has gaps at §37 and §54. Sections
+ * were withdrawn and numbers reused deliberately over the life of these files;
+ * a check demanding `n+1` would go red on history rather than on a mistake.
+ *
+ * Scope is the six ledgers `docs/README.md` names, found by the filename rather
+ * than a list here, so a seventh cannot be added without being covered — and
+ * the scan asserts it found the expected population, because a guard that
+ * silently matches nothing passes forever.
+ */
+test('a deviation ledger uses each section number once', () => {
+  const ledgers = mdFiles.filter(path => posix.basename(path) === 'DEVIATIONS.md')
+  // `docs/README.md` lists six. A floor rather than a pin: a seventh ledger is
+  // a legitimate addition, and the assertion below is what must still hold.
+  assert.ok(
+    ledgers.length >= 6,
+    `only ${ledgers.length} DEVIATIONS.md file(s) found; the ledger scan is broken`,
+  )
+
+  const duplicates: string[] = []
+  let sections = 0
+  for (const file of ledgers) {
+    const seen = new Map<string, number>()
+    linesOf(file).forEach((line, index) => {
+      const match = /^## ([0-9]+)\./.exec(line)
+      if (match === null) return
+      const number = match[1] ?? ''
+      sections += 1
+      const first = seen.get(number)
+      if (first !== undefined) {
+        duplicates.push(`${file}: §${number} at line ${String(index + 1)} repeats the one at line ${String(first)}`)
+        return
+      }
+      seen.set(number, index + 1)
+    })
+  }
+  assert.ok(sections >= 100, `only ${sections} numbered ledger sections found; the scan is broken`)
+  assert.deepEqual(
+    duplicates,
+    [],
+    `${duplicates.length} ledger section number(s) used more than once, so a citation to them is ambiguous:\n  ${duplicates.join('\n  ')}`,
+  )
+})
