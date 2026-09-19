@@ -152,13 +152,17 @@ export interface StartedInterface {
   /**
    * Re-navigate the frame under a changed network grant.
    *
-   * Optional: a test double built before the switch existed answers the
-   * structural type without it, and a missing member simply means that frame
-   * catches the grant at its next build instead. Structural optionality is
-   * deliberate here and is the one place it is sound: the controller below
-   * never *needs* the rebuild to stay correct — it needs it only to be early.
+   * **Required, not optional.** It was drafted optional on the argument that a
+   * test double predating the switch should still satisfy the type, and that
+   * leniency cost a real defect: `MessageInterfaces`' `runCard` wrapper never
+   * implemented it, TypeScript said nothing, the call site's `?.()` made it a
+   * silent no-op, and the card's cover image stayed refused while the script
+   * frame beside it re-navigated correctly. A missing member that the caller
+   * reaches for with `?.` is a behaviour that stops existing without a compile
+   * error — which is exactly what this repository's typecheck exists to
+   * prevent. Doubles implement it; the runner implements it; both are one line.
    */
-  applyNetworkGrant?: (granted: boolean) => void
+  applyNetworkGrant: (granted: boolean) => void
   dispose: () => void
 }
 
@@ -264,9 +268,9 @@ export interface RunningInterfaces {
   /**
    * Re-navigate every frame of this message under a changed network grant.
    *
-   * Forwarded to the frames that implement it; one that does not simply
-   * catches the grant at its next build, which the swap already delivers on
-   * any text change.
+   * Required for the reason `StartedInterface.applyNetworkGrant` records: as an
+   * optional member this stopped existing silently at one call site while the
+   * typecheck stayed green.
    */
   applyNetworkGrant: (granted: boolean) => void
   dispose: () => void
@@ -442,7 +446,7 @@ export function runMessageInterfaces(
 
     applyNetworkGrant: granted => {
       if (disposed) return
-      for (const card of running) card.applyNetworkGrant?.(granted)
+      for (const card of running) card.applyNetworkGrant(granted)
     },
 
     emit: (event, args) => {

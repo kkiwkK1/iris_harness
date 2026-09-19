@@ -8324,6 +8324,34 @@ API 密钥」—— 那是该授权真正解锁的能力；网络授权的确认
 | 契约方法真实可达线上 | 同文件 `PROBES` 表新增一行 + registration.test.ts 的注册扫描 |
 | 授权前后 `script-src` 逐字节一致 | `apps/iris-web/tests/sandbox-srcdoc.test.ts`（先于本开关存在） |
 
+### 追加：一个可选成员吞掉的缺陷（同日实测）
+
+开关落地后第一次真人验收报「授权了图片还是裂」。查下去有两个互不相干的原因，
+第二个是本节的代码缺陷，记在这里因为它的形状值得留下：
+
+**原因一（不是缺陷）。** 卡片的图全部来自 `gitgud.io/Rown/moshen`，该仓库已死：
+302 → 登录页 → 403。在**完全没有 CSP 的裸页面**里 `<img>` 也是
+`net::ERR_BLOCKED_BY_ORB`。对照实验：把卡片自己 frame 的 srcdoc 复制一份、只把
+URL 换成一张活的远程图，同一份 policy、同一个 sandbox 属性、同一套标记，
+替代图 LOADED、每个 gitgud URL 都 ERROR；把授权关掉，替代图立刻变 ERROR。
+结论：策略与授权链路都是好的，是 URL 死了。卡在 SillyTavern 里同样是裂图。
+
+**原因二（真缺陷，本 PR 内修）。** 授权后 message frame **不会**就地重载，而同一张
+卡同一屏上的 script frame 会 —— 一张卡两个 frame 跑在两套 policy 下。根因：
+`StartedInterface.applyNetworkGrant` 当初被写成**可选成员**（理由是「早于本开关的
+测试替身也该满足这个类型」），于是 `MessageInterfaces.tsx` 里 `runCard` 的包装对象
+根本没实现它，`tsc` 一声不吭，调用点的 `?.()` 把它变成静默 no-op。
+**一个调用点会用 `?.` 去够的缺失成员，是一段没有编译错误就消失的行为** —— 这正是
+本仓库两个 typecheck 存在的理由，而这次是它们没能拦住的那一类。
+
+修法：该成员改为必填（两个实现各一行，测试替身也各一行），并加
+`tests/message-frames.test.ts` 的一条断言：一次翻转必须到达**每一个**实例
+（只扫一部分会把漏掉那些 frame 里卡片自己的图留在拒绝状态，而屏幕上没有任何
+东西说明是哪些），撤销同样如此，disposed 之后不再重导航。实测复验：真实 UI
+按钮（设置 → 卡片脚本 → 授予网络访问权 → 勾选 → 确认）后两个 frame 都变成
+`https: data: blob:`，无需重开聊天。
+
+
 ### What would reopen this
 
 (a) 有人提出按主机授权（「只放行 gitgud.io」）：那是 SANDBOX.md 已裁的 per-host

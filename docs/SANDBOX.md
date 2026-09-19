@@ -384,10 +384,28 @@ panel beside the document grant. The chain, end to end:
   consequence (what the card can reach; what stays refused even granted —
   `http:`, and remote code off the allowlist), behind a risk-confirmation
   dialog whose acknowledgement names the exfiltration channel.
+- **Immediate, not next-run**: flipping the switch **re-navigates every live
+  frame of that card** (`runCard.applyNetworkGrant` — a srcdoc swap on the same
+  iframe, token and sandbox attribute untouched). A CSP belongs to the document
+  that carries it, so nothing short of a reload can apply a flipped grant; the
+  first version left that to the reader's next chat switch, which read as "the
+  switch does nothing". Two frames of one card on one screen must both be swept
+  — a partial sweep leaves the card's own images refused in the frames it
+  missed, with nothing on screen saying which.
 - **Policy, unchanged**: granted or not, `script-src` is byte-identical —
   pinned by `sandbox-srcdoc.test.ts`'s *"a network grant widens fetch, images
   and styles — and nothing else"*, which predates the switch and now guards the
   thing the switch actually flips.
+
+**A grant cannot revive a dead URL.** Measured 2026-09-19 on the card that
+motivated the feature: its images all live under `gitgud.io/Rown/moshen`, whose
+repository is gone (302 → sign-in → 403), and a bare page with **no CSP at all**
+refuses the same URLs with `net::ERR_BLOCKED_BY_ORB`. The controlled experiment:
+clone the card's own frame, change one string — the image URL — and the
+substitute loads under the same policy while every original URL fails; turn the
+grant off and the substitute fails too. The policy is exonerated and so is the
+grant; the reader gets a named refusal and a picture that will not appear in
+SillyTavern either.
 
 ### Upstream has no policy here at all — and its own frames load remote stylesheets
 
