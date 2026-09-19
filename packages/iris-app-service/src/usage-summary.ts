@@ -26,15 +26,16 @@
  * in `undatedTurns`**, so a reader can see how much of a time-sliced chart is a
  * reconstruction rather than a reading.
  *
- * **Three populations.** A conversation's cost is not only its turns. A card's
- * own `TavernHelper.generate` / `generateRaw` and this host's own compaction
- * summary are billed on the same route to the same account and produce no
- * reply, so they are stored on the chat header (`./side-usage.ts`) rather than
- * on a message. All three are counted here, and the two side shares are
- * reported as `UsageTotals.script` and `UsageTotals.compaction` — because a
- * total that left them out was about a population narrower than the user's
- * bill, and one that folded them in silently would leave a reader unable to
- * explain why the figure is larger than the replies they can see.
+ * **Turns, and the side populations beside them.** A conversation's cost is not
+ * only its turns. A card's own `TavernHelper.generate` / `generateRaw`, this
+ * host's own compaction summary, and the request that wrote a sandbox plugin
+ * are all billed on the same route to the same account and produce no reply, so
+ * they are stored on the chat header (`./side-usage.ts`) rather than on a
+ * message. Every one of them is counted here, and each side share is reported
+ * under the `UsageTotals` field spelled the same as its `TurnUsage.source` —
+ * because a total that left them out was about a population narrower than the
+ * user's bill, and one that folded them in silently would leave a reader unable
+ * to explain why the figure is larger than the replies they can see.
  *
  * @module @iris/app-service/usage-summary
  */
@@ -145,15 +146,16 @@ function emptyTotals(): UsageTotals {
  * **A generation that is not a turn is folded in twice: into the whole, and
  * into its own share.** Into the whole because it was billed to the same
  * account on the same route, so a total that left it out would be a total of
- * something other than the bill; into `script` or `compaction` so a surface can
- * say how much of the figure it is. The shares are not parallel populations to
- * be added — each is a subset of the enclosing figure, and a reader wanting the
- * turn share subtracts both.
+ * something other than the bill; into the share named after its source so a
+ * surface can say how much of the figure it is. The shares are not parallel
+ * populations to be added — each is a subset of the enclosing figure, and a
+ * reader wanting the turn share subtracts all of them.
  *
- * Two shares rather than one merged "not a turn" figure, for the reason
- * `UsageTotals.compaction` gives: a card's spend is the card author's doing and
- * a compaction's is this host's own policy, so a reader who wants less of one
- * acts somewhere different from a reader who wants less of the other.
+ * A share each rather than one merged "not a turn" figure, for the reason
+ * `UsageTotals.compaction` gives: a card's spend is the card author's doing, a
+ * compaction's is this host's own policy, and a plugin's is the player spending
+ * on a profile they picked for writing code — so a reader who wants less of one
+ * acts somewhere different from a reader who wants less of the others.
  * @param into - the accumulator, mutated.
  * @param record - one generation.
  */
@@ -161,12 +163,14 @@ export function addUsage(into: UsageTotals, record: DatedUsage): void {
   foldBuckets(into, record.usage)
   if (record.undated) into.undatedTurns += 1
   const source = record.usage.source
-  if (source !== 'script' && source !== 'compaction') return
+  if (source !== 'script' && source !== 'compaction' && source !== 'plugin') return
   // Keyed by the source rather than branched per share. The field name and the
-  // source spelling are the same word by construction, so a third side source
+  // source spelling are the same word by construction, so a further side source
   // folds by widening the guard above rather than by someone remembering to
   // copy an arm — and a forgotten arm here does not fail, it reports a share of
   // zero, which reads as "this profile does not do that" on every page.
+  // `'plugin'` was the first to arrive after that was written, and widening the
+  // guard by one word is all it took.
   const share = into[source] ?? emptyBuckets()
   into[source] = share
   foldBuckets(share, record.usage)

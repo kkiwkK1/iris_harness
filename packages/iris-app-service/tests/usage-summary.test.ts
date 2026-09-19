@@ -788,3 +788,89 @@ test('a compaction claimed on a message line is not read as one', () => {
   assert.equal(read.records[0]?.usage.source, undefined)
   assert.equal(summariseUsage([read]).totals.compaction, undefined)
 })
+
+/*
+ * ------------------------------------------------------ the fourth population
+ *
+ * The request that wrote a sandbox plugin (`docs/SANDBOX-PLUGINS.md` §11.3).
+ * Same standing again — billed to the same account, no candidate, stored on the
+ * header — and a third asker, on a connection profile the player chose for
+ * exactly this. The implementation it separates itself from is the one that
+ * folds it into `script`, which agrees with the right answer on every profile
+ * that has never grown a plugin.
+ */
+
+test('a plugin-writing request is counted in the whole and reported as its own share', () => {
+  const summary = summariseUsage([
+    chat('grew', [
+      record(NOON, 'deepseek-chat', { inputTokens: 100, outputTokens: 10, cacheReadTokens: 900 }),
+      record(NOON, 'deepseek-chat', {
+        inputTokens: 40, outputTokens: 4, cacheReadTokens: 360, source: 'script',
+      }),
+      record(NOON, 'deepseek-chat', {
+        inputTokens: 2_140, outputTokens: 96, cacheReadTokens: 768, source: 'compaction',
+      }),
+      record(NOON, 'deepseek-chat', {
+        inputTokens: 8_300, outputTokens: 640, cacheReadTokens: 12, source: 'plugin',
+      }),
+    ]),
+  ], { granularity: 'day' })
+
+  // In the whole. Leaving the plugin request out reports `cacheMiss` 2 280 —
+  // which is what every figure on the page said before this share existed.
+  assert.equal(summary.totals.turns, 4)
+  assert.equal(summary.totals.cacheMiss, 10_580)
+  assert.equal(summary.totals.output, 750)
+
+  /*
+   * And apart from the other two. Every figure differs from every other, so a
+   * fold into `script` reports `script.turns` 2, a swap reports
+   * `plugin.cacheMiss` 40, and an arm that forgot to widen reports
+   * `plugin` undefined while the whole still moved.
+   */
+  assert.equal(summary.totals.script?.turns, 1)
+  assert.equal(summary.totals.script?.cacheMiss, 40)
+  assert.equal(summary.totals.compaction?.cacheMiss, 2_140)
+  assert.equal(summary.totals.plugin?.turns, 1)
+  assert.equal(summary.totals.plugin?.cacheMiss, 8_300)
+  assert.equal(summary.totals.plugin?.output, 640)
+  assert.equal(summary.totals.plugin?.cacheRead, 12)
+
+  // One reading of one set: the cell and the conversation subtotal split it the
+  // same way the range total does.
+  assert.equal(summary.buckets[0]?.plugin?.turns, 1)
+  assert.equal(summary.chats[0]?.plugin?.turns, 1)
+})
+
+test('the three side shares are independently absent', () => {
+  /*
+   * The absence rule, extended to the third share rather than restated for it:
+   * a profile that grows features but runs no cards and never compacts draws
+   * one sentence, not three, and the two it does not draw are `undefined`
+   * rather than rows of zeros.
+   */
+  const pluginsOnly = summariseUsage([
+    chat('plugins-only', [
+      record(NOON, 'deepseek-chat', { inputTokens: 8_300, outputTokens: 640, source: 'plugin' }),
+    ]),
+  ], { granularity: 'day' })
+  assert.equal(pluginsOnly.totals.plugin?.turns, 1)
+  assert.equal(pluginsOnly.totals.script, undefined)
+  assert.equal(pluginsOnly.totals.compaction, undefined)
+  assert.equal(pluginsOnly.buckets[0]?.script, undefined)
+  assert.equal(pluginsOnly.chats[0]?.compaction, undefined)
+  // The tokens were still counted, which is the half an absent share is not.
+  assert.equal(pluginsOnly.totals.turns, 1)
+  assert.equal(pluginsOnly.totals.cacheMiss, 8_300)
+
+  // And the other direction: a profile that has never grown a feature draws no
+  // plugin sentence at all.
+  const never = summariseUsage([
+    chat('never', [
+      record(NOON, 'deepseek-chat', { inputTokens: 40, outputTokens: 4, source: 'script' }),
+    ]),
+  ], { granularity: 'day' })
+  assert.equal(never.totals.plugin, undefined)
+  assert.equal(never.buckets[0]?.plugin, undefined)
+  assert.equal(never.chats[0]?.plugin, undefined)
+})

@@ -291,7 +291,25 @@ export const en = {
   pluginDiscard: 'No thanks',
 
   pluginsPanelTitle: 'What this conversation grew',
-  pluginsPanelEmpty: 'This conversation has not grown anything yet. Switch to 「Grow a feature」 and say a sentence.',
+  /*
+   * The empty state, which is **this feature's only entry explanation**
+   * (`docs/SANDBOX-PLUGINS.md` §12 rule 3).
+   *
+   * So it says two things a blank panel cannot: what 「Grow a feature」 *is* —
+   * one sentence turns into one small feature for this conversation — and
+   * **where the switch is**, which is inside the composer's 「+」 and therefore
+   * not on screen when this panel is. Naming the mode without naming the menu
+   * would send a reader looking along a bar that does not have it.
+   */
+  pluginsPanelEmpty: 'This conversation has not grown anything yet. 「Grow a feature」 turns one sentence into one small feature for this conversation: open it from the 「+」 beside the message box and say what you want.',
+  /**
+   * Said **before** the sentence above when no authoring model is set, because
+   * the instruction above is not followable until this is done: the entry is
+   * dark and a reader who goes looking for it finds a disabled control with a
+   * hint they have to hover. One sentence, and it points at the row that fixes
+   * it rather than at the setting's name.
+   */
+  pluginsPanelNoAuthoring: 'First, no model is chosen for writing them, so 「Grow a feature」 is dark: pick one on the 「Writes plugins」 row under Settings → Connections.',
   pluginsPanelNoHost: 'This host keeps no sandbox plugins.',
   pluginStateMounted: 'Running',
   pluginStateDisabled: 'Off',
@@ -304,6 +322,28 @@ export const en = {
   pluginEnable: 'Turn on',
   pluginDisable: 'Turn off',
   pluginRemove: 'Delete',
+  /*
+   * 「See the code」 — the read-only source view (§12 rule 2).
+   *
+   * The row's fourth control and the only one that asks the host a question:
+   * `SandboxPluginView` carries no source, so opening this is a call. The
+   * toggle is one key in two states rather than two controls, because it is one
+   * disclosure.
+   *
+   * The note under the block is not a disclaimer, it is the **answer to the
+   * question the view creates**: a reader looking at code wants to change it,
+   * and the reason they cannot is that authorisation is recorded against the
+   * bytes' hash — an edited version is a version nobody approved, and being
+   * asked to approve something you wrote yourself is the confusing state this
+   * avoids. So it says what to do instead.
+   */
+  pluginViewCode: 'See the code',
+  pluginHideCode: 'Hide the code',
+  /** Over the block: which version these bytes are, and the hash they authorise under. */
+  pluginCodeHead: 'Version {version} · hash {hash}',
+  pluginCodeReadOnly: 'Read-only. To change it, say another sentence — an edited version would be one nobody approved.',
+  pluginCodeReading: 'Reading it from Iris…',
+  pluginCodeFailed: 'The code could not be read. {detail}',
   /** Said on the script panel when the card was refused, per AUTORUN. */
   pluginsDeclined: '{count} feature(s) this conversation grew will not run either.',
 
@@ -1534,6 +1574,26 @@ export const en = {
    * blank-never-zero rule, and the same reason `tok` is spelled out.
    */
   usageCompactionCell: '{n} compaction · {tokens} tok',
+  /*
+   * The plugin-writing share: the third sentence in the same note, the same
+   * hint, the same cell.
+   *
+   * Written as its own sentence for the reason the compaction one is, and one
+   * more: this is the **only** spend on this page that did not go out on the
+   * conversation's own connection. It went out on the profile chosen under
+   * 「写插件用」, which is where a reader who finds this number too large acts —
+   * so the hint names that row rather than describing the request.
+   *
+   * 「写插件」 names what was bought, not the mechanism: the player said a
+   * sentence, a model wrote code, and this is what that cost.
+   */
+  usagePluginShare: 'of which {n} plugin-writing requests · {tokens} tok',
+  usagePluginBasis: 'Requests Iris made to write this conversation’s features, each time you used 「Grow a feature」. They go out on the connection chosen under “Writes plugins”, not this conversation’s own; they are billed like a turn, produce no reply, and are counted inside every figure on this page.',
+  /**
+   * The subtotal list's plugin column, sharing the cell with the other two.
+   * Same blank-never-zero rule, and the same reason `tok` is spelled out.
+   */
+  usagePluginCell: '{n} plugin · {tokens} tok',
   /** Nothing to draw, because this figure was never billed — not a chart of zeros. */
   usageChartEmpty: 'Nothing was billed to this figure in this range.',
   /**
@@ -2105,19 +2165,26 @@ export const zh: Record<StringKey, string> = {
   pluginDiscard: '不要',
 
   pluginsPanelTitle: '这个对话长了什么',
-  pluginsPanelEmpty: '这段对话还没有长出任何功能。切到「创造」说一句话试试。',
+  pluginsPanelEmpty: '这段对话还没有长出任何功能。「创造」是用一句话给这段对话长出一个小功能：在输入框旁边的「+」里打开它，说一句你想要什么。',
+  pluginsPanelNoAuthoring: '先说一句：还没有选写插件用的模型，所以「创造」是灰的——到 设置 → 连接，在「写插件用」那一行选一个。',
   pluginsPanelNoHost: '这台宿主不保存沙箱插件。',
   pluginStateMounted: '挂着',
   pluginStateDisabled: '停用',
   pluginStatePending: '等你回答',
   pluginStateFailed: '失败 — {state}：{detail}',
   pluginFixMountFailed: '再说一句话让它重写。',
-  pluginFixDisposeFailed: '切走再切回这个聊天。',
+  pluginFixDisposeFailed: '切走再切回这个对话。',
   pluginVersionLabel: 'v{version}',
   pluginBranchedFrom: '来自分支',
   pluginEnable: '启用',
   pluginDisable: '停用',
   pluginRemove: '删除',
+  pluginViewCode: '看代码',
+  pluginHideCode: '收起代码',
+  pluginCodeHead: '第 {version} 版 · 哈希 {hash}',
+  pluginCodeReadOnly: '只读。要改就再说一句话——改过的那一版是没有人点过头的那一版。',
+  pluginCodeReading: '正在从 Iris 读取…',
+  pluginCodeFailed: '读不出这段代码。{detail}',
   pluginsDeclined: '这段对话长出来的 {count} 个功能也不会运行。',
 
   /* 连接卡下面新增的一行（owner 裁决，`docs/SANDBOX-PLUGINS.md` §11.1）。 */
@@ -3131,6 +3198,9 @@ export const zh: Record<StringKey, string> = {
   usageCompactionShare: '其中压缩摘要 {n} 次 · {tokens} tok',
   usageCompactionBasis: 'Iris 自己发起的请求，用来把这段时间较早的历史折成摘要。它们和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
   usageCompactionCell: '压缩摘要 {n} 次 · {tokens} tok',
+  usagePluginShare: '其中写插件请求 {n} 次 · {tokens} tok',
+  usagePluginBasis: '每次你用「创造」时，Iris 为这段对话写功能发出的请求。它们走的是「写插件用」那一行选的连接，不是这个对话自己的；和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
+  usagePluginCell: '写插件 {n} 次 · {tokens} tok',
   usageChartEmpty: '这段时间这个指标没有产生计费。',
   contextPill: '上下文 {used}/{total} · {percent}%',
   contextPillCapacity: '上下文 {total}',

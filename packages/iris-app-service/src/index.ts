@@ -1217,6 +1217,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('sandboxPlugin.list', handlers['sandboxPlugin.list']),
       ctx.irisRpc.register('sandboxPlugin.define', handlers['sandboxPlugin.define']),
       ctx.irisRpc.register('sandboxPlugin.decide', handlers['sandboxPlugin.decide']),
+      ctx.irisRpc.register('sandboxPlugin.source', handlers['sandboxPlugin.source']),
       ctx.irisRpc.register('backup.list', handlers['backup.list']),
       ctx.irisRpc.register('backup.preview', handlers['backup.preview']),
       ctx.irisRpc.register('backup.restore', handlers['backup.restore']),

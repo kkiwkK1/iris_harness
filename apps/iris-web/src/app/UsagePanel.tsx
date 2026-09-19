@@ -48,6 +48,7 @@ import {
   compactionTokens,
   hitRate,
   linePath,
+  pluginTokens,
   seriesDomKey,
   seriesKey,
   rangeParams,
@@ -411,17 +412,18 @@ function dashSwatch(color: string): string {
  * The share taken by generations nobody asked for is a **line under the
  * total**, not an eighth capsule, because it is not another way of dividing the
  * total — it is a statement about the same figure directly above it: how much
- * of that was something the user did not ask for. Each half appears only when
- * the host reported that share; a `0 次 · 0 token` line on every profile that
- * runs no card scripts is a line a reader learns to skip, and the same holds
- * for a profile that has never compacted.
+ * of that was not a reply. Each sentence appears only when the host reported
+ * that share; a `0 次 · 0 token` line on every profile that runs no card
+ * scripts is a line a reader learns to skip, and the same holds for a profile
+ * that has never compacted and for one that has never grown a plugin.
  *
- * **Two sentences in one note, not two notes.** The note is the hairline block
- * under the figure, and a second one would draw a second rule across the card
- * for a fact of the same rank. Inside it each sentence is its own `<span>`
- * carrying its own hint, because the two are explained differently — one is the
- * card author's spend, the other is Iris's own policy — and a `title` belongs
- * to one element.
+ * **One note, however many sentences, not a note each.** The note is the
+ * hairline block under the figure, and a second one would draw a second rule
+ * across the card for a fact of the same rank. Inside it each sentence is its
+ * own `<span>` carrying its own hint, because the three are explained
+ * differently — one is the card author's spend, one is Iris's own policy, one
+ * is the reader asking for a feature on a profile they chose for it — and a
+ * `title` belongs to one element.
  * @param props.totals - the range's aggregate.
  * @returns the cards.
  */
@@ -433,7 +435,7 @@ function Cards({ totals }: { totals: UsageTotals }): ReactElement {
       <div className="iris-usage__hero">
         <span className="iris-usage__total">{formatExactTokens(totalTokens(totals))}</span>
         <span className="iris-label">{t('usageCardTotal')}</span>
-        {totals.script === undefined && totals.compaction === undefined ? null : (
+        {totals.script === undefined && totals.compaction === undefined && totals.plugin === undefined ? null : (
           <span className="iris-usage__hero-note">
             {totals.script === undefined ? null : (
               <span title={t('usageScriptBasis')}>
@@ -448,6 +450,14 @@ function Cards({ totals }: { totals: UsageTotals }): ReactElement {
                 {t('usageCompactionShare', {
                   n: totals.compaction.turns,
                   tokens: formatExactTokens(compactionTokens(totals)),
+                })}
+              </span>
+            )}
+            {totals.plugin === undefined ? null : (
+              <span title={t('usagePluginBasis')}>
+                {t('usagePluginShare', {
+                  n: totals.plugin.turns,
+                  tokens: formatExactTokens(pluginTokens(totals)),
                 })}
               </span>
             )}
@@ -899,13 +909,13 @@ function ChatRows({
                   <span className="iris-meta">{share === null ? '—' : `${share}%`}</span>
                 </span>
                 {/*
-                  One cell for both side shares, stacked the way the hero note
-                  stacks its two sentences. Not two grid columns: a column that
-                  is blank on every conversation but the compacted ones would
-                  take width from the title on every row to say nothing, and the
-                  two facts belong to the same question — how much of this row
-                  was not a reply. Blank, never `0`, on a conversation with
-                  neither.
+                  One cell for every side share, stacked the way the hero note
+                  stacks its sentences. Not a grid column each: a column that is
+                  blank on every conversation but the compacted ones would take
+                  width from the title on every row to say nothing, and the
+                  facts belong to the same question — how much of this row was
+                  not a reply. Blank, never `0`, on a conversation with none of
+                  them.
                 */}
                 <span className="iris-usage__chat-script iris-meta">
                   {chat.script === undefined
@@ -925,6 +935,16 @@ function ChatRows({
                           {t('usageCompactionCell', {
                             n: chat.compaction.turns,
                             tokens: formatTokens(compactionTokens(chat)),
+                          })}
+                        </span>
+                      )}
+                  {chat.plugin === undefined
+                    ? null
+                    : (
+                        <span>
+                          {t('usagePluginCell', {
+                            n: chat.plugin.turns,
+                            tokens: formatTokens(pluginTokens(chat)),
                           })}
                         </span>
                       )}

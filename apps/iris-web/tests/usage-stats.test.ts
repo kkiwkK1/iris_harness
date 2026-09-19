@@ -42,6 +42,7 @@ import {
   linePath,
   metricValue,
   monthLabel,
+  pluginTokens,
   rangeParams,
   scriptTokens,
   seriesKey,
@@ -176,6 +177,34 @@ test('a row with no card share plots as a floor, while the page says nothing', (
   assert.equal(row.script, undefined)
   assert.equal(metricValue(row, 'script'), 0)
   assert.equal(scriptTokens(row), 0)
+})
+
+test('the plugin-writing share is read apart from the card share beside it', () => {
+  /*
+   * The third side share, and the reading it has to be told apart from is the
+   * one next to it: a row carrying both must report two different numbers, or
+   * an implementation that read `script` where it meant `plugin` agrees here.
+   * There is deliberately **no plugin metric** on the chart switch — the reason
+   * is under `pluginTokens`, and it is the compaction share's — so this is a
+   * figure and not a line.
+   */
+  const row = totals({
+    cacheMiss: 9_000,
+    cacheRead: 300,
+    output: 1_000,
+    turns: 4,
+    script: { cacheMiss: 100, cacheRead: 50, output: 40, turns: 1, cacheTurns: 1, cachePrompt: 150 },
+    plugin: { cacheMiss: 8_300, cacheRead: 12, output: 640, turns: 1, cacheTurns: 1, cachePrompt: 8_312 },
+  })
+  assert.equal(pluginTokens(row), 8_952)
+  assert.equal(scriptTokens(row), 190)
+  assert.notEqual(pluginTokens(row), scriptTokens(row))
+
+  // The absence rule the panel branches on, so a profile that has never grown a
+  // feature draws no sentence rather than a zero.
+  const none = totals({ cacheMiss: 700, output: 400, turns: 2 })
+  assert.equal(none.plugin, undefined)
+  assert.equal(pluginTokens(none), 0)
 })
 
 test('the metric switch offers the card line, or nobody can draw it', () => {
