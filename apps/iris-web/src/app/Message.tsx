@@ -20,6 +20,7 @@ import type { MessageView } from '@iris/protocol'
 
 import { Slot } from '../slots/Slot.tsx'
 import { getBodyTag, subscribeBodyTag } from './body-tag.ts'
+import { getQuoteScope, subscribeQuoteScope } from './quote-scope.ts'
 import {
   clearQuotedDialogue,
   markQuotedDialogue,
@@ -103,6 +104,11 @@ export function Message({
    */
   const prose = useRef<HTMLDivElement>(null)
   const bodyTag = useSyncExternalStore(subscribeBodyTag, getBodyTag, getBodyTag)
+  // Which quote pairs count: a device preference, and the §122 divergence from
+  // upstream's six. Subscribed rather than read once, so flipping the setting
+  // re-marks the prose that is already on screen — which is only true because
+  // the value is in the dependency list below.
+  const quoteScope = useSyncExternalStore(subscribeQuoteScope, getQuoteScope, getQuoteScope)
   // `editing` is not part of the upstream rule: the container simply is not
   // rendered while the textarea is, and leaving it out of this would mean the
   // effect never re-runs for the row that comes back when the edit is over.
@@ -110,11 +116,11 @@ export function Message({
   useLayoutEffect(() => {
     const root = prose.current
     if (root === null || !marked) return undefined
-    markQuotedDialogue(root)
+    markQuotedDialogue(root, quoteScope)
     return () => {
       clearQuotedDialogue(root)
     }
-  }, [marked, message.text, message.role, bodyTag, swipes?.index])
+  }, [marked, message.text, message.role, bodyTag, quoteScope, swipes?.index])
 
   const beginEdit = (): void => {
     setDraft(message.text)

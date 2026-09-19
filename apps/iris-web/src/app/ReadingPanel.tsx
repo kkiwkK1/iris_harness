@@ -1,12 +1,16 @@
+import { useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { ChoiceField, NumberField, ToggleField } from './fields.tsx'
 import { READING_LIMITS } from '../theme/theme.ts'
 import type { ReadingControl } from './SettingsDrawer.tsx'
+import { getQuoteScope, setQuoteScope, subscribeQuoteScope } from './quote-scope.ts'
+import type { QuoteScope } from './quoted-dialogue.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import type { Language } from './i18n/strings.ts'
 
 export function ReadingPanel({ control }: { control: ReadingControl }): ReactElement {
  const { lang, setLang } = useLanguage()
+ const quoteScope = useSyncExternalStore(subscribeQuoteScope, getQuoteScope, getQuoteScope)
  return (<section className="iris-section">
           <h3 className="iris-label iris-section__head">{t('sectionReading')}</h3>
           <NumberField
@@ -53,6 +57,24 @@ export function ReadingPanel({ control }: { control: ReadingControl }): ReactEle
             note={t('showFloorNumbersNote')}
             value={control.reading.floors}
             onToggle={next => control.setReading({ ...control.reading, floors: next })}
+          />
+          {/*
+            Which quotation marks take the theme's quote colour. The default is
+            speech only, which is a documented divergence from SillyTavern's six
+            (notes/apps/iris-web/DEVIATIONS.md §122): 「…」 and 『…』 mostly mark
+            terms and emphasis in Chinese prose, so colouring them paints the
+            page instead of the dialogue. The second option is the way back to
+            upstream's set, and it takes effect on the spot — every message on
+            screen re-marks itself.
+          */}
+          <ChoiceField
+            label={t('quoteScope')}
+            value={quoteScope}
+            options={[
+              { id: 'dialogue' as QuoteScope, label: t('quoteScopeDialogue') },
+              { id: 'upstream' as QuoteScope, label: t('quoteScopeUpstream') },
+            ]}
+            onSelect={(id: QuoteScope) => setQuoteScope(id)}
           />
           {/*
             The interface language. Lives beside the theme because it is the same
