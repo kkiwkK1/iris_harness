@@ -16,11 +16,20 @@
  *
  * @module iris-web/sandbox/plugin-surface
  */
+import { SANDBOX_PLUGIN_STYLE_ATTRIBUTE } from '@iris/protocol'
+
 import type { SandboxPluginPanelSink, SandboxPluginStyleSink } from './plugin-tree.ts'
 import { rewriteStylesheetLinks, unblockFontStylesheets } from './srcdoc.ts'
 
-/** The attribute a plugin's stylesheet carries, and the value is the owner's id. */
-export const PLUGIN_STYLE_ATTRIBUTE = 'data-iris-plugin-style'
+/**
+ * The attribute a plugin's stylesheet carries, and the value is the owner's id.
+ *
+ * The literal moved into `@iris/protocol` when the shell began writing the same
+ * attribute into message frames' `srcdoc`: this frame's head and a message
+ * frame's head have to carry **one** tag, or a census counting them would be
+ * counting two populations and reporting the total as one number.
+ */
+export const PLUGIN_STYLE_ATTRIBUTE = SANDBOX_PLUGIN_STYLE_ATTRIBUTE
 /** The attribute on the one container, which belongs to the frame. */
 export const PLUGIN_PANELS_ATTRIBUTE = 'data-iris-plugin-panels'
 /** The attribute on one plugin's cell, and the value is the owner's id. */

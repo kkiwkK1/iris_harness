@@ -987,6 +987,39 @@ stops waiting and records `mount-timeout`; the frame comes back when the loop
 does. This is the honest reading of the PR-A acceptance check that mounts
 `while(true){}`, and it is recorded rather than worked around.
 
+### What a message frame receives from a plugin, and what it does not
+
+A plugin never runs in a message frame. It runs in the card-script frame and
+nowhere else, which is a ruling rather than an accident — a plugin mounted per
+message frame would live and die with the reading window and would appear once
+per floor. But what a player asks a plugin for is usually drawn in a message
+frame: a card's status bar is a message interface.
+
+So since PR-C (2026-09-19) **one** thing crosses, and it is text. A plugin's
+`iris.styles.insert(css)` reports the sheet to the shell, the shell keeps it per
+`(chatId, pluginId)`, and the next message frame of that conversation is built
+with the sheet folded into its `srcdoc` — a `<style>` element in the head, beside
+the message's own, on the same marked-prefix transport (`MESSAGE_CSS_MARK`). Four
+properties of that crossing belong in this document because they are sandbox
+policy rather than feature detail:
+
+- **It is a string on every leg.** The shell bounds it, splits `</style` and
+  `</script` inside it, and never parses it. It is a model's output arriving from
+  an untrusted frame, and the only thing done to it is to put it inside an
+  element it cannot end.
+- **No code crosses, and no channel is opened.** The sheet reaches a frame by
+  that frame being **built** with it. There is no live injection into a running
+  message frame, so nothing new can reach one after it is constructed, and no
+  directive moves.
+- **It stops at this conversation.** The store is keyed by chat, and the
+  card-script frame going away takes its conversation's sheets with it — the
+  styles are derived from running code, so they have no source once the code
+  stops running.
+- **The shell's own page receives none of it.** The fan-out is pure data; the
+  only documents a `data-iris-plugin-style` element exists in are frames. An
+  acceptance assertion reads the shell document for that tag while a plugin's
+  sheet is live in the frames, which is the one moment the claim could fail.
+
 ## The shell's CSP floor
 
 The frame's policy is not the only one that reaches a frame, and the reason is a

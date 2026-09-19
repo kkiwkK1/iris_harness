@@ -192,6 +192,9 @@ export function installSandboxPluginTree(env: PluginEntryEnv): SandboxPluginTree
       }
       env.post({ iris: env.token, type: 'plugin:style', pluginId, css })
     },
+    retractStyles: pluginId => {
+      env.post({ iris: env.token, type: 'plugin:style-clear', pluginId })
+    },
     note: message => {
       env.post({ iris: env.token, type: 'note', scriptId: undefined, message })
     },

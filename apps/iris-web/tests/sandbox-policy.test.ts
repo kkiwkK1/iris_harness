@@ -346,6 +346,29 @@ test('a frame may report a mount, a named failure and a stylesheet', () => {
   )
 })
 
+test('a frame may say a plugin’s published stylesheets are gone', () => {
+  /*
+   * The removal counterpart, and it needs an arm of its own because the shell
+   * cannot work it out: `iris.styles.clear()` leaves the plugin mounted, so
+   * there is no `plugin:unmount` to infer it from, and without this message the
+   * message frames would go on painting a sheet the realm that wrote it has
+   * dropped.
+   */
+  assert.deepEqual(
+    parseFromFrame('tok', { iris: 'tok', type: 'plugin:style-clear', pluginId: '1-dark' }),
+    { iris: 'tok', type: 'plugin:style-clear', pluginId: '1-dark' },
+  )
+  assert.equal(
+    parseFromFrame('tok', { iris: 'tok', type: 'plugin:style-clear', pluginId: '' }),
+    undefined,
+    'an empty id names no owner, and "forget the sheets of nobody" has no reading',
+  )
+  assert.equal(
+    parseFromFrame('tok', { iris: 'tok', type: 'plugin:style-clear' }),
+    undefined,
+  )
+})
+
 test('a failure state the shell has no grade for is refused at the parser', () => {
   // Validated rather than passed through, the same rule `sizing`'s one mode
   // follows: the frame is untrusted, and a spelling that reached the shell would

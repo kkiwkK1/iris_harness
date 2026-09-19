@@ -386,6 +386,31 @@ export interface FrameCandidate {
    * observable now that "user rows carry nothing" can no longer be assumed.
    */
   isUser?: boolean
+  /**
+   * Bytes of sandbox-plugin CSS this frame will carry, from the shell's fan-out.
+   *
+   * **Charged, and that is a deliberate departure from how the message's own
+   * sheet is treated.** `runMessageInterfaces` explicitly does *not* charge
+   * message CSS, on the reasoning that a couple of kilobytes of shell-composed
+   * text billed to every region of a message would be this shell's weight
+   * reported as the card's. That reasoning does not carry over, for two reasons
+   * a reader should be able to check:
+   *
+   * - **the quantity is unbounded by the message.** A message's sheet is part of
+   *   a message whose body is already being charged; a plugin's is not bounded by
+   *   anything a floor contains. Sixteen plugins at the 32 KiB ceiling is half a
+   *   megabyte inlined into *each* frame — at twenty frames, ten megabytes of
+   *   real inlined text that a budget refusing to look at it would rate as zero.
+   * - **the number the budget exists to hold is what actually gets inlined.** An
+   *   uncharged half makes the 2 MiB a statement about part of a frame.
+   *
+   * The cost of charging it is stated too: a conversation that grows a big
+   * plugin sheet can push a later floor's interface into a placeholder that would
+   * have rendered before. That is the existing budget behaviour, reversible by
+   * the reader with the placeholder's own button, and the plugin that added the
+   * bytes has a report row of its own (`useCardScripts`, `onPluginStyle`).
+   */
+  pluginCssBytes?: number
 }
 
 /** What the previous plan handed out, and what the reader has asked for. */
@@ -472,10 +497,11 @@ export function floorOf(key: string): number | undefined {
  * describe — and both were `String.length` until this layer was built, which on
  * a Chinese corpus is about a third of the bytes actually paid.
  * @param candidate - the block.
- * @returns the encoded body plus the fixed per-frame overhead.
+ * @returns the encoded body, the sandbox-plugin CSS folded into this frame, and
+ * the fixed per-frame overhead.
  */
 export function frameWeight(candidate: FrameCandidate): number {
-  return encodedBytes(candidate.body) + FRAME_OVERHEAD_BYTES
+  return encodedBytes(candidate.body) + (candidate.pluginCssBytes ?? 0) + FRAME_OVERHEAD_BYTES
 }
 
 /**

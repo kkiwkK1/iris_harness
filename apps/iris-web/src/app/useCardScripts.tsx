@@ -29,6 +29,11 @@ import { startCardScripts } from '../sandbox/card-scripts.ts'
 import { pluginsFor, recordStatus, registerPluginControl } from '../dev/plugin-bench.ts'
 import { cardPopupBridge } from './card-popups.ts'
 import { registerCardEmitter } from './card-bus.ts'
+import {
+  forgetChatPluginStyles,
+  publishPluginStyle,
+  retractPluginStyles,
+} from './plugin-style-fanout.ts'
 import { broadcastWindowEvent, registerWindowEventSink } from './window-events.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
 import {
@@ -542,6 +547,52 @@ export function CardScriptFrames(): ReactElement {
                  */
                 void actionsOf(store).reportSandboxPlugin(text, fault ? 'fault' : 'note')
               },
+              /*
+               * The fan-out into this conversation's message frames.
+               *
+               * The store is the shell's, not the sidecar's: a plugin's styles
+               * are derived from running code, so they are re-derived on every
+               * mount and nothing about them is written to disk. What lands here
+               * is a **string** from an untrusted frame and it stays one all the
+               * way into the frames' `srcdoc`.
+               */
+              onPluginStyle: (pluginId, css) => {
+                if (chatId === undefined) return
+                const outcome = publishPluginStyle(chatId, pluginId, css)
+                if (outcome.accepted) {
+                  /*
+                   * A note beside the success, because this is the moment a
+                   * plugin starts costing every message frame of this
+                   * conversation bytes out of the 2 MiB pool. Without it the
+                   * budget could move and no row anywhere would say which plugin
+                   * moved it — and the reader of a frame that lost its place is
+                   * one step further from the cause than they need to be.
+                   */
+                  actionsOf(store).addCardReport(
+                    `sandbox plugin ${pluginId} published ${outcome.chars} characters of CSS to this`
+                    + " conversation's message frames; every one of them carries those bytes",
+                  )
+                  return
+                }
+                /*
+                 * **Refused by name, never truncated.** Half a stylesheet paints
+                 * something nobody wrote, and the syntax error in the surviving
+                 * half would point a reader at CSS rather than at a ceiling. The
+                 * frame keeps its own copy, so what a refusal costs is the
+                 * fan-out — which is what this sentence has to say, along with
+                 * both numbers (§6.2).
+                 */
+                const text =
+                  `sandbox plugin ${pluginId} too-large: its stylesheets total ${outcome.chars}`
+                  + ` characters, over the ${outcome.limit} this conversation's message frames accept`
+                  + " — the sheet is applied in the card's own frame and is not folded into them"
+                actionsOf(store).addCardReport(text)
+                void actionsOf(store).reportSandboxPlugin(text, 'note')
+              },
+              onPluginStyleCleared: pluginId => {
+                if (chatId === undefined) return
+                retractPluginStyles(chatId, pluginId)
+              },
               onRan: (scriptId, lateMs) => {
                 input.onPhase(scriptId, {
                   phase: 'ran',
@@ -934,6 +985,19 @@ export function CardScriptFrames(): ReactElement {
       popups.release()
       running.dispose()
       actionsOf(store).setRunStates([])
+      /*
+       * And this conversation's plugin stylesheets go with the realm that wrote
+       * them.
+       *
+       * Not tidiness: a sheet outliving the frame would keep painting this
+       * conversation's message frames for a plugin that is no longer mounted,
+       * and no `plugin:style-clear` is ever coming for it — the frame that would
+       * have sent one is gone. The styles are derived from running code, so when
+       * the code stops running they have no source left. They come back the next
+       * time the frame boots and the plugins mount again, which is the same
+       * "re-derived on every mount" the store's own note records.
+       */
+      if (chatId !== undefined) forgetChatPluginStyles(chatId)
       /*
        * Empty the surface, and this is **one more cleanup point than upstream
        * has**.

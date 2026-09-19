@@ -223,13 +223,23 @@ export interface RunnerHost {
   /**
    * A sandbox plugin injected a stylesheet into its frame.
    *
-   * Optional and, in PR-A, only ever read: the fan-out into this card's message
-   * frames is PR-C. It is here now because it is what makes a plugin's styles
-   * countable from outside the frame.
+   * Optional, because only the card-scripts host has a conversation to fan the
+   * sheet out to; a message frame's own host implements neither this nor its
+   * counterpart, and a message frame's plugin CSS arrives in its `srcdoc`
+   * rather than on this channel.
    * @param pluginId - which plugin.
    * @param css - the stylesheet text, bounded on the way in.
    */
   onPluginStyle?: (pluginId: string, css: string) => void
+  /**
+   * A sandbox plugin's published stylesheets are gone.
+   *
+   * Separate from `onPluginStyle` with an empty string for the reason the
+   * message is separate: the shell keeps a list per plugin, and "append nothing"
+   * is not "forget everything".
+   * @param pluginId - which plugin.
+   */
+  onPluginStyleCleared?: (pluginId: string) => void
   /**
    * The clip describing which parts of this frame may catch a click.
    *
@@ -871,14 +881,18 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
         return
       case 'plugin:style':
         /*
-         * Optional, and in PR-A nothing downstream of it but a reader.
-         *
-         * The fan-out into this card's message frames is PR-C. What this arm
-         * buys today is that a plugin's stylesheets are **countable from outside
-         * the frame**, which is what turns "the styles went away when it was
-         * unmounted" into an observation rather than a screenshot.
+         * Where the fan-out begins, and it stays a **string** the whole way: the
+         * host puts it in a store, the store hands it to `withPluginCss`, and
+         * nothing between here and the message frame's `<style>` element parses
+         * it. What this arm also buys, as it did before there was a fan-out, is
+         * that a plugin's stylesheets are countable from outside the frame —
+         * which is what turns "the styles went away when it was unmounted" into
+         * an observation rather than a screenshot.
          */
         host.onPluginStyle?.(message.pluginId, message.css)
+        return
+      case 'plugin:style-clear':
+        host.onPluginStyleCleared?.(message.pluginId)
         return
       default:
         return

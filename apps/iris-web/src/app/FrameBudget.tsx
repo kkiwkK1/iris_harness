@@ -10,10 +10,24 @@
  * @module iris-web/app/FrameBudget
  */
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { ReactElement, ReactNode } from 'react'
 
+import { useIris } from '../client/provider.tsx'
 import { claimMessageSurfaces } from '../sandbox/frontend-blocks.ts'
+import {
+  pluginStyleChars,
+  pluginStyleRevision,
+  subscribePluginStyles,
+} from './plugin-style-fanout.ts'
 import {
   frameKey,
   instancesOf,
@@ -100,6 +114,34 @@ export function FrameBudgetProvider({
    * view rendered two. Both kinds pay the same per-frame overhead and are spent
    * from the same pool; there is no second, quieter accounting for bare HTML.
    */
+  /*
+   * What this conversation's sandbox plugins add to **every** frame below.
+   *
+   * Read through the store's revision rather than its sheets: the sheets are a
+   * fresh array on every call, so this hook would never settle. The plugin CSS
+   * is the same text in every message frame of the conversation, so it is one
+   * number applied to each candidate rather than a per-block quantity.
+   *
+   * Approximated as UTF-16 units, which is the unit the wire and the fan-out's
+   * ceiling both use; `encodedBytes` would be the exact inlined size, and the
+   * difference only matters for a CJK-heavy stylesheet, which is not a shape CSS
+   * takes. The direction of the error is stated because it is the one that
+   * matters: for CJK content this **under**-counts, so the budget can overspend
+   * rather than refuse too early.
+   */
+  const chatId = useIris(state => state.chatId)
+  const pluginCssGate = useSyncExternalStore(
+    subscribePluginStyles,
+    () => pluginStyleRevision(chatId),
+    () => pluginStyleRevision(chatId),
+  )
+  const pluginCssBytes = useMemo(
+    // `pluginCssGate` is the dependency that makes this re-read; it is not used
+    // in the body, and saying so here is cheaper than a reader wondering.
+    () => (pluginCssGate === '' ? 0 : pluginStyleChars(chatId)),
+    [chatId, pluginCssGate],
+  )
+
   const candidates = useMemo<FrameCandidate[]>(() => {
     const found: FrameCandidate[] = []
     for (const floor of floors) {
@@ -109,11 +151,12 @@ export function FrameBudgetProvider({
           instance,
           body: block.body,
           ...(floor.isUser ? { isUser: true } : {}),
+          ...(pluginCssBytes === 0 ? {} : { pluginCssBytes }),
         })
       })
     }
     return found
-  }, [floors])
+  }, [floors, pluginCssBytes])
 
   const plan = useMemo(() => {
     const next = planFrames(candidates, { granted: granted.current, opened })
