@@ -36,6 +36,18 @@ const TOKENS = readFileSync(
  * @returns the hex string.
  */
 function token(name: string, theme: 'light' | 'dark' | 'parchment'): string {
+  const block = paletteBlock(theme)
+  const found = block.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1]
+  assert.ok(found !== undefined, `--${name} has no ${theme} value`)
+  return found
+}
+
+/**
+ * One theme's palette block.
+ * @param theme - which block to read.
+ * @returns the declarations inside it.
+ */
+function paletteBlock(theme: 'light' | 'dark' | 'parchment'): string {
   let block: string | undefined
   if (theme === 'light') {
     const bare = [...TOKENS.matchAll(/:root\s*\{([^}]*)\}/g)].map(match => match[1])
@@ -44,9 +56,26 @@ function token(name: string, theme: 'light' | 'dark' | 'parchment'): string {
     block = TOKENS.match(new RegExp(`:root\\[data-iris-theme='${theme}'\\]\\s*\\{([^}]*)\\}`))?.[1]
   }
   assert.ok(block !== undefined, `tokens.css has no ${theme} block`)
-  const found = block.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1]
-  assert.ok(found !== undefined, `--${name} has no ${theme} value`)
-  return found
+  return block
+}
+
+/**
+ * Take a token's value through one alias.
+ *
+ * The upstream-named colours are declared as `var(--iris-…)`, so asking for a
+ * hex directly would find nothing. Following the alias rather than measuring
+ * the Iris-named token means this keeps measuring whatever the stylesheet
+ * actually points at — a re-aim to a different token is exactly the change
+ * that should have to pass the floor again.
+ * @param name - the custom property, without the leading dashes.
+ * @param theme - which block to read.
+ * @returns the hex string the name resolves to.
+ */
+function aliased(name: string, theme: 'light' | 'dark' | 'parchment'): string {
+  const raw = paletteBlock(theme).match(new RegExp(`--${name}:\\s*([^;]+);`))?.[1]?.trim()
+  assert.ok(raw !== undefined, `--${name} has no ${theme} value`)
+  const alias = /^var\(\s*--([A-Za-z0-9-]+)\s*\)$/.exec(raw)?.[1]
+  return alias === undefined ? raw : token(alias, theme)
 }
 
 /** sRGB channel to linear light. */
@@ -78,6 +107,43 @@ function contrast(one: string, other: string): number {
 }
 
 for (const theme of ['light', 'dark', 'parchment'] as const) {
+  test(`quoted dialogue stays readable in ${theme}`, () => {
+    /*
+     * Dialogue is prose, so its floor is 4.5:1 — the same one the turn ordinal
+     * is held to below, and a stricter one than a decorative accent would get.
+     *
+     * The colour is upstream's `--SmartThemeQuoteColor`, which Iris aims at
+     * `--iris-warn` per theme. Upstream's own default is `rgb(225, 138, 36)`
+     * (`[ST] style.css:74`), chosen for a dark shell: measured against 雪's
+     * paper (`#f8f5f2`) it is **2.46:1**, well under this floor. That is why
+     * the three themes do not simply take upstream's hex, and why the number
+     * is computed here rather than asserted in a comment.
+     */
+    const ratio = contrast(aliased('SmartThemeQuoteColor', theme), token('iris-bg-page', theme))
+
+    assert.ok(
+      ratio >= 4.5,
+      `--SmartThemeQuoteColor is ${ratio.toFixed(2)}:1 on the page in ${theme}, below the 4.5:1 floor`,
+    )
+  })
+
+  test(`quoted dialogue is a different colour from the prose around it in ${theme}`, () => {
+    /*
+     * The feature is "dialogue reads as a different voice", and a token that
+     * passed the floor above while sitting on top of `--iris-ink` would pass
+     * every other check in this file too. 1.3:1 between the two is not a
+     * standard — it is the smallest gap that is still visible as a colour
+     * change in running text, and the point of the assertion is that the gap
+     * is measured at all.
+     */
+    const apart = contrast(aliased('SmartThemeQuoteColor', theme), token('iris-ink', theme))
+
+    assert.ok(
+      apart >= 1.3,
+      `quoted dialogue is ${apart.toFixed(2)}:1 against the prose ink in ${theme} — the same voice`,
+    )
+  })
+
   test(`the rail tick clears the non-text contrast floor in ${theme}`, () => {
     /*
      * 3:1 is WCAG 1.4.11, the floor for a UI component that carries meaning
