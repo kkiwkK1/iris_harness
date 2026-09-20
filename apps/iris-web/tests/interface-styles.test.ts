@@ -167,7 +167,11 @@ test('prose, a card interface and the composer are one width: bounded, centred, 
   )
 
   const inner = rule(panels, '.iris-composer__inner {')
-  assert.ok(!inner.includes('max-width'), 'the composer is capped separately, so it no longer matches the prose')
+  assert.match(
+    inner,
+    /max-width:var\(--iris-column-max\)/,
+    'the composer carries its own cap instead of the column token — the two widths can drift',
+  )
 })
 
 test('the old book measure is still written once, wherever it is still read', () => {

@@ -115,12 +115,15 @@
 
 .iris-composer__inner {
   /*
-   * No centring box. The composer used to be a `--iris-column-max` box centred
-   * in the panel with one gutter of padding on the left so its field sat under
-   * the prose; with the measure gone, this 46px inset **is** that alignment, and
-   * the field takes the whole track — the third of the three surfaces
-   * canvas.json holds to one width.
+   * Bounded and centred, 2026-09-21: the middle column got its cap back
+   * (`.iris-column`, `--iris-column-max`), and the composer is the third of
+   * the three surfaces canvas.json holds to one width — so it takes the same
+   * bound and centres in the track, putting the field back under the prose.
+   * The panel around it (gradient, branch) stays full-width; only the box the
+   * reader types into narrows.
    */
+  max-width: var(--iris-column-max);
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
