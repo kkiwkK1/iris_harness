@@ -465,10 +465,10 @@ export function saveAsideOpen(open: boolean, storage: StorageLike | undefined = 
  * mistake — computing against 44 and then expanding — squeezes the prose into
  * exactly the ribbon this block exists to prevent.
  */
-export const SIDEBAR_TRACK = 272
+export const SIDEBAR_TRACK = 320
 
 /** The margin's own open width (`tokens.css`, `--iris-aside`). */
-export const ASIDE_TRACK = 236
+export const ASIDE_TRACK = 320
 
 /** The drawer's column width (`tokens.css`, `--iris-drawer-w`). */
 export const DRAWER_TRACK = 392
@@ -496,7 +496,7 @@ export const READING_FLOOR = 640
  * plus drawer plus the reading floor. The first version used 1200, which
  * leaves the reading column 536px wide - below the floor the margin yields
  * for - so the drawer was allowed to do at 1200 what the margin was forbidden
- * to do at 1539. One floor, both flanks (coordinator ruling, 2026-09-07).
+ * to do at 1671. One floor, both flanks (coordinator ruling, 2026-09-07).
  */
 export const DRAWER_TRACK_FROM = SIDEBAR_TRACK + DRAWER_TRACK + READING_FLOOR
 

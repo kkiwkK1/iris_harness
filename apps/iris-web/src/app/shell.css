@@ -90,7 +90,10 @@
  */
 .iris-sidebar {
   position: relative;
-  width: 272px;
+  /* 320 was 272 until 2026-09-21: widened by the ruling that capped the middle
+     column — the flanks take the width the middle gave back. `SIDEBAR_TRACK` in
+     `state-panel.ts` copies this number; change them together. */
+  width: 320px;
   box-sizing: border-box;
   min-height: 0;
   overflow: hidden;
@@ -113,7 +116,7 @@
 }
 
 /*
- * The expanded form. Absolutely positioned at its own 272px so narrowing the
+ * The expanded form. Absolutely positioned at its own width so narrowing the
  * panel clips it instead of squeezing it, and `visibility` rather than
  * `display` so it can fade — and so that while it is away it is out of the
  * accessibility tree and out of the tab order.
@@ -121,7 +124,7 @@
 .iris-sidebar__full {
   position: absolute;
   inset: 0;
-  width: 272px;
+  width: 320px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;

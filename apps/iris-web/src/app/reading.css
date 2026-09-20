@@ -38,9 +38,19 @@
    * symmetrical (canvas.json: 阅读区左右各留 46px 对称,输入框居中不偏) without
    * the prose being indented twice.
    *
-   * No `max-width` and no auto margin: the column takes the whole reading track
-   * and re-wraps when the variable margin or the drawer moves.
+   * **Bounded and centred since 2026-09-21**, reversing the uncapped half of
+   * 「梅花」 by operator ruling: on a wide window the track reached ~1450px, a
+   * card locked to a fixed aspect ratio (黑兽's opening hero, 13/19) grew past
+   * two screens of height, and the prose line out-measured any comfortable
+   * read. The three surfaces are still one width — prose, a card's interface
+   * and the composer all live in this column — but the width is now a chosen
+   * number (`--iris-column-max`, `tokens.css`), centred in whatever track the
+   * variable margin and the drawer leave. Keep the cap and the centring
+   * together: capping without centring would park a dead channel on one side,
+   * which is the failure 「梅花」 was right to forbid.
    */
+  max-width: var(--iris-column-max);
+  margin: 0 auto;
   padding: 40px var(--iris-gutter) 28px 0;
   /*
    * A short conversation sits ON the composer instead of floating above it. It

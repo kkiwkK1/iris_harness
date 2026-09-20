@@ -1161,8 +1161,8 @@
  * media query that has to *rescue* the layout is one that fails at every width
  * the author did not think to test.
  *
- * 1304px is the floor, and it is arithmetic rather than a round number:
- * 272 sidebar + 392 drawer + the 640px reading floor the variable margin also
+ * 1352px is the floor, and it is arithmetic rather than a round number:
+ * 320 sidebar + 392 drawer + the 640px reading floor the variable margin also
  * yields for (`state-panel.ts`, `DRAWER_TRACK_FROM`). The first version said
  * 1200 and left 536px — the drawer was allowed to squeeze the column below the
  * width the margin was forbidden to, so the two flanks now share one number.
@@ -1199,7 +1199,7 @@
   visibility: visible;
 }
 
-@media (min-width: 1304px) {
+@media (min-width: 1352px) {
   /*
    * The column form. Everything the overlay form set has to be unset, which is
    * the cost of choosing the safe base rule — and it is the right cost: the
@@ -1947,7 +1947,7 @@
 
   /*
    * Nothing about the drawer here. It is a sliding overlay by default and only
-   * becomes a column above 1304px, so a phone already gets the right form —
+   * becomes a column above 1352px, so a phone already gets the right form —
    * this block used to have to put it back, which is the inverted shape the
    * drawer's own comment argues against.
    */
@@ -2161,7 +2161,7 @@
  * worse than the emptiness it replaced, and the collapse rail is a reader's
  * choice rather than a fallback for a window with no room.
  *
- * **The 让位 rule is not here, and could not be.** Between 1360px and 1540px an
+ * **The 让位 rule is not here, and could not be.** Between 1360px and 1672px an
  * open drawer leaves the reading column under 640px (measured: 539px at 1440),
  * so the margin stands down to its rail — but collapsed, this panel does not
  * render its tree *at all* (`StatePanel.tsx`: the 34-row branch is the expensive

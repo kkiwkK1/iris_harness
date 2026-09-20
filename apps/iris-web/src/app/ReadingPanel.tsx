@@ -38,10 +38,12 @@ export function ReadingPanel({ control }: { control: ReadingControl }): ReactEle
             consumer: `ReadingPrefs.measure`, `READING_LIMITS.measure`,
             `DEFAULT_READING.measure`, `applyReading`'s `--iris-measure` write
             and `settings-transfer`'s clamp all stand. The chain
-            `--iris-measure` → `--iris-column-max` → `--sheldWidth` is upstream
-            compatibility (a card's inline HTML may read SillyTavern's chat-column
-            width), so the value must keep existing and keep round-tripping
-            through an exported settings file — it just is not a knob any more.
+            `--iris-measure` → `--iris-column-max` → `--sheldWidth` broke at its
+            first link on 2026-09-21, when the column cap became a fixed length
+            (`tokens.css`) — the middle is bounded again, but by a ruling value
+            and not by this slider, which would otherwise resize every card
+            interface on the page. The measure still round-trips through an
+            exported settings file; it just has no reader today.
 
             To put a reader-visible measure back, the question to answer first is
             which surface it caps, because capping the prose alone re-opens the
