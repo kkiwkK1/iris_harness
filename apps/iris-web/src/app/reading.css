@@ -669,33 +669,19 @@
    */
   height: 60vh;
   /*
-   * **The clamp: a frame is never taller than the visible band.**
-   *
-   * The frame reports its content height and the runner applies it inline —
-   * 1847px on a measured card, against a 522px band — and that inline number is
-   * exactly the fault a user reads as "卡面前端超级大": the interface pushed the
-   * conversation down the page and the reading column scrolled to reach it. So
-   * the box is clamped here, in CSS, and the clamp wins over the inline height
-   * because `max-height` beats `height` at computed-value time no matter which
-   * of them is inline. The applied measurement stays on the element untouched —
-   * it is still the frame's own word about its content — and what renders is
-   * `min(content, band)`.
-   *
-   * The band is published on the reading scroller by `ChatPane`
-   * (`frame-fit.ts`); the `100vh` fallback covers the gap before it lands, and
-   * degrades to yesterday's behaviour rather than to a clamp of nothing.
-   *
-   * What the clamp owes the card: content taller than the clamped box must stay
-   * reachable, and it is — the frame's own bootstrap turns `overflow-y` on the
-   * moment its content exceeds its viewport (`frame-entry.ts`
-   * `scrollDecision`, decided from the honest extent of every ruler rather
-   * than `body.scrollHeight` alone, which a card that pins or clips itself
-   * lies about), and holds the wheel at its own boundary with
-   * `overscroll-behavior: contain` — so a clamped interface scrolls **inside
-   * itself** without dragging the page, which is what a game-style screen was
-   * always supposed to do.
+   * **No clamp.** This rule carried `max-height: var(--iris-app-frame-height)`
+   * from 2026-09-19 to 2026-09-21: the frame was held to the visible band and
+   * scrolled inside itself, which answered the "卡面前端超级大" complaint that
+   * had put a 1847px interface across the whole page. The ruling is reversed —
+   * upstream renders a message's card markup at its natural height in the page
+   * and lets the page scroll, and the band turned every card taller than one
+   * screen into an internal scrollbox that reads as a broken embed: measured on
+   * 黑兽's opening page, whose hero is locked to `aspect-ratio: 13 / 19`, so a
+   * full column width asks for ~1.5 column widths of height and the band showed
+   * a crop of it. The frame's own reported height rules here, the page scrolls,
+   * and the band survives only where a card asks for a screen
+   * (`data-iris-sizing='viewport'`, below).
    */
-  max-height: var(--iris-app-frame-height, 100vh);
   /*
    * **Always light, as upstream.** SillyTavern writes `color-scheme: only light`
    * on `body` (`[ST] style.css:167`) and the TavernHelper frame documents write
