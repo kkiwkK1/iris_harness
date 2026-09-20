@@ -438,7 +438,7 @@ export function saveAsideOpen(open: boolean, storage: StorageLike | undefined = 
  * below which they cannot all be paid for.
  *
  * Measured in the browser at 1440×DPR 1 with the drawer open as a column and
- * the margin expanded: 1440 − 272 − 236 − 393 ≈ 539px of reading area. Prose
+ * the margin expanded: 1440 − 400 − 400 − 393 ≈ 247px of reading area. Prose
  * and every card frame in it were squeezed into a ribbon and the frames grew
  * horizontal scrollbars — the one thing `StatePanel`'s own rules forbid of
  * itself.
@@ -465,16 +465,16 @@ export function saveAsideOpen(open: boolean, storage: StorageLike | undefined = 
  * mistake — computing against 44 and then expanding — squeezes the prose into
  * exactly the ribbon this block exists to prevent.
  */
-export const SIDEBAR_TRACK = 320
+export const SIDEBAR_TRACK = 400
 
 /** The margin's own open width (`tokens.css`, `--iris-aside`). */
-export const ASIDE_TRACK = 320
+export const ASIDE_TRACK = 400
 
 /** The drawer's column width (`tokens.css`, `--iris-drawer-w`). */
 export const DRAWER_TRACK = 392
 
 /** The width from which the margin shows at all (`panels.css`, `.iris-aside`). */
-export const ASIDE_FROM = 1360
+export const ASIDE_FROM = 1440
 
 /**
  * The narrowest reading column this layout will produce on purpose.

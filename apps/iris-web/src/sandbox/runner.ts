@@ -489,6 +489,24 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
   const view: Window = viewMaybe
   const frame = document.createElement('iframe')
 
+  /*
+   * Hidden until the first size report lands, and the reason is the flash a
+   * reader could set a watch by: the frame starts at the stylesheet's 60vh,
+   * the card paints into that box, the frame's own scroll decision sees
+   * content past its viewport and turns a scrollbar on — and one round trip
+   * later the real height arrives and the box jumps to its natural size.
+   * Clamped era, that jump read as "the card grew"; natural era, it read as
+   * "the card was cut, then fixed". Either way the reader watched plumbing.
+   *
+   * `visibility` rather than `opacity` or removal, because the inner document
+   * lays out and measures exactly the same hidden — the first height report
+   * is honest — and the reveal is one dataset deletion on a message the host
+   * is already handling. The timeout below is the floor under it: a card that
+   * never reports (and there is a diagnostic for why) must still become
+   * visible, or the failure would be a blank box instead of a broken card.
+   */
+  frame.dataset['irisSizePending'] = '1'
+
   // Set before `srcdoc`: the sandbox attribute has to be in place when the
   // document is created, or the frame is briefly not sandboxed at all.
   frame.setAttribute('sandbox', frameSandbox(host.documentGranted))
@@ -536,6 +554,26 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     ...(host.markup === undefined ? {} : { context: host.context }),
     systemPlugins,
   })
+
+  /*
+   * The reveal floor. A healthy frame deletes this mark itself, on its first
+   * height or sizing report — long before three seconds. A frame that never
+   * reports one (a card whose every ruler is broken, a bootstrap that died)
+   * would otherwise stay invisible for good, which turns "the card is broken"
+   * into "the card is a blank", and one of those is debuggable.
+   *
+   * The host window's own timer would tie the reveal to a view the tests fake
+   * with a plain object, so the global timer is the one used here — same page,
+   * same clock. `.unref()` is a Node-ism the browser handle (a number) does
+   * not have, guarded so both shapes read fine: a stray reveal must not hold
+   * a test process open.
+   */
+  const reveal = setTimeout(() => {
+    delete frame.dataset['irisSizePending']
+  }, 3000)
+  if (typeof reveal === 'object' && reveal !== null && 'unref' in reveal) {
+    ;(reveal as { unref: () => void }).unref()
+  }
 
   let disposed = false
   /**
@@ -760,6 +798,15 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
            */
           delete frame.dataset['irisSizing']
         }
+        /*
+         * Revealed here, after the reported height is applied, so the first
+         * paint a reader sees is the frame at its own size — not the starting
+         * viewport with a scrollbar and a jump. Deleted rather than flipped:
+         * the pending mark is a claim about the element, and this message is
+         * the fact that retires it. The same deletion sits in `sizing` and in
+         * the reveal timeout, because either of those is also a size answer.
+         */
+        delete frame.dataset['irisSizePending']
         host.onHeight?.(message.pixels)
         return
       case 'sizing':
@@ -783,6 +830,12 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
           frame.dataset['irisSizing'] = message.mode
           frame.style.removeProperty('height')
         }
+        /*
+         * "I cannot be measured" is still a size answer: the reader is revealed
+         * to the stylesheet-sized box this message hands the CSS, rather than
+         * left on the pending mark for the timeout to find.
+         */
+        delete frame.dataset['irisSizePending']
         return
       case 'settings':
         host.onSettings(message.settings, systemPlugins.revision)

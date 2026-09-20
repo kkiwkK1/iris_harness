@@ -181,13 +181,13 @@
    * (canvas.json: 正文、卡的界面、输入框三者同宽).
    */
   /*
-   * 236px was canvas.json's number; 320px is the 2026-09-21 operator ruling
+   * 236px was canvas.json's number; 400px is the 2026-09-21 operator ruling
    * that paid for the middle column's cap — the flanks widen to take the width
    * the bounded column gave back, and a variable tree with deep nesting
    * (战局/七盾要塞/… runs five levels) stops wrapping its keys. `ASIDE_TRACK`
    * in `state-panel.ts` copies this number; change them together.
    */
-  --iris-aside: 320px;
+  --iris-aside: 400px;
   --iris-aside-rail: 36px;
 
   /*

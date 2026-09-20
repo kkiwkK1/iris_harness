@@ -79,7 +79,7 @@
 /*
  * The panel, in two forms that are one element.
  *
- * 272px of column or 44px of rail (`Rail.dc.html`), and the two subtrees are
+ * 400px of column or 44px of rail (`Rail.dc.html`), and the two subtrees are
  * both mounted (`Sidebar.tsx` says why) — so everything below is a cross-fade
  * plus a width, and no rule here has to know which form is "real".
  *
@@ -90,10 +90,11 @@
  */
 .iris-sidebar {
   position: relative;
-  /* 320 was 272 until 2026-09-21: widened by the ruling that capped the middle
-     column — the flanks take the width the middle gave back. `SIDEBAR_TRACK` in
-     `state-panel.ts` copies this number; change them together. */
-  width: 320px;
+  /* 400 was 272 until 2026-09-21: widened by the ruling that capped the middle
+     column at 920px — the flanks take the width the middle gave back.
+     `SIDEBAR_TRACK` in `state-panel.ts` copies this number; change them
+     together. */
+  width: 400px;
   box-sizing: border-box;
   min-height: 0;
   overflow: hidden;
@@ -124,7 +125,7 @@
 .iris-sidebar__full {
   position: absolute;
   inset: 0;
-  width: 320px;
+  width: 400px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;

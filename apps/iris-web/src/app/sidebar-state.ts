@@ -21,7 +21,7 @@
  * The window width under which a first-time reader gets the rail.
  *
  * **Not a layout breakpoint, and it is deliberately not in a stylesheet.** The
- * shell has exactly three width breakpoints (880 / 1352 / 1360, enumerated in
+ * shell has exactly three width breakpoints (880 / 1432 / 1440, enumerated in
  * `breakpoints.test.ts`) and each one *is* a rule: below it the layout is one
  * thing and above it another, at every moment. This is a **default** — it is
  * read once, when there is no stored choice, and never again; a reader who

@@ -12,11 +12,11 @@
  *
  * ```
  *   ≤ 880      sidebar slides over the page   margin hidden   drawer overlays
- *   881–1351   sidebar is a column            margin hidden   drawer overlays
- *   1352–1359  sidebar is a column            margin hidden   drawer is a track
- *   1360–1671  sidebar is a column            320 or 36 …     drawer is a track
+ *   881–1431   sidebar is a column            margin hidden   drawer overlays
+ *   1432–1439  sidebar is a column            margin hidden   drawer is a track
+ *   1440–1831  sidebar is a column            400 or 36 …     drawer is a track
  *              …and an open drawer takes the margin's column (ASIDE_YIELD_QUERY)
- *   ≥ 1672     sidebar is a column            320 or 36       drawer is a track
+ *   ≥ 1832     sidebar is a column            400 or 36       drawer is a track
  * ```
  *
  * What is asserted is the *shape* of that table, not its numbers: each of the
