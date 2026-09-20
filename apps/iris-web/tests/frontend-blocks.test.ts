@@ -268,6 +268,36 @@ test('a bare status widget is claimed where a fence would be, with its exact tex
   assert.equal(source.slice(blocks[0]?.start ?? 0, blocks[0]?.end ?? 0), widget)
 })
 
+test('a regex-written card (sheet + details + multi-line divs) is one bare-html block', () => {
+  /*
+   * The shape a preset beautifier's replacement produces: the panel's sheet,
+   * its `<details>`, its `<summary>` and first `<div>`s welded onto one line,
+   * the captured prose arriving as the next lines, the closers last. Claimed
+   * one line, it rendered as a summary pill over a body of escaped tags —
+   * the 黑兽 事件记录 card. One claim, whole, is the fix's contract here.
+   */
+  const card = [
+    '<style>.kz-w>summary{list-style:none}</style><details class="kz-w"><summary>⭐ 事件记录</summary>'
+      + '<div class="kz-c"><div>★ 当前任务指引</div><div>当前主线任务: MQ.I</div></div>'
+      + '<div>💾 存档 Log</div><div>PG.2 时间推进。</div></div></details>',
+  ].join(NL)
+  const source = ['她的手心里有茧。', '', card, '', '后记。'].join(NL)
+  const { blocks, refused } = claimMessageSurfaces(source)
+
+  assert.deepEqual(refused, [])
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0]?.kind, 'bare-html')
+  assert.equal(blocks[0]?.body, card, 'the card is claimed whole, sheet included')
+  assert.equal(blocks[0]?.matched, '<style')
+  assert.equal(source.slice(blocks[0]?.start ?? 0, blocks[0]?.end ?? 0), card)
+
+  const segments = splitAroundInterfaces(source, blocks)
+  assert.deepEqual(
+    segments.filter(segment => segment.kind === 'text').map(segment => segment.text.trim()),
+    ['她的手心里有茧。', '后记。'],
+    'only the narrative stays prose',
+  )
+})
 test('a fenced block is claimed once, and its body never opens a bare region', () => {
   // The fence body's line-initial tags sit at line start exactly like a bare
   // region's would. Fence-first composition means the fence wins and nothing

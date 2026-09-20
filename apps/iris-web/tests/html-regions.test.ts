@@ -86,6 +86,102 @@ test('a region written on one line closes on that line', () => {
   assert.deepEqual(refused, [], 'a one-line region is not an unclosed one')
 })
 
+test('a preset card welded onto one line is one region, ended by its own close', () => {
+  /*
+   * **The 黑兽 事件记录 card, and the shape every 预设 beautifier emits.** The
+   * replacement is one line carrying the sheet (`<style>` open *and* close),
+   * the `<details>`, its `<summary>` and the first `<div>`s — followed by the
+   * regex's multi-line `$1`/`$2` captures and the closers. A counter for the
+   * tag that opened the region read that first line as net zero and claimed
+   * exactly it: the summary pill rendered, and the card's body leaked as prose
+   * and escaped tags. The stack keeps the region open until the panel's own
+   * `</details>`.
+   */
+  const card = [
+    '<style>.kz-w>summary{list-style:none}</style><details class="kz-w"><summary>⭐ 点击查看事件记录</summary>'
+    + '<div class="kz-c"><div>★ 当前任务指引</div><div>$1</div></div><div>💾 存档 Log</div><div>$2</div></div></details>',
+  ].join('\n')
+  const text = `她的手心里有茧。\n\n${card.replace('$1', '当前主线任务: MQ.I\n当前支线事件: SQ.0').replace('$2', 'PG.2 时间推进。\n概括: 一句话。')}\n\n后记。`
+  assert.deepEqual(shape(text), ['markdown', 'html', 'markdown'])
+
+  const { regions, refused, styles } = splitHtmlRegions(text)
+  assert.deepEqual(refused, [], 'the card is closed; nothing is unclosed')
+  assert.deepEqual(styles, [], 'the sheet is the card’s own, not a message sheet')
+  assert.match(regions[1]?.text ?? '', /^<style>/, 'the sheet travels with the panel')
+  assert.match(regions[1]?.text ?? '', /<\/details>$/, 'the panel is claimed to its own close')
+  assert.match(regions[1]?.text ?? '', /当前主线任务/, 'the captured body is inside the region')
+  assert.equal(regions[2]?.text.trim(), '后记。', 'the narrative after the card is prose again')
+})
+
+test('an opening tag that spans lines still pairs with its closer', () => {
+  /*
+   * Cards write attribute brackets lines below the tag name. A scanner that
+   * demanded the `>` on the same line would miss the open and end the region
+   * one `</div>` early — the failure a naive tokenizer produced on the same
+   * card, leaking each panel's last closing tag as markdown.
+   */
+  const text = [
+    '<div style="',
+    '  color: red',
+    '">',
+    '<details style="',
+    '  margin: 0',
+    '">',
+    '<summary>s</summary>',
+    '</details>',
+    '</div>',
+    '',
+    'after',
+  ].join('\n')
+  assert.deepEqual(shape(text), ['html', 'markdown'])
+
+  const { regions, refused } = splitHtmlRegions(text)
+  assert.deepEqual(refused, [])
+  assert.match(regions[0]?.text ?? '', /<\/div>$/, 'the outer close ends it, not an inner one')
+  assert.equal(regions[1]?.text.trim(), 'after')
+})
+
+test('a closer written inside a style run does not end the region', () => {
+  /*
+   * A stylesheet's `content: "</div>"` is text, not markup. The depth counter
+   * read it as a close; the stack, while `style` is open, looks for the
+   * style's own closer and nothing else.
+   */
+  const text = '<div>\n<style>.a::after{content:"</div>"}</style>\nx\n</div>\n\nafter'
+  assert.deepEqual(shape(text), ['html', 'markdown'])
+
+  const { regions } = splitHtmlRegions(text)
+  assert.match(regions[0]?.text ?? '', /x/, 'the line after the sheet is still inside')
+  assert.equal(regions[1]?.text.trim(), 'after')
+})
+
+test('an outer closer closes through still-open inner tags', () => {
+  /*
+   * HTML's implied ends: a card that forgets an inner `</div>` must not turn
+   * the region unclosed and swallow the message — the outer closer pops the
+   * inner opens along with itself.
+   */
+  const text = '<div>\n<p>x\n</div>\n\nafter'
+  assert.deepEqual(shape(text), ['html', 'markdown'])
+
+  const { refused } = splitHtmlRegions(text)
+  assert.deepEqual(refused, [], 'the implied end is not an unclosed region')
+  assert.equal(shape(text)[1], 'markdown')
+})
+
+test('a one-line style plus widget is a region, not a sheet', () => {
+  /*
+   * A sheet is a run that is *nothing but* style elements. When the panel's
+   * opener shares the style's line, the run has something outside the styles,
+   * so it stays a region and the CSS rides with the panel's frame.
+   */
+  const text = '<style>.a{}</style><div>x</div>\n\nafter'
+  const { regions, styles } = splitHtmlRegions(text)
+  assert.deepEqual(shape(text), ['html', 'markdown'])
+  assert.deepEqual(styles, [], 'the sheet belongs to the widget’s frame')
+  assert.match(regions[0]?.text ?? '', /^<style>/)
+})
+
 test('a closing tag cannot open a region', () => {
   /*
    * **Every one of the 936 floors has a line-initial closing tag**, so a rule

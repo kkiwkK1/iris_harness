@@ -139,13 +139,20 @@ test('the seeded shape matches what SillyTavern writes, field by field', {
   assert.equal('stat_data' in table, true)
   assert.equal('initialized_lorebooks' in table, true)
 
-  // And the known divergence, asserted rather than left to be discovered: every
-  // non-empty table in the corpus carries `schema`, which MVU derives from the
-  // declaration and Iris does not implement. Omitting a field is honest;
-  // fabricating one a consumer might read is not. If this ever starts failing,
-  // schema support arrived and this note is what says why it was missing.
+  // The corpus check first: every non-empty table in the corpus carries
+  // `schema`, so writing it is not an invention.
   assert.ok(realKeys.has('schema'), 'the corpus stopped carrying schema')
-  assert.equal('schema' in table, false, 'a schema appeared without anything computing one')
+  // The pinned divergence from the day this seed omitted the key — it held
+  // until it did not, and its own note is what dates the change. MagVarUpdate's
+  // baseline walk accepts a floor only when its table has **both** `stat_data`
+  // and `schema`, so a seed without the key made every fresh chat's round one
+  // fold its commands onto nothing (黑兽: `replace` ops no-oped on the missing
+  // base and a panel read empty strings for a whole conversation). What the
+  // seed writes is presence only — `{}`, never a computed template, which the
+  // bundle derives from `stat_data` at its init and rewrites, and a zod-managed
+  // card replaces outright. Iris still computes no schema of its own.
+  assert.equal('schema' in table, true, 'the seed stopped carrying the admissibility key')
+  assert.deepEqual(table['schema'], {}, 'the seed grew a schema template nobody computes')
 })
 
 test('a chat is not given a variables table it has nothing to put in', {

@@ -15,6 +15,7 @@ import { TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
 import type { ChatView, IrisEvent } from '@iris/protocol'
 
 import { chatChangedEvent, forwardedEvents } from '../src/sandbox/host-events.ts'
+import { settledEvents } from '../src/sandbox/tavern-helper.ts'
 
 /** A view is required by the event shape but never read by the mapping. */
 const VIEW = {} as ChatView
@@ -96,6 +97,26 @@ test('every event the mapping produces is a name the shared table actually carri
     }
   }
   assert.ok(known.has(chatChangedEvent(undefined, 'a')?.event ?? ''))
+})
+
+test('the settled names and the stream mapping announce the same arrival, in the same order', () => {
+  /*
+   * **This test is the bug's own tombstone.** Two mappings of one host event
+   * existed — `forwardedEvents` here, and `settledEvents` in the shell — and
+   * only `forwardedEvents` named `MESSAGE_RECEIVED`. The dev probe used the
+   * complete one and the real app used the incomplete one, so every card in the
+   * product was missing the event MagVarUpdate builds its whole post-generation
+   * chain on. Asserting the two agree is what stops it recurring; they cannot be
+   * one function, because the shell also emits Iris-internal names.
+   */
+  const mapped = forwardedEvents({ type: 'stream.end', chatId: 'c', turn: 3, view: VIEW, reason: 'completed' })
+  const settled = settledEvents('completed')
+
+  assert.equal(settled[0], TAVERN_EVENTS.MESSAGE_RECEIVED, 'the shell announces the arrival first')
+  assert.equal(mapped[0]?.event, TAVERN_EVENTS.MESSAGE_RECEIVED)
+  assert.ok(settled.includes(TAVERN_EVENTS.GENERATION_ENDED))
+  assert.ok(mapped.some(forwarded => forwarded.event === TAVERN_EVENTS.GENERATION_ENDED))
+  assert.equal(settledEvents('aborted').includes(TAVERN_EVENTS.MESSAGE_RECEIVED), false)
 })
 
 test('the interception hooks are never forwarded as notifications', () => {

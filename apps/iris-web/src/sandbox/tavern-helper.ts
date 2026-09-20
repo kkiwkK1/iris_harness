@@ -172,6 +172,30 @@ export const SETTLED_EVENT_NAMES: readonly string[] = [
 
 /**
  * The events a settled generation is announced under.
+ *
+ * **`MESSAGE_RECEIVED` first, and its absence was a whole card feature.**
+ * Upstream appends the reply to `chat` and then emits
+ * `MESSAGE_RECEIVED(chat.length - 1, type)` — before `GENERATION_ENDED`
+ * (`public/script.js:3740` for streaming, `:3477` for the end of generation).
+ * Cards use the pair in that order: read the settled text, then tear down.
+ *
+ * The name is not bookkeeping. MagVarUpdate — which every measured status-bar
+ * card ships — registers its entire post-generation chain on it
+ * (`MagVarUpdate/src/function/update/index.ts`), and that chain is what parses
+ * the model's `<UpdateVariable>` block, applies the JSON patch to the floor's
+ * `stat_data`, and **appends `<StatusPlaceHolderImpl/>` to the stored message**
+ * (`function/update_variables.ts:1500`, the append at the end of
+ * `handleVariablesInMessage`). A card's display-only regex then replaces that
+ * placeholder with its panel. Without the event the model's own update block
+ * stays raw in the chat, the variables are never patched, the placeholder is
+ * never appended, and no panel is ever drawn — observed on a real card
+ * (黑兽, 2026-09-19) with no error anywhere.
+ *
+ * **The argument is the chat index, not the turn.** MVU reads it back with
+ * `getChatMessages(message_id)`, which indexes the chat array — user rows
+ * included — so `turn` (the generation's own number, which counts turns rather
+ * than rows) addresses the wrong floor. The caller derives it with
+ * {@link settledMessageIndex}.
  * @param reason - how the generation ended.
  * @returns the bus events to emit, in order.
  */
@@ -180,10 +204,60 @@ export function settledEvents(reason: 'completed' | 'aborted'): readonly string[
    * An abort emits `generation_stopped` **only**. Upstream's abort path does not
    * also fire `GENERATION_ENDED`, and a card that revoked on the first and
    * re-armed on the second would be left in the wrong state if both arrived.
+   *
+   * No `MESSAGE_RECEIVED` either, and that is the same fact rather than a second
+   * rule: an aborted generation may still leave a partial floor, but upstream
+   * announces an arrival there through `GENERATION_STOPPED`, and MVU's handler
+   * is written for a finished reply. Emitting it here would have the bundle
+   * apply a half-written update block.
    */
   return reason === 'aborted'
     ? ['generation_stopped']
-    : ['js_generation_ended', 'generation_ended']
+    : [TAVERN_EVENTS.MESSAGE_RECEIVED, 'js_generation_ended', 'generation_ended']
+}
+
+/**
+ * The chat index of the floor a settled generation wrote.
+ *
+ * **Not the turn.** `stream.end` carries `turn`, the generation's own number,
+ * and on a real chat the two differ by every user row in the conversation —
+ * measured: the reply sat at chat index 2 while its turn was 1 (chat
+ * `黑兽-20260920-012429`). A card indexing the chat with the turn therefore
+ * reads a floor that is not the one that just arrived.
+ *
+ * Read off the settled view rather than counted, because the view is the host's
+ * own answer about what the chat now holds: its last row is the floor this event
+ * is about, for a completion and for a `continue` alike (a continue rewrites the
+ * floor it grew rather than adding one, so the last row is still the right
+ * answer). `undefined` when the view is empty.
+ * @param view - the settled chat view.
+ * @returns the index of the settled floor, or undefined.
+ */
+export function settledMessageIndex(view: { messages: readonly unknown[] }): number | undefined {
+  if (view.messages.length === 0) return undefined
+  return view.messages.length - 1
+}
+
+/**
+ * The name/argument pairs a settled generation is announced under.
+ *
+ * The emit site's whole decision, as a value, so it can be tested without a
+ * React effect and without a frame. `MESSAGE_RECEIVED` is the only one that
+ * takes an argument, and it is the chat index rather than the turn; the others
+ * are bare, as upstream sends them.
+ * @param reason - how the generation ended.
+ * @param view - the settled chat view.
+ * @returns one `{ event, args }` per name, in emit order.
+ */
+export function settledEmissions(
+  reason: 'completed' | 'aborted',
+  view: { messages: readonly unknown[] },
+): readonly { event: string, args: readonly unknown[] }[] {
+  const index = settledMessageIndex(view)
+  return settledEvents(reason).map(event => ({
+    event,
+    args: event === TAVERN_EVENTS.MESSAGE_RECEIVED && index !== undefined ? [index] : [],
+  }))
 }
 /** A scope selector, in the shape upstream's cards pass it. */
 export interface VariableOption {

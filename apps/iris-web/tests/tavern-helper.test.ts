@@ -27,7 +27,9 @@ import {
   TAVERN_HELPER_VERSION,
   createFrameTavernHelper,
   resolveRange,
+  settledEmissions,
   settledEvents,
+  settledMessageIndex,
 } from '../src/sandbox/tavern-helper.ts'
 
 /** A snapshot with three messages, the last carrying two swipes. */
@@ -1918,7 +1920,61 @@ test('the names a settled generation goes out under are upstream’s, split by r
    * synthesising them honest rather than a guess wearing upstream's name.
    */
   assert.deepEqual(settledEvents('aborted'), ['generation_stopped'])
-  assert.deepEqual(settledEvents('completed'), ['js_generation_ended', 'generation_ended'])
+  assert.deepEqual(settledEvents('completed'), [
+    TAVERN_EVENTS.MESSAGE_RECEIVED,
+    'js_generation_ended',
+    'generation_ended',
+  ])
+})
+
+test('a completion settles the floor before it declares generation over', () => {
+  /*
+   * **First, and it was missing.** MagVarUpdate registers its whole
+   * post-generation chain on `MESSAGE_RECEIVED` — parsing the model's
+   * `<UpdateVariable>` block, patching the floor's `stat_data`, and appending
+   * `<StatusPlaceHolderImpl/>` for the card's display regex to expand
+   * (`function/update_variables.ts:1500`). Not emitted at all, a real card draws
+   * no panel and reports nothing (黑兽, 2026-09-19).
+   */
+  const names = settledEvents('completed')
+  assert.equal(names[0], TAVERN_EVENTS.MESSAGE_RECEIVED, 'the arrival is announced first')
+  assert.ok(
+    names.indexOf(TAVERN_EVENTS.MESSAGE_RECEIVED) < names.indexOf('generation_ended'),
+    'and before generation is declared over',
+  )
+  assert.equal(
+    settledEvents('aborted').includes(TAVERN_EVENTS.MESSAGE_RECEIVED),
+    false,
+    'an abort announces no arrival — MVU would apply a half-written update block',
+  )
+})
+
+test('the settled floor is addressed by chat index, not by turn', () => {
+  /*
+   * Measured on a real chat: the reply sat at chat index 2 while its `turn` was
+   * 1, because the turn counts turns and the index counts rows — user rows
+   * included. MVU reads its argument back through `getChatMessages(message_id)`,
+   * which indexes the chat array, so passing the turn reads the wrong floor.
+   */
+  assert.equal(settledMessageIndex({ messages: [{}, {}, {}] }), 2)
+  assert.equal(settledMessageIndex({ messages: [{}] }), 0)
+  assert.equal(settledMessageIndex({ messages: [] }), undefined)
+})
+
+test('the emit site’s whole decision: which names, in which order, with which argument', () => {
+  /*
+   * The test that would have caught the bug as a test rather than as a card: the
+   * emit lived in a React effect, the one place neither a frame test nor a
+   * mapping test looks.
+   */
+  assert.deepEqual(settledEmissions('completed', { messages: [{}, {}, {}] }), [
+    { event: TAVERN_EVENTS.MESSAGE_RECEIVED, args: [2] },
+    { event: 'js_generation_ended', args: [] },
+    { event: 'generation_ended', args: [] },
+  ])
+  assert.deepEqual(settledEmissions('aborted', { messages: [{}, {}, {}] }), [
+    { event: 'generation_stopped', args: [] },
+  ])
 })
 
 test('once revokes on the event the host actually broadcasts', async () => {
