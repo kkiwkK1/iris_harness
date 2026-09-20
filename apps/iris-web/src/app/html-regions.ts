@@ -203,12 +203,74 @@ function opensRegion(line: string): string | undefined {
   return tag !== undefined && BLOCK_TAGS.has(tag) ? tag : undefined
 }
 
-/** How far the nesting of `tag` moves across one line. */
-function depthDelta(line: string, tag: string): number {
-  const opens = line.match(new RegExp(`<${tag}(?=[\\s/>])`, 'gi'))?.length ?? 0
-  const closes = line.match(new RegExp(`</${tag}(?=[\\s>])`, 'gi'))?.length ?? 0
-  const selfClosing = line.match(new RegExp(`<${tag}\\b[^>]*/>`, 'gi'))?.length ?? 0
-  return opens - closes - selfClosing
+/**
+ * Tags whose text content is not markup.
+ *
+ * While one of these is open, the scan is looking for its closing tag and
+ * nothing else: a stylesheet that contains the characters `</div>` (a
+ * `content:` declaration, say) must not end a region the panel around it
+ * opened. The depth counter this file used before could be fooled by exactly
+ * that; a stack of open elements cannot.
+ */
+const RAWTEXT_TAGS: ReadonlySet<string> = new Set(['style', 'script'])
+
+/**
+ * An HTML tag, opening or closing, matched anywhere in a line.
+ *
+ * The lookahead never demands the `>` on the same line, because a card writes
+ * tags across lines — `<div style="` with the bracket several lines down — and
+ * a scanner that waited for it would miss the open and end the region a
+ * closing tag later than it should.
+ */
+const TAG_SCAN = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?=[\s/>])/g
+
+/**
+ * Move an open-tag stack across one line of a region.
+ *
+ * The region's rule is depth pairing, but a counter for the tag that opened
+ * the region cannot read two shapes cards actually write. A preset beautifier
+ * welds the panel's `<style>` sheet, its `<details>` and its first `<div>`s
+ * into **one line** — a `style` counter reads that line as net zero and ends
+ * the region before the panel's own tags, stranding the panel's body as prose
+ * and escaped text (measured on 黑兽's 事件记录 card). And an element opened on
+ * one line whose attribute bracket arrives lines later has no counter for its
+ * name at all. A stack answers both: every block tag opens a frame, every
+ * closer pops the nearest matching open **and whatever was still open above
+ * it** — HTML's implied ends — and the region is over exactly when the stack
+ * is empty at an end of line.
+ *
+ * Void tags and self-closing opens push nothing. `style`/`script` content is
+ * RAWTEXT: while one is open, only its own closing tag is recognised.
+ */
+function advanceStack(line: string, stack: string[]): void {
+  const low = line.toLowerCase()
+  let saw = 0
+  for (;;) {
+    const top = stack[stack.length - 1] ?? ''
+    if (RAWTEXT_TAGS.has(top)) {
+      const closer = low.indexOf(`</${top}`, saw)
+      if (closer === -1) return
+      const bracket = low.indexOf('>', closer)
+      if (bracket === -1) return
+      saw = bracket + 1
+      stack.pop()
+      continue
+    }
+    TAG_SCAN.lastIndex = saw
+    const match = TAG_SCAN.exec(low)
+    if (match === null) return
+    saw = TAG_SCAN.lastIndex
+    const name = match[2] ?? ''
+    if (match[1] === '/') {
+      const at = stack.lastIndexOf(name)
+      if (at !== -1) stack.length = at
+      continue
+    }
+    if (VOID_TAGS.has(name)) continue
+    const bracket = low.indexOf('>', saw)
+    const selfClosing = bracket !== -1 && low[bracket - 1] === '/'
+    if (!selfClosing && BLOCK_TAGS.has(name)) stack.push(name)
+  }
 }
 
 /**
@@ -292,12 +354,20 @@ export function splitHtmlRegions(text: string): SplitMessage {
       continue
     }
 
-    let depth = 0
+    /*
+     * The depth is an open-tag stack, not a counter for the tag that opened
+     * the region — `advanceStack` carries the reasoning. The stack starts
+     * empty and the opening line seeds it, so an element written on one line
+     * still closes on that line, and one whose first line also carries a
+     * sheet and the panel's own openers stays claimed until the panel really
+     * ends.
+     */
+    const stack: string[] = []
     let end = at
     let closed = false
     while (end < lines.length) {
-      depth += depthDelta(lines[end] ?? '', tag)
-      if (depth <= 0) {
+      advanceStack(lines[end] ?? '', stack)
+      if (stack.length === 0) {
         closed = true
         break
       }

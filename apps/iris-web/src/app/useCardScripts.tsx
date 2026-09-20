@@ -44,7 +44,7 @@ import {
 import { runCard } from '../sandbox/runner.ts'
 import type { RunningCard } from '../sandbox/runner.ts'
 import { overlayViewport } from './overlay-surface.ts'
-import { STARTED_EVENTS, settledEvents } from '../sandbox/tavern-helper.ts'
+import { STARTED_EVENTS, settledEmissions } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun, isFailure } from '../sandbox/script-run-state.ts'
@@ -842,9 +842,23 @@ export function CardScriptFrames(): ReactElement {
        * appears and `is_send_press` goes true at this moment, and a card that
        * hears only the *end* would spend the whole generation believing it was
        * idle. Handled before the filter, since that filter is about views.
+       *
+       * **The refresh is awaited even here.** MagVarUpdate's init chain runs on
+       * this moment too, and it re-reads the chat through `getLastMessageId()`
+       * to write the round's schema'd baseline onto the floor that just became
+       * the last one — the user's. Against a stale snapshot that answer names
+       * the *previous* floor, and the baseline lands one floor up, where no
+       * reader looks for it. One host round trip against a wrong-floor write.
        */
       if (event.type === 'stream.start' && event.chatId === chatId) {
-        for (const name of STARTED_EVENTS) running.emit(name, [])
+        void (async () => {
+          try {
+            await running.refresh()
+          } catch {
+            // Reported by the controller. The announcement below still goes out.
+          }
+          for (const name of STARTED_EVENTS) running.emit(name, [])
+        })()
         return
       }
       if (event.type !== 'chat.updated' && event.type !== 'stream.end') return
@@ -869,9 +883,58 @@ export function CardScriptFrames(): ReactElement {
        * `stream.end` only. `chat.updated` covers edits, swipes and script
        * writes, none of which is a generation settling, and revoking a `once`
        * injection on a swipe would take it away mid-conversation.
+       *
+       * **The refresh is awaited first, and the order is the whole point.**
+       * `MESSAGE_RECEIVED` is what MagVarUpdate reads the settled floor through —
+       * `getChatMessages(message_id)` and, past it, `getLastValidVariable`, both
+       * of which answer from the frame's snapshot (`card-scripts.ts`'s own
+       * docblock names this chain). Emitting before the refresh lands reads the
+       * *previous* floor and rewrites the wrong text, and `_.throttle(fn, 3000)`
+       * does not help: its first call is leading, so the handler runs at once.
+       * The guarantee is the channel's rather than an acknowledgement's —
+       * `refresh()` awaits the host fetch and then posts `context` to every frame
+       * over the same `postMessage` channel the events use, so a `context` posted
+       * before an `event` is applied before it is emitted.
+       *
+       * **The settled names go out even when the refresh does not.** A card
+       * waiting on `generation_ended` to re-enable its own UI (`is_send_press`,
+       * `#send_but`) must still hear it; a host that answered no context is a
+       * fault reported where it happened, not a reason to strand that card.
        */
       if (event.type === 'stream.end') {
-        for (const name of settledEvents(event.reason)) running.emit(name, [])
+        void (async () => {
+          try {
+            await running.refresh()
+          } catch {
+            // Reported by the controller. The emits below are what matters here.
+          }
+          /*
+           * One call, and it owns the order and the argument: the arrival is
+           * announced before generation is declared over, and it is the one
+           * name that carries the chat index.
+           */
+          const emissions = settledEmissions(event.reason, event.view)
+          for (const { event: name, args } of emissions) {
+            running.emit(name, [...args])
+          }
+          /*
+           * The settle leaves one line on the record, because a settle that
+           * reaches no card is otherwise indistinguishable from a settle that
+           * never happened — the failure that took this chain its first fix was
+           * invisible exactly because nothing anywhere said anything, and the
+           * report buffer is the only one of the three hops (effect, frame,
+           * bundle) that survives a page reload.
+           */
+          actionsOf(store).addCardReport(
+            `settled (${event.reason}): `
+              + emissions
+                .map(emission => `${emission.event}${emission.args.length > 0 ? `(${emission.args.join(', ')})` : ''}`)
+                .join(', ')
+              + ` — view ${event.view.messages.length} floors`,
+            { channel: 'settle', grade: 'note' },
+          )
+        })()
+        return
       }
       /*
        * Not awaited, and failures are the controller’s to report: a refresh

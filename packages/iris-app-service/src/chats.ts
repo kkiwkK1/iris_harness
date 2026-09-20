@@ -1015,7 +1015,22 @@ export function seedInitialVariables(entry: ChatEntry): void {
   const initial = entry.initVars()
   if (Object.keys(initial.stat_data).length === 0) return
   try {
-    entry.variables.replaceVariables(initial as unknown as Variables, { type: 'message', message_id: 0 })
+    /*
+     * The row carries `schema` from birth, though nothing host-side reads it:
+     * MagVarUpdate's own baseline walk accepts a floor only when its table has
+     * **both** `stat_data` and `schema`, and a seed without the second key made
+     * every fresh chat's round one fold its commands onto nothing — measured on
+     * 黑兽, where `replace` ops against the missing base no-oped and the panel
+     * read empty strings for the whole conversation while `add` ops (which
+     * create their own path) were the only ones that ever landed. `{}` because
+     * presence is the whole contract: the bundle derives the real template from
+     * `stat_data` at its init and rewrites the key, and a zod-managed card
+     * replaces it outright.
+     */
+    entry.variables.replaceVariables(
+      { ...initial, schema: {} } as unknown as Variables,
+      { type: 'message', message_id: 0 },
+    )
   } catch {
     // A card with no greeting has no turn 0 to attach state to. That is a card
     // with nothing to show before the first reply, and the fallback in
