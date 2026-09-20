@@ -129,15 +129,15 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
   }, [chatId])
 
   /*
-   * Publish the visible band the message frames may fill.
+   * Publish the visible band the viewport-mode message frames fill.
    *
-   * A card interface is clamped to this number (`reading.css` clamps the frame
-   * with `max-height: var(--iris-app-frame-height)`), so the clamp is only ever
-   * as true as this measurement. A window resize reshapes the scroller without
-   * any React state changing, and so does a panel opening beside it — nothing
-   * that re-renders this component — which is why this is an observer on the
-   * box rather than a render-time read: the value must stay true in exactly the
-   * moments nothing else is watching.
+   * A card that reports `data-iris-sizing='viewport'` is sized to this number
+   * (`reading.css`), so its screen is only ever as true as this measurement. A
+   * window resize reshapes the scroller without any React state changing, and
+   * so does a panel opening beside it — nothing that re-renders this component
+   * — which is why this is an observer on the box rather than a render-time
+   * read: the value must stay true in exactly the moments nothing else is
+   * watching.
    *
    * **A ref callback, not a mount effect.** The reading view renders in two
    * shapes — no chat open, then chat open — and React reworks the tree between

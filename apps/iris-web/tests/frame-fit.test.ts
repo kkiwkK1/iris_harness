@@ -1,12 +1,15 @@
 /**
- * The frame clamp: the band, and the two halves that have to agree about it.
+ * The viewport-mode frame's screen: the band, and the two halves that have to
+ * agree about it.
  *
- * The clamp itself is CSS (`max-height` on the frame, `reading.css`) — the one
- * mechanism that beats the inline height the runner applies from the frame's
- * own report. What can be tested without a browser is the *number* the clamp
- * uses and the pairing that keeps it true: a `max-height` naming a variable
- * nothing publishes would clamp every frame to the fallback forever, which is
- * the silent-failure shape `interface-styles.test.ts` exists against.
+ * This file used to guard a clamp — `max-height` on every message frame, held
+ * to the band — and its pairing test asserted that clamp alive. Reversed on
+ * 2026-09-21: upstream renders a message's card markup at natural height and
+ * lets the page scroll, and the band read as a broken embed on aspect-locked
+ * cards (黑兽's opening page). What remains of the mechanism is the band the
+ * `data-iris-sizing='viewport'` rule fills — a card that *asks* for a screen —
+ * and the absence pin below, because a clamp that was deliberately removed is
+ * exactly the kind of rule a later "fix" re-adds without knowing the ruling.
  *
  * @module iris-web/tests/frame-fit
  */
@@ -16,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
-import { FRAME_BAND_VARIABLE, frameBandPixels } from '../src/app/frame-fit.ts'
+import { frameBandPixels } from '../src/app/frame-fit.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -54,28 +57,37 @@ test('the band is whole pixels, because the protocol carries integers', () => {
   assert.equal(frameBandPixels(834.75, 1080), 834)
 })
 
-test('the CSS clamp and the publisher name the same variable', () => {
+test('the base frame rule carries no clamp, and the publisher still feeds the band', () => {
   /*
-   * A pairing guard, the shape of the cqi/container one in
-   * `interface-styles.test.ts`: `max-height: var(--iris-app-frame-height)` with
-   * nothing publishing it falls back to `100vh` — yesterday's behaviour, which
-   * is the 1847px frame this clamp exists to stop, arriving silently.
+   * The absence pin, standing where the clamp's pairing guard used to stand.
+   * The clamp was removed by ruling, not by accident: a frame is as tall as the
+   * height it reports, the page scrolls, and re-adding a `max-height` here
+   * would silently re-break every aspect-locked card (黑兽's opening page
+   * measured) into an internal scrollbox. The publisher stays — the
+   * `data-iris-sizing='viewport'` rule below still fills its screen from the
+   * band — so the pairing that remains is one-directional and asserted too.
    */
   const styles = readFileSync(join(here, '..', 'src', 'app', 'reading.css'), 'utf8')
   const pane = readFileSync(join(here, '..', 'src', 'app', 'ChatPane.tsx'), 'utf8')
 
   const frameAt = styles.indexOf('.iris-interfaces__slot iframe {')
   assert.notEqual(frameAt, -1, 'nothing styles the frame element')
-  const frame = styles.slice(frameAt, styles.indexOf('}', frameAt))
-  assert.match(
+  const frameBlock = styles.slice(frameAt, styles.indexOf('}', frameAt))
+  /*
+   * Comments stripped before the match: the ruling's tombstone lives in a
+   * comment inside this very rule, and a pin that read comments would fire on
+   * its own explanation.
+   */
+  const frame = frameBlock.replace(/\/\*[\s\S]*?\*\//g, '')
+  assert.doesNotMatch(
     frame,
-    /max-height:\s*var\(--iris-app-frame-height/u,
-    'the frame is not clamped to the band — a frame taller than the visible band is back',
+    /max-height/u,
+    'the clamp is back — natural height is the ruling; move any cap behind an explicit request, not this rule',
   )
 
   assert.ok(
-    pane.includes(FRAME_BAND_VARIABLE),
-    'ChatPane no longer publishes the band; the clamp above fell back to 100vh',
+    pane.includes('FRAME_BAND_VARIABLE'),
+    'ChatPane no longer publishes the band; the viewport-mode rule fell back to 100vh',
   )
   assert.match(pane, /ResizeObserver/u, 'the band is published once and never updated on resize')
 })
