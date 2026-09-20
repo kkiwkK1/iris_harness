@@ -119,28 +119,25 @@ test('the frame itself is given a starting height', () => {
   assert.match(block, /width:\s*100%/u, 'a frame narrower than its row would clip the card sideways')
 })
 
-test('prose, a card interface and the composer are one width: nothing capped, nothing escaping', () => {
+test('prose, a card interface and the composer are one width: bounded, centred, nothing escaping', () => {
   /*
-   * The 「梅花」 ruling, expressed as three declarations that must not be there.
+   * The width ruling, as it stands after its second reversal — and the history
+   * is the point, because each version of this guard pinned its own era.
    *
-   * This assertion replaces its own opposite, and the history is the point. It
-   * used to pin a *breakout*: the prose was capped at a 68ch book measure, a
-   * card computed negative inline margins in `100cqi` against
-   * `--iris-column-max` to escape that cap, and this guard held the arithmetic
-   * to the bound it subtracted — plus a pairing check that `.iris-scroll` really
-   * declared a container, because a stray `cqi` with no container falls back to
-   * the viewport and computes a plausible wrong number in silence.
+   * It began as a *breakout* guard: the prose was capped at a 68ch book
+   * measure and a card computed negative inline margins in `100cqi` against
+   * `--iris-column-max` to escape it. 「梅花」 removed the cause — 正文、卡的
+   * 界面、输入框三者同宽 … 不留死槽 — and this guard flipped to pinning the
+   * absence of every cap.
    *
-   * canvas.json removes the cause instead of repairing the effect — 正文、卡的
-   * 界面、输入框三者同宽 … 不留死槽 — so there is no cap left to escape and the
-   * arithmetic is gone with it. What is worth guarding is that nobody puts
-   * either half back: a `max-width` on the prose column or on the composer
-   * restores the dead channel, and a negative inline margin on the slot pulls a
-   * card past the page's own flanks.
-   *
-   * Asserted as absences, which is weaker than asserting a number and is the
-   * honest shape here — the three widths are one grid track's, so there is no
-   * number in any stylesheet to compare them against.
+   * 2026-09-21, operator ruling: the uncapped track reached ~1450px on a wide
+   * window, a card locked to a fixed aspect ratio (黑兽's opening hero, 13/19)
+   * grew past two screens of height, and the prose line out-measured a
+   * comfortable read. The three surfaces are still one width — no per-surface
+   * cap, no escape — but the width they share is now `--iris-column-max`,
+   * centred in the track. That is what this pins: the cap present and naming
+   * the token, the slot still escaping nothing, the composer still riding the
+   * column rather than carrying its own width.
    */
   const reading = readFileSync(join(here, '..', 'src', 'app', 'reading.css'), 'utf8')
   const panels = readFileSync(join(here, '..', 'src', 'app', 'panels.css'), 'utf8')
@@ -156,16 +153,21 @@ test('prose, a card interface and the composer are one width: nothing capped, no
   }
 
   const column = rule(reading, '.iris-column {')
-  assert.ok(!column.includes('max-width'), 'the reading column is capped again, which is the dead channel back')
+  assert.match(
+    column,
+    /max-width:var\(--iris-column-max\)/,
+    'the reading column lost its bound — the uncapped track is what out-measured the reader',
+  )
+  assert.match(column, /margin:0auto/, 'a bounded column that is not centred parks a dead channel on one side')
 
   const slot = rule(reading, '.iris-interfaces__slot {')
   assert.ok(
     !slot.includes('margin-inline-start') && !slot.includes('cqi'),
-    'the interface slot is escaping the column again, and there is no cap left for it to escape',
+    'the interface slot is escaping the column again',
   )
 
   const inner = rule(panels, '.iris-composer__inner {')
-  assert.ok(!inner.includes('max-width'), 'the composer is capped again, so it no longer matches the prose')
+  assert.ok(!inner.includes('max-width'), 'the composer is capped separately, so it no longer matches the prose')
 })
 
 test('the old book measure is still written once, wherever it is still read', () => {

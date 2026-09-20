@@ -128,16 +128,14 @@
    * Reading size and measure are user-adjustable; these are the defaults the
    * Reading panel writes over.
    *
-   * **`--iris-measure` no longer bounds the prose.** The 「梅花」 ruling is that
-   * the reading text, a card's interface and the composer are one width and take
-   * the whole middle track, reflowing when the variable margin or the settings
-   * drawer opens (canvas.json: 不留死槽). A 68ch cap would have left the exact
-   * dead channel that ruling names. What the token still feeds is
-   * `--iris-column-max` → `--sheldWidth`, the SillyTavern alias for the chat
-   * column's width, which is upstream compatibility rather than our layout — so
-   * the Reading panel's 行宽 slider now moves that alias and nothing a reader
-   * can see. Flagged rather than silently removed: deleting a settings control
-   * is a product decision.
+   * **`--iris-measure` bounds nothing any more.** It fed
+   * `--iris-column-max → --sheldWidth` while that bound was a layout fact, and
+   * lost that reader on 2026-09-21: the column cap is now a fixed length
+   * (below), chosen once, because coupling it to the 行宽 slider would let a
+   * prose-preference resize every card interface on the page. The token stays
+   * and the Reading panel's slider still writes it — flagged rather than
+   * silently removed, because deleting a settings control is a product
+   * decision — but nothing consumes the value today.
    */
   --iris-prose-size: 17px;
   --iris-prose-leading: 1.72;
@@ -182,7 +180,14 @@
    * so prose, a card's interface and the composer are one width that reflows
    * (canvas.json: 正文、卡的界面、输入框三者同宽).
    */
-  --iris-aside: 236px;
+  /*
+   * 236px was canvas.json's number; 320px is the 2026-09-21 operator ruling
+   * that paid for the middle column's cap — the flanks widen to take the width
+   * the bounded column gave back, and a variable tree with deep nesting
+   * (战局/七盾要塞/… runs five levels) stops wrapping its keys. `ASIDE_TRACK`
+   * in `state-panel.ts` copies this number; change them together.
+   */
+  --iris-aside: 320px;
   --iris-aside-rail: 36px;
 
   /*
@@ -200,16 +205,23 @@
 
   --iris-gutter: 46px;
   /*
-   * The old book measure, kept for exactly one consumer: `--sheldWidth` below.
+   * The middle column's bound, and since 2026-09-21 a **layout fact again**,
+   * not just an alias.
    *
-   * Four surfaces used to align to it — masthead, prose column, composer, and
-   * the card breakout computed against it. None of them do now: the 「梅花」
-   * layout gives all three the same full-track width, so there is nothing left
-   * to break out *of* and nothing to centre. Upstream's `--sheldWidth` is a
-   * length a card may read, so the chain `--iris-measure` → here → the alias is
-   * what is left of the number.
+   * 「梅花」 ruled the reading text, a card's interface and the composer one
+   * uncapped width across the whole middle track. Reversed by operator ruling:
+   * on a wide window the track reached ~1450px, a card locked to a fixed aspect
+   * ratio (黑兽's opening hero, 13/19) grew past two screens of height, and the
+   * prose line out-measured any comfortable read. `.iris-column` caps at this
+   * number and centres in its track (`reading.css`), so the three surfaces are
+   * still one width — just a chosen one. Keep it a fixed length: coupling it
+   * back to `--iris-measure` would make the Reading panel's 行宽 slider resize
+   * every card interface on the page.
+   *
+   * `--sheldWidth` below still aliases this, which is upstream's own meaning
+   * for the name: the chat column's width.
    */
-  --iris-column-max: calc(var(--iris-gutter) + var(--iris-measure) + 40px);
+  --iris-column-max: 920px;
 
   /*
    * How tall a card that sizes itself to its viewport gets to be.
