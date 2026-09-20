@@ -234,7 +234,7 @@ test('whitespace between two regions is not emitted as prose', () => {
 })
 
 test('an empty message produces no regions', () => {
-  assert.deepEqual(splitHtmlRegions(''), { regions: [], refused: [], styles: [] })
+  assert.deepEqual(splitHtmlRegions(''), { regions: [], refused: [], styles: [], scripts: [] })
 })
 
 /**
@@ -346,6 +346,53 @@ test('an unclosed style block is CSS, and the reader is told so', () => {
   assert.equal(refused.length, 1, refused.join(','))
   assert.match(refused[0] ?? '', /never closed/)
   assert.match(refused[0] ?? '', /<style>/, 'the note has to name what did not close')
+})
+
+test('a standalone script run is a span, not a frame and not prose', () => {
+  /*
+   * **The 黑兽 thinking card's own tail.** The preset prettifier ships its card
+   * with a trailing `<script>` (the bubble animation), and the card's `<div>`
+   * closers empty the stack one line before it — so the run claimed a frame of
+   * its own: measured 417px of blank between the card and the narrative, on
+   * every floor the card touched. Upstream never shows one either — DOMPurify
+   * removes script elements — so the faithful rendering is the span carved
+   * out, the way a style run is.
+   */
+  const text = '<div class="card">面板</div>\n\n<script>\n(function() { init() })()\n</script>\n\n骑士走在前面。'
+  const { regions, scripts, refused } = splitHtmlRegions(text)
+
+  assert.deepEqual(refused, [], 'a closed script is nothing to report')
+  assert.equal(scripts.length, 1, 'the run comes back as a span')
+  assert.equal(
+    text.slice(scripts[0]?.start ?? 0, scripts[0]?.end ?? 0).startsWith('<script>'),
+    true,
+    'the span carves the script out of the source',
+  )
+  assert.deepEqual(regions.map(region => region.kind), ['html', 'markdown'])
+  assert.equal(regions[1]?.text.trim(), '骑士走在前面。', 'the narrative follows the card with no code between')
+})
+
+test('a script inside a panel stays in the panel’s region and runs there', () => {
+  /*
+   * The span rule is for *orphaned* runs. A card that ships its script inside
+   * its own markup wrote it for the frame that markup becomes — pulling it out
+   * would strand the animation from the panel it drives.
+   */
+  const text = '<div class="card">\n<script>init()</script>\n面板\n</div>\n\n后面。'
+  const { regions, scripts } = splitHtmlRegions(text)
+
+  assert.deepEqual(scripts, [], 'nothing orphaned, nothing reported')
+  assert.deepEqual(regions.map(region => region.kind), ['html', 'markdown'])
+  assert.match(regions[0]?.text ?? '', /<script>/, 'the script travels with its panel')
+})
+
+test('an unclosed script block is dropped, and the reader is told so', () => {
+  const { regions, scripts, refused } = splitHtmlRegions('<script>\ninit()\n\n后面还有叙事')
+
+  assert.deepEqual(regions, [], 'an unclosed script became a frame')
+  assert.equal(scripts.length, 1)
+  assert.equal(refused.length, 1, refused.join(','))
+  assert.match(refused[0] ?? '', /<script>/, 'the note names what did not close')
 })
 
 test('every region reports offsets that carve its exact text out of the source', () => {

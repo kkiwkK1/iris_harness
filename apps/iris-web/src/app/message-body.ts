@@ -47,10 +47,11 @@ import {
  * mechanism existed.
  *
  * @param display - the message after display regex and the settled stray-fence
- *   repair. The whole of it — this is the string the claims' offsets are in.
- * @param tag - the body tag name in force, from `getBodyTag`.
- * @param blocks - the claimed interfaces, from `claimMessageSurfaces(display)`.
  * @param styles - the message's own `<style>` spans, from the same claim.
+ * @param scripts - the message's own standalone `<script>` spans, from the
+ *   same claim. Spans only: upstream's sanitizer removes script elements from
+ *   the rendered message, so the faithful rendering is the span carved out,
+ *   not the code on screen.
  * @returns the segments to render, in source order, with empty prose dropped
  *   and every prose run already through the unknown-markup rule.
  */
@@ -59,6 +60,7 @@ export function layOutMessageBody(
   tag: string,
   blocks: readonly FrontendBlock[],
   styles: readonly MessageStyle[],
+  scripts: readonly { start: number, end: number }[] = [],
 ): MessageSegment[] {
   const span = locateBodyTag(display, tag)
   const tagMarkup = span.tagged
@@ -77,7 +79,7 @@ export function layOutMessageBody(
    * Scaffolding is deliberately left alone: it renders verbatim inside its
    * fold, and the honest rendering of markup-adjacent text is its characters.
    */
-  return splitAroundInterfaces(display, blocks, [...styles, ...tagMarkup], prose)
+  return splitAroundInterfaces(display, blocks, [...styles, ...scripts, ...tagMarkup], prose)
     .map(segment =>
       segment.kind === 'text'
         ? { ...segment, text: unwrapUnknownTagsOutsideCode(segment.text) }

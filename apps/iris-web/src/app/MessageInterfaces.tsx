@@ -593,8 +593,13 @@ export function MessageInterfaces({
    * interface rebuilt per token is not a feature, and a half-arrived block shown
    * as source is honest about what has come so far.
    */
-  const { blocks, refused, styles } = streaming
-    ? { blocks: [], refused: [] as readonly string[], styles: [] as readonly MessageStyle[] }
+  const { blocks, refused, styles, scripts } = streaming
+    ? {
+        blocks: [],
+        refused: [] as readonly string[],
+        styles: [] as readonly MessageStyle[],
+        scripts: [] as readonly { start: number, end: number }[],
+      }
     : claimMessageSurfaces(display)
 
   /*
@@ -700,7 +705,7 @@ export function MessageInterfaces({
    * call it with the row's own arguments — see §110 for the defect that was
    * invisible precisely because it lived between two correct functions.
    */
-  const segments = layOutMessageBody(display, bodyTag, blocks, styles)
+  const segments = layOutMessageBody(display, bodyTag, blocks, styles, scripts)
   const byInstance = new Map(states.map(state => [state.instance, state]))
 
   return (

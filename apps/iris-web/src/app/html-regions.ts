@@ -132,6 +132,22 @@ export interface SplitMessage {
    * frame for it nor its source text.
    */
   styles: readonly MessageStyle[]
+  /**
+   * The message's own standalone `<script>` runs, in source order — **spans
+   * only, no content**.
+   *
+   * Never a region, for upstream's reason rather than ours: DOMPurify's
+   * default forbids script elements, so the sanitized message SillyTavern
+   * renders never carries one, and a preset prettifier that ships its card
+   * with a trailing `<script>` (the 黑兽 thinking card's bubble animation)
+   * ships markup for a frame that upstream never builds. Here a run that is
+   * nothing but script elements still claimed a frame — measured 417px of
+   * blank between the card and the narrative, on every floor the card
+   * touched. The span exists so a caller can carve the same characters out of
+   * the prose, exactly as `styles` does; a script *inside* a panel's own
+   * region stays where its author put it and still runs in that frame.
+   */
+  scripts: readonly { start: number, end: number }[]
 }
 
 /** A `<style>` element's opening tag. */
@@ -145,6 +161,12 @@ const STYLE_OPEN = /<style\b[^>]*>/i
  * patterns are the ones a collapsed escape would silently widen.
  */
 const STYLE_CLOSE = /<[/]style\s*>/i
+
+/** A `<script>` element's opening tag. */
+const SCRIPT_OPEN = /<script\b[^>]*>/i
+
+/** A `<script>` element's closing tag. */
+const SCRIPT_CLOSE = /<[/]script\s*>/i
 
 /** An HTML comment: neither content a renderer needs nor CSS. */
 const COMMENT = /<!--[\s\S]*?-->/g
@@ -191,6 +213,29 @@ function cssOnly(text: string): string | undefined {
 
   if (!found) return undefined
   return outside.replace(COMMENT, '').trim() === '' ? css : undefined
+}
+
+/**
+ * Whether a run is `<script>` elements and nothing else.
+ *
+ * The script-run twin of {@link cssOnly}: whitespace and comments around the
+ * elements are tolerated, anything else (prose, a tag the author meant to
+ * ship with the code) means the run stays a region and the script keeps the
+ * company it was written in. An unclosed `<script>` answers false here — the
+ * unclosed fallback owns that case, and it drops the rest of the message
+ * rather than rendering it.
+ */
+function scriptOnly(text: string): boolean {
+  let rest = text
+  for (;;) {
+    const open = SCRIPT_OPEN.exec(rest)
+    if (open === null) break
+    const after = rest.slice(open.index + open[0].length)
+    const close = SCRIPT_CLOSE.exec(after)
+    if (close === null) return false
+    rest = after.slice(close.index + close[0].length)
+  }
+  return rest.replace(COMMENT, '').trim() === ''
 }
 
 /** The tag a line opens, if it opens one. */
@@ -292,13 +337,17 @@ function advanceStack(line: string, stack: string[]): void {
  * elements is a *message-level sheet* (`MessageStyle`), not a panel: it comes
  * back in `styles` with its span and never as a region, because a frame built
  * for it renders nothing and takes its rules out of reach of the panel they
- * were written for.
+ * were written for. A run that is nothing but `<script>` elements is its twin
+ * (`scripts`): upstream's sanitizer removes script elements outright, so a
+ * frame built for one is 400px of blank between a card and its narrative —
+ * measured, not hypothesised.
  *
  * @param text - the message text, after display regex.
- * @returns the regions in order, the message's own style blocks, and any notes.
+ * @returns the regions in order, the message's own style blocks and script
+ *   runs, and any notes.
  */
 export function splitHtmlRegions(text: string): SplitMessage {
-  if (text === '') return { regions: [], refused: [], styles: [] }
+  if (text === '') return { regions: [], refused: [], styles: [], scripts: [] }
 
   const lines = text.split('\n')
 
@@ -313,6 +362,7 @@ export function splitHtmlRegions(text: string): SplitMessage {
   const regions: Region[] = []
   const refused = new Set<string>()
   const styles: MessageStyle[] = []
+  const scripts: { start: number, end: number }[] = []
 
   let pending: string[] = []
   let pendingFrom = 0
@@ -388,7 +438,22 @@ export function splitHtmlRegions(text: string): SplitMessage {
           + ' and nothing after it reaches the reader',
         )
         styles.push({ start: starts[at] ?? 0, end: text.length, css: unclosedCss })
-        return { regions, refused: [...refused], styles }
+        return { regions, refused: [...refused], styles, scripts }
+      }
+      /*
+       * An unclosed `<script>` is its sibling's case with the polarity of the
+       * verdict reversed: the run is dropped, not applied — upstream's
+       * sanitizer removes script elements outright, so rendering the run is
+       * not a fidelity anyone had. Reported, for the same reason the style
+       * case is: the characters below it are gone either way.
+       */
+      if (tag === 'script') {
+        refused.add(
+          'a <script> block is never closed — its code is dropped,'
+          + ' and nothing after it reaches the reader',
+        )
+        scripts.push({ start: starts[at] ?? 0, end: text.length })
+        return { regions, refused: [...refused], styles, scripts }
       }
       /*
        * The documented fallback: take the rest and say so. Reported rather than
@@ -399,7 +464,7 @@ export function splitHtmlRegions(text: string): SplitMessage {
        */
       refused.add(`an HTML block opened with <${tag}> is never closed — the rest of the message is treated as HTML`)
       regions.push({ kind: 'html', text: tail, start: starts[at] ?? 0, end: text.length })
-      return { regions, refused: [...refused], styles }
+      return { regions, refused: [...refused], styles, scripts }
     }
 
     const claimed = lines.slice(at, end + 1).join('\n')
@@ -419,10 +484,23 @@ export function splitHtmlRegions(text: string): SplitMessage {
       continue
     }
 
+    /*
+     * And a script run leaves it here, span only — upstream's sanitizer is the
+     * reason, and `scripts`'s docblock carries it. A card's own script that
+     * lives *inside* its panel's markup never reaches this branch: the panel's
+     * tags hold the stack open, so the run stays in the panel's region and
+     * runs in that frame.
+     */
+    if (tag === 'script' && scriptOnly(claimed)) {
+      scripts.push({ start: from, end: to })
+      at = end + 1
+      continue
+    }
+
     regions.push({ kind: 'html', text: claimed, start: from, end: to })
     at = end + 1
   }
 
   flushMarkdown()
-  return { regions, refused: [...refused], styles }
+  return { regions, refused: [...refused], styles, scripts }
 }
