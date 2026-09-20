@@ -709,6 +709,21 @@
 }
 
 /*
+ * Unpainted until its first size answer, so the reader never watches plumbing.
+ *
+ * A frame starts at the 60vh above while its card measures itself; without
+ * this, the reader saw that starting box — scrollbar on, content cropped —
+ * for exactly one round trip before the real height landed and the frame
+ * jumped. `visibility` keeps the inner document laying out, so the pending
+ * measurement is the honest one; the mark is set at frame creation
+ * (`runner.ts`) and deleted on the first `height`/`sizing` message, with a
+ * three-second reveal timeout underneath for the frame that never reports.
+ */
+.iris-interfaces__slot iframe[data-iris-size-pending] {
+  visibility: hidden;
+}
+
+/*
  * A card that sizes itself to its viewport gets a screen, not a measurement.
  *
  * Set when the frame reports that it cannot be measured: every ruler it has
