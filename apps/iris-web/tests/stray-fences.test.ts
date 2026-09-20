@@ -223,7 +223,7 @@ test('the streaming gate holds where the text enters, and every consumer repairs
   assert.match(row, /text: display,/, 'the controller claims the same string the row splices')
   assert.match(
     row,
-    /const segments = layOutMessageBody\(display, bodyTag, blocks, styles\)/,
+    /const segments = layOutMessageBody\(display, bodyTag, blocks, styles, scripts\)/,
     'the splice reads that same string — and the wrapper reaches it as a name the layout resolves to a range, never as a substring',
   )
   /*

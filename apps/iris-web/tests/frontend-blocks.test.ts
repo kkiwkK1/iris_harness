@@ -298,6 +298,33 @@ test('a regex-written card (sheet + details + multi-line divs) is one bare-html 
     'only the narrative stays prose',
   )
 })
+
+test('a card’s trailing script is carved out of the flow, not framed beside it', () => {
+  /*
+   * The 黑兽 thinking card ships `<script>` after its closing `</div>`, and the
+   * card's closers empty the region's stack one line before it — so the run
+   * claimed a frame of its own and stood between the card and the narrative as
+   * measured-empty height. Upstream's sanitizer drops script elements, so the
+   * claim pipeline hands the span back and the splice carves it: the card is
+   * the only interface, and no code reaches the prose.
+   */
+  const card = '<div class="konata"><details><summary>❤️ 小此在思考✨</summary>思考内容</details></div>'
+  const script = ['<script>', '(function() { init() })()', '</script>'].join(NL)
+  const source = ['她的手心里有茧。', '', card, '', script, '', '骑士走在前面。'].join(NL)
+  const claim = claimMessageSurfaces(source)
+
+  assert.deepEqual(claim.refused, [])
+  assert.equal(claim.blocks.length, 1, 'the card is the only interface')
+  assert.equal(claim.scripts.length, 1, 'the orphaned run comes back as a span')
+  assert.equal(source.slice(claim.scripts[0]?.start ?? 0, claim.scripts[0]?.end ?? 0), script)
+
+  const segments = splitAroundInterfaces(source, claim.blocks, claim.scripts)
+  assert.deepEqual(
+    segments.filter(segment => segment.kind === 'text').map(segment => segment.text.trim()),
+    ['她的手心里有茧。', '骑士走在前面。'],
+    'the narrative reads with no code and no blank frame between',
+  )
+})
 test('a fenced block is claimed once, and its body never opens a bare region', () => {
   // The fence body's line-initial tags sit at line start exactly like a bare
   // region's would. Fence-first composition means the fence wins and nothing

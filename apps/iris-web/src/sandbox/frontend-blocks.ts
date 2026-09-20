@@ -282,6 +282,15 @@ export interface ClaimedSurfaces {
    */
   styles: readonly MessageStyle[]
   /**
+   * The message's own standalone `<script>` runs, spans only.
+   *
+   * Handed back for the same splice `styles` is: leaving the run in the prose
+   * would put a screenful of escaped JavaScript where the card's panel ends.
+   * Upstream never shows one either — its sanitizer removes script elements —
+   * so carving the span out is the faithful rendering, not a divergence.
+   */
+  scripts: readonly { start: number, end: number }[]
+  /**
    * Those styles, confined and ready for a region frame's head.
    *
    * One string for the whole message, because the message is the scope: every
@@ -371,16 +380,17 @@ export function claimMessageSurfaces(source: string): ClaimedSurfaces {
   const regions: FrontendBlock[] = []
   const notes: string[] = []
   const styles: MessageStyle[] = []
+  const scripts: { start: number, end: number }[] = []
 
   // Fences — claimed or not — bound the prose the split may read. `cursor`
   // walks the source and collects one split per gap between them.
   let cursor = 0
   for (const span of scanned) {
     if (span.kind !== 'fenced') continue
-    if (span.start > cursor) collectRegions(source, cursor, span.start, regions, notes, styles)
+    if (span.start > cursor) collectRegions(source, cursor, span.start, regions, notes, styles, scripts)
     if (span.end > cursor) cursor = span.end
   }
-  if (cursor < source.length) collectRegions(source, cursor, source.length, regions, notes, styles)
+  if (cursor < source.length) collectRegions(source, cursor, source.length, regions, notes, styles, scripts)
 
   /*
    * A claimed code block outranks a region that reaches into it — the fence
@@ -432,6 +442,7 @@ export function claimMessageSurfaces(source: string): ClaimedSurfaces {
     blocks,
     refused: notes,
     styles,
+    scripts,
     css: reachable ? scoped.css : '',
   }
 }
@@ -446,6 +457,8 @@ export function claimMessageSurfaces(source: string): ClaimedSurfaces {
  * @param notes - where the split's unclosed-region notes accumulate.
  * @param styles - where the message's own `<style>` spans accumulate, in
  *   source offsets like everything else here.
+ * @param scripts - where the message's own standalone `<script>` spans
+ *   accumulate, same offsets, same reason: the renderer would print them.
  */
 function collectRegions(
   source: string,
@@ -454,11 +467,15 @@ function collectRegions(
   out: FrontendBlock[],
   notes: string[],
   styles: MessageStyle[],
+  scripts: { start: number, end: number }[],
 ): void {
   const split = splitHtmlRegions(source.slice(from, to))
   for (const note of split.refused) notes.push(note)
   for (const style of split.styles) {
     styles.push({ start: from + style.start, end: from + style.end, css: style.css })
+  }
+  for (const script of split.scripts) {
+    scripts.push({ start: from + script.start, end: from + script.end })
   }
   for (const region of split.regions) {
     if (region.kind !== 'html') continue
