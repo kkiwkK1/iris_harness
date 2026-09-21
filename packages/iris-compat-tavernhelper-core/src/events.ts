@@ -163,6 +163,21 @@ export class EventBus {
   }
 
   /**
+   * How many listeners one event name carries right now.
+   *
+   * Exists for the shell's own observability: an event emitted into a frame
+   * that subscribed to nothing is the silent failure the whole
+   * settled-generation chain once was (MagVarUpdate never hearing
+   * `MESSAGE_RECEIVED` drew no error anywhere), and "delivered to zero
+   * listeners" is the sentence that names it.
+   * @param event - event name.
+   * @returns the listener count, 0 when nothing is subscribed.
+   */
+  listenerCount(event: string): number {
+    return this.#listeners.get(event)?.length ?? 0
+  }
+
+  /**
    * Remove one subscription.
    * @param event - event name.
    * @param listener - the function originally registered.

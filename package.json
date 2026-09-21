@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test:live": "node scripts/test-live.mjs",
     "test:template-differential": "node scripts/template-differential.mjs",
+    "test:regex-differential": "node scripts/regex-differential.mjs",
     "census:cache-cause": "node scripts/cache-cause-census.mjs",
     "census:card-scripts": "node scripts/card-script-census.mjs",
     "census:card-surface": "node scripts/card-surface-census.mjs",
