@@ -263,37 +263,73 @@ export function toCardCharacter(
  * snapshot did not *show* the user row a table. So the repair belongs here, in
  * the read projection, and nowhere else.
  *
- * **Three lines this must not cross.**
+ * **An assistant row whose reply wrote nothing has the same hole, and the same
+ * repair.** The store keeps one table per candidate that actually changed one —
+ * its write dedupes against the inherited read, by design — so a turn whose
+ * reply carried no variable commands leaves both its rows table-less in the
+ * file while upstream MagVarUpdate writes the carried-forward tree onto every
+ * floor it settles. A card reading its own floor through the snapshot
+ * (`getVariables({type:'message', message_id})`, the reading the 黑兽 dossier
+ * panel makes) then polled a floor that answered `{}` for eight seconds and
+ * fell to its 「预览数据 · 等待酒馆宿主」 fallback — on a real install the row
+ * itself would have held the state. The fill is the inherited table the message
+ * scope already answers (`effectiveFloorVariables`), placed at the row's
+ * selected swipe, so what a floor-addressed read returns is what upstream's row
+ * would have returned.
+ *
+ * **Four lines this must not cross.**
  *
  * 1. **The export path is untouched.** Projecting into `toFile`'s output would
  *    write tables into the user's own chat file that SillyTavern never put
  *    there — the 972-of-972 byte-identical round trip breaks immediately, and it
- *    breaks by *adding* data, which no reader would notice.
+ *    breaks by *adding* data, which no reader would notice. The lean store is
+ *    the same ruling on the same grounds: four tables where forty carry the
+ *    same information stays true, and only the ephemeral snapshot fills.
  * 2. **Fill absences only, never overwrite.** A chat imported from SillyTavern
  *    has real user-row tables restored through `iris/st-meta`; those are the
- *    genuine article and win.
+ *    genuine article and win. A candidate's own table — written by the settle,
+ *    by a script, by anything — wins over any fill the same way.
  * 3. **The projected table is the turn's, which is half a turn newer than
  *    upstream's.** Upstream's user row holds the state as the turn *began*;
  *    this host has only the state the turn *settled on*. That is a difference in
  *    what a read means, not in what a write does — see `notes/packages/iris-app-service/FLOOR-VARIABLES.md`.
+ * 4. **The fill never reaches a writer.** A card that merges onto what it read
+ *    writes back through the message scope, which attaches to the candidate by
+ *    selector; the snapshot row is not a source any write reads. `floorVariables`
+ *    itself keeps answering a floor's own table only — the anchor a merge writes
+ *    back through must not inherit, and does not start because this projection
+ *    does.
  * @param entry - the open conversation.
- * @returns the message lines, with user rows filled in.
+ * @returns the message lines, with holes filled.
  */
-function withUserRowTables(entry: ChatEntry): SillyTavernMessage[] {
+function withRowTables(entry: ChatEntry): SillyTavernMessage[] {
   const lines = entry.toFile().messages
   return lines.map((line, index) => {
-    if (!line.is_user) return line
+    // Present and non-empty means it came from the file or the settle — the
+    // genuine article. Leave it alone.
     const existing = line['variables']
-    // Present and non-empty means it came from the file. Leave it alone.
     if (Array.isArray(existing) && existing.some(table =>
       typeof table === 'object' && table !== null && Object.keys(table).length > 0)) {
       return line
     }
-    const table = entry.floorVariables(index)
-    if (Object.keys(table).length === 0) return line
-    // A copy, because the caller may scribble on what it is handed and these
-    // lines came out of `toFile` fresh but the table did not.
-    return { ...line, variables: [structuredClone(table)] }
+    // A user row shows its turn's settled table when there is one — the ruling
+    // guardrail 3 names. Everything else — a user row of a turn that settled
+    // nothing, an assistant row whose reply wrote nothing — reads the table the
+    // turn reads through inheritance, which is what upstream's row would hold.
+    const own = line.is_user ? entry.floorVariables(index) : {}
+    const shown = Object.keys(own).length > 0
+      ? own
+      : entry.effectiveFloorVariables(index)
+    if (Object.keys(shown).length === 0) return line
+    // Placed at the row's selected swipe, not at index 0: `variables` is
+    // parallel to `swipes`, and a re-rolled floor can be showing its second
+    // reading — a fill at index 0 would be a table the row's own `swipe_id`
+    // cannot see. A copy, because the caller may scribble on what it is handed
+    // and these lines came out of `toFile` fresh but the table did not.
+    const swipe = typeof line.swipe_id === 'number' ? line.swipe_id : 0
+    const tables: unknown[] = []
+    tables[swipe] = structuredClone(shown)
+    return { ...line, variables: tables }
   }).map(asTransportShape)
 }
 
@@ -434,7 +470,7 @@ export function buildCardContext(
     // `toFile`, not `exportMessages`: only the former attaches
     // `chat[i].variables[swipe_id]`, which is where a status-bar card reads its
     // MVU state. The bare projection loses it with no error to trace.
-    chat: withUserRowTables(entry),
+    chat: withRowTables(entry),
     // Structured-cloned rather than handed over: the frame gets a copy it may
     // scribble on, and the host keeps the version it will actually store.
     chatMetadata: structuredClone(entry.header.chat_metadata),

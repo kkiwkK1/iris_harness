@@ -78,6 +78,46 @@ async function chatWithBoth(t: TestContext): Promise<ChatStore> {
   return new ChatStore(join(dir, 'chats'), new CharacterLibrary(join(dir, 'characters'), '/iris/avatar'))
 }
 
+/**
+ * A chat whose second turn wrote nothing: the reply carried no variable
+ * commands, so the store holds no table for it — the lean-storage ruling —
+ * while upstream MagVarUpdate would have written the carried-forward tree onto
+ * both of that turn's rows.
+ *
+ * The hole turn's rows must read state through the snapshot fill, and the fill
+ * must be the **inherited** table (the greeting turn's), not some other turn's:
+ * the evening this pins is 黑兽's, where five of ten replies from a flash-tier
+ * model carried no `<UpdateVariable>` block and those floors' status panels
+ * answered `{}` for eight seconds each before falling to their
+ * 「预览数据 · 等待酒馆宿主」 fallback.
+ */
+async function chatWithHoleTurn(t: TestContext): Promise<ChatStore> {
+  const dir = await tempDir(t, 'iris-urv-hole-')
+  await mkdir(join(dir, 'characters'), { recursive: true })
+  await mkdir(join(dir, 'chats'), { recursive: true })
+  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+
+  const rows = [
+    { user_name: 'U', character_name: 'Aria', create_date: '2026-09-02 @10h00m00s', chat_metadata: {} },
+    {
+      name: 'Aria', is_user: false, mes: 'Hello.',
+      variables: [{ stat_data: { owner: 'GREETING', turn: 0 } }],
+    },
+    { name: 'U', is_user: true, mes: 'first' },
+    // The hole: a reply that wrote no table, and one re-rolled reading of it is
+    // what is showing — so the fill must land at the swipe the row names.
+    { name: 'Aria', is_user: false, mes: 'kept', swipes: ['discarded', 'kept'], swipe_id: 1 },
+    { name: 'U', is_user: true, mes: 'second' },
+  ]
+  await writeFile(
+    join(dir, 'chats', 'hole.jsonl'),
+    rows.map(row => JSON.stringify(row)).join(String.fromCharCode(10)) + String.fromCharCode(10),
+    'utf8',
+  )
+
+  return new ChatStore(join(dir, 'chats'), new CharacterLibrary(join(dir, 'characters'), '/iris/avatar'))
+}
+
 test('the snapshot carries a user row’s own variable table', async (t) => {
   const chats = await chatWithBoth(t)
   const messages = (await chats.open('probe')).toFile().messages
@@ -226,6 +266,59 @@ function carriesState(line: { variables?: unknown, swipe_id?: number } | undefin
   return typeof table === 'object' && table !== null && 'stat_data' in table
 }
 
+test('a table-less reply reads the inherited table through the snapshot', async (t) => {
+  const chats = await chatWithHoleTurn(t)
+  const snapshot = buildCardContext(
+    await chats.open('hole'), { extensionSettings: {}, characters: [] })
+
+  // The reading the 黑兽 dossier panel makes: its own floor, by id. The fill
+  // must be the inherited tree — the greeting turn's — because that is the
+  // table upstream's row would hold, and it must sit at the swipe the row is
+  // showing, because `variables` is parallel to `swipes` and a fill at index 0
+  // is one this row's `swipe_id` cannot see.
+  const row = snapshot.chat.find(line => line.mes === 'kept')
+  assert.equal(row?.is_user, false, 'the hole row moved')
+  const tables = JSON.parse(String(row?.['variables'])) as Array<{ stat_data?: { owner?: string } } | null>
+  assert.equal(tables[0], null, 'the fill landed at index 0 instead of the showing swipe')
+  assert.equal(
+    tables[1]?.stat_data?.owner,
+    'GREETING',
+    'a floor-addressed read of a hole floor still answers nothing — the panel falls to its preview fallback',
+  )
+})
+
+test('a hole turn’s user row reads the same inherited table', async (t) => {
+  const chats = await chatWithHoleTurn(t)
+  const snapshot = buildCardContext(
+    await chats.open('hole'), { extensionSettings: {}, characters: [] })
+
+  // The turn settled no table of its own, so the user-row fill has nothing of
+  // the turn's to show and falls through to the same inheritance — the state as
+  // the turn began, which is exactly what upstream's user row holds.
+  const row = snapshot.chat.find(line => line.mes === 'first')
+  assert.equal(row?.is_user, true)
+  const tables = JSON.parse(String(row?.['variables'])) as Array<{ stat_data?: { owner?: string } } | null>
+  assert.equal(tables[0]?.stat_data?.owner, 'GREETING', 'the user row of a hole turn reads no state')
+})
+
+test('the hole fill stays out of the file — the lean store keeps its shape', async (t) => {
+  const chats = await chatWithHoleTurn(t)
+  const entry = await chats.open('hole')
+  // Built first: a projection that mutated `toFile`'s lines would leave the
+  // export holding what only the snapshot should show.
+  buildCardContext(entry, { extensionSettings: {}, characters: [] })
+
+  const exported = entry.toFile().messages
+  const hole = exported.find(line => line.mes === 'kept')
+  assert.equal(
+    hole?.['variables'],
+    undefined,
+    'the inherited fill leaked into the stored chat — the lean store is the same ruling as the round trip',
+  )
+  const greeting = exported.find(line => line.mes === 'Hello.')
+  assert.ok(Array.isArray(greeting?.['variables']), 'a real table went missing from the file')
+})
+
 test('the restore predicate sees the same floors upstream does', async (t) => {
   const chats = await chatWithBoth(t)
   const snapshot = buildCardContext(
@@ -242,11 +335,14 @@ test('the restore predicate sees the same floors upstream does', async (t) => {
   //
   //   a turn that updated variables  → the whole turn carries state, so a
   //                                    backwards replay stops inside it
-  //   a turn that updated nothing    → no floor of it carries state, so the
-  //                                    replay passes through to an earlier one
+  //   a turn that updated nothing    → its floors read the inherited table,
+  //                                    so a replay that stops there reads the
+  //                                    same values it would reach by passing
+  //                                    through — which is also what upstream's
+  //                                    row holds, because MVU materialised it
   //
-  // Both readings match upstream, where the user row would have been
-  // materialised by MVU.
+  // The second reading changed when hole floors began carrying the inherited
+  // table in the snapshot: the replay stops earlier, never on different values.
   const rows = snapshot.chat
   const updated = rows.findIndex(line => line.mes === 'first')
   const settled = rows.findIndex(line => line.mes === 'a reply')

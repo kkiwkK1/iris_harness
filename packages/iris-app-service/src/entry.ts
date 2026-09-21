@@ -1868,6 +1868,45 @@ export class ChatEntry {
   }
 
   /**
+   * The table a floor's turn reads **through inheritance**: the turn's own
+   * settled table when it wrote one, else the running state an earlier turn
+   * left — the same answer the message scope's `getVariables` gives, addressed
+   * by the chat-file line a card counts.
+   *
+   * {@link floorVariables} deliberately answers a floor's **own** table and
+   * nothing else — its callers merge and write back, and a floor anchor that
+   * inherited would hand a merge the newest state it could reach. This method
+   * is the other reading, and it exists for the snapshot projection: a floor
+   * whose reply carried no variable commands keeps no table of its own (the
+   * store's write dedupes against exactly this inherited read), while
+   * upstream MagVarUpdate writes the carried-forward tree onto **every** floor
+   * it settles — so a card reading `chat[i].variables[swipe_id]` on a real
+   * install finds state there, and on a snapshot of this host's rows found a
+   * hole. Measured on 黑兽 (2026-09-22): a flash-tier model omitted the
+   * `<UpdateVariable>` block on five of one evening's ten replies, those
+   * floors' panels polled their floor for eight seconds, got `{}`, and fell to
+   * their 「预览数据 · 等待酒馆宿主」 fallback one turn after the last one that
+   * worked.
+   *
+   * Read-only, like every projection over the log: a card that merges onto
+   * this answer writes back through the message scope, which attaches to the
+   * candidate by selector and never to the snapshot.
+   * @param messageId - the chat-file line index, which is what a card counts.
+   * @returns the table that turn reads, empty when there is nothing to inherit.
+   */
+  effectiveFloorVariables(messageId: number): Variables {
+    const turn = lineTurns(this.session)[messageId]
+    if (turn === undefined) return {}
+    try {
+      return this.variables.getVariables({ type: 'message', message_id: turn })
+    } catch {
+      // A turn with no message to attach to (a bare turn/start) has nothing to
+      // read, inherited or otherwise — the same answer `floorVariables` gives.
+      return {}
+    }
+  }
+
+  /**
    * A floor's table together with **how it was arrived at**.
    *
    * {@link floorVariables} answers with a table and nothing else, which is right
