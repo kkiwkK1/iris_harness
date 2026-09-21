@@ -374,6 +374,24 @@ export function substituteFor(
  *   message sits (`0` is the last message).
  * @returns the rewritten text.
  */
+/**
+ * How deep one floor sits: counted from the **end** of the conversation, which
+ * is the unit a regex script's `minDepth`/`maxDepth` is measured in —
+ * upstream's `usableMessages.length - indexOf - 1` on the display side
+ * (`public/script.js:1804-1806`) and `coreChat.length - index - 1` on the
+ * prompt side (`:4445`). One function, because the two call sites (the
+ * display projection here and the prompt history in `service.ts`) answering
+ * differently is exactly the drift the depth windows cannot survive: a rule
+ * aimed at "the last two floors" would land on different floors in the two
+ * stages.
+ * @param index - the floor's position, oldest first.
+ * @param total - how many floors the conversation carries.
+ * @returns the floor's depth, 0 = newest.
+ */
+export function depthFromEnd(index: number, total: number): number {
+  return total - 1 - index
+}
+
 export function runScripts(
   text: string,
   role: ViewRole,

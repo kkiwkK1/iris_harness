@@ -18,7 +18,7 @@ import type { ChatBudget, ChatCompaction, ChatView, MessageView, TurnGeneration,
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 
 import type { PromptFingerprint } from './fingerprint.ts'
-import { runScripts } from './regex.ts'
+import { depthFromEnd, runScripts } from './regex.ts'
 import { timingBySeq } from './timing.ts'
 import { conversationUsage, usageBySeq } from './usage.ts'
 
@@ -253,7 +253,7 @@ export function projectMessages(
     ...view,
     text: runScripts(view.text, view.role, scripts, {
       isMarkdown: true,
-      depth: views.length - 1 - index,
+      depth: depthFromEnd(index, views.length),
       substitute: options.substitute,
     }),
   }))

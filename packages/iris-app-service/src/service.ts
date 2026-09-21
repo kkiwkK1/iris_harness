@@ -123,7 +123,7 @@ import type { VariableWriteKind, VariableWriteProposal, VariableWriteView } from
 import type { SystemPluginLease, SystemPluginRuntime, VariableWriter } from './system-plugins.ts'
 import type { SystemPluginInstallService } from './plugins/install.ts'
 import { DEFAULT_PRUNE, pruneDue } from './prune.ts'
-import { runScripts } from './regex.ts'
+import { depthFromEnd, runScripts } from './regex.ts'
 // —— family②: regex ——
 import { formatAsTavernRegexed, fromTavernRegex, readPresetRegex, tavernRegexId, toTavernRegex } from './regex.ts'
 import { evaluatePrompt, promptHasTemplate } from './templates.ts'
@@ -6186,6 +6186,21 @@ export class IrisAppService {
         cacheFriendly,
         historyRules: [...historyRules],
       })
+      /*
+       * The tier state that shaped this request, on the record once per turn.
+       * The Black兽 leak lived in a tier composed empty — 30 preset rules the
+       * engine never saw, because the allow-list had no row for the preset —
+       * and nothing anywhere said so. Counts only: the rules themselves are
+       * on the panel, and the applied names are in the assembled account.
+       */
+      const tiers = entry.scriptTiers
+      this.#report(
+        'regex tiers — global: ' + String(tiers.global)
+          + ', preset: ' + (tiers.preset === 'refused' ? 'refused' : String(tiers.preset) + ' rules')
+          + ', card: ' + String(tiers.scoped)
+          + '; prompt rules applied: ' + String(historyRules.size),
+        { kind: 'script', grade: 'note', chatId: entry.chatId },
+      )
       // The first floor the budget kept is the one the dropped count names —
       // history entries map one-to-one onto chat-file lines. This is
       // `chat_metadata.lastInContextMessageId` upstream and, like it, a real
@@ -6931,7 +6946,7 @@ export class IrisAppService {
       ...item,
       text: runScripts(item.text, item.role, scripts, {
         isPrompt: true,
-        depth: entries.length - 1 - index,
+        depth: depthFromEnd(index, entries.length),
         substitute: entry.substitute,
         // The regex stage's trace. A floor rewritten by a prompt-direction rule
         // is the only place these fire, so this is where they are collected —
