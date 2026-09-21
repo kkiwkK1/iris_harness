@@ -2645,8 +2645,18 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (env.members.STARTED_EVENTS.includes(message.event)) generating = true
       else if (env.members.SETTLED_EVENT_NAMES.includes(message.event)) generating = false
 
-      // Not awaited and not reported: a listener that throws is the card's
-      // problem with its own handler, and upstream does not tell the host either.
+      /*
+       * Not awaited and not reported: a listener that throws is the card's
+       * problem with its own handler, and upstream does not tell the host
+       * either. What IS reported — here, to the frame's own console, where the
+       * card console panel and the host's report capture both read it — is a
+       * delivery that reached nobody: MagVarUpdate not hearing
+       * `MESSAGE_RECEIVED` looked identical to a working chain from every
+       * angle but this one, and cost a real debugging round.
+       */
+      if (events.listenerCount(message.event) === 0) {
+        console.warn(`[iris] event "${message.event}" was delivered to no listener in this frame`)
+      }
       void events.eventEmit(message.event, ...message.args)
       return
     }
