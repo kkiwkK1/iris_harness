@@ -23,6 +23,7 @@ import { Composer } from './Composer.tsx'
 import { PlumSpray } from './marks.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { PromptPanel } from './PromptPanel.tsx'
+import { TurnRail } from './TurnRail.tsx'
 import { repairStrayFences } from './stray-fences.ts'
 import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
 import { DEFAULT_WINDOW, grow, readingWindow } from './reading-window.ts'
@@ -232,6 +233,13 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
     <>
       <div className="iris-scroll" ref={attachScroller} onScroll={onScroll}>
         <div className="iris-column">
+          <TurnRail
+            messages={messages}
+            onJump={floor => {
+              const floorEl = document.querySelector(`.iris-msg[data-floor="${String(floor)}"]`)
+              floorEl?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+          />
           {/*
             First in the column, because what it describes is the beginning of
             the conversation — `CompactionNote` says why it is not spliced in at

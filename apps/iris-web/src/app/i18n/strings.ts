@@ -448,6 +448,11 @@ export const en = {
   showCardUiTitle: 'Show the card interface',
   hideCardUiTitle: 'Collapse the card interface — Iris stays reachable',
 
+  /** Turn rail. */
+  turnRailAria: 'Turn timeline',
+  turnRailJumpAria: 'Jump to turn {n}',
+  turnRailThinking: 'thinking · {seconds}s',
+
   /** State panel. */
   stateAria: 'Conversation state',
   /* 「变量」, which is what this margin is: the host's own variable manager
@@ -2293,6 +2298,11 @@ export const zh: Record<StringKey, string> = {
   hideCardUi: '收起卡片界面',
   showCardUiTitle: '显示卡片界面',
   hideCardUiTitle: '收起卡片界面——Iris 保持可用',
+
+  /** 逐轮时间线。 */
+  turnRailAria: '逐轮时间线',
+  turnRailJumpAria: '跳到第 {n} 轮',
+  turnRailThinking: '思考 · 持续 {seconds} 秒',
 
   /** 状态面板。 */
   stateAria: '对话状态',

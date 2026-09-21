@@ -133,7 +133,7 @@ export function Message({
   }
 
   return (
-    <article className={`iris-msg iris-msg--${message.role}`}>
+    <article className={`iris-msg iris-msg--${message.role}`} data-floor={message.id}>
       <div className="iris-msg__margin">
         {message.role === 'assistant' && swipes !== undefined && turn !== undefined ? (
           <VariantRail
