@@ -62,7 +62,7 @@ import {
   type MvuUpdate,
 } from './plugins/mvu.ts'
 import { COMPAT_TAVERN_HELPER } from './plugins/tavern-helper.ts'
-import type { MvuData } from '@iris/mvu'
+import { hasMvuState, type MvuData } from '@iris/mvu'
 
 /**
  * One generation's per-candidate record, as the log holds it and the file
@@ -137,15 +137,6 @@ export function readMeta(header: SillyTavernChatHeader): IrisChatMeta {
     updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : 0,
     ...typeof meta.parentChatId === 'string' ? { parentChatId: meta.parentChatId } : {},
   }
-}
-
-/**
- * Whether a value is an MVU state tree rather than some other variable table.
- * @param value - the candidate.
- * @returns true when it carries a `stat_data` tree.
- */
-function isMvuData(value: unknown): value is MvuData {
-  return typeof value === 'object' && value !== null && 'stat_data' in value
 }
 
 /** The shape one sticky or cooldown window takes in `chat_metadata.timedWorldInfo`. */
@@ -669,6 +660,30 @@ export class ChatEntry {
   }
 
   /**
+   * How the three regex tiers are composed right now, as counts.
+   *
+   * The generation path reports this once per turn (`service.ts`'s driver), so
+   * the state that decides whether a preset's own rules run is on the record
+   * where a reader looks — the silent half of the Black兽 leak was a tier
+   * composed empty, and nothing anywhere said so.
+   *
+   * `preset` is the count of rules the tier carries, or the string `refused`
+   * when the tier is not allowed at all — the two states a reader tells apart
+   * before asking anything else. Counts only: the rules themselves are on the
+   * panel already.
+   */
+  get scriptTiers(): { global: number, preset: number | 'refused', scoped: number } {
+    const scopedScripts = this.card?.data.extensions.regex_scripts
+    return {
+      global: this.#globalScripts.length,
+      preset: this.#presetRegex === undefined || this.#presetRegex.policy.allowed !== true
+        ? 'refused'
+        : this.#presetRegex.scripts.length,
+      scoped: Array.isArray(scopedScripts) ? scopedScripts.length : 0,
+    }
+  }
+
+  /**
    * The starting variables the card ships beside its scripts.
    *
    * Upstream's `initial` scope: what a reset resets to. Deliberately not the
@@ -1029,7 +1044,7 @@ export class ChatEntry {
         // That turn produced no candidate to attach variables to.
         continue
       }
-      if (isMvuData(stored)) return stored
+      if (hasMvuState(stored)) return stored
     }
     return this.initVars()
   }

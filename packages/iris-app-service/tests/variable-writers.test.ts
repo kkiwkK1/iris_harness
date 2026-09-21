@@ -525,9 +525,33 @@ test('the MVU writer returns its engine reports under the mvu kind', async () =>
     data: baseline,
     reports: ['MVU: a dropped command'],
   })))
-  const proposal = await writer.propose(fakeView())
+  // The baseline the view walks to is admissible (`schema` present), so the
+  // only report is the engine's own.
+  const admissible = fakeView({
+    variablesAt: (turn: number) => (turn === 1 ? { stat_data: {}, schema: {} } : undefined),
+  })
+  const proposal = await writer.propose(admissible)
   assert.deepEqual(proposal?.reports, ['MVU: a dropped command'])
   assert.equal(proposal?.reportKind, 'mvu')
+})
+
+test('a baseline the bundle would refuse is said out loud at settlement', async () => {
+  /*
+   * The silence that was 黑兽: the bundle's baseline walk refuses a row
+   * without the `schema` key and skips the floor with no report anywhere, so
+   * a whole conversation's commands folded onto nothing. The writer now says
+   * so, once per settlement, under the same mvu kind the engine's own reports
+   * travel in.
+   */
+  const writer = createMvuVariableWriter(fakeCapability((_text, baseline) => ({
+    data: baseline,
+    reports: [],
+  })))
+  const proposal = await writer.propose(fakeView())
+  assert.ok(
+    (proposal?.reports ?? []).some(report => report.includes('`schema` key')),
+    'the refused baseline is named in the reports',
+  )
 })
 
 // --- T9: an aborted partial keeps MVU and keeps the bridge out ---------------

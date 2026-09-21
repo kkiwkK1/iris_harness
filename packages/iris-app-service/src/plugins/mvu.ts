@@ -17,6 +17,8 @@ import type {
 } from '@iris/plugin-api'
 import {
   applyCommands,
+  bundleAdmitsMvuRow,
+  hasMvuState,
   loadInitVars,
   scanDialects,
   type MvuData,
@@ -142,9 +144,7 @@ export const COMPAT_MVU = createMvuCapability(0)
  * message layer can carry any writer's table, and only one carrying a
  * `stat_data` tree is a state MVU may inherit from.
  */
-function isMvuData(value: unknown): value is MvuData {
-  return typeof value === 'object' && value !== null && 'stat_data' in value
-}
+const isMvuData = hasMvuState
 
 /**
  * The state a turn's MVU commands fold into, read off a settlement view.
@@ -181,10 +181,26 @@ export function createMvuVariableWriter(capability: MvuCapability): VariableWrit
     baselineFor: view => mvuBaselineOf(view) as unknown as PluginVariableTable,
     propose: view => {
       if (view.kind === 'impersonate') return undefined
-      const result = capability.update(view.text, mvuBaselineOf(view))
+      const baseline = mvuBaselineOf(view)
+      const result = capability.update(view.text, baseline)
       return {
         variables: result.data as unknown as PluginVariableTable,
-        reports: result.reports,
+        reports: [
+          ...(result.reports ?? []),
+          /*
+           * The one sentence that was missing when this exact state was live
+           * on 黑兽: the bundle's baseline walk refuses a row without the
+           * `schema` key and skips the floor silently, so the round's commands
+           * folded onto nothing and the panel read empty strings. The host
+           * walk is lenient (hasMvuState), the bundle is strict — a baseline
+           * the host accepts and the bundle refuses is the one divergence a
+           * reader cannot see from either side.
+           */
+          ...bundleAdmitsMvuRow(baseline)
+            ? []
+            : ['the baseline floor carries no `schema` key — MagVarUpdate skips rows'
+               + ' without one, so the bundle will not apply this round of commands'],
+        ],
         reportKind: 'mvu',
       }
     },

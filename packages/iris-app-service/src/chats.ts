@@ -17,6 +17,7 @@ import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import type { CharacterCard } from '@iris/character'
 import { appendCandidate, selectCandidate } from '@iris/chat'
 import { createMacroContext, expandMacros } from '@iris/macro'
+import { admissibleMvuSeed } from '@iris/mvu'
 import {
   formatChatFile,
   parseChatFile,
@@ -1011,6 +1012,9 @@ export class ChatStore {
  * file whose card has no MVU has no `variables` key at all.
  * @param entry - the new conversation, with its greeting already seeded.
  */
+// The seed shape lives in `@iris/mvu` (`admissibleMvuSeed`): the row contract
+// — `stat_data` plus the admissibility key — is the bundle's, and this call is
+// its only writer.
 export function seedInitialVariables(entry: ChatEntry): void {
   const initial = entry.initVars()
   if (Object.keys(initial.stat_data).length === 0) return
@@ -1028,7 +1032,7 @@ export function seedInitialVariables(entry: ChatEntry): void {
      * replaces it outright.
      */
     entry.variables.replaceVariables(
-      { ...initial, schema: {} } as unknown as Variables,
+      admissibleMvuSeed(initial) as unknown as Variables,
       { type: 'message', message_id: 0 },
     )
   } catch {

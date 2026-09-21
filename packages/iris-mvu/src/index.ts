@@ -63,3 +63,9 @@ export {
   schemaForPath,
   type SchemaNode,
 } from './schema.ts'
+
+export {
+  admissibleMvuSeed,
+  bundleAdmitsMvuRow,
+  hasMvuState,
+} from './row.ts'
