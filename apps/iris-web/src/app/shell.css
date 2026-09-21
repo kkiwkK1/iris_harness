@@ -419,6 +419,16 @@
 .iris-search {
   display: block;
   box-sizing: border-box;
+  /*
+   * Full width, deliberately. An input is a replaced element: `display:block`
+   * alone leaves it at its intrinsic ~20ch, so the searches inside the sidebar
+   * stayed at their old narrow width after the sidebar itself widened to 400px
+   * (measured: a 173px box in a 400px column — the reader reads it as "this
+   * part was not updated"). In the one flex context (`.iris-row-group`), the
+   * child's `flex: 1` sets flex-basis `0%`, which wins over this width, so
+   * that layout is untouched.
+   */
+  width: 100%;
   margin: 2px 4px 8px;
   padding: 7px 10px;
   font: inherit;
@@ -842,6 +852,14 @@
 }
 
 .iris-sort {
+  /*
+   * Each capsule takes an equal share of the row, so the three grow with the
+   * sidebar instead of huddling at its left edge — the same "this part was not
+   * updated" reading the search box above had when the column went to 400px.
+   * `text-align` centres the word inside the wider pill.
+   */
+  flex: 1 1 0;
+  text-align: center;
   padding: 3px 9px 4px;
   background: none;
   border: var(--iris-hairline) solid var(--iris-rule);

@@ -90,8 +90,10 @@ function fixOf(plugin: SandboxPluginView): string | undefined {
  */
 function SourceBlock({
   source,
+  onClose,
 }: {
   source: { version?: number, hash?: string, code?: string, failure?: string }
+  onClose: () => void
 }): ReactElement {
   useLanguage()
   if (source.failure !== undefined) {
@@ -102,9 +104,14 @@ function SourceBlock({
   }
   return (
     <div className="iris-plugin-code">
-      <span className="iris-conn__meta">
-        {t('pluginCodeHead', { version: source.version ?? 0, hash: source.hash ?? '' })}
-      </span>
+      <div className="iris-plugin-code__head">
+        <span className="iris-conn__meta">
+          {t('pluginCodeHead', { version: source.version ?? 0, hash: source.hash ?? '' })}
+        </span>
+        <button type="button" className="iris-act" onClick={onClose}>
+          {t('pluginHideCode')}
+        </button>
+      </div>
       <pre className="iris-plugin-code__text" data-plugin-code="">{source.code}</pre>
       <span className="iris-conn__meta">{t('pluginCodeReadOnly')}</span>
     </div>
@@ -193,7 +200,9 @@ export function SandboxPluginPanel(): ReactElement | null {
                     <span className="iris-conn__meta">「{version.prompt}」</span>
                   )}
                   {fix === undefined ? null : <span className="iris-conn__meta">{fix}</span>}
-                  {open?.pluginId === plugin.id ? <SourceBlock source={open} /> : null}
+                  {open?.pluginId === plugin.id
+                    ? <SourceBlock source={open} onClose={() => actions.closeSandboxPluginSource()} />
+                    : null}
                 </div>
                 <div className="iris-conn__actions">
                   <button

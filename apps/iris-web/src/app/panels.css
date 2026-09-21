@@ -115,12 +115,15 @@
 
 .iris-composer__inner {
   /*
-   * No centring box. The composer used to be a `--iris-column-max` box centred
-   * in the panel with one gutter of padding on the left so its field sat under
-   * the prose; with the measure gone, this 46px inset **is** that alignment, and
-   * the field takes the whole track — the third of the three surfaces
-   * canvas.json holds to one width.
+   * Bounded and centred, 2026-09-21: the middle column got its cap back
+   * (`.iris-column`, `--iris-column-max`), and the composer is the third of
+   * the three surfaces canvas.json holds to one width — so it takes the same
+   * bound and centres in the track, putting the field back under the prose.
+   * The panel around it (gradient, branch) stays full-width; only the box the
+   * reader types into narrows.
    */
+  max-width: var(--iris-column-max);
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3184,25 +3187,56 @@
 /*
  * 「See the code」 — the read-only source under a sandbox-plugin row.
  *
- * The head and the note are `.iris-conn__meta`, so the block is three lines of
- * the row's own quiet voice with the source between them rather than a panel
- * inside a panel.
+ * **A wide, centred overlay, not an inline block.** The panel lives in the
+ * sidebar, and an inline block there held the source to a ~370px column —
+ * horizontal scrolling per statement, eleven words of context a screen. The
+ * reading column is 920px and sits right of the sidebar, so the open view
+ * borrows that width: fixed to the viewport, centred, scrolling in both axes
+ * like the inline block always did. The head and the note are
+ * `.iris-conn__meta`, so the block is three lines of the row's own quiet voice
+ * with the source between them plus the close the overlay owes its reader —
+ * the row's own toggle still works and still says 「收起代码」.
  */
 .iris-plugin-code {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  /*
+   * The drawer's rung, deliberately: the overlay is shell tooling the reader
+   * opened over the page — above a card's own overlay surface (40), below the
+   * cleaning offer (60) that destroys data. `layers.test.ts` holds every
+   * z-index here to the ladder's names.
+   */
+  z-index: var(--iris-drawer-z);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  align-self: stretch;
-  min-width: 0;
-  margin-top: 4px;
+  gap: 6px;
+  box-sizing: border-box;
+  width: min(920px, 92vw);
+  max-height: min(86vh, 900px);
+  overflow-y: auto;
+  padding: 14px 16px 12px;
+  background: var(--iris-bg-page);
+  border: var(--iris-hairline) solid var(--iris-rule-strong);
+  border-radius: var(--iris-radius);
+  box-shadow: 0 18px 48px -12px rgb(0 0 0 / 0.35);
+}
+
+.iris-plugin-code__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 /*
  * The source itself.
  *
- * `max-height` with a scroller because a plugin may be 64 KiB and the drawer is
- * 300-odd pixels wide: a block that grew to the code's height would push every
- * other row off the panel, and the reader opened one row.
+ * `max-height` with a scroller because a plugin may be 64 KiB: a block that
+ * grew to the code's height would leave the overlay, and the reader opened
+ * one row. The head, the note and the scroller's own chrome take the rest of
+ * the overlay's bounded height.
  *
  * Both axes scroll, and horizontally is deliberate — the same call
  * `.iris-reports__stack pre` makes and for the same reason. Wrapping source at
@@ -3212,14 +3246,14 @@
  */
 .iris-plugin-code__text {
   margin: 0;
-  max-height: 260px;
+  max-height: none;
   overflow: auto;
   padding: 6px 8px;
   border-radius: var(--iris-radius);
   background: var(--iris-bg-sunken);
   font-family: var(--iris-font-mono);
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: var(--iris-ink-secondary);
   /* The bytes as stored, including the blank lines a model left in them. */
   white-space: pre;
