@@ -106,6 +106,7 @@ EJS 的 `package.json` 作者为 `Matthew Eernisse <mde@fleegix.org>`；阅读�
 | `apps/iris-web/src/app/context-occupancy.ts` | 来自 ui-conversation 的占用计算和 `ContextMeter` 分段规则；Iris 改为六种装配来源，分母为 `context - reserve` |
 | `apps/iris-web/src/app/ContextMeter.tsx` | 参考展开面板、标题/条/图例顺序及外部点击/Escape 关闭；改用胶囊条和本地 CSS 定位 |
 | `apps/iris-web/src/app/CompactionNote.tsx` | 来自 `CompactionItem.tsx` 的折叠标记；不替换原消息，位置改到可见列头 |
+| `apps/iris-web/src/app/TurnNavigator.tsx`、`TurnNavigator.module.css` | 来自 ui-chat 的同名组件，参考版本 `0a53fb5`；Iris 改用消息 key、Iris 字典与主题 token，导航移到左侧，并支持跳转到尚未挂载的旧消息 |
 | `packages/iris-app-service/src/compaction.ts`、`compaction-prompt.ts` | 来自 compaction-basic 与 command-compact 的配置、选区、摘要和触发流程 |
 
 压缩部分保留的来源包括：`0.8` / `0.16` 两个比例与校验、从最新端累积选择、缩小检查、checkpoint 包装、摘要指令置于最后一条用户消息以复用前缀缓存、必须写出全部章节、合并旧摘要、失败后继续当前回合，以及手动 `retainRatio = 0` 的分支。
@@ -116,8 +117,31 @@ Iris 将摘要章节改为角色扮演场景，按 `context - reserve` 计算阈
 
 原转录副本为 `0.1.3-alpha.1 / d347e70`；本地参考 checkout 为 `0.1.2-alpha.2 / 0a53fb5`。原记录确认 token 格式文件在两者间字节一致，不据此推断整个项目一致。
 
-> [!IMPORTANT]
-> 原记录中的 MIT 全文位于被忽略的 `.reference/deepseek-harness/LICENSE`，普通克隆不会携带该文件。本说明没有补入该全文，也不表示已经补齐随转录代码分发所需的许可证材料。待办仍见[许可证盘点](notes/LICENSE-INVENTORY.md)。
+本次导航组件适配随仓库保留以下上游 MIT 许可文本：
+
+> MIT License
+>
+> Copyright (c) 2026 DeepSeek
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+这补齐了本次导航适配所需的上游文本；其他既有转录的许可裁决仍见[许可证盘点](notes/LICENSE-INVENTORY.md)。
 
 ## jQuery 与 lodash 的 vendor 文件
 
