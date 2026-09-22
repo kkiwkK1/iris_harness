@@ -1042,6 +1042,21 @@
   color: var(--iris-ink-tertiary);
 }
 
+.iris-turnrail__you {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--iris-accent);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.iris-turnrail__you-label {
+  color: var(--iris-ink-tertiary);
+}
+
 .iris-turnrail__excerpt {
   margin: 0;
   font-size: 12.5px;

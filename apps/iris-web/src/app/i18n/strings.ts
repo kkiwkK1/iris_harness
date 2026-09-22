@@ -452,6 +452,7 @@ export const en = {
   turnRailAria: 'Turn timeline',
   turnRailJumpAria: 'Jump to turn {n}',
   turnRailThinking: 'thinking · {seconds}s',
+  turnRailYou: 'You said · ',
 
   /** State panel. */
   stateAria: 'Conversation state',
@@ -2303,6 +2304,7 @@ export const zh: Record<StringKey, string> = {
   turnRailAria: '逐轮时间线',
   turnRailJumpAria: '跳到第 {n} 轮',
   turnRailThinking: '思考 · 持续 {seconds} 秒',
+  turnRailYou: '你说 · ',
 
   /** 状态面板。 */
   stateAria: '对话状态',
