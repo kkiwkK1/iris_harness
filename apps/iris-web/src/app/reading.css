@@ -69,15 +69,6 @@
   justify-content: flex-end;
 }
 
-/* Leave a separate lane for navigation; message swipe controls already own
-   the inner margin. Equal outer insets keep the reading column centered. */
-@media (min-width: 601px) {
-  .iris-scroll--navigable .iris-column {
-    padding-left: 32px;
-    padding-right: calc(var(--iris-gutter) + 32px);
-  }
-}
-
 .iris-turn {
   position: relative;
   padding: 22px 0;
