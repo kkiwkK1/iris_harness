@@ -8,6 +8,15 @@
   pointer-events: none;
 }
 
+/* Leave a separate lane for navigation; message swipe controls already own
+   the inner margin. Equal outer insets keep the reading column centered. This
+   responsive rule belongs to the navigator rather than the shell's global
+   breakpoint table. */
+:global(.iris-scroll--navigable .iris-column) {
+  padding-left: 32px;
+  padding-right: calc(var(--iris-gutter) + 32px);
+}
+
 .rail {
   --turn-rail-band: var(--iris-app-frame-height, 100dvh);
   --turn-preview-height: 100px;
@@ -146,6 +155,11 @@
 @media (max-width: 600px) {
   .slot {
     display: none;
+  }
+
+  :global(.iris-scroll--navigable .iris-column) {
+    padding-left: 0;
+    padding-right: var(--iris-gutter);
   }
 }
 
