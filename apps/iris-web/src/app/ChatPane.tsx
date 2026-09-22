@@ -10,7 +10,7 @@
  * @module iris-web/app/ChatPane
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
@@ -20,6 +20,8 @@ import { FRAME_BAND_VARIABLE, frameBandPixels } from './frame-fit.ts'
 import { FrameBudgetProvider, type BudgetedFloor } from './FrameBudget.tsx'
 import { CompactionNote } from './CompactionNote.tsx'
 import { Composer } from './Composer.tsx'
+import { TurnNavigator } from './TurnNavigator.tsx'
+import { turnNavigation, type TurnNavigationItem } from './turn-navigation.ts'
 import { PlumSpray } from './marks.tsx'
 import { Message, type MessageHandlers } from './Message.tsx'
 import { PromptPanel } from './PromptPanel.tsx'
@@ -63,6 +65,9 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
   const window_ = useMemo(() => readingWindow(all, shown, message => message.turn), [all, shown])
   const messages = window_.visible
   const groups = useMemo(() => groupByTurn(messages), [messages])
+  const navigation = useMemo(() => turnNavigation(all), [all])
+  const [activeAnchor, setActiveAnchor] = useState<string | null>(null)
+  const pendingNavigation = useRef<string | null>(null)
 
   /*
    * What the frame budget plans over: the mounted rows, in conversation order.
@@ -94,6 +99,8 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
    */
   useEffect(() => {
     setShown(DEFAULT_WINDOW)
+    pendingNavigation.current = null
+    setActiveAnchor(null)
   }, [chatId])
   const retryId = lastReplyId(messages)
 
@@ -107,6 +114,65 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
   const pinned = useRef(true)
   /** The load-more control, so a press can ask whether it was on screen. */
   const more = useRef<HTMLButtonElement>(null)
+
+  const syncActiveAnchor = useCallback(() => {
+    const node = scroller.current
+    if (node === null) return
+    const rows = Array.from(node.querySelectorAll<HTMLElement>('[data-turn-anchor]'))
+    const line = node.getBoundingClientRect().top + Math.min(96, node.clientHeight * 0.2)
+    let active = rows[0]
+    for (const row of rows) {
+      if (row.getBoundingClientRect().top > line) break
+      active = row
+    }
+    if (node.scrollHeight - node.scrollTop - node.clientHeight < 64) active = rows.at(-1)
+    setActiveAnchor(active?.dataset.turnAnchor ?? null)
+  }, [])
+
+  const landOnAnchor = useCallback((key: string): boolean => {
+    const node = scroller.current
+    const row = Array.from(node?.querySelectorAll<HTMLElement>('[data-turn-anchor]') ?? [])
+      .find(element => element.dataset.turnAnchor === key)
+    if (node === null || row === undefined) return false
+    node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - 24
+    pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 64
+    syncActiveAnchor()
+    return true
+  }, [syncActiveAnchor])
+
+  const navigateTo = useCallback((item: TurnNavigationItem) => {
+    pinned.current = false
+    if (landOnAnchor(item.key)) return
+    pendingNavigation.current = item.key
+    setShown(current => Math.max(current, all.length - item.start))
+  }, [all.length, landOnAnchor])
+
+  useLayoutEffect(() => {
+    const key = pendingNavigation.current
+    if (key !== null && landOnAnchor(key)) pendingNavigation.current = null
+  }, [messages, landOnAnchor])
+
+  // Card frames can resize after mounting, without a message or scroll event.
+  useEffect(() => {
+    const node = scroller.current
+    const column = node?.querySelector('.iris-column')
+    if (node === null || column == null) return
+    let frame = 0
+    const schedule = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(syncActiveAnchor)
+    }
+    const resize = new ResizeObserver(schedule)
+    resize.observe(node)
+    resize.observe(column)
+    node.addEventListener('scroll', schedule, { passive: true })
+    schedule()
+    return () => {
+      resize.disconnect()
+      node.removeEventListener('scroll', schedule)
+      cancelAnimationFrame(frame)
+    }
+  }, [chatId, view !== undefined, syncActiveAnchor])
 
   const onScroll = useCallback(() => {
     const node = scroller.current
@@ -230,7 +296,8 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
 
   return (
     <>
-      <div className="iris-scroll" ref={attachScroller} onScroll={onScroll}>
+      <div className={`iris-scroll${navigation.length > 1 ? ' iris-scroll--navigable' : ''}`} ref={attachScroller} onScroll={onScroll}>
+        <TurnNavigator key={chatId} items={navigation} activeTurn={activeAnchor} onNavigate={navigateTo} />
         <div className="iris-column">
           {/*
             First in the column, because what it describes is the beginning of
@@ -298,7 +365,7 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
              */
             <FrameBudgetProvider key={chatId} floors={budgeted}>
             {groups.map((group, at) => (
-              <section className="iris-turn" key={group.turn ?? `loose-${at}`}>
+              <section className="iris-turn" key={group.turn ?? `loose-${at}`} data-turn-anchor={group.messages[0]?.key}>
                 {/*
                   On the boundary, and only where there is one. The number names
                   the turn — the thing swipe and regenerate address — so it marks
