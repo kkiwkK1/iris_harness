@@ -478,6 +478,7 @@ export const en = {
   /** The one-line tally under the tools; the symbols are shared, the sentence around them is not. */
   stateDiffSummaryAria: 'This round: {added} added, {changed} changed, {removed} removed',
   stateBadgeNew: 'new',
+  stateValueEmpty: 'No value in the current snapshot',
   stateBadgeChanged: 'mod',
   stateRemovedHead: 'Removed this round',
   stateItems: '{n} items',
@@ -2319,6 +2320,7 @@ export const zh: Record<StringKey, string> = {
   stateOnlyChangesTitle: '只显示本轮变化过的条目',
   stateDiffSummaryAria: '本轮变化：新增 {added}，修改 {changed}，移除 {removed}',
   stateBadgeNew: '新',
+  stateValueEmpty: '当前变量快照中没有值',
   stateBadgeChanged: '改',
   stateRemovedHead: '本轮移除',
   stateItems: '{n} 项',

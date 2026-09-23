@@ -429,8 +429,9 @@
    * that layout is untouched.
    */
   width: 100%;
-  margin: 2px 4px 8px;
-  padding: 7px 10px;
+  margin: var(--iris-space-1) 0 var(--iris-space-2);
+  min-height: var(--iris-control-height);
+  padding: var(--iris-space-2) var(--iris-space-3);
   font: inherit;
   font-size: var(--iris-ui-size);
   color: var(--iris-ink);
@@ -477,7 +478,7 @@
   /* A 2px well on the left that only the current row fills: the selected state
      was previously carried by a tint so faint it read as a rendering artefact. */
   border-left: 2px solid transparent;
-  padding: 8px 12px 9px 10px;
+  padding: var(--iris-space-2) var(--iris-space-3);
   /* Square against the panel edge, rounded away from it — the well and the
      wash are one shape running out of the sidebar's border. */
   border-radius: 0 var(--iris-radius) var(--iris-radius) 0;
@@ -501,8 +502,8 @@
   align-items: center;
   gap: 8px;
   box-sizing: border-box;
-  min-height: 44px;
-  padding: 12px 6px 12px 8px;
+  min-height: var(--iris-control-touch);
+  padding: var(--iris-space-3) var(--iris-space-2);
 }
 
 /* Hover belongs to the whole shell, not to the row button: the trigger and the

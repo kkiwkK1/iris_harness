@@ -1,0 +1,125 @@
+/* Interaction finishes for the existing plum reading theme. No layout or
+   width breakpoints here: motion answers an action and never moves prose. */
+.iris-composer__card {
+  transition: border-color var(--iris-slip) var(--iris-ease), box-shadow var(--iris-slip) var(--iris-ease);
+}
+
+.iris-composer__card:focus-within {
+  box-shadow: 0 0 0 3px var(--iris-accent-wash);
+}
+
+.iris-composer .iris-composer__send {
+  transition: background-color var(--iris-slip) var(--iris-ease), box-shadow var(--iris-slip) var(--iris-ease), transform var(--iris-fast) var(--iris-ease);
+}
+
+.iris-composer .iris-composer__send:active:not(:disabled) {
+  transform: scale(.94);
+}
+
+.iris-composer .iris-composer__send--stop {
+  border-radius: var(--iris-radius);
+}
+
+.iris-row {
+  transition: background-color var(--iris-slip) var(--iris-ease), border-color var(--iris-slip) var(--iris-ease), color var(--iris-slip) var(--iris-ease);
+}
+
+.iris-row-shell:hover .iris-row[aria-current='true'],
+.iris-row-shell:focus-within .iris-row[aria-current='true'] {
+  background: var(--iris-accent-wash);
+}
+
+.iris-card__head {
+  min-height: var(--iris-control-compact);
+  align-items: center;
+  border-radius: var(--iris-radius);
+  transition: background-color var(--iris-slip) var(--iris-ease);
+}
+
+.iris-card__head:hover {
+  background: var(--iris-bg-sunken);
+}
+
+.iris-card__summary {
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-var__row,
+.iris-var__summary {
+  border-radius: var(--iris-radius);
+  transition: background-color var(--iris-slip) var(--iris-ease);
+}
+
+.iris-var__row:hover,
+.iris-var__summary:hover {
+  background: var(--iris-bg-sunken);
+}
+
+/* Keep the mark for the same round as the existing change badges. Streaming
+   snapshots do not restart an animation or repeatedly flash the reader. */
+.iris-var__row[data-changed],
+.iris-var__summary[data-changed] {
+  background: var(--iris-accent-wash);
+  box-shadow: inset 2px 0 var(--iris-accent-quiet);
+}
+
+.iris-var__row[data-changed] > .iris-var__key,
+.iris-var__summary[data-changed] > .iris-var__key {
+  padding-left: var(--iris-space-2);
+}
+
+.iris-card__head:focus-visible,
+.iris-var__tool:focus-visible,
+.iris-composer .iris-composer__send:focus-visible {
+  outline: 2px solid var(--iris-accent);
+  outline-offset: 3px;
+}
+
+@keyframes iris-disclosure-reveal {
+  from { opacity: .35; }
+  to { opacity: 1; }
+}
+
+.iris-card__body:not([hidden]),
+.iris-var__branch[open] > .iris-var__children {
+  animation: iris-disclosure-reveal var(--iris-slip) var(--iris-ease);
+}
+
+/* A touch user has no hover with which to discover controls. The row keeps
+   its existing space on desktop, so revealing it never shifts a message. */
+@media (hover: none), (pointer: coarse) {
+  .iris-actions {
+    opacity: 1;
+    flex-wrap: wrap;
+    row-gap: var(--iris-space-1);
+  }
+
+  .iris-actions .iris-act {
+    min-height: var(--iris-control-touch);
+    color: var(--iris-ink-tertiary);
+  }
+
+  .iris-row__menu {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris-composer__card,
+  .iris-composer .iris-composer__send,
+  .iris-row,
+  .iris-card__head,
+  .iris-var__row,
+  .iris-var__summary {
+    transition: none;
+  }
+
+  .iris-composer .iris-composer__send:active:not(:disabled) {
+    transform: none;
+  }
+
+  .iris-card__body:not([hidden]),
+  .iris-var__branch[open] > .iris-var__children {
+    animation: none;
+  }
+}

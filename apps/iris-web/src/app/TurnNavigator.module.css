@@ -19,12 +19,12 @@
 
 .rail {
   --turn-rail-band: var(--iris-app-frame-height, 100dvh);
-  --turn-preview-height: 100px;
+  --turn-preview-height: 124px;
 
   position: absolute;
   top: calc(var(--turn-rail-band) / 2);
   left: 8px;
-  width: 28px;
+  width: 32px;
   height: min(
     var(--turn-natural-height),
     max(0px, calc(var(--turn-rail-band) - 64px)),
@@ -33,7 +33,7 @@
   cursor: pointer;
   pointer-events: auto;
   transform: translateY(-50%);
-  transition: height 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: height var(--iris-slip) var(--iris-ease);
 }
 
 .marks {
@@ -48,8 +48,8 @@
   left: 0;
   height: 10px;
   transform: translateY(-50%);
-  transition: top 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  animation: dsh-turn-mark-enter 150ms ease-out;
+  transition: top var(--iris-slip) var(--iris-ease);
+  animation: dsh-turn-mark-enter var(--iris-slip) var(--iris-ease);
 }
 
 .mark {
@@ -74,7 +74,7 @@
   background: var(--iris-tick);
   content: '';
   transform: translateY(-50%);
-  transition: width 140ms ease, background-color 140ms ease;
+  transition: width var(--iris-fast) var(--iris-ease), background-color var(--iris-fast) var(--iris-ease);
 }
 
 .markPreview::before {
@@ -84,6 +84,7 @@
 
 .markActive::before {
   width: 20px;
+  height: 3px;
   background: var(--iris-ink);
 }
 
@@ -112,15 +113,22 @@
   width: min(300px, calc(100vw - 80px));
   max-height: var(--turn-preview-height);
   overflow: hidden;
-  padding: 10px 12px;
+  padding: var(--iris-space-3) var(--iris-space-4);
   border: 1px solid var(--iris-tick);
-  border-radius: 10px;
+  border-radius: var(--iris-radius-field);
   color: var(--iris-ink);
   background: var(--iris-bg-raised);
   box-shadow: var(--iris-shadow);
   pointer-events: none;
-  animation: dsh-turn-preview-enter 120ms ease-out;
-  transition: top 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: dsh-turn-preview-enter var(--iris-fast) var(--iris-ease);
+  transition: top var(--iris-slip) var(--iris-ease);
+}
+
+.previewOrdinal {
+  margin-bottom: var(--iris-space-1);
+  color: var(--iris-ink-tertiary);
+  font: var(--iris-meta-size)/1.5 var(--iris-font-ui);
+  font-variant-numeric: tabular-nums;
 }
 
 .previewPrompt,
@@ -131,14 +139,14 @@
 }
 
 .previewPrompt {
-  font: 600 13px/1.4 var(--iris-font-ui);
+  font: 600 var(--iris-ui-size)/1.5 var(--iris-font-ui);
   -webkit-line-clamp: 2;
 }
 
 .previewResponse {
-  margin-top: 4px;
+  margin-top: var(--iris-space-1);
   color: var(--iris-ink-secondary);
-  font: 12px/1.4 var(--iris-font-ui);
+  font: var(--iris-meta-size)/1.5 var(--iris-font-ui);
   -webkit-line-clamp: 2;
 }
 
