@@ -293,3 +293,50 @@ carrier still declares `server` private would be a test about somebody else's
 direction to be sensitive in. What holds the entry is this file and the
 remediation record (`notes/SECURITY-REMEDIATION.md`), where L-8 is listed as
 pending on the upstream request above.
+
+## 3. The hub's own hang-ups are logged, because `terminate()` raises nothing
+
+**Kind.** Iris-only diagnostic. Dated 2026-09-24. The page half of the incident
+is web §124; the read the page makes after a drop is host §101. Numbers are
+provisional until the coordinator renumbers.
+
+### What was silent
+
+`EventHub` drops a page in two places, both with `ws.terminate()`: a page that
+answered no ping for a whole heartbeat period (`#probe`), and a page more than
+`MAX_BUFFERED_BYTES` (8 MiB) behind (`broadcast`). `terminate()` destroys the
+socket without an `error` event, so neither drop reached `onError` and neither
+left a line in the host's log. The owner's stuck reply of 2026-09-24 had exactly
+that shape: the page reconnected (its side effects are in the log — two
+`run … ended` notes a second apart) and nothing anywhere said the host had hung
+up on it.
+
+### What changed
+
+`EventHubOptions.onDropped(reason, bufferedBytes)`, optional, called after each
+`terminate()` with `'heartbeat'` or `'backpressure'`; `IrisRpcHost` logs it as a
+warning (`event socket: dropped a page that answered no heartbeat ping in 30000 ms
+(0 bytes were waiting for it); it will reconnect and resync`), inside a
+try/catch for the same reason `onError`'s sink reads defensively. The comment
+on `MAX_BUFFERED_BYTES` said the client "reconnects and re-opens the chat, which
+resyncs from host truth"; that was false until the same day (the client only
+resubscribed) and now names `chat.resync`.
+
+**Measured with it** (web §124, `qa/stream-resync-acceptance.mjs`): with card
+黑兽's scripts allowed, the page's main thread stalled for 34–54 s in later
+generations of one session, and this line recorded three heartbeat drops in one
+run. That is how the stall and the stuck reply were tied together.
+
+### Test
+
+`tests/dropped.test.ts`: a real `ws` client with `autoPong: false` against an
+`EventHub` with a 20 ms heartbeat — the socket closes and exactly one
+`heartbeat` drop is reported. Removing the `onDropped` call reddens it; the
+socket still closes, which is why the assertion is on the report and not on
+the close.
+
+### What would reopen it
+
+A drop reason that is not one of these two (a third `terminate()` site), or a
+decision to count drops rather than log each one — at which point this belongs
+in `debug.reports` under `host`, not in the log.

@@ -126,8 +126,9 @@ export interface StreamBuffer {
    * Identity the host gave the row this text belongs to.
    *
    * Absent only when deltas arrived without their opening frame — a reconnect
-   * mid-generation — where the settled view fetched by the reopen already
-   * carries the row, and its own key is used instead.
+   * mid-generation, or a `chat.resync` that found the host generating a turn
+   * this page never heard open (web §124) — where the view already carries the
+   * row, and its own key is used instead.
    */
   key?: string
   /**
@@ -269,6 +270,26 @@ export function repeatsLatestNotice(
  * quietly forgets is a list someone will read as complete.
  */
 export const NOTICE_LOG_LIMIT = 50
+
+/**
+ * How long a page showing a reply as generating may hear **no stream frame at
+ * all** before it asks the host whether that reply has in fact settled.
+ *
+ * The owner's stuck reply of 2026-09-24 (web §124): the host finished and
+ * saved, the page's event socket had a gap across the `stream.end`, and the
+ * caret blinked on under half a reply until a reload. A reconnect is one way
+ * such a gap shows itself and gets its own resync; a socket that simply stops
+ * delivering without closing shows nothing, and this is the only thing that
+ * notices it.
+ *
+ * Twenty seconds because every live frame — a text delta, a reasoning delta,
+ * the opening frame — resets it, so it only runs out on a stream that has
+ * truly gone quiet: a provider still thinking without streaming its reasoning
+ * gets an answer of "still generating" and another twenty seconds, at the
+ * cost of one read. Shorter would ask needlessly during a slow first token;
+ * much longer is how long the reader stares at a frozen caret.
+ */
+export const STREAM_SILENCE_MS = 20_000
 
 /** Everything the interface renders from. */
 /**
@@ -4158,11 +4179,96 @@ export function createIrisStore(
   // reconnected line replaces the fear that the reader has to dispel
   // themselves. Raised only when an outage actually logged an error, so a
   // page that connected once and stayed connected never announces anything.
+  /*
+   * **Resync after a gap in the events** (web §124, host §101).
+   *
+   * The page streams from pushed frames only, and nothing used to reconcile
+   * what the page shows with what the host holds after a gap: a reconnect
+   * resubscribed to *future* frames, so a `stream.end` broadcast while the
+   * socket was down was simply never seen. Measured on a fake endpoint: the
+   * page kept the caret, kept Stop, and kept the reply cut where the gap
+   * began, for as long as anyone watched — the owner's screenshot exactly —
+   * while the host had settled and saved the whole reply.
+   *
+   * So on a reconnect, and after {@link STREAM_SILENCE_MS} of silence while a
+   * reply shows as generating, the page asks `chat.resync` for the open chat.
+   * Settled there → take its view and clear the stream. Still generating →
+   * keep waiting. No chat open → nothing to ask.
+   *
+   * **The event channel wins every race.** Anything it delivered while the
+   * request was in flight — a delta, the real `stream.end`, a `chat.updated` —
+   * is at least as new as the answer, so the answer is dropped if `view` or
+   * `stream` moved under it. The next silence asks again.
+   *
+   * **The host's partial text is not adopted while it is still generating.**
+   * A gap mid-stream leaves a hole in the buffer until the settle replaces it
+   * wholesale. Filling it from the answer would race the socket: deltas sent
+   * after the host answered can arrive before the answer does, and pasting the
+   * answer's text over them would drop them instead.
+   */
+  let lastStreamFrameAt = Date.now()
+  let silenceTimer: ReturnType<typeof setTimeout> | undefined
+  let resyncing: Promise<void> | undefined
+  const resync = (reason: 'reconnect' | 'silence'): Promise<void> => {
+    if (resyncing !== undefined) return resyncing
+    resyncing = (async () => {
+      const before = store.getState()
+      const chatId = before.chatId
+      if (chatId === undefined) return
+      const stream = before.stream
+      let answer: { view: ChatView, generating?: { turn: number } }
+      try {
+        answer = await client.call('chat.resync', {
+          chatId,
+          reason,
+          ...stream === undefined
+            ? {}
+            : { streamTurn: stream.turn, silentMs: Math.max(0, Math.round(Date.now() - lastStreamFrameAt)) },
+        })
+      } catch {
+        // A host that is down right now: the reconnect, or the next silence,
+        // asks again. Not a notice — the connection banner already says it.
+        return
+      }
+      const now = store.getState()
+      if (now.chatId !== chatId || now.view !== before.view || now.stream !== before.stream) return
+      if (answer.generating !== undefined) {
+        // Still generating. Keep the buffer if it is for that turn; a page that
+        // never heard this turn open starts one, so the reader sees Stop.
+        if (stream?.turn === answer.generating.turn) return
+        store.setState({ view: answer.view, stream: { turn: answer.generating.turn, text: '', reasoning: '' } })
+        return
+      }
+      store.setState({ view: answer.view, stream: undefined })
+    })().finally(() => {
+      resyncing = undefined
+      armSilence()
+    })
+    return resyncing
+  }
+  const armSilence = (): void => {
+    if (silenceTimer !== undefined) clearTimeout(silenceTimer)
+    silenceTimer = undefined
+    if (store.getState().stream === undefined) return
+    silenceTimer = setTimeout(() => {
+      silenceTimer = undefined
+      void resync('silence')
+    }, STREAM_SILENCE_MS)
+  }
+  // Every stream frame replaces the buffer, so its identity is the heartbeat:
+  // a delta, a reasoning delta, an opening frame and a settle all move it.
+  const offSilence = store.subscribe((state, previous) => {
+    if (state.stream === previous.stream) return
+    lastStreamFrameAt = Date.now()
+    armSilence()
+  })
+
   let wasConnected = client.connected
   const offConnection = client.onConnectionChange(connected => {
     if (connected && !wasConnected) {
       beginSystemPluginSession(store)
       store.setState({ connected })
+      void resync('reconnect')
       // This read is authoritative for the newly connected host session. It
       // runs even if the settings drawer is never opened because frame owners
       // use the runtime revision as their lifetime fence.
@@ -4187,6 +4293,8 @@ export function createIrisStore(
     dispose: () => {
       offConnection()
       offEvents()
+      offSilence()
+      if (silenceTimer !== undefined) clearTimeout(silenceTimer)
     },
   }
 }

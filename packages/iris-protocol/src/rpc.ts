@@ -386,6 +386,36 @@ export const requestSchemas = {
   'chat.list': z.object({}),
   'chat.create': z.object({ characterId: z.string().min(1) }),
   'chat.open': z.object({ chatId: z.string().min(1) }),
+  /**
+   * Read a conversation's settled view **and whether a turn is in flight**,
+   * because the page suspects it missed events.
+   *
+   * The page streams from pushed frames only, so a gap in the event socket —
+   * a reconnect, or a socket that stopped delivering without closing — can eat
+   * the `stream.end` that would have cleared its generating state: the reply
+   * stops mid-sentence, the caret keeps blinking, Stop stays up, and a reload
+   * shows the whole reply (measured 2026-09-24, web §124). This is the call the
+   * page makes after such a gap to learn the truth.
+   *
+   * **Not `chat.open`, on purpose.** An open is the moment upstream's
+   * `CHAT_CHANGED` fires: it announces the chat to the extension plane (whose
+   * preload re-runs), re-raises the legacy cleanup offer, and files the
+   * "injections still live" note. None of those is true of a page that merely
+   * lost frames, and the silence watchdog can ask this while a slow provider is
+   * still thinking — so this reads, and does nothing else except, when the page
+   * was still showing a turn the host has already finished, file one `note`
+   * saying so. That line is the countable trace of a page that would otherwise
+   * have stayed stuck.
+   */
+  'chat.resync': z.object({
+    chatId: z.string().min(1),
+    /** Why the page is asking: its event socket came back, or it has heard nothing for a while. */
+    reason: z.enum(['reconnect', 'silence']),
+    /** The turn the page is showing as generating, if any. */
+    streamTurn: z.number().int().nonnegative().optional(),
+    /** How long the page had heard no stream frame, for the note. */
+    silentMs: z.number().int().nonnegative().max(86_400_000).optional(),
+  }),
   'chat.delete': z.object({ chatId: z.string().min(1) }),
   'chat.rename': z.object({ chatId: z.string().min(1), title: z.string().max(200) }),
   /**
@@ -2672,6 +2702,12 @@ export interface RpcResponseMap {
   'chat.list': { chats: ChatSummary[], ordered?: boolean }
   'chat.create': { view: ChatView }
   'chat.open': { view: ChatView }
+  /**
+   * The settled view, and the turn this host is generating in this chat right
+   * now — absent when none is. The two are read in one step, so a page cannot
+   * be told "settled" by a view that predates the turn it is asking about.
+   */
+  'chat.resync': { view: ChatView, generating?: { turn: number } }
   'chat.delete': Record<string, never>
   'chat.rename': { chats: ChatSummary[] }
   /**

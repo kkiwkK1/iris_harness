@@ -530,6 +530,14 @@ class InMemoryClient implements FakeClient {
         return { view: toChatView(chat, this.#streams.get(chat.chatId)?.turn) }
       }
 
+      // The read a page makes after a gap in its events: the view, and the
+      // turn still streaming here if one is.
+      case 'chat.resync': {
+        const chat = this.#require((params as RpcRequest<'chat.resync'>).chatId)
+        const turn = this.#streams.get(chat.chatId)?.turn
+        return { view: toChatView(chat, turn), ...turn === undefined ? {} : { generating: { turn } } }
+      }
+
       case 'chat.delete': {
         const { chatId } = params as RpcRequest<'chat.delete'>
         this.#require(chatId)

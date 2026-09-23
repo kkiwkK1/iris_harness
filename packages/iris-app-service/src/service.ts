@@ -2239,6 +2239,40 @@ export class IrisAppService {
         return { view: this.#viewOf(entry) }
       },
 
+      /*
+       * A page that suspects it missed frames asks what is true now (host
+       * §101, web §124). Read-only on purpose — see the method's own docblock
+       * in the protocol for why this is not `chat.open`.
+       *
+       * The view and the in-flight turn are read in the same synchronous step,
+       * after the one await, so no settle can land between them: a page told
+       * "not generating" is holding a view that already contains the reply.
+       */
+      'chat.resync': async ({ chatId, reason, streamTurn, silentMs }) => {
+        const entry = await chats.open(chatId)
+        const view = this.#viewOf(entry)
+        const turn = entry.generating ? entry.pending?.turn : undefined
+        if (streamTurn !== undefined && turn !== streamTurn) {
+          const gap = reason === 'reconnect'
+            ? 'after its event socket reconnected'
+            : `after ${String(Math.round((silentMs ?? 0) / 1000))} s without a stream frame`
+          this.#report(
+            `the page resynced this chat ${gap}: it was still showing turn ${String(streamTurn)} as generating,`
+            + (turn === undefined
+              ? ' which this host had already finished'
+              : ` while this host is generating turn ${String(turn)}`)
+            + '; it took the settled view instead of waiting for a stream.end it had missed',
+            {
+              kind: 'host',
+              grade: 'note',
+              chatId,
+              ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId },
+            },
+          )
+        }
+        return { view, ...turn === undefined ? {} : { generating: { turn } } }
+      },
+
       'chat.delete': async ({ chatId }) => {
         chats.cached(chatId)?.abort()
         await chats.delete(chatId)
