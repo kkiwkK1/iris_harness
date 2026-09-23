@@ -46,6 +46,7 @@ import '../theme/bridge.css'
 import './shell.css'
 import './reading.css'
 import './panels.css'
+import './interaction.css'
 
 /**
  * Render the application.

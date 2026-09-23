@@ -125,7 +125,7 @@ test('the composer and the prose share both flanks, not just the left one', () =
    * twin — so what was checked was that one midline had not moved away from the
    * other. 「梅花」 makes the reading area `46px | 1fr | 46px` on both sides
    * (canvas.json: 阅读区左右各留 46px 对称,输入框居中不偏), so the composer's
-   * flanks are now a plain `padding: 30px var(--iris-gutter) 22px` and the
+   * flanks use the gutter between shared vertical spacing tokens, and the
    * column's right flank is a gutter too.
    *
    * All three are read from the shorthand rather than from `padding-left`,
@@ -136,7 +136,7 @@ test('the composer and the prose share both flanks, not just the left one', () =
   assert.ok(inner !== undefined, 'the inner rule disappeared')
   assert.match(
     dense(inner),
-    /padding:30pxvar\(--iris-gutter\)22px/,
+    /padding:var\(--iris-space-8\)var\(--iris-gutter\)var\(--iris-space-6\)/,
     'the composer no longer takes its flanks from the gutter token',
   )
 

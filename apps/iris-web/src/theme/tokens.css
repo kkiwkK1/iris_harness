@@ -158,12 +158,23 @@
    */
   --iris-size-wordmark: 26px;
   --iris-size-brand: 22px;
-  --iris-size-title: 17px;
+  --iris-size-title: 16px;
   --iris-size-row: 14px;
-  --iris-ui-size: 13px;
-  --iris-label-size: 11px;
+  --iris-ui-size: 14px;
+  --iris-label-size: 12px;
   --iris-label-tracking: 0.075em;
-  --iris-meta-size: 11px;
+  --iris-meta-size: 12px;
+
+  /* Shared UI rhythm; reading geometry and card-authored layouts are separate. */
+  --iris-space-1: 4px;
+  --iris-space-2: 8px;
+  --iris-space-3: 12px;
+  --iris-space-4: 16px;
+  --iris-space-6: 24px;
+  --iris-space-8: 32px;
+  --iris-control-compact: 32px;
+  --iris-control-height: 36px;
+  --iris-control-touch: 44px;
 
   /*
    * The variable margin's two widths.
@@ -239,26 +250,26 @@
    * of thing a box is.
    *
    *   8px   controls and list rows            (--iris-radius)
-   *   10px  input fields                      (--iris-radius-field)
+   *   12px  input fields                      (--iris-radius-field)
    *   12px  the composer: field and stamp     (--iris-radius-send)
-   *   14px  avatars, the drawer's outer edge  (--iris-radius-lg)
+   *   16px  avatars, the drawer's outer edge  (--iris-radius-lg)
    *   999px tag capsules                      (--iris-radius-pill)
    *
    * Why the composer's writing surface takes the send key's 12px rather than
-   * the 10px the ruler gives a field: the two sit side by side in one row on
+   * a separate field radius: the two sit side by side in one row on
    * every artboard (`Main.dc.html` draws both at 12), and two adjacent boxes
    * with different corners read as a mis-assembled control, not as a hierarchy.
    */
   --iris-radius: 8px;
-  --iris-radius-field: 10px;
+  --iris-radius-field: 12px;
   --iris-radius-send: 12px;
-  --iris-radius-lg: 14px;
+  --iris-radius-lg: 16px;
   --iris-radius-pill: 999px;
   --iris-hairline: 1px;
 
   --iris-ease: cubic-bezier(0.2, 0, 0.2, 1);
-  --iris-fast: 90ms;
-  --iris-slip: 150ms;
+  --iris-fast: 120ms;
+  --iris-slip: 180ms;
 
   /*
    * The sidebar's fold, in three durations that are one gesture.

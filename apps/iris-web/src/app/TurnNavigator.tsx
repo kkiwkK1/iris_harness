@@ -106,9 +106,8 @@ function TurnNavigatorRail({ items, activeTurn, onNavigate }: TurnNavigatorProps
         </div>
         {preview !== undefined && previewPosition !== undefined && (
           <div id={previewId} role="tooltip" className={css.preview} style={previewPosition}>
-            <div className={css.previewPrompt}>
-              {preview.prompt || t('turnNavigationEntry', { n: preview.ordinal })}
-            </div>
+            <div className={css.previewOrdinal}>{t('turnNavigationEntry', { n: preview.ordinal })}</div>
+            {preview.prompt !== '' && <div className={css.previewPrompt}>{preview.prompt}</div>}
             {preview.response !== '' && <div className={css.previewResponse}>{preview.response}</div>}
           </div>
         )}

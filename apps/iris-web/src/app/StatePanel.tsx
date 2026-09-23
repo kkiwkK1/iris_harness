@@ -301,7 +301,7 @@ function StateRows({
                 onToggle(here, now)
               }}
             >
-              <summary className="iris-var__summary">
+              <summary className="iris-var__summary" data-changed={added.has(here) || changed.has(here) ? '' : undefined}>
                 <DeltaBadge
                   added={added.has(here)}
                   changed={changed.has(here)}
@@ -339,6 +339,7 @@ function StateRows({
         return (
           <div
             className={stacked ? 'iris-var__row iris-var__row--stacked' : 'iris-var__row'}
+            data-changed={added.has(here) || changed.has(here) ? '' : undefined}
             key={key}
           >
             <dt className="iris-var__key">
@@ -350,7 +351,7 @@ function StateRows({
               />
               {key}
             </dt>
-            <dd className={classes.join(' ')} title={shown.kind === 'text' ? shown.text : undefined}>
+            <dd className={classes.join(' ')} title={shown.kind === 'text' ? shown.text : translate(lang, 'stateValueEmpty')} aria-label={shown.kind === 'absent' ? translate(lang, 'stateValueEmpty') : undefined}>
               {shown.kind === 'absent' ? '—' : shown.text}
             </dd>
           </div>
