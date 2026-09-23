@@ -73,6 +73,8 @@ import { markSaved, openWiEditor, updateWiEntry, type WiEditorState } from '../a
 // notice is worded when it is raised, in the language in force at that moment.
 import { getLanguage } from '../app/i18n/language.ts'
 import { translate } from '../app/i18n/strings.ts'
+import { runDoctor, type DoctorRow } from '../app/doctor.ts'
+import { readDoctorPage } from '../app/doctor-page.ts'
 
 /** A prompt breakdown, or why there is not one. */
 export type ItemizationResult =
@@ -187,6 +189,16 @@ export interface Notice {
   source?: 'transport'
   /** A transport error the connection has since recovered from. */
   resolved?: boolean
+  /**
+   * Stays until dismissed instead of clearing on the timer.
+   *
+   * For a notice that is a **report** rather than an event — `/doctor`'s dozen
+   * rows cannot be read in the 3.2 seconds an information notice lives, and a
+   * report that has gone before it was read is the one reading the notice log
+   * exists to repair after the fact. Only the bar honours it; the log keeps
+   * every notice regardless.
+   */
+  lasting?: true
 }
 
 /**
@@ -1541,7 +1553,12 @@ export interface IrisActions {
     id: string,
     enabled: boolean,
   ): Promise<void>
-  notify(kind: Notice['kind'], text: string): void
+  notify(kind: Notice['kind'], text: string, options?: { lasting?: boolean }): void
+  /**
+   * Run `/doctor`'s checks (`app/doctor.ts`) against this host, this page and
+   * the open conversation. Reads only; the caller reports the rows.
+   */
+  runDoctor(): Promise<DoctorRow[]>
   /** A failure of the event channel itself — resolvable, unlike a host refusal. */
   notifyTransportError(text: string): void
   dismissNotice(): void
@@ -1704,7 +1721,7 @@ export function createIrisStore(
      * @param source - the channel, when it changes how the notice reads.
      * @returns the fields to set.
      */
-    const raise = (kind: Notice['kind'], text: string, source?: Notice['source']): {
+    const raise = (kind: Notice['kind'], text: string, source?: Notice['source'], lasting?: boolean): {
       notice: Notice
       noticeLog: readonly Notice[]
       noticesDropped: number
@@ -1719,14 +1736,16 @@ export function createIrisStore(
         // The row speaks the **newest** occurrence's words: `at` already moves
         // to now, and a sentence that still quotes this run's addresses is the
         // evidence this entry stands for.
-        const { resolved: _closed, ...carried } = last
+        const { resolved: _closed, lasting: _held, ...carried } = last
         void _closed
+        void _held
         const merged: Notice = {
           ...carried,
           text,
           seq: noticeSeq,
           at: now,
           count: (last.count ?? 1) + 1,
+          ...lasting === true ? { lasting: true as const } : {},
         }
         return {
           notice: merged,
@@ -1734,9 +1753,14 @@ export function createIrisStore(
           noticesDropped: get().noticesDropped,
         }
       }
-      const notice: Notice = source === undefined
-        ? { kind, text, seq: noticeSeq, at: now }
-        : { kind, text, seq: noticeSeq, at: now, source }
+      const notice: Notice = {
+        kind,
+        text,
+        seq: noticeSeq,
+        at: now,
+        ...source === undefined ? {} : { source },
+        ...lasting === true ? { lasting: true as const } : {},
+      }
       const kept = [...log, notice]
       return {
         notice,
@@ -4092,8 +4116,12 @@ export function createIrisStore(
         }
       },
 
-      notify(kind: Notice['kind'], text: string): void {
-        set(raise(kind, text))
+      notify(kind: Notice['kind'], text: string, options?: { lasting?: boolean }): void {
+        set(raise(kind, text, undefined, options?.lasting))
+      },
+
+      async runDoctor(): Promise<DoctorRow[]> {
+        return runDoctor(client, readDoctorPage(get().view?.characterId))
       },
 
       /**

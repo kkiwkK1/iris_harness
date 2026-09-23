@@ -9060,3 +9060,65 @@ Assistant 2 / 2 / 2 / 2 / 2 / 2 / 2；
 那默认该换边。要的是按卡族的计数，不是印象。
 (d) **每张卡一个开关**：不做。按卡调这件事是「每卡旋钮是一种气味」那条裁定管的范围
 （2026-09-03），真要分卡族，先回答为什么规则本身不能自己看出来。
+
+## 123. `/doctor`：一次读完宿主、页面和这个对话，每行说读到了什么、该怎么修
+
+**Kind:** Iris-only addition（主人 2026-09-23：「为项目的命令输入添加 /doctor，Claude Code 的功能」）。
+上游没有这个名字——`ST_SLASH_NAMES`（1.18.0 的 289 个）里没有 `doctor`，`commands.test.ts` 的
+不相交检查照常守着。宿主那半是 host 账本 §100 的 `debug.doctor`。
+
+**它报在哪：和 `/compact` 同一条通道，但多一个标记。** `/compact` 的结果不是对话里的一条消息，
+而是 `actions.notify` ——一格通知条（信息 3.2 秒、错误 8 秒后自己消失）加一份会话内的通知日志
+（设置 → 诊断 → 通知）。任务书说「像 `/compact` 那样把一份报告贴进对话」，这个前提的后半句
+与代码不符：`/compact` **从不**往对话里写东西，也不发给模型。`/doctor` 照着通道走（一条通知，
+不是消息），只加了一处：通知带 `lasting: true`，通知条不给它计时，点 ✕ 才关。十几行的报告在
+3.2 秒里读不完，而「报告在被读之前就没了」正是通知日志事后补救、而不该由它来补救的那种情况。
+报告里有 ✗ 时以错误级别出，没有时以信息级别出。
+
+顺带修了一个 `/help` 早就有的问题：`.iris-notice` 以前没有 `white-space: pre-line`，`/help`
+用 `\n` 拼的多行文本在通知条里被压成一段。现在通知条和通知日志都按行显示。
+
+**十三行，顺序即报告顺序**（`apps/iris-web/src/app/doctor.ts`）：
+
+| 行 | 读的是 | ✓ | ⚠ | ✗ |
+| --- | --- | --- | --- | --- |
+| 宿主 | `debug.doctor` 的版本 / Node / pid + 页面端口 | 读到了 | — | 宿主不回答（比页面旧的宿主会说 no handler），下面四行跳过 |
+| 页面构建 | 页面启动的入口文件名 vs 宿主现在提供的 | 相同；或页面不是构建产物（dev，读而不比） | 不同（旧包）；宿主没有构建 | 宿主的首页里读不到入口 |
+| 提供方 | `connection.list` 的 `activeId` | 有在用的 | — | 没有 |
+| 提供方测试 | `connection.test { profileId }` | 有回应 | — | 拒绝 / 不通 |
+| 写插件 | `connection.list` 的 `authoring` | 已设 | 未设（「创造」灰）；指向已删的提供方 | — |
+| 卡片脚本 | `script.list`（对话的卡） | 没有脚本；已允许（并说网络授权与否） | 被拒绝；还没回答 | — |
+| 数据目录 | `debug.doctor.dataDir` | 可写且锁的 pid 等于宿主 pid | — | 不可写；没有锁；锁是别的进程的 |
+| 宿主故障 | `debug.reports` 里的 `fault` 级 | 没有 | 有（报条数与最新一条） | — |
+| 卡片沙箱 | `GET /sandbox/manifest.json` + `HEAD` 它指向的 message preset | 都取得到 | — | 任一取不到 |
+| 页面策略 | 本文档里的外壳 CSP `<meta>` | 有 | 没有（多半是开发服务器） | — |
+| 系统插件 | `plugin.list` 的 `status: 'error'` / `failure` | 没有失败的 | — | 列出失败的与原因 |
+| 卡片存储 | `debug.doctor.cardStorage` | 九成以下 | 九成及以上 | — |
+| SillyTavern 目录 | `debug.doctor.corpusDir` | 未设置；可读 | — | 读不到 |
+
+**判定口径**：`✗` 是「不修就有东西坏着」（生成不了、锁被别人拿着、沙箱起不来）；`⚠` 是
+「可能正是你遇到的问题，但也可能是你的选择」（旧包、授权被拒、「创造」未设）；`✓` 行不带
+处方——`tests/doctor.test.ts` 的 `assertRemedyMatchesVerdict` 双向钉着这一点。
+
+**两处与任务书字面不同，按代码走：**
+(1) 任务书写「`/sandbox/preset.js` 可达」。没有这个路径：沙箱产物名带内容哈希
+（`preset-<hash>.js`），唯一固定的路径是 `/sandbox/manifest.json`（`asset-manifest.ts` 的
+`SANDBOX_MANIFEST_PATH`）。所以先取清单，再 `HEAD` 清单里的 **message preset**——卡帧实际加载的
+那一份（`useCardScripts.tsx` 的 `presetUrl`），1.66 MB，所以用 `HEAD` 不用 `GET`。
+(2) 任务书写比「`bootstrap-*.js` 名字」。页面构建过期要比的是**外壳**的入口（`index-<hash>.js`）：
+沙箱 bootstrap 每次都经清单现取，旧页面也会拿到新 bootstrap，它过期不了；过期的是外壳自己的
+JS。页面那半从 `document` 的 module script 读（`doctor-page.ts` 的 `bootEntry`，跳过 dev 的
+`/@vite/client`），宿主那半从构建出的 `index.html` 读。
+
+**只读，不花 token。** 唯一出网的是 `connection.test`，即连接面板的测试按钮：`GET /models`，不产生
+生成请求。它只带 `profileId`，不从页面送任何密钥。`doctor.ts` 与 `doctor-page.ts` 去掉注释后不得
+出现 `apiKey` / `keyTail` / `hasKey` / `apiKeyHeader` / `keySource` / `connections.json`——对源码钉，
+理由见 host §100。
+
+**`/doctor` 不按「生成中」拦**：每一项都是读，而「回复为什么没来」恰好是回复没来时要问的。
+`commands.test.ts` 的 idle-only 划分把它放在开放那一侧，并在那条断言的说明里写了为什么。
+
+**何时重开：**(a) 对话里出现「本地系统消息」这种载体（只显示、不发给模型）：那时报告应该移过去，
+和 `/compact`、`/help` 一起，通知条回到只报事件。(b) 有一行开始需要**写**才能读到（例如真测
+可写性）：那它不再属于 `/doctor`，或者 `/doctor` 不再是只读，两者必须择一写在这里。
+(c) 行数继续增长到一屏放不下：按 ✗ / ⚠ 在前排序，而不是删 ✓ 行——全 ✓ 的报告本身就是答案。

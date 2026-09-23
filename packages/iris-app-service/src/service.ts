@@ -25,7 +25,7 @@ import { evaluateBatch } from '@iris/compat-prompt-template'
 import { StCompatBridge, applyGenerateResultToContributions, bridgeMessagesFromContributions, contributionsHaveTemplates, validateReplyResult } from '@iris/compat-st-extension'
 import type { StBridgeContext, StBridgeResult } from '@iris/compat-st-extension'
 import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type PromptItem, type PromptOrder } from '@iris/preset'
-import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemExplanation, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, SystemPluginSnapshot, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
+import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, HostDoctorFacts, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemExplanation, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, SystemPluginSnapshot, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset, precheckSandboxPluginSyntax, SANDBOX_PLUGIN_QUOTAS } from '@iris/protocol'
 import type { SandboxPluginFailureState } from '@iris/protocol'
 import { toId, uniqueId } from './paths.ts'
@@ -857,6 +857,15 @@ export interface AppServiceOptions {
    * one for a host nobody is debugging.
    */
   diagnostics?: DiagnosticBuffer
+  /**
+   * Where `debug.doctor` reads the host's own facts (`doctor.ts`).
+   *
+   * A thunk rather than the facts, because every one of them is read at call
+   * time — the lock file and the built index are exactly the two things that
+   * change under a running page. Absent means the composition did not say where
+   * its data directory is, and the method refuses rather than inventing one.
+   */
+  doctor?: () => Promise<HostDoctorFacts>
 }
 
 /** Host-side tuning for the template evaluator. */
@@ -871,8 +880,9 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'sandboxPlugins' | 'hostConnection' | 'stCompat' | 'variableWriterTimeoutMs'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'sandboxPlugins' | 'hostConnection' | 'stCompat' | 'variableWriterTimeoutMs' | 'doctor'>>
     & {
+      doctor?: () => Promise<HostDoctorFacts>
       onError: (error: Error) => void
       hostConnection?: HostConnection
       plugins?: SystemPluginRuntime
@@ -1071,6 +1081,7 @@ export class IrisAppService {
       ...options.backups === undefined ? {} : { backups: options.backups },
       ...options.cacheTrace === undefined ? {} : { cacheTrace: options.cacheTrace },
       ...options.sandboxPlugins === undefined ? {} : { sandboxPlugins: options.sandboxPlugins },
+      ...options.doctor === undefined ? {} : { doctor: options.doctor },
     }
     // The manager's live state starts on whatever the caller assembled: a
     // stored selection is applied by the caller (the plugin) before the
@@ -3960,6 +3971,17 @@ export class IrisAppService {
           throw new AppError('unsupported', 'this host retains no diagnostic reports')
         }
         return diagnostics.read(since, limit)
+      },
+
+      'debug.doctor': async () => {
+        const doctor = this.#options.doctor
+        // Refused rather than answered with defaults, for the reason
+        // `debug.reports` above refuses: a doctor shown a made-up data
+        // directory would pass the lock row against a file nobody read.
+        if (doctor === undefined) {
+          throw new AppError('unsupported', 'this host was composed without the facts /doctor reads')
+        }
+        return { facts: await doctor() }
       },
 
       /**

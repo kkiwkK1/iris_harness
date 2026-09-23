@@ -125,7 +125,8 @@ export function App(): ReactElement {
   // Notices clear themselves. An error a reader has already read is noise, and
   // one that mattered will happen again the moment they retry.
   useEffect(() => {
-    if (notice === undefined) return
+    // A lasting notice is a report (`/doctor`), dismissed by the reader.
+    if (notice === undefined || notice.lasting === true) return
     const timer = setTimeout(() => actions.dismissNotice(), notice.kind === 'error' ? 8000 : 3200)
     return () => clearTimeout(timer)
   }, [notice, actions])

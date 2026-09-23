@@ -199,6 +199,22 @@ interface DebugReport {
 - **`oldest`** 让页面知道自己的游标是不是已经落在缓冲之外了。
 - **`kinds`** 是 §3.6 那条硬约束的落点,见下。
 
+**旁边多了一个只读方法 `debug.doctor`**(2026-09-23,输入框的 `/doctor` 用):
+
+```ts
+'debug.doctor': {}
+  → { facts: HostDoctorFacts }   // packages/iris-protocol/src/views.ts
+```
+
+它回的是**别处读不到的宿主事实**,每次调用现读:Iris 版本、Node 版本、进程号、宿主此刻
+提供的界面入口文件名(每次从构建出的 `index.html` 里读,静态座位也是每个请求重读这个
+文件,所以这就是刷新会拿到的那一份)、数据目录路径 + 是否可写(`access(W_OK)`,不写探针
+文件)+ `host.lock` 里记的进程号、`IRIS_ST_DIR` 设置时能否列目录、卡片存储大小与上限。
+**只给事实不给判定**:页面构建是否过期要拿页面自己的入口去比,判定只能在页面做
+(`apps/iris-web/src/app/doctor.ts`)。不含密钥,也不读、不提连接存储那份文件。
+插件失败、脚本授权、提供方这几行用的是已有的 `plugin.list` / `script.list` /
+`connection.list` / `connection.test`,不在这里重复。
+
 ### 3.3 缓冲
 
 进程内环形缓冲,**同时按条数和字节封顶**:

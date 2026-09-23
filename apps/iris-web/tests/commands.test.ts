@@ -96,6 +96,10 @@ function table(options: {
     openSettings: () => {
       ran.push('openSettings')
     },
+    doctor: async () => {
+      ran.push('doctor')
+      await Promise.resolve()
+    },
   })
   return { commands, ran, setChoices: (patch) => { choices = { ...choices, ...patch } } }
 }
@@ -239,7 +243,7 @@ test('completions are a prefix match, and stop once the name is settled', () => 
   const { commands } = table()
   assert.deepEqual(
     commandCompletions('/', commands).map(row => row.name),
-    ['new', 'rename', 'export', 'chat-model', 'capacity', 'compact', 'config', 'help'],
+    ['new', 'rename', 'export', 'chat-model', 'capacity', 'compact', 'config', 'doctor', 'help'],
     'the menu order is the table order, which is also `/help`’s order',
   )
   assert.deepEqual(commandCompletions('/ca', commands).map(row => row.name), ['capacity'])
@@ -278,8 +282,8 @@ test('exactly the three commands that change what the next request sees are idle
   const open = commands.filter(row => row.idleOnly !== true).map(row => row.name)
   assert.deepEqual(
     open.sort(),
-    ['capacity', 'chat-model', 'config', 'help', 'rename'],
-    '/chat-model is deliberately open, because the capsule’s menu is open during a generation and one action must not have two answers',
+    ['capacity', 'chat-model', 'config', 'doctor', 'help', 'rename'],
+    '/chat-model is deliberately open, because the capsule’s menu is open during a generation and one action must not have two answers; /doctor only reads',
   )
 })
 
@@ -458,6 +462,9 @@ test('every command is filed under the group its object belongs to', () => {
     ['capacity', 'context'],
     ['compact', 'context'],
     ['config', 'app'],
+    // Acts on Iris itself — the host, the page, the connection — and reads the
+    // conversation only for its card's consent.
+    ['doctor', 'app'],
     ['help', 'app'],
   ])
 })
@@ -531,4 +538,26 @@ test('the copy follows the language', () => {
   assert.match(helpText(commands), /[㐀-鿿]/)
   setLanguage('en')
   assert.doesNotMatch(helpText(commands), /[㐀-鿿]/)
+})
+
+test('/doctor is registered, completes from /d, is listed under settings and help, and runs its action', async () => {
+  setLanguage('en')
+  const { commands, ran } = table()
+  const row = commands.find(entry => entry.name === 'doctor')
+  assert.ok(row !== undefined, 'there is no /doctor in the table')
+  assert.equal(row.group, 'app')
+  // Not gated: every check is a read, and the question is worth asking while a
+  // reply is not arriving.
+  assert.notEqual(row.idleOnly, true)
+  assert.match(row.summary(), /what to fix/)
+
+  assert.ok(commandCompletions('/do', commands).some(entry => entry.name === 'doctor'), '/do does not offer /doctor')
+  const resolved = resolveCommand('/doctor', commands)
+  assert.equal(resolved.kind, 'iris')
+  assert.match(helpText(commands), /^\/doctor — Check this host/m)
+
+  const said = await invoke(commands, 'doctor')
+  assert.deepEqual(ran, ['doctor'])
+  // The action reports for itself (one lasting notice); `run` adds nothing.
+  assert.deepEqual(said, [])
 })
