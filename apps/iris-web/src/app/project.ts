@@ -70,9 +70,11 @@ export function withStream(view: ChatView | undefined, stream: StreamBuffer | un
     const name = impersonating
       ? stream.name ?? find('user') ?? view.title
       : find('assistant') ?? view.title
-    // The fallback is reachable only while a reconnect's reopen is still in
-    // flight: without the opening frame there is no identity to be had, and one
-    // remount when the view lands beats showing nothing while text arrives.
+    // The fallback is reachable only when the opening frame was missed — a
+    // reconnect mid-generation, or a `chat.resync` that found the host
+    // generating a turn this page never heard open (web §124): without that
+    // frame there is no identity to be had, and one remount when the settled
+    // view lands beats showing nothing while text arrives.
     const key = stream.key ?? 'stream-unannounced'
     return [...view.messages, live({ id: view.messages.length, name, key })]
   }

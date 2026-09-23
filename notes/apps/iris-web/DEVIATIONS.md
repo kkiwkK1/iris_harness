@@ -9122,3 +9122,112 @@ JS。页面那半从 `document` 的 module script 读（`doctor-page.ts` 的 `bo
 和 `/compact`、`/help` 一起，通知条回到只报事件。(b) 有一行开始需要**写**才能读到（例如真测
 可写性）：那它不再属于 `/doctor`，或者 `/doctor` 不再是只读，两者必须择一写在这里。
 (c) 行数继续增长到一屏放不下：按 ✗ / ⚠ 在前排序，而不是删 ✓ 行——全 ✓ 的报告本身就是答案。
+
+## 124. 回复停在半句、光标一直闪：事件断档之后，页面向宿主要一次真相（`chat.resync`）
+
+**Kind:** Iris-only fix（主人 2026-09-24 00:05 的截图，卡 黑兽，提供方 deepseek，宿主 `main` 44ba71a）。
+宿主那半是 host 账本 §101，挂断留痕是 rpc-host 账本 §3。编号待协调者重排。
+
+**症状。** 回复在流式里长到一半停住（最后一段停在「…磨砂灯罩把光散到半路，照不亮」，没有句号），
+光标在它下面一直闪，输入框一直是「停止」键，刷新之后回复是完整的——宿主写完了、存盘了，页面
+没听说。截图里消息下面已经有「复制 编辑 提示词 删除」：那一行在流式期间本来就在（`Message.tsx`
+无条件渲染），**不是**已落定的证据；真正的判据是它缺了「继续 / 代言 / 重新生成」——
+`canRegenerate` 在 `generating` 时为假。三个信号——光标（`message.streaming`）、「停止」键和那一行里
+缺的按钮（都读 `stream !== undefined`）——全部来自同一个字段 `state.stream`，不会互相矛盾。
+
+**测到的原因（按任务书三条假设的顺序）：**
+
+1. **事件通道断档、之后没有任何东西补回来——成立，并且在 `main` 上复现。** 读代码：
+   `@iris/rpc-client` 断线会按退避重连，重连后只是**继续收之后的帧**；`store.ts` 的
+   `onConnectionChange` 在重连时只开新的插件会话、刷新插件列表，**不**碰打开的对话。断档期间
+   广播出去的 `stream.end` 就此丢失，`stream` 永远不清。`events.ts` 的注释说「客户端重连并重新
+   打开对话，从宿主取真相」——这句话在今天之前是假的（已改）。
+   用假端点复现（`qa/stream-resync-acceptance.mjs`，`EXPECT=stuck`，`main` 构建）：b 场景在页面
+   处理到第 10 个 delta 时从页面侧关掉事件套接字，宿主 `stream.end` 之后 1 s 才放行重连——
+   重连成功后 15 s 窗口内：光标在、「停止」在、回复停在 806 字（标记没出现），宿主那边
+   `stream.end` 带着完整回复早已发出。**和截图一模一样。**
+   **页面为什么会被断开，也测到了：** 卡 黑兽 的脚本在允许状态下，每次流式开始后 1–2 s 页面主线程
+   会停顿（100 ms 间隔计时器记下的空档），而且在同一页面会话里随生成次数变长：`main` 上连跑 6 轮
+   30-delta 的流，停顿依次是 12.8+7.7 s、7.7 s、7.5+16.9 s、17+17+25+8.6 s、……到 34 s 和 54 s；
+   停顿超过心跳周期时，宿主以心跳无回应**无声地** `terminate()` 了页面（本 PR 加的日志行记下了三次
+   `dropped a page that answered no heartbeat ping in 30000 ms`）；第 4–6 轮在 `main` 上到宿主结束后
+   26 s 的观察窗口末仍是光标 +「停止」，其中第 5、6 轮窗口里能看到被宿主断开再重连。（这组读数用的是
+   主工作区 `apps/iris/data` 的一份拷贝，拷贝时刻的末楼是 2 330–2 489 字的那条回复。）
+   **同一张卡拒绝脚本后，同样的流零停顿**，页面与宿主同步到毫秒级。停顿期间的 CPU 剖面：React
+   连续渲染，`MessageInterfaces` → `claimMessageSurfaces` / `scanCodeBlocks`、`repairStrayFences`、
+   `splitHtmlRegions`、`locateBodyTag`，以及 `PresetPanel`、`Menu` 都在反复渲染（整棵树在重渲，
+   37 s 剖面里 `MessageInterfaces` 独占 12 s）。**这条停顿本 PR 没有修**，是下一个任务（见「何时重开」）。
+   主人那一轮的宿主日志与此吻合：00:00:25 生成结束，没有任何套接字错误（`terminate()` 不发 `error`），
+   00:01:18 / 00:01:19 两行 `run 黑兽-…:3/4 ended, but no injection…`——**这一对正是重连的签名**：
+   `beginSystemPluginSession` 把 `systemPlugins` 清空、`refreshSystemPlugins` 再填回，卡脚本的 effect
+   依赖 `pluginRevision` 变了两次，于是连着拆掉两个 run。复现里 b 场景重连后宿主同样紧接着记下
+   `run …:1 ended` 与 `run …:2 ended`。
+2. **结束帧到了、落定路径在页面上抛错——不成立。** 每个场景都挂了 `Runtime.exceptionThrown` 与
+   `console.error` 的收集，全部为空；对照场景 a 里页面每一次都落定了（宿主 `stream.end` 之后 1 ms 到
+   5.2 s 不等，长的那几次整段都是上面的主线程停顿：页面还在消化排队的帧，不是落定失败）。
+   `stream.end` 的处理是一次 `setState({ view, stream: undefined })`，zustand 先赋值再通知订阅者，
+   订阅者抛错也不会把 `stream` 留住；卡的 tap 在 `rpc-client` 的 `#deliver` 里有 try/catch。
+3. **宿主时序 / id 不一致——不成立。** 独立的观察套接字上，每个场景都是全部 `stream.text` 之后才有
+   `stream.end`，其 `view` 的末楼含回复结尾的标记；`stream.end` 的处理不看 turn 与 key，只要 `chatId`
+   对得上就清。
+
+**修法（裁定：不论原因，页面都不许在宿主落定之后还停在生成中）。**
+
+- **重连即对账。** 事件套接字重连（`connected` 由假变真）时，若有打开的对话，页面调用
+  `chat.resync { chatId, reason: 'reconnect', streamTurn? }`。宿主已落定 → 采用它的 view、清掉
+  `stream`（光标、「停止」一起消失）；宿主仍在生成 → 保留缓冲、继续等；宿主正在生成一个页面没听到
+  开头的 turn → 为它开一个空缓冲，「停止」出现。没打开对话 → 什么都不问。
+- **静默看门狗。** `stream` 在、却 `STREAM_SILENCE_MS`（**20 s**）没有任何一帧改动它（文本 delta、
+  推理 delta、开头帧都算）时，同样问一次 `reason: 'silence'`。仍在生成就再等 20 s；`silentMs`
+  从最后一帧算起，不从上一次问算起。这是唯一能发现「套接字没关、却不再送东西」的机制——不会有
+  `close`，也就不会有重连。20 s 的取舍写在常量的注释里：任何活帧都重置它，所以只有真正沉默的流
+  会触发；慢的首字只多花一次读。
+- **事件通道赢所有竞态。** 请求在途期间事件通道送来的任何东西（delta、真正的 `stream.end`、
+  `chat.updated`）都至少和答复一样新，所以 `view` 或 `stream` 在答复回来前变过，答复就作废。
+- **不是 `chat.open`，这一点偏离了任务书。** 裁定写的是「调用 `chat.open`」。`chat.open` 是上游
+  `CHAT_CHANGED` 的时刻：它向扩展平面宣告对话（预载重跑）、重新发起旧版清理的询问、记「注入仍在」
+  的 note——对一个只是丢了几帧的页面，这三件都不是真的，而看门狗还可能在慢提供方思考时每 20 s
+  问一次。所以宿主加了只读的 `chat.resync`（host §101），答复里同一步读出 view 与在途 turn。
+- **留痕（静默也要有信号）。** 页面仍把某个宿主已结束的 turn 显示为生成中时，宿主记一条 `host` 类
+  `note`：`the page resynced this chat after its event socket reconnected: it was still showing turn N
+  as generating, which this host had already finished; …`（静默时写 `after N s without a stream frame`）。
+  在 `debug.reports` 里可数、刷新后仍在；干净的重连不记。宿主自己挂断页面也不再无声（rpc-host §3）。
+
+**上游对照。** SillyTavern 里这个状态到不了：生成就在浏览器里跑，`StreamingProcessor.generate()`
+（`public/script.js:3800-3857`）直接 `for await` 读服务器转发的流，流断了迭代抛错，
+`onErrorStreaming()`（`3761`）中止、`markUIGenStopped()` 解锁界面、保留已到的部分；而流正常结束走
+`onFinishStreaming()`（`3749`）后才 `saveChatConditional()`。浏览器与生成是同一条连接，连接断了生成也
+就停了（服务器端代理随请求关闭而中止上游请求），不存在「服务器写完、页面没听说」。Iris 把生成放在
+宿主、把显示放在页面、两者之间只有推送帧——这条缝是 Iris 自己的，所以补法也是 Iris 自己的。
+
+**测试。**
+
+| 测试 | 钉的是 | 红过（改坏什么） |
+| --- | --- | --- |
+| `apps/iris-web/tests/stream-resync.test.ts` · 重连遇到已落定 | 采用 view、清 `stream`；请求带 `reason`/`streamTurn` | 删掉重连时的 `resync('reconnect')` → 红 |
+| 同上 · 重连遇到仍在生成 | 缓冲原样保留；真正的 `stream.end` 之后照常清 | 答复里的 `generating` 当不存在（总是清）→ 红 |
+| 同上 · 没有打开的对话 | 不发请求 | 删掉 `chatId === undefined` 的早退 → 红 |
+| 同上 · 在途期间事件先到 | 较旧的答复作废，`stream.end` 的 view 留下 | 删掉 `view`/`stream` 变动的判断 → 红 |
+| 同上 · 看门狗（`t.mock.timers`） | 差 1 ms 不问、有 delta 就重置、满 20 s 才问；`silentMs` 从最后一帧算 | 让 delta 不重置计时器 → 红 |
+| 同上 · 看门狗在「仍在生成」后再问、无流时停 | 第二次 `silentMs` = 40 s；`stream` 清掉后再过 200 s 不再问 | 同「总是清」那一改 → 红 |
+| 同上 · 宿主在生成页面没听到开头的 turn | 开空缓冲，「停止」出现 | 同上 → 红 |
+| `packages/iris-app-service/tests/chat-resync.test.ts`（host §101） | 在途 → 答 `generating` 且不记；落定 → view 含整条回复、记一条；没卡住的页面问 → 不记 | 让宿主永远答「不在生成」→ 红；让 note 无条件记 → 红 |
+| `packages/iris-rpc-host/tests/dropped.test.ts`（rpc-host §3） | `autoPong: false` 的页面被心跳断开且被报告 | 删掉 `onDropped` 调用 → 红 |
+| `qa/stream-resync-acceptance.mjs` | 真宿主 + 假端点 + 真卡 黑兽 的页面读数（见下） | `main` 构建上 b、c 卡住（`EXPECT=stuck` 通过） |
+
+**验收读数**（本机，headless Chrome，复制的数据目录，端口 8791）：a 对照——修前修后都落定，宿主
+`stream.end` 之后 1 ms–5.2 s（长的是主线程停顿）。b 断档跨过结尾——修前：重连后 15 s 窗口内仍卡住；修后：放行重连后
+867–1469 ms 落定，`debug.reports` 里有那条 note。c 套接字静默（`close` 永不发生）——修前：26 s 窗口内
+仍卡住；修后：看门狗到点后落定，note 写 `after 30–43 s without a stream frame`（超过 20 s 是因为计时器
+本身被主线程停顿推迟）。d 断档在流中间合上——修前修后都落定。自然复现（`ONLY=e E_REPEAT=6`，不做
+任何人为断档）——`main`：第 4–6 轮在 26 s 窗口末仍卡住、宿主记下三次心跳断开；修后同一跑法 6/6 落定，但那一跑
+的停顿只有 5–17 s、宿主没有断开过——停顿长短每跑不同，所以「修后经心跳断开再恢复」的读数来自完整
+套件那一跑的 c 场景（宿主日志一行 `dropped a page…`，看门狗与重连对账随后落定）。
+
+**何时重开：**(a) 页面主线程停顿（上面第 1 条的后半）修掉之后，心跳断开应当几乎消失，那时这条
+note 的出现次数就是剩下的真实断网次数——如果它仍常见，说明还有别的丢帧来源。(b) 宿主开始支持
+按序号补发事件（重连时带上最后收到的序号）：那时对账可以换成补发，`chat.resync` 只留给补发窗口之外的
+情况。(c) 有提供方在首字之前沉默超过 20 s 成为常态：看门狗每 20 s 一次读仍然便宜，但若这个读变贵
+（`#viewOf` 变重），要换成指数退避。(d) 断档期间页面丢掉了中间的 delta、重连后还在生成：现在缓冲会
+缺一段，直到落定时整条换成宿主的文本；若主人觉得这段缺口扎眼，答复里可以带上宿主的 `pending.text`，
+但要先解决它与在途 delta 的先后问题（为什么这次没做，见 store.ts 的注释）。

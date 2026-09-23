@@ -39,7 +39,10 @@ import {
  *
  * A page this far behind on a token stream will not catch up, and buffering for
  * it without bound is how a host runs out of memory. Dropping it is recoverable:
- * the client reconnects and re-opens the chat, which resyncs from host truth.
+ * the client reconnects and asks `chat.resync` for the open chat, which takes
+ * host truth. **That sentence was false until 2026-09-24** — the client only
+ * resubscribed, and a page dropped across a `stream.end` stayed on its caret
+ * until reloaded (web §124, host §101, rpc-host §3).
  */
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024
 
@@ -64,6 +67,18 @@ export interface EventHubOptions {
   onRefused: (reason: UpgradeRefusal, value: string) => void
   /** Reports a socket-level failure; never throws. */
   onError: (error: Error) => void
+  /**
+   * Reports a page this hub hung up on itself; never throws.
+   *
+   * Both drops are `terminate()`, which raises no `error` event, so before this
+   * existed a page dropped for a missed heartbeat or for falling behind left no
+   * line anywhere — the owner's stuck reply of 2026-09-24 had exactly that: a
+   * reconnect visible only as its side effects, no socket line in the log.
+   * @param reason - `heartbeat`: the page answered no ping for a whole period;
+   *   `backpressure`: more than {@link MAX_BUFFERED_BYTES} were waiting for it.
+   * @param bufferedBytes - what was waiting to be sent to it at that moment.
+   */
+  onDropped?: (reason: 'heartbeat' | 'backpressure', bufferedBytes: number) => void
 }
 
 /** Fans `IrisEvent` frames out to every connected page. */
@@ -143,7 +158,9 @@ export class EventHub {
     for (const ws of this.#sockets) {
       if (ws.readyState !== ws.OPEN) continue
       if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+        const waiting = ws.bufferedAmount
         ws.terminate()
+        this.#options.onDropped?.('backpressure', waiting)
         continue
       }
       ws.send(text, (error) => {
@@ -178,7 +195,9 @@ export class EventHub {
   #probe(): void {
     for (const ws of this.#sockets) {
       if (!this.#responsive.has(ws)) {
+        const waiting = ws.bufferedAmount
         ws.terminate()
+        this.#options.onDropped?.('heartbeat', waiting)
         continue
       }
       this.#responsive.delete(ws)

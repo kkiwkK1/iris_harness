@@ -288,6 +288,7 @@ const PROBES: Record<string, unknown> = {
   'chat.list': {},
   'chat.create': { characterId: 'no-such-card' },
   'chat.open': { chatId: 'no-such-chat' },
+  'chat.resync': { chatId: 'no-such-chat', reason: 'reconnect' },
   'chat.delete': { chatId: 'no-such-chat' },
   'chat.rename': { chatId: 'no-such-chat', title: 'x' },
   // An empty order is the request that *clears* an arrangement, so it is both a

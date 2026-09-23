@@ -1206,6 +1206,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('chat.list', handlers['chat.list']),
       ctx.irisRpc.register('chat.create', handlers['chat.create']),
       ctx.irisRpc.register('chat.open', handlers['chat.open']),
+      ctx.irisRpc.register('chat.resync', handlers['chat.resync']),
       ctx.irisRpc.register('chat.delete', handlers['chat.delete']),
       ctx.irisRpc.register('chat.rename', handlers['chat.rename']),
       ctx.irisRpc.register('chat.reorder', handlers['chat.reorder']),

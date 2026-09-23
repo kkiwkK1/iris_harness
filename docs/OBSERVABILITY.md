@@ -417,6 +417,17 @@ export function isFrontend(content: string): boolean {
 宿主那半是新的只读 RPC `debug.doctor`（[DEBUG-SURFACE](DEBUG-SURFACE.md) §3.2 末尾），
 其余几行用的是已有方法。行清单见 [USER-GUIDE](USER-GUIDE.md)「先跑 /doctor」。
 
+**表外再一条（2026-09-24）：页面丢了事件、自己补回来时留一行。** 回复停在半句、光标一直闪、
+刷新后是完整的——宿主写完了，页面的事件套接字在 `stream.end` 那一刻有空档，没听到。页面现在在
+重连时、以及显示某个回复在生成却 20 s 没收到任何流帧时，向宿主要一次 `chat.resync`；**当它确实
+卡着**（它显示为生成中的 turn，宿主已经结束）时，宿主在 `debug.reports` 里记一条 `host` 类
+`note`：`the page resynced this chat after its event socket reconnected: it was still showing turn N
+as generating, which this host had already finished; …`（静默触发时写 `after N s without a stream
+frame`）。干净的重连不记，所以这行的**次数**就是「本来会卡住」的次数。同一天宿主自己挂断页面
+也不再无声：心跳无回应或落后超过 8 MiB 时，宿主日志里有一行
+`event socket: dropped a page that …`（以前 `terminate()` 什么都不留）。原因、读数和上游对照见
+web 账本 §124、host §101、rpc-host §3。
+
 **给读者的一句**：第 1 条（W7，2026-09-16）是这份表里最后一条「上游有而我们没有」——它关上后，十二条里再无一项是上游领先的。层三里投入最小、收益最大的第 8 条已经做了；而「产品主张」那段
 押注的三条（8、11、12）今天是**两条做了一条没做**——没做的 11 恰好是把前两条交回
 作者手里的那一条，所以那段主张至今只兑现了一半。

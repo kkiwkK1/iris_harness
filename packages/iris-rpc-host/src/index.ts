@@ -235,6 +235,18 @@ export class IrisRpcHost extends Service {
       // is already going wrong. The guard at the source (events.ts) is the fix;
       // this is the seatbelt, and it costs one expression.
       onError: (error: unknown) => { this.ctx.logger.warn(describeHubError(error)) },
+      // rpc-host §3: a hang-up of our own is a line, not silence.
+      onDropped: (reason, bufferedBytes) => {
+        try {
+          this.ctx.logger.warn(reason === 'heartbeat'
+            ? `event socket: dropped a page that answered no heartbeat ping in ${String(resolved.heartbeatMs)} ms`
+              + ` (${String(bufferedBytes)} bytes were waiting for it); it will reconnect and resync`
+            : `event socket: dropped a page that fell ${String(bufferedBytes)} bytes behind`
+              + '; it will reconnect and resync')
+        } catch {
+          // The seatbelt again: a reporting sink must not take the host down.
+        }
+      },
     })
   }
 
