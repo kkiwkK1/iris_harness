@@ -9697,3 +9697,53 @@ character-card configuration — Unable to read character lorebook "黑兽"` 每
 要求可恢复：那需要给每本书留一份持久副本，先要解释它和 §12 消除的那份重复有什么
 不同。(c) 出现「在、坏掉」以外的第四种不可读状态（例如权限）：届时该按「应当修」
 还是「应当报」重新分类，而不是继续并进 `unreadable`。
+
+## 100. `debug.doctor`：只读的宿主事实，供输入框的 `/doctor` 比对
+
+**Kind:** Iris-only addition（上游没有对应的体检；SillyTavern 的 `/version` 只回版本号）。
+web 账本 §123 是它的页面那半。
+
+**为什么要一个新方法。** `/doctor` 要回答的问题里，有几条的事实在今天的方法表里**根本读不到**：
+宿主此刻提供的界面入口文件名（「页面是不是还在跑旧包」要拿它比）、数据目录是否可写、
+`host.lock` 里记的是哪个进程、宿主自己的进程号、Node 版本、`IRIS_ST_DIR` 能否读、
+卡片存储离 10 MiB 上限还有多远。插件失败、脚本授权、提供方这几条**已有方法可读**
+（`plugin.list` / `script.list` / `connection.list` / `connection.test`），不重复进这里——
+所以任务书里「plugin failure summary」这一项没有进 `HostDoctorFacts`，页面直接读 `plugin.list`。
+
+**形状**（`packages/iris-protocol/src/views.ts` 的 `HostDoctorFacts`，`rpc.ts` 里挨着
+`debug.reports`）：`{ irisVersion, node, pid, webBundle?: { entry? }, dataDir: { path, writable,
+lockPid? }, corpusDir?: { path, readable }, cardStorage?: { bytes, limit } }`。
+
+**三条设计决定。**
+
+- **每次调用现读，不在启动时抓。** 这个方法存在的两个理由——宿主换了构建而页面没刷新、
+  另一个宿主接管了锁——都是「事实变了而有人拿着旧的」；启动时抓一份，恰好是唯一一种
+  保证看不见这两件事的读法。入口文件名每次从 `webDistIndex` 指的 `index.html` 里读：
+  `@deepseek-ai/dsh-host-frontend-static` 的 `renderIndex` 也是**每个请求重读这个文件**
+  （`lib/index.js:80`），所以这里读到的就是页面刷新会拿到的那一份。
+- **只给事实，不给判定。** 「页面构建过期」是一次比较，另一半在页面手里；其余几行若在
+  宿主判定，措辞就会有两处。判定全在 `apps/iris-web/src/app/doctor.ts`。
+- **不写任何东西。** 「可写」用 `access(W_OK)` 回答，不写探针文件——体检在它要诊断的
+  目录里留下一个文件，就改变了被诊断的东西。代价要写明：Windows 上 `W_OK` 只看只读属性，
+  被 ACL 拒绝写入的目录这里仍读作可写；那种情况由锁那一行和保存失败自己的报告去抓，
+  页面那句话写的是「宿主报告…可写」而不是「写过一次，可写」。
+
+**不含密钥。** 读的文件内容只有 `host.lock`（进程号、端口、主机名、启动时间）和构建出的
+`index.html`；不打开连接存储，也不提它的文件名。`tests/doctor.test.ts` 最后一条对源码钉住
+这一点（去掉注释后不得出现 `connections.json` / `apiKey` / `keyTail` / `ConnectionStore`）——
+钉在源码上，因为要守的是「这个模块**能**读什么」，输出测试对一个读了密钥却碰巧没打印的
+模块也会通过。
+
+**没有组合进 `doctor` 的宿主会拒绝**（`unsupported`），理由同 `debug.reports` 在没有缓冲时
+拒绝：编一个数据目录出来，锁那一行就会拿一个没人读过的文件去比，报出一个假的 ✓。
+假客户端（`@iris/client-fake`）同样拒绝：它没有宿主进程。
+
+**方法数的不变量照旧，没有改任何数字。** 新方法进了 `requestSchemas`，`index.ts` 里按方法
+逐条 `register`（`tests/registration.test.ts` 从源码核对每个方法都注册了），`apps/iris/tests/
+rpc-transport.test.ts` 的 `PROBES` 表加了一行 `'debug.doctor': {}`——那张表对每个方法都要一条
+探针，缺了会以「no probe for …」红掉，所以它是随契约自动生长的，不是一个要手动加一的计数。
+
+**何时重开：**(a) 宿主开始缓存 `index.html`（例如静态座位改成启动时读一次）：那时
+`webBundle.entry` 要改成读那份缓存，而不是读盘——要比的是「刷新会拿到什么」，不是「盘上
+是什么」。(b) 数据目录的可写性需要真测：那就得接受在目录里写一次再删，并在这一节写清楚
+体检从此不再是纯读。

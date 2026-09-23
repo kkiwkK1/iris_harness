@@ -348,6 +348,12 @@ export function irisCommands(actions: {
   showCapacity: () => boolean
   /** Open the settings drawer. */
   openSettings: () => void
+  /**
+   * Run the checks and report them. The action owns the reporting because the
+   * report is one notice with its own lifetime, which `CommandContext.notify`
+   * cannot ask for.
+   */
+  doctor: () => Promise<void>
 }): CommandDescriptor[] {
   const table: CommandDescriptor[] = [
     {
@@ -469,6 +475,16 @@ export function irisCommands(actions: {
       group: 'app',
       summary: () => t('commandConfigSummary'),
       run: () => { actions.openSettings() },
+    },
+    {
+      /*
+       * Not gated. Every check is a read, and "why is this reply not arriving"
+       * is a question worth being able to ask while it is not arriving.
+       */
+      name: 'doctor',
+      group: 'app',
+      summary: () => t('commandDoctorSummary'),
+      run: async () => { await actions.doctor() },
     },
     {
       name: 'help',

@@ -1795,6 +1795,9 @@
   padding: 9px 18px;
   border-bottom: var(--iris-hairline) solid var(--iris-rule);
   font-size: 12.5px;
+  /* A notice that is a report (`/help`, `/doctor`) is one line per row; the
+     newlines are the rows, and `normal` would run them into one paragraph. */
+  white-space: pre-line;
 }
 
 .iris-notice--error {
@@ -3723,6 +3726,11 @@
   padding: 0;
   display: grid;
   gap: 6px;
+}
+
+/* The log keeps a report's rows as rows, as the bar does. */
+.iris-notices__list .iris-reports__message {
+  white-space: pre-line;
 }
 
 /* How many identical arrivals one row stands for. Quiet: the count is metadata

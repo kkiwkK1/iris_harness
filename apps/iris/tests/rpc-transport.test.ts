@@ -475,6 +475,8 @@ const PROBES: Record<string, unknown> = {
   // Empty params: the cursor and the limit are both optional, and reading
   // from the oldest held record is the page's first call.
   'debug.reports': {},
+  // No params at all: every doctor fact is a host-side reading.
+  'debug.doctor': {},
   // Storage arms refuse on a host without the store configured, which is what
   // the probe host is; the guard checks reachability, not success.
   'storage.set': { characterId: 'no-such-character', key: 'k', value: 'v' },

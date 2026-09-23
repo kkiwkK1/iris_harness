@@ -1778,6 +1778,19 @@ class InMemoryClient implements FakeClient {
         }
       }
 
+      case 'debug.doctor': {
+        /*
+         * Refused, for the reason the diagnostics answer above is empty: every
+         * field is a reading of a host process — its pid, its lock file, the
+         * build it serves — and this client has none. Invented facts would let
+         * `/doctor` show a clean bill of health for a host that does not exist;
+         * the refusal makes the doctor's own "host facts unreadable" row the
+         * honest reading of a fake-backed page.
+         */
+        void params
+        throw new FakeRpcError('unsupported', 'the fake client has no host process for /doctor to read')
+      }
+
       /*
        * Card storage: refused, and the reason is attribution rather than
        * difficulty.

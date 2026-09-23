@@ -124,6 +124,7 @@ export type {
   ConnectionTestErrorCode,
   ContextWindowSource,
   DebugReport,
+  HostDoctorFacts,
   DivergenceState,
   HostDefaultConnection,
   ReportGrade,

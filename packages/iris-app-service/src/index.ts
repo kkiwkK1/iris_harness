@@ -30,8 +30,9 @@ import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
 import type { CharacterCard } from '@iris/character'
 
-import { CardStorageStore } from './card-storage.ts'
+import { CardStorageStore, MAX_STORE_BYTES } from './card-storage.ts'
 import { DiagnosticBuffer } from './diagnostics.ts'
+import { readHostDoctorFacts } from './doctor.ts'
 import { acquireHostLock } from './host-lock.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
@@ -1117,6 +1118,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     broadcast: event => { ctx.irisRpc.broadcast(event) },
     diagnostics,
     cardStorage,
+    // `/doctor`'s host facts, read per call (`doctor.ts`). The data directory
+    // is the resolved one the lock was taken in, so the lock row compares the
+    // file this process actually created against this process's own pid.
+    doctor: () => readHostDoctorFacts({
+      dataDir,
+      ...config.webDistIndex === undefined ? {} : { webDistIndex: config.webDistIndex },
+      ...config.sillyTavernDir === undefined ? {} : { sillyTavernDir: config.sillyTavernDir },
+      cardStorage: { size: () => cardStorage.size(), limit: MAX_STORE_BYTES },
+    }),
     ...config.userName === undefined ? {} : { userName: config.userName },
     ...config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow },
     ...config.reserveTokens === undefined ? {} : { reserveTokens: config.reserveTokens },
@@ -1189,6 +1199,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ctx.irisRpc.register('stCompat.settings', handlers['stCompat.settings']),
       ctx.irisRpc.register('stExtension.install', handlers['stExtension.install']),
       ctx.irisRpc.register('debug.reports', handlers['debug.reports']),
+      ctx.irisRpc.register('debug.doctor', handlers['debug.doctor']),
       ctx.irisRpc.register('storage.set', handlers['storage.set']),
       ctx.irisRpc.register('storage.remove', handlers['storage.remove']),
       ctx.irisRpc.register('storage.clear', handlers['storage.clear']),

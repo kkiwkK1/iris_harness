@@ -19,7 +19,7 @@ import type { RuntimeRequestSchema } from './rpc-registry.ts'
 import { lookupRequestSchema } from './rpc-registry.ts'
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDoctorFacts, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
 import type { SystemPluginInstallPreview, SystemPluginSnapshot } from './system-plugins.ts'
 import type { SandboxPluginView } from './sandbox-plugins.ts'
 // —— family①: identity & messages ——
@@ -1383,6 +1383,16 @@ export const requestSchemas = {
     since: z.number().int().nonnegative().optional(),
     limit: z.number().int().positive().max(2000).optional(),
   }),
+  /**
+   * The host facts the composer's `/doctor` compares against the page.
+   *
+   * Beside `debug.reports` because it answers the same kind of question — what
+   * is this host actually doing — and, like it, reads and never writes. One
+   * method rather than one per fact: every fact is cheap, they are only ever
+   * wanted together, and a doctor that fired six calls to learn six numbers
+   * would be six places an old host could answer differently.
+   */
+  'debug.doctor': z.object({}),
   /**
    * Fetch a remote script dependency through the host.
    *
@@ -3117,6 +3127,7 @@ export interface RpcResponseMap {
     oldest: number
     kinds: readonly string[]
   }
+  'debug.doctor': { facts: HostDoctorFacts }
   /** The fetched body. Refusals arrive as an `unsupported` rejection. */
   'script.fetch': { content: string, contentType?: string }
 

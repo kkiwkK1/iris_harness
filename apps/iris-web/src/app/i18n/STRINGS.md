@@ -638,3 +638,21 @@ Iris 此前只有两档，而切进来的预设 body 一直是整份存着的—
 **「对话」不是「聊天」。** 词表裁定：`quoteScopeDialogue` 说的是模型写的那几句**对白**，
 不是一段会话。同一格里的另一档只说它与什么一致，不解释理由——理由在账本 §122 和用户指南的
 兼容范围表里，一个设置项的标签不该承载一段排版学。
+
+任务（`/doctor`，`dev/composer-doctor-command`，web 账本 §123）追加：
+
+| 来源 | 内容 | 键 |
+| --- | --- | --- |
+| `commands.ts` `/doctor` | 补全菜单与 `/help` 的一行说明，和整份报告没能跑完时的一句（原样带上原因） | `commandDoctorSummary commandDoctorFailed` |
+| `doctor.ts` 报告骨架 | 计数行（几项正常 / 要留意 / 要修），「读到的 —— 该怎么做」的连接，读不到时的通用一句 | `doctorHeading doctorRowWithRemedy doctorUnreadable` |
+| `doctor.ts` 十三个行名 | 宿主、页面构建、提供方、提供方测试、写插件、卡片脚本、数据目录、宿主故障、卡片沙箱、页面策略、系统插件、卡片存储、SillyTavern 目录 | `doctorLabel*` |
+| `doctor.ts` 每行的读数与处方 | 读数只说读到了什么；`…Fix` 结尾的是处方，写成祈使句并**点出在哪修**（设置里的哪一页、哪个环境变量、哪条命令）——知道怎么修却不说在哪修，读者还是得自己去找 | `doctorHost* doctorBundle* doctorProvider* doctorAuthoring* doctorConsent* doctorDataDir* doctorLock* doctorFaults* doctorSandbox* doctorPolicy* doctorPlugins* doctorStorage* doctorCorpus*` |
+
+**词表照用**：provider 是「提供方」（`STRINGS.md` 词表那一行；连接面板里旧的「供应商」
+不在这次改动范围内，没有顺手改），session 说「这次打开」（`doctorFaultsNone`：宿主这次打开
+以来）。处方里的设置路径照 `SettingsNavigation.tsx` 的页名写：连接、脚本、系统插件、
+诊断 → 宿主报告——写成别的名字，读者照着找会找不到。
+
+**`doctorRowWithRemedy` 进了 `i18n.test.ts` 的中立白名单**，理由同 `commandRow`：两个槽加一个
+连接号，没有自己的词。两栏只差连接号（英文 ` — `，中文 ` —— `），两边的词各是自己的一行、各自受检。`doctorLabelCorpus` 的中文是
+「SillyTavern 目录」，产品名不翻、「目录」翻，同 `quoteScopeUpstream` 的规矩。

@@ -2486,6 +2486,48 @@ export interface DebugReport {
   stack?: string
 }
 
+/**
+ * What the host can say about itself that no other method exposes, for the
+ * composer's `/doctor`.
+ *
+ * **Facts, not verdicts.** The page decides what is healthy, because one of the
+ * questions is a comparison only the page can make — "is the bundle I am
+ * running the one you serve now" needs the page's own half — and a host that
+ * pre-judged the other rows would be a second place the wording lives.
+ *
+ * **No secrets, and no path inside the profile's connection store.** The data
+ * directory is named because "which directory is this host writing into" is
+ * the question the one-host-per-directory rule turns on; the credential file
+ * inside it is neither read nor named.
+ */
+export interface HostDoctorFacts {
+  /** This host's own version (`GET /version`'s `iris` field). */
+  irisVersion: string
+  /** `process.version` of the host process. */
+  node: string
+  /** The host process's id. */
+  pid: number
+  /**
+   * The web bundle the host is serving **now**, read from the built index at
+   * call time — the static seat re-reads that file per request, so this is what
+   * a reload would load. `entry` is the module script's file name (for example
+   * `index-hUStB4Sx.js`), absent when the index could not be read or names no
+   * module script. The whole field is absent when this host serves no build.
+   */
+  webBundle?: { entry?: string }
+  /** The data directory, whether this process can write into it, and whose pid its lock names. */
+  dataDir: {
+    path: string
+    writable: boolean
+    /** The pid `host.lock` records, read at call time. Absent when the file is missing or unreadable. */
+    lockPid?: number
+  }
+  /** `IRIS_ST_DIR`, when configured, and whether this process can list it. Absent when unset. */
+  corpusDir?: { path: string, readable: boolean }
+  /** The shared card storage's size against its cap. Absent when the store is not composed. */
+  cardStorage?: { bytes: number, limit: number }
+}
+
 /** How a character's books and the globally selected ones are interleaved. */
 export type InsertionStrategy = 'evenly' | 'character_first' | 'global_first'
 

@@ -65,6 +65,7 @@ import {
   type ModelChoices,
 } from './commands.ts'
 import { describeError } from '../client/errors.ts'
+import { doctorReport } from './doctor.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 
 /**
@@ -504,6 +505,23 @@ export function Composer({
         before: result.compacted.spanTokens,
         after: result.compacted.summaryTokens,
       }))
+    },
+    /*
+     * Reported through the same channel `/compact` reports through — one
+     * notice, never a message to the model — with one difference: the notice
+     * is **lasting**. A dozen rows do not read in an information notice's 3.2
+     * seconds, and a report that is gone before it was read is the case the
+     * notice log exists to repair after the fact rather than prevent.
+     */
+    doctor: async () => {
+      try {
+        const report = doctorReport(await actions.runDoctor())
+        actions.notify(report.kind, report.text, { lasting: true })
+      } catch (error: unknown) {
+        actions.notify('error', t('commandDoctorFailed', {
+          reason: error instanceof Error ? error.message : String(error),
+        }))
+      }
     },
   }), [actions])
 

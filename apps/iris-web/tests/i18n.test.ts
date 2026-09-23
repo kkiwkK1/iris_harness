@@ -38,6 +38,10 @@ const NEUTRAL = new Set([
   // words around it in the same row — 挂着 / 停用 / 来自分支 — are in the
   // dictionary and are checked.
   'pluginVersionLabel',
+  // `/doctor`'s row-and-remedy joint: two slots and a dash, like `commandRow`.
+  // The two columns differ only in the dash (` — ` / ` —— `); the words on both
+  // sides of it are their own rows and are checked.
+  'doctorRowWithRemedy',
 ])
 
 function auditShellColumns(): ReturnType<typeof auditBilingualCopy> {
