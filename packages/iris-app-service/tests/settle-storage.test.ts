@@ -106,7 +106,7 @@ async function fixture(t: TestContext, options: { throwing?: boolean } = {}): Pr
   let listFailure: string | undefined
   chats.save = async (entry, onReport) => {
     if (saveFailure !== undefined) throw new Error(saveFailure)
-    await realSave(entry, onReport)
+    return realSave(entry, onReport)
   }
   chats.list = async (onReport) => {
     if (listFailure !== undefined) throw new Error(listFailure)

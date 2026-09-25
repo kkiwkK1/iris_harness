@@ -79,8 +79,13 @@ const CLASSIFIED: Record<string, { total: boolean, why: string }> = {
   },
 }
 
-/** Call sites that put tables back, whatever their rebuild does. */
-const HYDRATION_SITES = ['open', 'branch', 'script.createChatMessages'] as const
+/**
+ * Call sites that put tables back, whatever their rebuild does.
+ *
+ * `#load` is `ChatStore.open`'s cold half: `open` itself only dedupes
+ * concurrent loads of one chat and delegates the read to it.
+ */
+const HYDRATION_SITES = ['#load', 'branch', 'script.createChatMessages'] as const
 
 /** Lines that look like a declaration but are control flow. */
 const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'else', 'do', 'try'])

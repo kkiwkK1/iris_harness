@@ -25,6 +25,7 @@ import type {
   UsageTotals,
   ViewRole,
 } from '@iris/protocol'
+import { promptTokensOf } from '@iris/protocol'
 
 import { FAKE_CHAT_BUDGET, FAKE_MEASURED_TOKENS } from './prompt.ts'
 
@@ -558,5 +559,5 @@ function foldBuckets(into: UsageBuckets, usage: TurnUsage): void {
   if (usage.cacheReadTokens === undefined) return
   into.cacheRead = (into.cacheRead ?? 0) + usage.cacheReadTokens
   into.cacheTurns += 1
-  into.cachePrompt += usage.inputTokens + usage.cacheReadTokens + (usage.cacheWriteTokens ?? 0)
+  into.cachePrompt += promptTokensOf(usage)
 }

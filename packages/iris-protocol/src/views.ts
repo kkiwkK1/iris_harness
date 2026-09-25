@@ -1487,7 +1487,9 @@ export interface PromptItemization {
   /** Sum of the entries. */
   tokens: number
   /**
-   * What the provider reported this prompt actually cost, when it has.
+   * What the provider reported this prompt actually cost, when it has: the
+   * whole prompt side (`promptTokensOf`), cached buckets included, because
+   * that is the size {@link tokens} estimates.
    *
    * Shown beside {@link tokens} so a user can see whether the estimate is
    * trustworthy. Absent in preview, and absent for a turn whose provider

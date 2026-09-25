@@ -188,6 +188,8 @@ export type {
 
 export { CACHE_STALE_MS, HISTORY_ITEM_PREFIX, MAX_CONTEXT_WINDOW, providerExcuse } from './views.ts'
 
+export { promptTokensOf, type PromptUsage } from './usage.ts'
+
 export {
   PROVIDER_PRESETS,
   providerPreset,

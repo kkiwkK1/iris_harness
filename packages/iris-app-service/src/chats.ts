@@ -101,6 +101,25 @@ export class ChatStore {
   readonly #globalSelect: (() => readonly string[]) | undefined
   readonly #entries = new Map<string, ChatEntry>()
   /**
+   * Loads in flight, so concurrent opens of one cold chat share one entry.
+   *
+   * Without it, two opens that both missed `#entries` each read the file and
+   * built their own `ChatEntry`; the map kept the second and the first caller
+   * held an orphan. The busy guard lives on the entry, so two cold `chat.send`
+   * calls each passed it and both streamed — two billed requests, and one turn
+   * lost when the later save overwrote the earlier.
+   */
+  readonly #opening = new Map<string, Promise<ChatEntry>>()
+  /**
+   * Entries this store has let go of: deleted, or replaced by a restore.
+   *
+   * A turn in flight holds its entry past that moment, and its settle calls
+   * {@link save}. Written by chatId, that save put a deleted conversation back
+   * on disk (with its settings and shelf row already forgotten) or undid a
+   * restore. `save` refuses a retired entry instead; see there.
+   */
+  readonly #retired = new WeakSet<ChatEntry>()
+  /**
    * Materialise a card's embedded book and say which named book it became.
    *
    * Injected rather than built here so this store stays unaware of bindings and
@@ -484,7 +503,21 @@ export class ChatStore {
   async open(chatId: string): Promise<ChatEntry> {
     const cached = this.#entries.get(chatId)
     if (cached !== undefined) return cached
+    const loading = this.#opening.get(chatId)
+    if (loading !== undefined) return loading
+    const load = this.#load(chatId)
+    this.#opening.set(chatId, load)
+    try {
+      return await load
+    } finally {
+      // Deleted on success and on failure alike: a failed read must not be
+      // replayed to the next caller, which may find a file that is now there.
+      if (this.#opening.get(chatId) === load) this.#opening.delete(chatId)
+    }
+  }
 
+  /** {@link open}'s cold half: read, parse and cache one conversation. */
+  async #load(chatId: string): Promise<ChatEntry> {
     const path = fileFor(this.#dir, chatId, '.jsonl')
     let text: string
     try {
@@ -882,11 +915,42 @@ export class ChatStore {
    * @param entry - the live conversation.
    * @param onReport - passed through to the projection, which uses it to say
    *   what it dropped.
+   * @returns `false`, with nothing written, when the entry is retired (see
+   *   {@link isLive}); `true` once the file is written.
    */
-  async save(entry: ChatEntry, onReport?: (message: string) => void): Promise<void> {
+  async save(entry: ChatEntry, onReport?: (message: string) => void): Promise<boolean> {
+    if (!this.isLive(entry)) return false
     await this.ensure()
     const path = fileFor(this.#dir, entry.chatId, '.jsonl')
     await atomicWriteFile(path, formatChatFile(entry.toFile(onReport)))
+    return true
+  }
+
+  /**
+   * Whether this entry is still the one this store answers for its chat.
+   *
+   * False once `delete` or `restoreFile` has let it go, and false for an entry
+   * another has replaced in the map. {@link save} refuses such an entry and
+   * answers `false`, because the file at that id now belongs to someone else —
+   * the empty hole a deletion left, or the snapshot a restore wrote back — and
+   * a turn that was still streaming when that happened must not write over it.
+   * The caller that cares (the settle) reports it; the rest ignore the answer.
+   * An entry the map has never held (a test building one by hand) is not
+   * retired and saves as before.
+   * @param entry - the entry about to be written.
+   * @returns whether a write for it may land.
+   */
+  isLive(entry: ChatEntry): boolean {
+    if (this.#retired.has(entry)) return false
+    const live = this.#entries.get(entry.chatId)
+    return live === undefined || live === entry
+  }
+
+  /** Let go of the live entry for a chat, so nothing it still holds can write. */
+  #retire(chatId: string): void {
+    const live = this.#entries.get(chatId)
+    if (live !== undefined) this.#retired.add(live)
+    this.#entries.delete(chatId)
   }
 
   /**
@@ -926,7 +990,7 @@ export class ChatStore {
    * @param text - the snapshot's whole text.
    */
   async restoreFile(chatId: string, text: string): Promise<void> {
-    this.#entries.delete(chatId)
+    this.#retire(chatId)
     await this.ensure()
     await atomicWriteFile(fileFor(this.#dir, chatId, '.jsonl'), text)
   }
@@ -938,12 +1002,22 @@ export class ChatStore {
    */
   async delete(chatId: string): Promise<void> {
     const path = fileFor(this.#dir, chatId, '.jsonl')
+    // Retired **before** the unlink, synchronously: the caller has just
+    // aborted any turn in flight, and that turn's settle runs as soon as this
+    // method first awaits — a retirement after the unlink let its save pass
+    // `isLive` and land on the path the unlink had just emptied.
+    const live = this.#entries.get(chatId)
+    this.#retire(chatId)
     try {
       await unlink(path)
     } catch {
+      // Nothing was deleted, so nothing is let go: the entry comes back.
+      if (live !== undefined) {
+        this.#retired.delete(live)
+        this.#entries.set(chatId, live)
+      }
       throw notFound(`no chat "${chatId}"`)
     }
-    this.#entries.delete(chatId)
   }
 
   /**
