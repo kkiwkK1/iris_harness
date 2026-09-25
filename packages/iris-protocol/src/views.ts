@@ -524,6 +524,67 @@ export interface ChatSummary {
 }
 
 /**
+ * Where a branch leaves its parent, in the parent's floor numbers.
+ *
+ * `floor` is the floor the branch was made **from** — the last floor
+ * `chat.branch` copied, and the floor that carries the "⑂N" badge. `shared` is
+ * the first floor of the branch's own lane — the floors before it are drawn on
+ * the parent's: `floor + 1` for an ordinary branch, and `floor` itself when the
+ * branch's copy of that floor reads differently from the parent's (a swipe
+ * turned into a branch, or an edit on either side since).
+ */
+export interface ChatTreeFork {
+  floor: number
+  shared: number
+  /**
+   * How the fork point was known: recorded by `chat.branch` in the child's
+   * `iris.branchAt`; read from upstream's `extra.branches` marker on the
+   * parent's floor; or inferred as the longest common prefix of the two
+   * conversations (role plus text, floor by floor), for a branch written before
+   * either was recorded.
+   */
+  source: 'recorded' | 'marker' | 'prefix'
+}
+
+/** One conversation in a lineage. */
+export interface ChatTreeNode {
+  chatId: string
+  title: string
+  /** Unix epoch milliseconds of the last activity. */
+  updatedAt: number
+  /** The conversation this one branched from, when it is in the tree. */
+  parentChatId?: string
+  /**
+   * The parent this conversation names but that is not there any more — deleted,
+   * or never imported. Such a conversation is the root of its own tree.
+   */
+  detachedFrom?: string
+  /** 0 for the root. */
+  depth: number
+  floorCount: number
+  /** Readings per floor, one entry per floor; 1 for a user line or a single reply. */
+  swipes: number[]
+  /** Absent on the root. */
+  fork?: ChatTreeFork
+  /** Set when the file could not be read; the node is then drawn with no floors. */
+  unreadable?: true
+}
+
+/**
+ * A conversation's whole lineage, for the tree map.
+ *
+ * Every chat reachable from the root ancestor, **root first and then in
+ * depth-first order**, children ordered by where they fork. One branch is one
+ * SillyTavern chat file, so a node here is always a file that exports as-is.
+ */
+export interface ChatTreeView {
+  rootChatId: string
+  chats: ChatTreeNode[]
+  /** The conversation that was asked about, and its newest floor. */
+  current: { chatId: string, floor: number }
+}
+
+/**
  * One floor a search matched, and where it sits.
  *
  * `messageId` is the chat-file line index minus the header — the same number a

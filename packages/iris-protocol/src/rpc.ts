@@ -19,7 +19,7 @@ import type { RuntimeRequestSchema } from './rpc-registry.ts'
 import { lookupRequestSchema } from './rpc-registry.ts'
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDoctorFacts, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatTreeView, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDoctorFacts, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
 import type { SystemPluginInstallPreview, SystemPluginSnapshot } from './system-plugins.ts'
 import type { SandboxPluginView } from './sandbox-plugins.ts'
 // —— family①: identity & messages ——
@@ -854,6 +854,15 @@ export const requestSchemas = {
     id: z.number().int().min(0),
     swipeId: z.number().int().min(0).optional(),
   }),
+
+  /**
+   * The whole lineage a conversation belongs to, for the tree map.
+   *
+   * Read-only: it reads the chat files of the root ancestor and every
+   * descendant and changes none of them. Answered from the files, like
+   * `chat.search`, so an unsaved card replay batch is not in it.
+   */
+  'chat.tree': z.object({ chatId: z.string().min(1) }),
 
   /**
    * Copy a SillyTavern chat file into this profile.
@@ -2791,6 +2800,8 @@ export interface RpcResponseMap {
   'chat.deleteMessage': { view: ChatView }
   /** The new branch, already open, plus the refreshed list it now appears in. */
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
+  /** The lineage graph: root ancestor, every descendant, fork points, floor and swipe counts. */
+  'chat.tree': { tree: ChatTreeView }
   /** The conversation as stored, summary-shaped — the sidebar's own currency. */
   'chat.import': { chat: ChatSummary }
   /**

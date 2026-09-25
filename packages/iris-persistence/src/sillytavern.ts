@@ -342,6 +342,79 @@ export function withOriginalKeyOrder(line: SillyTavernMessage): SillyTavernMessa
 }
 
 /**
+ * The top-level key a line Iris wrote carries its durable identity under.
+ *
+ * **Minted, never derived** (owner ruling 6, 2026-09-25). A floor's index moves
+ * whenever a line above it is deleted, and its text changes on every edit and
+ * swipe, so neither can say "this is the same line" across a branch or an
+ * edit; a random id that rides with the line can. It is a sibling of `mes`,
+ * not a key inside `extra`, because `extra` is the part of a line other
+ * extensions write into and SillyTavern rewrites wholesale on some paths; a
+ * top-level key SillyTavern does not know is carried through its saves as-is.
+ *
+ * **Only lines Iris itself wrote get one.** A line that came in from a file
+ * (it has a recorded key order, which every imported line does) is left
+ * exactly as it was, so an imported and untouched chat still exports byte for
+ * byte; `tests/line-id.test.ts` pins both halves. A caller that deliberately
+ * changes an imported line (a branch point, which gains `extra.branches`
+ * anyway) may give it one with {@link mintLineId}.
+ */
+export const LINE_ID_KEY = 'iris_id'
+
+/**
+ * A fresh line id.
+ * @returns a random id, unique for every practical purpose.
+ */
+export function mintLineId(): string {
+  return globalThis.crypto.randomUUID()
+}
+
+/**
+ * The durable id a line carries, if it has one.
+ * @param line - a message line.
+ * @returns the id, or undefined for a line without one.
+ */
+export function lineIdOf(line: SillyTavernMessage): string | undefined {
+  const value = line[LINE_ID_KEY]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/**
+ * Ids minted during export, per log and per message event.
+ *
+ * Remembered so the same log exports the same id every time it is saved: the
+ * id reaches the file on the first save, and from the next load on it is an
+ * ordinary carried field in `iris/st-meta`. Keyed weakly on the session so a
+ * log that is replaced (a rebuild reimports from the exported lines, which by
+ * then carry the id) takes its memo with it.
+ */
+const MINTED = new WeakMap<Session, Map<number, string>>()
+
+/**
+ * The id an exported line gets, when it has none of its own.
+ * @param session - the chat log.
+ * @param seq - the message event the line is built from.
+ * @param fields - the carried-through fields, which win when they hold an id.
+ * @returns the fields to spread onto the line: `{}` for an imported line or one
+ *   that already carries an id, `{ iris_id }` for a line this log wrote.
+ */
+function lineIdFields(session: Session, seq: number, fields: Record<string, unknown>): Record<string, string> {
+  if (typeof fields[LINE_ID_KEY] === 'string') return {}
+  let memo = MINTED.get(session)
+  const known = memo?.get(seq)
+  if (known !== undefined) return { [LINE_ID_KEY]: known }
+  // A line with a recorded key order came from a file. It stays as it was.
+  if (keyOrderFor(session, seq) !== undefined) return {}
+  if (memo === undefined) {
+    memo = new Map()
+    MINTED.set(session, memo)
+  }
+  const minted = mintLineId()
+  memo.set(seq, minted)
+  return { [LINE_ID_KEY]: minted }
+}
+
+/**
  * Render an Iris chat log back into SillyTavern's message list.
  * @param session - the chat log.
  * @param header - the file header, which supplies the speaker names.
@@ -353,11 +426,13 @@ export function exportMessages(session: Session, header: SillyTavernChatHeader):
 
   for (const event of session.events as readonly SessionEvent[]) {
     if (event.type === 'user/message') {
+      const fields = rowFields(session, event.seq)
       lines.push(remember(session, event.seq, {
         name: header.user_name,
         is_user: true,
         mes: textOf(event.data),
-        ...rowFields(session, event.seq),
+        ...fields,
+        ...lineIdFields(session, event.seq, fields),
       }))
       continue
     }
@@ -374,6 +449,7 @@ export function exportMessages(session: Session, header: SillyTavernChatHeader):
     const swipes = candidates.map(candidate => textOf(candidate.message))
     const swipeId = current === undefined ? 0 : current.index
     const first = candidates[0]
+    const fields = first === undefined ? {} : rowFields(session, first.seq)
 
     lines.push(first === undefined
       ? {
@@ -389,7 +465,8 @@ export function exportMessages(session: Session, header: SillyTavernChatHeader):
           mes: swipes[swipeId] ?? '',
           swipes,
           swipe_id: swipeId,
-          ...rowFields(session, first.seq),
+          ...fields,
+          ...lineIdFields(session, first.seq, fields),
         }))
   }
 

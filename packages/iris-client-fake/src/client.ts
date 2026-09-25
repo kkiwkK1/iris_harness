@@ -48,6 +48,7 @@ import {
 } from './connections.ts'
 import { mergeOverrides, mergeSettings } from './settings.ts'
 import { FakeSystemPlugins } from './plugins.ts'
+import { fakeChatTree } from './tree.ts'
 import {
   DEFAULT_SETTINGS,
   FAKE_GLOBAL_REGEX,
@@ -1246,11 +1247,44 @@ class InMemoryClient implements FakeClient {
       }
 
       case 'chat.branch': {
-        // Refused until the interface grows branch UI, at which point the fake
-        // should implement it for real — branching is chat-shape work the fake
-        // can model honestly, unlike the script bridge below. Whoever builds
-        // that UI upgrades this arm; a refusal today beats a wrong model.
-        throw new FakeRpcError('unsupported', 'the fake client does not implement chat.branch yet')
+        // Implemented now that the interface has branch UI (the tree map, the
+        // floor badge, 转成分支). The host's rules: an inclusive cut at `id`,
+        // the chosen reading selected on the copy and never on the parent, a
+        // `- Branch #N` title, and the child opened.
+        const { chatId, id, swipeId } = params as RpcRequest<'chat.branch'>
+        const parent = this.#require(chatId)
+        const at = parent.messages[id]
+        if (at === undefined) throw new FakeRpcError('invalid-request', `this chat has no message ${String(id)}`)
+        if (swipeId !== undefined && at.candidates[swipeId] === undefined) {
+          throw new FakeRpcError('invalid-request', `message ${String(id)} has ${String(at.candidates.length)} swipes; no index ${String(swipeId)}`)
+        }
+        const messages = structuredClone(parent.messages.slice(0, id + 1))
+        const point = messages[id]
+        if (swipeId !== undefined && point !== undefined) point.index = swipeId
+        const base = parent.title.replace(/ - Branch #\d+$/u, '')
+        const titles = new Set(this.#chats.map(row => row.title))
+        let n = 1
+        while (titles.has(`${base} - Branch #${String(n)}`)) n += 1
+        const child: FakeChat = {
+          chatId: `chat-${this.#nextId++}`,
+          title: `${base} - Branch #${String(n)}`,
+          ...(parent.characterId === undefined ? {} : { characterId: parent.characterId }),
+          parentChatId: chatId,
+          branchAt: { floor: id, swiped: swipeId !== undefined && swipeId !== at.index },
+          messages,
+          updatedAt: Date.now(),
+          settings: { ...parent.settings },
+          variables: structuredClone(parent.variables),
+        }
+        this.#chats.unshift(child)
+        this.#emit({ type: 'chats.updated', chats: this.#summaries() })
+        return { view: toChatView(child), chats: this.#summaries() }
+      }
+
+      case 'chat.tree': {
+        const { chatId } = params as RpcRequest<'chat.tree'>
+        this.#require(chatId)
+        return { tree: fakeChatTree(this.#chats, chatId) }
       }
 
       case 'script.context':

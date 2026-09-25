@@ -250,3 +250,84 @@ test('the old prefix naming is stripped as well as the modern suffix', () => {
   assert.equal(stripBranchSuffix('Branch #6 - 2026-01-04@11h00m00s'), '2026-01-04@11h00m00s')
   assert.equal(branchTitle('Branch #6 - Aria', () => false), 'Aria - Branch #1')
 })
+
+/** The lines of a stored chat file, header first. */
+async function fileLines(fix: Fixture, chatId: string): Promise<Record<string, unknown>[]> {
+  const file = await readFile(join(fix.dir, 'chats', `${chatId}.jsonl`), 'utf8')
+  return file.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+}
+
+test('a branch records where it was cut, by floor and by the line’s durable id', async (t) => {
+  const fix = await fixture(t, ['First reply.', 'Second reply.', 'Branch reply.'])
+  const chatId = await conversation(fix)
+  const { view } = await fix.handlers['chat.branch']({ chatId, id: 2 })
+
+  const parent = await fileLines(fix, chatId)
+  const lineId = parent[3]?.['iris_id']
+  assert.equal(typeof lineId, 'string', 'the branch point carries an id at the top level of its line')
+
+  const child = await fileLines(fix, view.chatId)
+  const iris = child[0]?.['iris'] as { branchAt?: unknown } | undefined
+  assert.deepEqual(iris?.branchAt, { floor: 2, lineId })
+  assert.equal(child[3]?.['iris_id'], lineId, 'the copy of the floor is the same line')
+
+  // And it survives the branch's first turn: the header block is rewritten on
+  // every touch, from what `readMeta` read of it.
+  await fix.handlers['chat.send']({ chatId: view.chatId, text: 'On the branch.' })
+  await fix.settled()
+  const later = await fileLines(fix, view.chatId)
+  assert.deepEqual((later[0]?.['iris'] as { branchAt?: unknown }).branchAt, { floor: 2, lineId })
+})
+
+test('chat.tree answers the whole lineage from any member: nested and swipe branches', async (t) => {
+  const fix = await fixture(t, ['First reply.', 'Second reply.', 'Retake.', 'Deeper.'])
+  const chatId = await conversation(fix)
+  // [greeting, q1, r1, q2, r2]. Regenerate the last reply so floor 4 has two readings.
+  await fix.handlers['chat.regenerate']({ chatId })
+  await fix.settled()
+
+  const a = (await fix.handlers['chat.branch']({ chatId, id: 2 })).view.chatId
+  await fix.handlers['chat.send']({ chatId: a, text: 'Down branch a.' })
+  await fix.settled()
+  const b = (await fix.handlers['chat.branch']({ chatId: a, id: 4 })).view.chatId
+  // The reading not showing on floor 4, turned into a branch.
+  const s = (await fix.handlers['chat.branch']({ chatId, id: 4, swipeId: 0 })).view.chatId
+
+  const { tree } = await fix.handlers['chat.tree']({ chatId: b })
+  assert.equal(tree.rootChatId, chatId)
+  assert.deepEqual(tree.chats.map(node => node.chatId), [chatId, a, b, s])
+  const byId = new Map(tree.chats.map(node => [node.chatId, node]))
+  assert.deepEqual(byId.get(a)?.fork, { floor: 2, shared: 3, source: 'recorded' })
+  assert.deepEqual(byId.get(b)?.fork, { floor: 4, shared: 5, source: 'recorded' })
+  assert.equal(byId.get(b)?.parentChatId, a)
+  assert.deepEqual(byId.get(s)?.fork, { floor: 4, shared: 4, source: 'recorded' }, 'a swipe branch owns its floor 4')
+  assert.deepEqual(byId.get(chatId)?.swipes, [1, 1, 1, 1, 2])
+  assert.deepEqual(tree.current, { chatId: b, floor: 4 })
+
+  await assert.rejects(
+    () => fix.handlers['chat.tree']({ chatId: 'nope' }),
+    (error: unknown) => (error as { code?: string }).code === 'not-found',
+  )
+})
+
+test('chat.tree infers a legacy SillyTavern branch from the common prefix, and writes nothing', async (t) => {
+  const fix = await fixture(t)
+  await fix.chats.ensure()
+  const header = (mainChat?: string): string => JSON.stringify({
+    user_name: 'Traveller', character_name: 'Aria', create_date: '2026-01-04 @10h00m00s',
+    chat_metadata: mainChat === undefined ? {} : { main_chat: mainChat },
+  })
+  const line = (isUser: boolean, mes: string): string => JSON.stringify({ name: isUser ? 'T' : 'Aria', is_user: isUser, mes })
+  const parentText = [header(), line(false, 'Hello.'), line(true, 'q1'), line(false, 'r1'), line(true, 'q2')].join('\n') + '\n'
+  const childText = [header('Aria - 2026-01-04@10h00m00s'), line(false, 'Hello.'), line(true, 'q1'), line(false, 'r1'), line(true, 'other')].join('\n') + '\n'
+  await writeFile(join(fix.dir, 'chats', 'Aria - 2026-01-04@10h00m00s.jsonl'), parentText, 'utf8')
+  await writeFile(join(fix.dir, 'chats', 'Branch #1 - 2026-01-04@11h00m00s.jsonl'), childText, 'utf8')
+
+  const { tree } = await fix.handlers['chat.tree']({ chatId: 'Branch #1 - 2026-01-04@11h00m00s' })
+  assert.equal(tree.rootChatId, 'Aria - 2026-01-04@10h00m00s')
+  assert.deepEqual(tree.chats[1]?.fork, { floor: 2, shared: 3, source: 'prefix' })
+
+  // Read-only: both files are the bytes they were.
+  assert.equal(await readFile(join(fix.dir, 'chats', 'Aria - 2026-01-04@10h00m00s.jsonl'), 'utf8'), parentText)
+  assert.equal(await readFile(join(fix.dir, 'chats', 'Branch #1 - 2026-01-04@11h00m00s.jsonl'), 'utf8'), childText)
+})

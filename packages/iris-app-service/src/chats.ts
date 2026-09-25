@@ -22,6 +22,9 @@ import {
   formatChatFile,
   parseChatFile,
   importChat,
+  lineIdOf,
+  LINE_ID_KEY,
+  mintLineId,
   type SillyTavernChat,
   type SillyTavernChatHeader,
   type SillyTavernMessage,
@@ -659,6 +662,14 @@ export class ChatStore {
     const at = messages[id]
     if (at === undefined) throw invalid(`this chat has no message ${String(id)}`)
 
+    // The branch point's durable id, minted onto it if it has none yet. Before
+    // the clone, so the parent's floor and the branch's copy of it carry the
+    // same id — which is what lets the tree find the fork again after the
+    // parent's floors above it move. An imported line gains the key here, and
+    // only here: it is being changed anyway (`extra.branches`, below).
+    const lineId = lineIdOf(at) ?? mintLineId()
+    at[LINE_ID_KEY] = lineId
+
     // Cloned before anything is changed, exactly as upstream does
     // (`structuredClone(chat.slice(...))`). Selecting a swipe edits the branch
     // point, and doing that on the shared array would move the PARENT onto the
@@ -704,6 +715,10 @@ export class ChatStore {
         title,
         updatedAt: now.getTime(),
         parentChatId: chatId,
+        // Where the cut was made, so the tree map does not have to infer it.
+        // `floor` alone would go stale the moment the parent loses a floor
+        // above it; the line id finds the same floor wherever it has moved.
+        branchAt: { floor: id, lineId },
       },
     }
 
@@ -859,6 +874,29 @@ export class ChatStore {
   }
 
   // —— family①: identity & messages ——
+  /**
+   * One conversation's whole file, header included, as stored — for readers
+   * that need the header's lineage (`chat.tree`) as well as the floors.
+   *
+   * Read from disk for the reason `floorsOf` gives, and `undefined` on the
+   * same two failures, so a caller can say "unreadable" rather than throw.
+   * @param chatId - the conversation to read.
+   * @returns the parsed file, or undefined.
+   */
+  async fileOf(chatId: string): Promise<SillyTavernChat | undefined> {
+    let text: string
+    try {
+      text = await readFile(fileFor(this.#dir, chatId, '.jsonl'), 'utf8')
+    } catch {
+      return undefined
+    }
+    try {
+      return parseChatFile(text)
+    } catch {
+      return undefined
+    }
+  }
+
   /**
    * One conversation's floors, read from its file and nothing else.
    *

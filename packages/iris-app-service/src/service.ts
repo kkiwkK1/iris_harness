@@ -136,6 +136,7 @@ import { CONTINUE_POSTFIX_SEPARATORS, type SettingsStore } from './settings.ts'
 import { trimToEndSentence } from './reply-trim.ts'
 import { textOf } from './views.ts'
 import { arbitrateMessageVariables, type VariableProposal } from './variable-arbitration.ts'
+import { buildChatTree, lineageOf, treeInputOf } from './chat-tree.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
@@ -2839,6 +2840,19 @@ export class IrisAppService {
         const view = this.#viewOf(child)
         this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(await chats.open(chatId)) })
         return { view, chats: await this.#chatList() }
+      },
+
+      'chat.tree': async ({ chatId }) => {
+        // Read-only, and read from the files: the list says who is family, and
+        // only the family's files are opened (`chat-tree.ts`).
+        const rows = await chats.list()
+        const family = lineageOf(rows, chatId)
+        const inputs = await Promise.all(
+          rows.filter(row => family.has(row.chatId)).map(async row => treeInputOf(row, await chats.fileOf(row.chatId))),
+        )
+        const tree = buildChatTree(inputs, chatId)
+        if (tree === undefined) throw notFound(`no chat "${chatId}"`)
+        return { tree }
       },
 
       'chat.import': async ({ filename, content, characterId }) => {

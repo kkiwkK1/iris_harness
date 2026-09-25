@@ -319,6 +319,9 @@ const PROBES: { [M in RpcMethod]: RpcRequest<M> } = {
   'chat.editMessage': { chatId: 'no-such-chat', id: 0, text: 'x' },
   'chat.deleteMessage': { chatId: 'no-such-chat', id: 0 },
   'chat.branch': { chatId: 'no-such-chat', id: 0 },
+  // Refused with not-found: the probe host has no chats, and the refusal
+  // proves the read-only handler is registered and ran.
+  'chat.tree': { chatId: 'no-such-chat' },
   // The import probe names a card that is not in the library: reachability is
   // the property, and the not-found answer proves the handler ran.
   'chat.import': { filename: 'probe.jsonl', content: 'e30=', characterId: 'no-such-card' },
