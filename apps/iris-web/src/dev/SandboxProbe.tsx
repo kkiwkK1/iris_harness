@@ -32,6 +32,7 @@ import type { ScriptContext } from '@iris/protocol'
 
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { tapHostEvents } from '../client/store.ts'
+import type { FrameBinding } from '../client/card-gateway.ts'
 import { chatChangedEvent, forwardedEvents } from '../sandbox/host-events.ts'
 import { describeBytes } from '../app/format.ts'
 import { Section } from '../app/fields.tsx'
@@ -213,6 +214,14 @@ export function SandboxProbe(): ReactElement | null {
         }
       }
 
+      /*
+       * The probe's frame is bound like any other: to the chat and card open
+       * when it was built. With none open there is nothing a call could be
+       * about, and it is refused as it always was.
+       */
+      const binding: FrameBinding | undefined = chatId !== undefined && characterId !== undefined
+        ? { kind: 'probe', chatId, characterId }
+        : undefined
       const card = runCard(
         {
           bootstrapUrl: `${window.location.origin}${assets.bootstrap}`,
@@ -230,7 +239,10 @@ export function SandboxProbe(): ReactElement | null {
           fetch: async url => {
             throw new Error(`the probe does not fetch (${url})`)
           },
-          onCall: async (method, params) => actions.runCardAction(method, params),
+          onCall: async (method, params) => {
+            if (binding === undefined) throw new Error('no chat is open')
+            return actions.runCardAction(method, params, binding)
+          },
           onDialog: (kind, text) => {
             setHarness(before => ({
               dialog: [...before.dialog, `${kind}: ${text}`],
@@ -257,7 +269,7 @@ export function SandboxProbe(): ReactElement | null {
             setHarness(before => ({ slash: [...before.slash, command] }))
             // Rethrown, not swallowed: the card is awaiting this, and a resolved
             // promise would tell it the command ran.
-            return actions.runSlash(command)
+            return actions.runSlash(command, undefined, binding)
           },
           onSettings: settings => {
             setHarness({ settings: JSON.stringify(settings) })

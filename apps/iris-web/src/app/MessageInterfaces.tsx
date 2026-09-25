@@ -21,6 +21,7 @@ import type { MessageView, ScriptContext } from '@iris/protocol'
 import type { MessageStyle } from './html-regions.ts'
 
 import { actionsOf, tapHostEvents } from '../client/store.ts'
+import type { FrameBinding } from '../client/card-gateway.ts'
 import { describeRefusal } from './blocked-line.ts'
 import { cardPopupBridge } from './card-popups.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
@@ -335,9 +336,17 @@ export function MessageInterfaces({
       && chatId !== undefined,
     start: input => {
       const current = ready
-      if (current === undefined || chatId === undefined) {
+      if (current === undefined || chatId === undefined || characterId === undefined) {
         throw new Error('a message frame was started before its build assets resolved')
       }
+      /*
+       * **Who this frame is**, fixed when it is built: the chat and card this
+       * row rendered for. An interface frame has no run of its own — an
+       * injection it makes belongs to this chat's script run, if one is live
+       * (`client/card-gateway.ts` `runFor`). A call it posts after the reader
+       * switched chats is refused by name instead of landing in the next one.
+       */
+      const binding: FrameBinding = { kind: 'interface', chatId, characterId }
       let painted = false
       /*
        * This interface's popup channel. Released with the frame below, because
@@ -374,8 +383,8 @@ export function MessageInterfaces({
             throw new Error('a message frame fetches nothing on the shell’s behalf')
           },
           onSettings: () => undefined,
-          onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision),
-          onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
+          onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision, binding),
+          onCall: async (method, params) => actionsOf(store).runCardAction(method, params, binding),
           /*
            * The dialog bridge, with the same wording and split the script
            * frame uses: the sandbox answers `alert` with silence, and a
