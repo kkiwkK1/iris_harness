@@ -53,12 +53,17 @@
  * the diff watches the snapshots the store already delivers and keeps no
  * protocol of its own.
  *
+ * **The margin has two halves since 2026-09-25**: the variables on top and the
+ * branch tree map below (`TreeMap.tsx`'s `AsideTreeSection`), with a divider
+ * between them (owner placement ruling; web ledger §128).
+ *
  * @module iris-web/app/StatePanel
  */
 
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 
 import { useIris } from '../client/provider.tsx'
+import { AsideTreeSection } from './TreeMap.tsx'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { translate, type Language } from './i18n/strings.ts'
 import {
@@ -678,6 +683,12 @@ export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElemen
         )}
       </div>
       )}
+      {/*
+        The margin's lower half: the branch tree map (owner placement ruling
+        2026-09-25 — variables on top, tree map below). Same rule as the tree
+        above it: not rendered at all while the margin is folded or yielding.
+      */}
+      {!showing ? null : <AsideTreeSection />}
     </aside>
   )
 }

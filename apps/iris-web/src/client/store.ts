@@ -53,6 +53,7 @@ import type {
 } from '@iris/protocol'
 
 import { asRpcError, describeError, isHostError } from './errors.ts'
+import { branchTreeActions, branchTreeState, type BranchTreeActions, type BranchTreeState } from './branch-tree.ts'
 
 /**
  * What a library save carries: the editable half of a stored script.
@@ -429,7 +430,7 @@ export interface CardReportOptions {
   grant?: RefusalGrant
 }
 
-export interface IrisState {
+export interface IrisState extends BranchTreeState {
   connected: boolean
   /** The host-authored system-plugin catalog and runtime state. */
   systemPlugins: SystemPluginSnapshot | undefined
@@ -934,7 +935,7 @@ export interface IrisState {
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
-export interface IrisActions {
+export interface IrisActions extends BranchTreeActions {
   boot(): Promise<void>
   /** Replace the plugin projection from an explicit host read. */
   refreshSystemPlugins(): Promise<SystemPluginOperationResult>
@@ -1914,6 +1915,10 @@ export function createIrisStore(
 
     return {
       connected: client.connected,
+      // The branch tree's slice (`branch-tree.ts`): the lineage and the floor
+      // jump, with the actions that drive them.
+      ...branchTreeState(),
+      ...branchTreeActions({ client, get, set, guard }),
       systemPlugins: undefined,
       chats: [],
       chatsOrdered: undefined,

@@ -12,7 +12,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
-import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { MessageActions } from './MessageActions.tsx'
 import { MessageInterfaces } from './MessageInterfaces.tsx'
@@ -31,6 +31,7 @@ import { UsagePopover } from './UsagePopover.tsx'
 import { VariantRail } from './VariantRail.tsx'
 import { usageChipText, usageDetailRows } from './token-format.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+import type { BranchLink } from './tree-map.ts'
 
 /** What a message row can do, supplied by the pane that owns the chat. */
 export interface MessageHandlers {
@@ -45,6 +46,10 @@ export interface MessageHandlers {
   onNotify: (text: string) => void
   /** Show how this turn's request was assembled. */
   onExplain: (turn: number) => void
+  /** Branch the conversation at this floor, from a given reading when one is named; the branch opens. */
+  onBranch: (id: number, swipeId?: number) => void
+  /** Go to another conversation of the lineage at a floor. */
+  onOpenBranch: (chatId: string, floor: number) => void
 }
 
 /**
@@ -58,12 +63,19 @@ export function Message({
   message,
   canRegenerate,
   handlers,
+  branches,
+  canBranch = true,
 }: {
   message: MessageView
   canRegenerate: boolean
   handlers: MessageHandlers
+  /** The other conversations that go on from this floor (the ⑂N badge). */
+  branches?: readonly BranchLink[] | undefined
+  /** False while a turn is generating: the host refuses a branch then. */
+  canBranch?: boolean
 }): ReactElement {
   const [editing, setEditing] = useState(false)
+  const [forksOpen, setForksOpen] = useState(false)
   const [draft, setDraft] = useState(message.text)
   const field = useRef<HTMLTextAreaElement>(null)
   // Subscribed so a language switch re-renders the row's actions.
@@ -133,7 +145,7 @@ export function Message({
   }
 
   return (
-    <article className={`iris-msg iris-msg--${message.role}`}>
+    <article className={`iris-msg iris-msg--${message.role}`} data-floor={message.id}>
       <div className="iris-msg__margin">
         {message.role === 'assistant' && swipes !== undefined && turn !== undefined ? (
           <VariantRail
@@ -144,12 +156,66 @@ export function Message({
           />
         ) : null}
         {/*
+          转成分支, beside the reading control it acts on: the reading on screen
+          becomes a conversation of its own, and that conversation opens. Only
+          where there is more than one reading — with one, it is the plain
+          "Branch" in the row's actions.
+        */}
+        {message.role === 'assistant' && swipes !== undefined && swipes.count > 1 && !streaming ? (
+          <button
+            type="button"
+            className="iris-rail__branch"
+            data-control="swipe-to-branch"
+            disabled={!canBranch}
+            onClick={() => handlers.onBranch(message.id, swipes.index)}
+          >
+            ⑂ {t('swipeToBranch')}
+          </button>
+        ) : null}
+        {/*
           The floor's number (upstream's `mesIDDisplay_enabled`, which the
           measured profile turned on). Rendered whenever there is a floor to
           name; the reading preference decides whether it shows, so toggling it
           never remounts a row.
         */}
         <span className="iris-msg__floor" aria-hidden="true">#{message.id}</span>
+        {/*
+          ⑂N: other conversations go on from this floor. Always shown, unlike
+          the floor number, because it is a way somewhere rather than a label.
+        */}
+        {branches === undefined || branches.length === 0 ? null : (
+          <Menu
+            open={forksOpen}
+            portal
+            align="start"
+            anchor={
+              <button
+                type="button"
+                className="iris-msg__forks"
+                data-control="floor-forks"
+                aria-haspopup="menu"
+                aria-expanded={forksOpen}
+                aria-label={t('forkBadgeAria', { n: branches.length })}
+                onClick={() => setForksOpen(!forksOpen)}
+              >
+                ⑂{branches.length}
+              </button>
+            }
+            items={branches.map(link => ({
+              id: link.chatId,
+              label: link.relation === 'parent'
+                ? t('forkParent', { title: link.title })
+                : link.relation === 'sibling'
+                  ? t('forkSibling', { title: link.title })
+                  : link.title,
+            }))}
+            onSelect={id => {
+              setForksOpen(false)
+              handlers.onOpenBranch(id, message.id)
+            }}
+            onClose={() => setForksOpen(false)}
+          />
+        )}
       </div>
 
       <div className="iris-msg__body">
@@ -234,6 +300,17 @@ export function Message({
               <button type="button" className="iris-act" onClick={beginEdit}>
                 {t('edit')}
               </button>
+              {streaming ? null : (
+                <button
+                  type="button"
+                  className="iris-act"
+                  data-control="branch-here"
+                  disabled={!canBranch}
+                  onClick={() => handlers.onBranch(message.id)}
+                >
+                  {t('branchHere')}
+                </button>
+              )}
               {message.role === 'assistant' && turn !== undefined ? (
                 <button type="button" className="iris-act" onClick={() => handlers.onExplain(turn)}>
                   {t('promptButton')}
