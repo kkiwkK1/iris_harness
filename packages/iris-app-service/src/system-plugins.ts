@@ -26,6 +26,7 @@ import type { RpcError } from '@iris/protocol'
 import { atomicWriteFile } from './atomic.ts'
 import { AppError } from './errors.ts'
 import { MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from './plugins/builtins.ts'
+import { TEMPLATE_ENGINE_PLUGIN_ID } from './plugins/template-engine.ts'
 import { PLUGIN_PERMISSIONS } from './plugins/manifest.ts'
 import { PluginDataStore } from './plugins/storage.ts'
 
@@ -280,6 +281,15 @@ export class SystemPluginRuntime {
   readonly #onError: (error: Error) => void
   readonly #writePreferences: (file: string, contents: string) => Promise<void>
   readonly #defaultEnabled: ReadonlySet<string>
+  readonly #defaultInstalled: ReadonlySet<string>
+  /**
+   * Ids whose row this boot's preference file did not hold, so the row took
+   * its default. Read once, by the composition's migration of the retired
+   * `IRIS_TEMPLATES` variable (`plugins/template-engine.ts`): "seed only a row
+   * nobody has decided yet" needs to know which rows those are, and after
+   * `initialize` every row is persisted, so the file can no longer say.
+   */
+  readonly #seeded = new Set<string>()
   readonly #persisted = new Map<string, StoredPluginPreference>()
   readonly #leases = new Map<string, { count: number, waiters: Set<() => void> }>()
   /**
@@ -379,6 +389,11 @@ export class SystemPluginRuntime {
       TAVERN_HELPER_PLUGIN_ID,
       MVU_PLUGIN_ID,
     ])
+    // Installed but off: a row with a toggle rather than an install step. The
+    // template engine is the one builtin that ships this way (ruling 7: off by
+    // default, enabled through a confirmation), and an extra Install click in
+    // front of that confirmation would be a step that decides nothing.
+    this.#defaultInstalled = new Set(options.defaultInstalled ?? [TEMPLATE_ENGINE_PLUGIN_ID])
 
     for (const raw of options.definitions) {
       if (raw.id.length === 0 || raw.id.length > 200) {
@@ -455,6 +470,15 @@ export class SystemPluginRuntime {
       this.#persisted.set(raw.id, { installed: options.installed, enabled: false })
     }
     return true
+  }
+
+  /**
+   * Whether `initialize` found no stored row for this id and gave it the
+   * default. False for every id when the file was unreadable (every row is
+   * then an error, not a default) and for ids adopted after boot.
+   */
+  seededAtBoot(id: string): boolean {
+    return this.#seeded.has(id)
   }
 
   /** Whether this id came from the constructor's definition list. */
@@ -791,8 +815,12 @@ export class SystemPluginRuntime {
         }
       }
       for (const [id, plugin] of this.#plugins) {
-        const preference = stored?.plugins[id]
-          ?? { installed: this.#defaultEnabled.has(id), enabled: this.#defaultEnabled.has(id) }
+        const recorded = stored?.plugins[id]
+        if (recorded === undefined) this.#seeded.add(id)
+        const preference = recorded ?? {
+          installed: this.#defaultEnabled.has(id) || this.#defaultInstalled.has(id),
+          enabled: this.#defaultEnabled.has(id),
+        }
         plugin.installed = preference.installed
         plugin.enabled = preference.installed && preference.enabled
         plugin.status = plugin.installed ? 'disabled' : 'not-installed'

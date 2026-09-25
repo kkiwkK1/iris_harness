@@ -73,7 +73,16 @@ import { ScriptVariableStore } from './script-variables.ts'
 import { SettingsStore } from './settings.ts'
 import { SystemPluginRuntime } from './system-plugins.ts'
 import { SystemPluginInstallService } from './plugins/install.ts'
-import { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
+import {
+  builtinSystemPluginDefinitions,
+  MVU_PLUGIN_ID,
+  TAVERN_HELPER_PLUGIN_ID,
+} from './plugins/builtins.ts'
+import {
+  retiredTemplatesEnvNotice,
+  seedsTemplateEngine,
+  TEMPLATE_ENGINE_PLUGIN_ID,
+} from './plugins/template-engine.ts'
 import { PLUGIN_ASSET_PREFIX, servedStExtensionRow, stExtensionRows } from '@iris/plugin-web-api'
 import { adoptStExtension } from './st-extension-adopt.ts'
 
@@ -104,7 +113,21 @@ export {
   type PluginInstallSource,
   type SystemPluginInstallOptions,
 } from './plugins/install.ts'
-export { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS, MVU_PLUGIN_ID, TAVERN_HELPER_PLUGIN_ID } from './plugins/builtins.ts'
+export {
+  BUILTIN_SYSTEM_PLUGIN_DEFINITIONS,
+  builtinSystemPluginDefinitions,
+  MVU_PLUGIN_ID,
+  TAVERN_HELPER_PLUGIN_ID,
+  TEMPLATE_ENGINE_PLUGIN_ID,
+} from './plugins/builtins.ts'
+export {
+  createTemplateEngineDefinition,
+  retiredTemplatesEnvNotice,
+  seedsTemplateEngine,
+  TEMPLATE_ENGINE_CAPABILITY,
+  type RetiredTemplatesEnv,
+  type TemplateEngineCapability,
+} from './plugins/template-engine.ts'
 export type { SystemPluginCapabilities } from './plugins/capabilities.ts'
 export { createTavernHelperCapability, type TavernHelperCapability } from './plugins/tavern-helper.ts'
 export { createMvuCapability, type MvuCapability } from './plugins/mvu.ts'
@@ -381,19 +404,23 @@ export interface Config {
   /** Never trim the newest this many turns. @default 20 */
   pruneKeepRecent?: number
   /**
-   * Run the cards' EJS prompt templates (the ST-Prompt-Template extension).
+   * The retired `IRIS_TEMPLATES` variable, read only to migrate it.
    *
-   * Off by default, and the default is the honest one: evaluating a template is
-   * running the card author's JavaScript. It runs in a child process with no
-   * environment, no filesystem writes, a heap ceiling, one child at a time, and
-   * a `vm` realm nothing of the child's own realm reaches into — the last of
-   * those true since 2026-09-11, when the three functions EJS names in every
-   * template's scope (`escapeFn`, `include`, `rethrow`) stopped crossing raw and
-   * `escapeFn.constructor("return process")` stopped working. Containment is
-   * still a containment argument, not a reason to opt a user in for them.
-   * @default false
+   * Iris's EJS engine is the builtin plugin row `iris-templates` since ruling 7
+   * (2026-09-25): off by default, enabled in the plugin center through a
+   * confirmation that says it runs the card author's JavaScript. It runs in a
+   * child process with no environment, no filesystem writes, a heap ceiling,
+   * one child at a time, and a `vm` realm nothing of the child's own realm
+   * reaches into (`@iris/compat-prompt-template`); containment is still a
+   * containment argument, which is why the row starts off.
+   *
+   * This value switches nothing. When it is `1` and the profile's catalog has
+   * no row for the engine yet — an operator who ran with the variable, on the
+   * first boot of this build — the row is seeded enabled once; every boot that
+   * still sees the variable logs that it is retired
+   * (`plugins/template-engine.ts`).
    */
-  templates?: boolean
+  legacyTemplatesEnv?: string
   /**
    * Wall clock for one prompt's whole batch of templates, in milliseconds.
    *
@@ -454,7 +481,7 @@ export const Config: z<Config> = z.object({
   scriptBundleTtlSeconds: z.natural().default(604_800),
   webDistIndex: z.string(),
   sandboxPath: z.string().default('/sandbox'),
-  templates: z.boolean().default(false),
+  legacyTemplatesEnv: z.string(),
   pruneVariables: z.boolean().default(false),
   // Defaults deferred to the adapter's own `DEFAULT_TIMEOUTS` rather than
   // restated: two schemas that each name 30000 are two places to change it.
@@ -796,10 +823,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     )
   }
 
+  // The retired operator switch (`plugins/template-engine.ts` has the choice
+  // and its reasons): `IRIS_TEMPLATES=1` seeds the engine row enabled, and only
+  // a row the catalog file does not hold yet — a stored row is the user's.
+  const retiredTemplatesEnv = { value: config.legacyTemplatesEnv }
   const systemPlugins = new SystemPluginRuntime({
     context: ctx,
     file: join(paths.root, 'system-plugins.json'),
-    definitions: BUILTIN_SYSTEM_PLUGIN_DEFINITIONS,
+    definitions: builtinSystemPluginDefinitions({
+      templates: config.templateDeadlineMs === undefined ? {} : { deadlineMs: config.templateDeadlineMs },
+    }),
+    defaultEnabled: [
+      TAVERN_HELPER_PLUGIN_ID,
+      MVU_PLUGIN_ID,
+      ...seedsTemplateEngine(retiredTemplatesEnv) ? [TEMPLATE_ENGINE_PLUGIN_ID] : [],
+    ],
     // The plugins' private stores live under the profile, beside everything
     // else the profile owns; the runtime builds its store on this root and
     // reports its problems through the `onError` line below, which is the
@@ -808,6 +846,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     onError: error => { reportStoreProblem(error.message) },
   })
   await systemPlugins.initialize()
+  {
+    const notice = retiredTemplatesEnvNotice(retiredTemplatesEnv, {
+      seeded: systemPlugins.seededAtBoot(TEMPLATE_ENGINE_PLUGIN_ID),
+      enabled: systemPlugins.isEnabled(TEMPLATE_ENGINE_PLUGIN_ID),
+    })
+    if (notice !== undefined) ctx.logger.warn(notice)
+  }
 
   // ---- Installed system-plugin packages (PR-2) ----------------------------
   // The install path and the boot scan that gives every recorded row a verdict
@@ -1178,12 +1223,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ...config.reserveTokens === undefined ? {} : { reserveTokens: config.reserveTokens },
     ...config.templateOverhead === undefined ? {} : { templateOverhead: config.templateOverhead },
     ...config.trimBlockFloors === undefined ? {} : { trimBlockFloors: config.trimBlockFloors },
-    // `templates: false` must produce no key at all: in the service, presence is
-    // the switch, and a `{}` here would silently turn the feature on.
-    ...config.templates !== true
-      ? {}
-      : { templates: config.templateDeadlineMs === undefined ? {} : { deadlineMs: config.templateDeadlineMs } },
-    // Same rule as `templates` above: presence is the switch, so `false` must
+    // No `templates` key, ever: this host composes with a plugin runtime, so
+    // the `iris-templates` row is the engine's switch and the service refuses
+    // the pair (`AppServiceOptions.templates`).
+    //
+    // Presence is the switch for `pruneVariables`, so `false` must
     // produce no key. **This pass-through was missing from the commit that added
     // the feature** — the three settings were declared on the config and read by
     // nothing, so the cleanup could not run however it was configured. Declaring

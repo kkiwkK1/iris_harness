@@ -143,12 +143,20 @@
     # card frame that loads them is an opaque origin, and the plugin serving the
     # rest of the dist has no way to set one.
     webDistIndex: !!js process.env.IRIS_WEB_DIST
-    # The cards' EJS prompt templates (the ST-Prompt-Template extension). Off
-    # unless asked for, because evaluating one is running the card author's
-    # JavaScript — it is contained in a child process with no environment, no
-    # filesystem writes and no host objects in reach, but containment is not a
-    # reason to opt someone in. Set IRIS_TEMPLATES=1 to turn it on.
-    templates: !!js process.env.IRIS_TEMPLATES === '1'
+    # The cards' EJS prompt templates are no longer switched here. Iris's own
+    # ST-Prompt-Template-compatible engine is the builtin "Iris EJS templates"
+    # row in the plugin center: off by default, because evaluating a template is
+    # running the card author's JavaScript (contained in a child process with no
+    # environment, no filesystem writes and no host objects in reach — but
+    # containment is not a reason to opt someone in), and turned on there
+    # through a confirmation that says so.
+    #
+    # IRIS_TEMPLATES is retired. This row passes it through only to migrate an
+    # operator who used it: with IRIS_TEMPLATES=1, a profile whose catalog has
+    # no row for the engine yet gets the row seeded enabled, once; a stored row
+    # is never overridden; and every boot that still sees the variable logs
+    # that it is retired, so it can be deleted.
+    legacyTemplatesEnv: !!js process.env.IRIS_TEMPLATES
     # Conversation snapshots kept per chat before the oldest is deleted. The
     # host snapshots a conversation before deleting a message from it, before a
     # card's replay batch becomes the stored file, and before a restore writes

@@ -10,9 +10,17 @@ import {
   createTavernHelperCapability,
   type TavernHelperCapability,
 } from './tavern-helper.ts'
+import {
+  createTemplateEngineDefinition,
+  TEMPLATE_ENGINE_PLUGIN_ID,
+  type TemplateEngineCapability,
+} from './template-engine.ts'
+
+export { TEMPLATE_ENGINE_PLUGIN_ID }
 
 /**
- * The two bundled ids, named once, here.
+ * The first two bundled ids, named once, here (the third,
+ * {@link TEMPLATE_ENGINE_PLUGIN_ID}, is named in its own module).
  *
  * They are deliberately plain strings: the catalog holds definitions adopted
  * from installed ST extensions beside these, so the protocol's closed
@@ -22,8 +30,23 @@ import {
 export const TAVERN_HELPER_PLUGIN_ID = 'tavern-helper'
 export const MVU_PLUGIN_ID = 'mvu'
 
-/** Tavern Helper and MVU, available for profile-local install and activation. */
-export const BUILTIN_SYSTEM_PLUGIN_DEFINITIONS: readonly SystemPluginDefinition[] = [
+/**
+ * Tavern Helper, MVU and Iris's EJS template engine, available for
+ * profile-local install and activation.
+ *
+ * A function because the template engine carries the composition's tuning
+ * (`templateDeadlineMs`) into the capability it publishes; the other two take
+ * nothing. {@link BUILTIN_SYSTEM_PLUGIN_DEFINITIONS} is this with defaults.
+ * @param options.templates - the template engine's tuning.
+ * @returns the bundled definitions, in catalog order.
+ */
+export function builtinSystemPluginDefinitions(
+  options: { templates?: TemplateEngineCapability } = {},
+): readonly SystemPluginDefinition[] {
+  return [...BASE_DEFINITIONS, createTemplateEngineDefinition(options.templates)]
+}
+
+const BASE_DEFINITIONS: readonly SystemPluginDefinition[] = [
   {
     id: TAVERN_HELPER_PLUGIN_ID,
     name: 'Tavern Helper',
@@ -56,3 +79,6 @@ export const BUILTIN_SYSTEM_PLUGIN_DEFINITIONS: readonly SystemPluginDefinition[
     },
   },
 ]
+
+/** The bundled definitions with default tuning. */
+export const BUILTIN_SYSTEM_PLUGIN_DEFINITIONS: readonly SystemPluginDefinition[] = builtinSystemPluginDefinitions()

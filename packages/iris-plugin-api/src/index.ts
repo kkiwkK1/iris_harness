@@ -311,8 +311,14 @@ export interface SystemPluginRuntimeOptions {
   context: Context
   file: string
   definitions: readonly SystemPluginDefinition[]
-  /** Defaults used only when the preference file does not exist. */
+  /** Defaults used only for a row the preference file does not hold. */
   defaultEnabled?: readonly string[]
+  /**
+   * Rows that start installed but disabled when the preference file holds no
+   * row for them — a toggle rather than an install step. Like
+   * `defaultEnabled`, never applied over a stored row.
+   */
+  defaultInstalled?: readonly string[]
   /**
    * The profile's `plugin-data` directory, where each activated plugin's
    * {@link PluginStorage} files live (`<root>/<pluginId>/<key>.json`).

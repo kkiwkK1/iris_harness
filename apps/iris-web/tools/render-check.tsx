@@ -201,9 +201,17 @@ async function main(): Promise<void> {
   // copy moved into the shared dictionaries, and this holds one heading per
   // language on the page.
   assert.equal(pluginCenter.match(/Bundled catalog/g)?.length, 1, 'the plugin center heading should appear exactly once in English')
-  assert.equal(pluginCenter.match(/data-plugin-id=/g)?.length, 2, 'the bundled catalog should render two plugins')
+  // One row per catalog entry the client sent, whatever that count is.
+  assert.equal(
+    pluginCenter.match(/data-plugin-id=/g)?.length,
+    pluginWired.store.getState().systemPlugins?.plugins.length,
+    'the plugin center should render one row per catalog entry',
+  )
   assert.match(pluginCenter, /TavernHelper/, 'TavernHelper is missing from the bundled catalog')
   assert.match(pluginCenter, /MVU/, 'MVU is missing from the bundled catalog')
+  // Ruling 7: Iris's EJS engine is a row, off, and says it is not the ST extension.
+  assert.match(pluginCenter, /data-plugin-id="iris-templates" data-plugin-status="disabled"/, 'the template engine row is missing or not off')
+  assert.match(pluginCenter, /It is not the ST-Prompt-Template extension/, 'the template engine row does not say it is Iris’s own')
   // The browser-asset surface renders beside the host chip; before any manifest
   // fetch has answered, an enabled plugin reads as loading (SSR has no effects).
   assert.match(pluginCenter, /data-plugin-asset-phase="loading"/, 'an enabled plugin does not show its browser asset as loading')

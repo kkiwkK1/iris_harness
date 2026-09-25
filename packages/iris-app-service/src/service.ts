@@ -119,6 +119,11 @@ import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts
 import type { PruneOptions } from './prune.ts'
 import { MVU_CAPABILITY } from './plugins/capabilities.ts'
 import { MVU_PLUGIN_ID } from './plugins/builtins.ts'
+import {
+  TEMPLATE_ENGINE_CAPABILITY,
+  TEMPLATE_ENGINE_PLUGIN_ID,
+  type TemplateEngineCapability,
+} from './plugins/template-engine.ts'
 import { COMPAT_MVU, createMvuVariableWriter, type MvuCapability } from './plugins/mvu.ts'
 import type { VariableWriteKind, VariableWriteProposal, VariableWriteView } from '@iris/plugin-api'
 import type { SystemPluginLease, SystemPluginRuntime, VariableWriter } from './system-plugins.ts'
@@ -772,13 +777,20 @@ export interface AppServiceOptions {
    */
   pruneVariables?: PruneOptions
   /**
-   * EJS prompt templates, off unless this is present.
+   * EJS prompt templates for a host **without** a plugin runtime, off unless
+   * this is present.
    *
-   * Presence is the switch rather than a boolean, because there is no useful
-   * "configured but disabled" state: evaluating a card author's JavaScript is a
-   * decision the deployment makes once. Absent means no child is ever forked and
-   * `<%` reaches the model as literal text, which is what SillyTavern without the
+   * Presence is the switch. Absent means no child is ever forked and `<%`
+   * reaches the model as literal text, which is what SillyTavern without the
    * extension installed does.
+   *
+   * **A host with `plugins` must not pass this**, and the constructor refuses
+   * the pair: since ruling 7 (2026-09-25) the engine is the builtin catalog row
+   * `iris-templates` (`plugins/template-engine.ts`), whose active capability is
+   * the switch and carries the tuning. Two switches for one engine would leave
+   * the plugin center's toggle answering for a state this option could
+   * override, so a composition names exactly one. The product composes with a
+   * runtime; this remains for library callers, tests and the census scripts.
    */
   templates?: TemplateOptions
   /**
@@ -1113,6 +1125,11 @@ export class IrisAppService {
    * @param options - domain stores, the model stream, and the event sink.
    */
   constructor(options: AppServiceOptions) {
+    if (options.plugins !== undefined && options.templates !== undefined) {
+      throw new TypeError(
+        'templates and plugins are two switches for one engine: with a plugin runtime, the "iris-templates" row decides',
+      )
+    }
     this.#options = {
       stream: options.stream,
       library: options.library,
@@ -2556,106 +2573,115 @@ export class IrisAppService {
         // string. A card asking for a render and receiving `''` cannot tell that
         // from a template that rendered to nothing, and would go on to inject
         // the emptiness.
-        const templates = this.#options.templates
-        if (templates === undefined) {
+        const engine = this.#templateEngine()
+        if (engine === undefined) {
           throw new AppError(
             'unsupported',
-            'script.evalTemplate needs the template feature, which this host is running without',
+            this.#options.plugins === undefined
+              ? 'script.evalTemplate needs the template feature, which this host is running without'
+              : 'script.evalTemplate needs the "Iris EJS templates" plugin, which is not enabled in the plugin center',
           )
         }
+        // Held for the whole evaluation, writes included: a disable resolves
+        // only after this drains, so a toggle-off can never be followed by a
+        // write from the evaluation it switched off.
+        const templates = engine.options
+        try {
+          const entry = await chats.open(chatId)
+          const turn = entry.pending?.turn ?? 0
+          this.#traceId += 1
 
-        const entry = await chats.open(chatId)
-        const turn = entry.pending?.turn ?? 0
-        this.#traceId += 1
+          // Evaluated in the forked child, exactly like a prompt slot — same
+          // fence, same empty environment, same deadline. There is deliberately
+          // no shorter path for a single string: a second evaluator would be a
+          // second thing to keep sandboxed, and it is the sandbox that is the
+          // whole point of this arm.
+          //
+          // The origin is labelled apart from `generate/…` so a diagnostic can
+          // say which door a template came through. What it cannot say is what
+          // the card *put* in the string — a world book entry the card read and
+          // handed over arrives here identical to a template the card wrote, so
+          // this label distinguishes the call path, not the material.
+          const outcome = await evaluateBatch({
+            items: [{ id: 'eval', text: content, origin: `script.evalTemplate/${chatId}` }],
+            snapshot: buildSnapshot(entry, turn, this.#traceId),
+            ...templates.deadlineMs === undefined ? {} : { deadlineMs: templates.deadlineMs },
+          })
 
-        // Evaluated in the forked child, exactly like a prompt slot — same
-        // fence, same empty environment, same deadline. There is deliberately
-        // no shorter path for a single string: a second evaluator would be a
-        // second thing to keep sandboxed, and it is the sandbox that is the
-        // whole point of this arm.
-        //
-        // The origin is labelled apart from `generate/…` so a diagnostic can
-        // say which door a template came through. What it cannot say is what
-        // the card *put* in the string — a world book entry the card read and
-        // handed over arrives here identical to a template the card wrote, so
-        // this label distinguishes the call path, not the material.
-        const outcome = await evaluateBatch({
-          items: [{ id: 'eval', text: content, origin: `script.evalTemplate/${chatId}` }],
-          snapshot: buildSnapshot(entry, turn, this.#traceId),
-          ...templates.deadlineMs === undefined ? {} : { deadlineMs: templates.deadlineMs },
-        })
+          const result = outcome.results[0]?.result
+          if (result === undefined || !result.ok) {
+            const reason = result === undefined
+              ? outcome.timedOut ? 'the evaluator timed out' : 'the evaluator returned nothing'
+              : result.error
+            // Thrown, so the façade can do what upstream does: warn and keep the
+            // caller's original text. Swallowing it here would decide that policy
+            // for every caller, in the one place that cannot see who is asking.
+            throw invalid(`template evaluation failed: ${reason}`)
+          }
 
-        const result = outcome.results[0]?.result
-        if (result === undefined || !result.ok) {
-          const reason = result === undefined
-            ? outcome.timedOut ? 'the evaluator timed out' : 'the evaluator returned nothing'
-            : result.error
-          // Thrown, so the façade can do what upstream does: warn and keep the
-          // caller's original text. Swallowing it here would decide that policy
-          // for every caller, in the one place that cannot see who is asking.
-          throw invalid(`template evaluation failed: ${reason}`)
-        }
+          // **Writes are applied, and every one of them is reported.**
+          //
+          // The first version of this refused them, on the reasoning that the `Op`
+          // channel was built for world book and preset templates whose text comes
+          // from installed files. That reasoning was right about the trust
+          // asymmetry and wrong about the consequence. Measured: the corpus's 18
+          // books hold 8 entries carrying writes, and the one card that actually
+          // calls `evalTemplate` is rendering **world book content** with it —
+          // its `renderEntry` can reach 16 entries, one of which
+          // (`[EJS]末日世界观`) both templates and writes.
+          //
+          // So refusing, or discarding, does not close a hole: it makes a write
+          // that upstream performs **stop happening**, on a card that works there.
+          // That is a divergence dressed as a fix, and the failure it creates is
+          // the quiet kind — the card renders, the variable never moves, and
+          // nothing connects the two.
+          //
+          // What the route genuinely lacks is not authority but **visibility**:
+          // a card-supplied string reaching the same writer as an installed file
+          // should not do so silently. So each op is named on the way through.
+          // See `notes/packages/iris-app-service/DEVIATIONS.md` for the three options and why this one.
+          if (outcome.ops.length > 0) {
+            const before = entry.header.chat_metadata
+            for (const performed of outcome.ops) {
+              // Named individually rather than counted: "a template wrote" is not
+              // actionable, "a card's template set `global` scope `x`" is. The
+              // scope is the part that matters — it is what says how far the
+              // write reaches beyond the card that made it.
+              const scope = 'scope' in performed ? ` ${performed.scope}` : ''
+              const key = 'key' in performed ? ` ${performed.key}` : ''
 
-        // **Writes are applied, and every one of them is reported.**
-        //
-        // The first version of this refused them, on the reasoning that the `Op`
-        // channel was built for world book and preset templates whose text comes
-        // from installed files. That reasoning was right about the trust
-        // asymmetry and wrong about the consequence. Measured: the corpus's 18
-        // books hold 8 entries carrying writes, and the one card that actually
-        // calls `evalTemplate` is rendering **world book content** with it —
-        // its `renderEntry` can reach 16 entries, one of which
-        // (`[EJS]末日世界观`) both templates and writes.
-        //
-        // So refusing, or discarding, does not close a hole: it makes a write
-        // that upstream performs **stop happening**, on a card that works there.
-        // That is a divergence dressed as a fix, and the failure it creates is
-        // the quiet kind — the card renders, the variable never moves, and
-        // nothing connects the two.
-        //
-        // What the route genuinely lacks is not authority but **visibility**:
-        // a card-supplied string reaching the same writer as an installed file
-        // should not do so silently. So each op is named on the way through.
-        // See `notes/packages/iris-app-service/DEVIATIONS.md` for the three options and why this one.
-        if (outcome.ops.length > 0) {
-          const before = entry.header.chat_metadata
-          for (const performed of outcome.ops) {
-            // Named individually rather than counted: "a template wrote" is not
-            // actionable, "a card's template set `global` scope `x`" is. The
-            // scope is the part that matters — it is what says how far the
-            // write reaches beyond the card that made it.
-            const scope = 'scope' in performed ? ` ${performed.scope}` : ''
-            const key = 'key' in performed ? ` ${performed.key}` : ''
+              // `saveMetadata` carries a **clone of the whole of**
+              // `chat_metadata` and lands as a wholesale replacement, so its
+              // payload is the wrong thing to print — a single floor's variables
+              // reach 282 KiB in the corpus and this is the same order. Which
+              // top-level keys moved is both readable and the actual semantics of
+              // a replace.
+              let detail = ''
+              if (performed.op === 'saveMetadata') {
+                const after = performed.value as Record<string, unknown>
+                const keys = new Set([...Object.keys(before), ...Object.keys(after ?? {})])
+                const moved = [...keys].filter(name =>
+                  JSON.stringify(before[name]) !== JSON.stringify(after?.[name])).sort()
+                detail = moved.length === 0 ? ' (no top-level key changed)' : ` on ${moved.join(', ')}`
+              }
 
-            // `saveMetadata` carries a **clone of the whole of**
-            // `chat_metadata` and lands as a wholesale replacement, so its
-            // payload is the wrong thing to print — a single floor's variables
-            // reach 282 KiB in the corpus and this is the same order. Which
-            // top-level keys moved is both readable and the actual semantics of
-            // a replace.
-            let detail = ''
-            if (performed.op === 'saveMetadata') {
-              const after = performed.value as Record<string, unknown>
-              const keys = new Set([...Object.keys(before), ...Object.keys(after ?? {})])
-              const moved = [...keys].filter(name =>
-                JSON.stringify(before[name]) !== JSON.stringify(after?.[name])).sort()
-              detail = moved.length === 0 ? ' (no top-level key changed)' : ` on ${moved.join(', ')}`
+              this.#report(
+                `a card's template performed ${performed.op}${scope}${key}${detail}`,
+                { kind: 'template', grade: 'note', chatId, ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId } },
+              )
             }
+            try {
+              applyOps(entry, outcome.ops, turn,
+                reason => { this.#report(reason, { kind: 'template', grade: 'fault', chatId }) })
+            } catch (error: unknown) {
+              this.#report(error, { kind: 'template', grade: 'fault', chatId })
+            }
+          }
 
-            this.#report(
-              `a card's template performed ${performed.op}${scope}${key}${detail}`,
-              { kind: 'template', grade: 'note', chatId, ...entry.meta.characterId === undefined ? {} : { characterId: entry.meta.characterId } },
-            )
-          }
-          try {
-            applyOps(entry, outcome.ops, turn,
-              reason => { this.#report(reason, { kind: 'template', grade: 'fault', chatId }) })
-          } catch (error: unknown) {
-            this.#report(error, { kind: 'template', grade: 'fault', chatId })
-          }
+          return { text: result.text }
+        } finally {
+          engine.release()
         }
-
-        return { text: result.text }
       },
 
       'script.replaceScriptButtons': async ({ chatId, characterId: named, scriptId, buttons }) => {
@@ -7890,12 +7916,86 @@ export class IrisAppService {
    * @returns the request to send, rewritten where a template succeeded.
    */
   async #applyTemplates(options: GenerateOptions, entry: ChatEntry): Promise<GenerateOptions> {
-    const templates = this.#options.templates
-    if (templates === undefined) return options
     // Before the fork, not after: a chat with no `<%` anywhere must not pay for
     // a child process and a 3 MiB snapshot to be told it had nothing to do.
+    // Before the lease too, for the same reason — and so a chat without
+    // templates never waits behind a toggle.
     if (!promptHasTemplate(options)) return options
+    const engine = this.#templateEngine()
+    if (engine === undefined) return options
+    try {
+      /*
+       * **Both engines enabled: one request, one engine.** The ST plane
+       * (`#expandContributionsViaStCompat`) expands `<%` in the assembled parts
+       * before this seam ever sees the request. Running this engine over its
+       * output as well would evaluate twice — an EJS `<%%` that the extension
+       * correctly rendered as a literal `<%` would be executed here as code —
+       * and apply every write twice. So while the ST plane serves an enabled
+       * extension, that plane is the prompt's template engine and this one
+       * stands down for prompts; `script.evalTemplate`, which a card calls by
+       * name, still answers. The rule is read from catalog state, not from
+       * whether the plane happened to answer this request, so the same two
+       * rows always give the same engine (DEVIATIONS: the template-engine
+       * entry). A request that still carries `<%` here is one the plane did
+       * not expand — no page armed it, or its round failed — and that is said
+       * rather than silently shipped.
+       */
+      const st = this.#options.stCompat
+      if (st !== undefined && st.revisionOf(st.extensionId()) !== undefined) {
+        this.#report(
+          'the prompt still carries <% after the ST extension plane’s turn; Iris’s own EJS engine is enabled '
+          + 'but stands down while an ST extension is enabled, so these tags go out as written',
+          { kind: 'template', grade: 'note', chatId: entry.chatId },
+        )
+        return options
+      }
+      return await this.#evaluatePromptTemplates(options, entry, engine.options)
+    } finally {
+      engine.release()
+    }
+  }
 
+  /**
+   * The template engine this request may use, leased, or undefined when off.
+   *
+   * With a plugin runtime the switch is the `iris-templates` row: its active
+   * capability carries the tuning, and the lease keeps its incarnation alive
+   * until the caller releases, so a disable drains the evaluation in flight
+   * instead of racing its writes. Without one, the composition's `templates`
+   * option is the switch, as it always was (the constructor refuses both).
+   * @returns the tuning and the release, or undefined when the engine is off.
+   */
+  #templateEngine(): { options: TemplateEngineCapability, release: () => void } | undefined {
+    const plugins = this.#options.plugins
+    if (plugins === undefined) {
+      const templates = this.#options.templates
+      return templates === undefined ? undefined : { options: templates, release: () => {} }
+    }
+    const capability = plugins.capability<TemplateEngineCapability>(TEMPLATE_ENGINE_PLUGIN_ID, TEMPLATE_ENGINE_CAPABILITY)
+    if (capability === undefined) return undefined
+    let lease: SystemPluginLease
+    try {
+      lease = plugins.lease(TEMPLATE_ENGINE_PLUGIN_ID)
+    } catch {
+      // Disabled between the read and the lease: off, exactly as if the read
+      // had come a moment later.
+      return undefined
+    }
+    return { options: capability, release: () => { lease.release() } }
+  }
+
+  /**
+   * Evaluate one assembled prompt's templates with a leased engine.
+   * @param options - the assembled request.
+   * @param entry - the conversation it was assembled for.
+   * @param templates - the engine's tuning.
+   * @returns the request to send, rewritten where a template succeeded.
+   */
+  async #evaluatePromptTemplates(
+    options: GenerateOptions,
+    entry: ChatEntry,
+    templates: TemplateEngineCapability,
+  ): Promise<GenerateOptions> {
     // The message scope hangs off the turn being generated. A prompt assembled
     // outside a turn has none, and `0` is what the evaluator's own backstop
     // reads as "no candidate here" — an empty table rather than another turn's.

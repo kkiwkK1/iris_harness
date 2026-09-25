@@ -49,7 +49,12 @@ test('plugin center renders factual lifecycle, dependency and host-error guidanc
   })
 
   const root = fileURLToPath(new URL('..', import.meta.url))
-  const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })
+  const server = await createServer({
+    root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
+    // The page's enable confirmation is the primitives' `RiskConfirmation`,
+    // whose package imports CSS modules Node cannot load; Vite transforms it.
+    ssr: { noExternal: ['@deepseek-ai/dsh-client-ui-primitives'] },
+  })
   const client = createFakeClient({ chunkDelayMs: 0 })
   const wired = createIrisStore(client, { transport: 'fake', origin: 'plugin center test' })
   t.after(async () => {
@@ -122,7 +127,12 @@ test('every failure state, every source badge and the consent page read in both 
   installShellGlobals()
 
   const root = fileURLToPath(new URL('..', import.meta.url))
-  const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })
+  const server = await createServer({
+    root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
+    // The page's enable confirmation is the primitives' `RiskConfirmation`,
+    // whose package imports CSS modules Node cannot load; Vite transforms it.
+    ssr: { noExternal: ['@deepseek-ai/dsh-client-ui-primitives'] },
+  })
   const client = createFakeClient({ chunkDelayMs: 0 })
   const wired = createIrisStore(client, { transport: 'fake', origin: 'plugin failure states test' })
   t.after(async () => {

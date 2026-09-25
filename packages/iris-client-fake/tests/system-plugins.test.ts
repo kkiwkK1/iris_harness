@@ -12,13 +12,16 @@ function plugin(snapshot: SystemPluginSnapshot, id: string) {
   return found
 }
 
-test('existing fake profiles start with both bundled plugins active', async () => {
+test('existing fake profiles start with TH and MVU active and the template engine installed but off', async () => {
   const client = testClient()
   const snapshot = await client.call('plugin.list', {})
 
-  assert.deepEqual(snapshot.plugins.map(row => row.id), ['tavern-helper', 'mvu'])
+  assert.deepEqual(snapshot.plugins.map(row => row.id), ['tavern-helper', 'mvu', 'iris-templates'])
   assert.equal(plugin(snapshot, 'tavern-helper').status, 'enabled')
   assert.equal(plugin(snapshot, 'mvu').status, 'enabled')
+  // Ruling 7: the host's engine row ships off; enabling it is a confirmed choice.
+  assert.equal(plugin(snapshot, 'iris-templates').installed, true)
+  assert.equal(plugin(snapshot, 'iris-templates').status, 'disabled')
   assert.deepEqual(plugin(snapshot, 'mvu').dependencies, ['tavern-helper'])
   client.dispose()
 })
@@ -102,7 +105,9 @@ test('the fake refuses ids outside its bundled catalog', async () => {
     () => client.call('plugin.install', { id: 'imaginary-marketplace-package' }),
     (error: unknown) => (error as { code?: string }).code === 'not-found',
   )
-  assert.equal((await client.call('plugin.list', {})).plugins.length, 2)
+  // The refusal added no row: the catalog is still exactly the bundled one.
+  const bundled = new FakeSystemPlugins(() => {}, () => { throw new Error('unused') }).snapshot().plugins.length
+  assert.equal((await client.call('plugin.list', {})).plugins.length, bundled)
   client.dispose()
 })
 

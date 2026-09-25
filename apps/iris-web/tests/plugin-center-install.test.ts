@@ -59,7 +59,12 @@ test('the install form, the consent page and the tampered reinstall, driven by c
   void stored
 
   const root = fileURLToPath(new URL('..', import.meta.url))
-  const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })
+  const server = await createServer({
+    root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
+    // The page's enable confirmation is the primitives' `RiskConfirmation`,
+    // whose package imports CSS modules Node cannot load; Vite transforms it.
+    ssr: { noExternal: ['@deepseek-ai/dsh-client-ui-primitives'] },
+  })
   const client = createFakeClient({ chunkDelayMs: 0 })
 
   /*
@@ -320,7 +325,12 @@ test('W5: the uninstall data checkbox is per row, default-off, and only sends `r
   globalThis.fetch = (() => new Promise(() => {})) as typeof fetch
 
   const root = fileURLToPath(new URL('..', import.meta.url))
-  const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })
+  const server = await createServer({
+    root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
+    // The page's enable confirmation is the primitives' `RiskConfirmation`,
+    // whose package imports CSS modules Node cannot load; Vite transforms it.
+    ssr: { noExternal: ['@deepseek-ai/dsh-client-ui-primitives'] },
+  })
   const client = createFakeClient({ chunkDelayMs: 0 })
   const calls: RecordedCall[] = []
   const recorder = {
@@ -408,7 +418,12 @@ test('W5: the uninstall data checkbox is per row, default-off, and only sends `r
 
 test('the client-side shape check answers the four commit spellings the wire refuses', async t => {
   const root = fileURLToPath(new URL('..', import.meta.url))
-  const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })
+  const server = await createServer({
+    root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
+    // The page's enable confirmation is the primitives' `RiskConfirmation`,
+    // whose package imports CSS modules Node cannot load; Vite transforms it.
+    ssr: { noExternal: ['@deepseek-ai/dsh-client-ui-primitives'] },
+  })
   t.after(async () => { await server.close() })
   const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as typeof import('./plugin-center-harness.tsx')
   const git = (remote: string, commit: string): string | undefined =>
