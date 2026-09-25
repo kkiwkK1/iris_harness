@@ -21,6 +21,11 @@ export interface PluginRealm {
   send: (message: ToFrame) => void
   /** The `call` messages posted so far, as `method` and `params`. */
   calls: () => { method: string, params: Record<string, unknown> }[]
+  /**
+   * Run an empty card script and hand back the globals it was given, so a test
+   * can read the card's shared namespace (`parent`) as a card script sees it.
+   */
+  cardGlobals: () => Record<string, unknown>
 }
 
 /**
@@ -52,6 +57,7 @@ export function contextFor(chatId: string, overrides: Record<string, unknown> = 
 export function pluginRealm(context?: ScriptContext): PluginRealm {
   const posted: FromFrame[] = []
   const listeners: ((message: ToFrame) => void)[] = []
+  let handed: Record<string, unknown> = {}
   const env: FrameEnv = {
     members: MEMBERS,
     token: 'tok',
@@ -64,7 +70,10 @@ export function pluginRealm(context?: ScriptContext): PluginRealm {
     realWindow: {},
     post: message => posted.push(message),
     onMessage: listener => listeners.push(listener),
-    evaluate: () => undefined,
+    evaluate: (_source, _mode, names, values) => {
+      handed = Object.fromEntries(names.map((name, at) => [name, values[at]]))
+      return undefined
+    },
   }
   const sandbox = installSandbox(env)
   const send = (message: ToFrame): void => listeners.forEach(listener => listener(message))
@@ -76,5 +85,9 @@ export function pluginRealm(context?: ScriptContext): PluginRealm {
     calls: () => posted
       .filter((message): message is Extract<FromFrame, { type: 'call' }> => message.type === 'call')
       .map(message => ({ method: message.method, params: message.params as Record<string, unknown> })),
+    cardGlobals: () => {
+      send({ iris: 'tok', type: 'run', code: '/* card */', mode: 'classic', scriptId: 'card-script' })
+      return handed
+    },
   }
 }

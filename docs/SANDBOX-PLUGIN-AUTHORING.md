@@ -171,7 +171,7 @@ return {
 
 ## 8. How this can fail
 
-Seven named states. The player sees the name and a sentence.
+Eight named states. The player sees the name and a sentence.
 
 | state | what happened |
 | --- | --- |
@@ -182,6 +182,7 @@ Seven named states. The player sees the name and a sentence.
 | `mount-timeout` | `apply` outran 3 s, or the batch outran 10 s |
 | `dispose-failed` | something did not come away when you were removed |
 | `orphaned` | the record exists and nothing is mounted for it |
+| `facade-mismatch` | written for a newer facade than this Iris hands over |
 
 ## 9. How to answer
 

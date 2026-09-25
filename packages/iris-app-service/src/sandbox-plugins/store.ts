@@ -37,6 +37,7 @@ import { mkdir, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import {
+  SANDBOX_PLUGIN_FACADE_VERSION,
   SANDBOX_PLUGIN_QUOTAS,
   SANDBOX_PLUGIN_SIDECAR_VERSION,
   type SandboxPluginDeclaration,
@@ -70,6 +71,40 @@ export interface SandboxPluginVersionRecord {
   /** The player's sentence, verbatim. */
   readonly prompt: string
   readonly authored: { readonly connectionId: string, readonly model: string, readonly at: number }
+  /**
+   * Which facade this version was written against (`SANDBOX_PLUGIN_FACADE_VERSION`).
+   *
+   * Stamped by the host at define time and never taken from the model's
+   * output: the model cannot know which build will mount it, and a field it
+   * could set would be a field it could set to "compatible". Absent on
+   * versions written before the stamp existed, which reads as 1 — the only
+   * facade that had shipped then ({@link facadeOf}).
+   */
+  readonly facade?: number
+}
+
+/**
+ * The facade a version targets, with absence read as 1.
+ * @param version - the stored version.
+ * @returns its facade number.
+ */
+export function facadeOf(version: SandboxPluginVersionRecord): number {
+  return version.facade ?? 1
+}
+
+/**
+ * Whether this build can mount a version, judged by its facade stamp alone.
+ *
+ * Newer is refused; older and equal mount. The facade grows by addition and a
+ * member a build lacks reads as `undefined`, so a lower stamp is code written
+ * against a subset of what is here. A higher one may call a member that was
+ * renamed or removed in between, and the honest answer is a named state, not
+ * `mount-failed` on whichever member it reaches first.
+ * @param version - the stored version.
+ * @returns whether the stamp is within this build's facade.
+ */
+export function facadeMounts(version: SandboxPluginVersionRecord): boolean {
+  return facadeOf(version) <= SANDBOX_PLUGIN_FACADE_VERSION
 }
 
 /** One plugin's whole state in one conversation. */
@@ -158,6 +193,22 @@ function versionViewOf(version: SandboxPluginVersionRecord): SandboxPluginVersio
  * @returns the view.
  */
 export function viewOf(record: SandboxPluginRecord): SandboxPluginView {
+  const current = record.versions.at(-1)
+  /*
+   * `facade-mismatch` is derived, not stored: it is a fact about this build and
+   * that version together, so it appears on an older build and disappears after
+   * an upgrade without anything being written. It outranks a stored failure,
+   * because it is the reason nothing will be mounted now.
+   */
+  const mismatch = current !== undefined && !facadeMounts(current)
+    ? {
+      state: 'facade-mismatch' as const,
+      detail: `version ${String(current.version)} was written for plugin facade ${String(facadeOf(current))}, and`
+        + ` this Iris hands over facade ${String(SANDBOX_PLUGIN_FACADE_VERSION)} — it is not mounted here`,
+      at: 0,
+    }
+    : undefined
+  const failure = mismatch ?? record.failure
   return {
     id: record.id,
     versions: record.versions.map(versionViewOf),
@@ -165,7 +216,7 @@ export function viewOf(record: SandboxPluginRecord): SandboxPluginView {
     trustFutureVersions: record.trustFutureVersions,
     authorized: isPluginAuthorized(record),
     ...record.branchedFrom === undefined ? {} : { branchedFrom: record.branchedFrom },
-    ...record.failure === undefined ? {} : { failure: record.failure },
+    ...failure === undefined ? {} : { failure },
   }
 }
 
@@ -187,6 +238,10 @@ export function mountsOf(records: readonly SandboxPluginRecord[]): SandboxPlugin
     if (!isPluginAuthorized(record)) continue
     const current = record.versions.at(-1)
     if (current === undefined) continue
+    // Refused by name in the view (`facade-mismatch`); here it simply is not
+    // handed to the frame, so nothing reaches `new Function` that this build's
+    // facade was not written for.
+    if (!facadeMounts(current)) continue
     out.push({ pluginId: record.id, version: current.version, code: current.code })
   }
   // Lexicographic by id, the order §9 fixes. Sorted here as well as in the shell
@@ -220,7 +275,11 @@ function readRecord(value: unknown): SandboxPluginRecord | undefined {
     const hash = version['hash']
     if (typeof code !== 'string' || typeof number !== 'number' || typeof hash !== 'string') continue
     const authored = version['authored']
+    const facade = version['facade']
     kept.push({
+      // Kept only when it is a positive integer. Anything else is dropped to
+      // "absent", which reads as 1 — the same as a version from before stamps.
+      ...typeof facade === 'number' && Number.isInteger(facade) && facade >= 1 ? { facade } : {},
       version: number,
       name: typeof version['name'] === 'string' ? version['name'] : '',
       purpose: typeof version['purpose'] === 'string' ? version['purpose'] : '',

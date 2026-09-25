@@ -15,6 +15,7 @@ import { SANDBOX_PLUGIN_LIMITS } from '@iris/protocol'
 import type { FromFrame, ToFrame } from './protocol.ts'
 import { createPluginPanelSink, createPluginStyleSink } from './plugin-surface.ts'
 import { createSandboxPluginTree, type SandboxPluginTree } from './plugin-tree.ts'
+import type { OwnerScope } from './owner-scope.ts'
 
 /** What the entry hands this module. */
 export interface PluginEntryEnv {
@@ -29,34 +30,12 @@ export interface PluginEntryEnv {
   /**
    * The card surface, bound per owner — `FrameSandbox.cardSurface`.
    * @param owner - the plugin id.
-   * @returns the bound members.
+   * @returns the bound members, and the owner scope their lasting effects
+   *   registered their undo in.
    */
-  cardSurface: (owner: string) => Record<string, unknown>
+  cardSurface: (owner: string) => { members: Record<string, unknown>, scope: OwnerScope, ready: Promise<void> }
   /** The shell's origin, for the interface markup rewrite a panel string goes through. */
   origin: string
-}
-
-/**
- * Call a member off a bound surface without letting its failure end the sweep.
- *
- * Teardown item 5 is three member calls, and a member that refuses — the surface
- * answers `undefined` for anything this build does not carry — must not stop the
- * other two. The thrown reason is passed on so the checklist row can say which
- * one it was.
- * @param surface - the plugin's bound members.
- * @param name - the member to call.
- * @param args - its arguments.
- * @returns what went wrong, or undefined.
- */
-function callMember(surface: Record<string, unknown>, name: string, args: readonly unknown[]): string | undefined {
-  const member = surface[name]
-  if (typeof member !== 'function') return undefined
-  try {
-    ;(member as (...rest: unknown[]) => unknown)(...args)
-    return undefined
-  } catch (error: unknown) {
-    return `${name}: ${error instanceof Error ? error.message : String(error)}`
-  }
 }
 
 /**
@@ -69,45 +48,39 @@ export function installSandboxPluginTree(env: PluginEntryEnv): SandboxPluginTree
   const panel = createPluginPanelSink(env.document, globalThis as never, env.origin)
 
   /**
-   * Each plugin's surface, built once and kept.
+   * Each plugin's surface and owner scope, built once and kept.
    *
    * Kept rather than rebuilt per call because the `identity` members carry
    * per-owner state — a listener registry keyed by owner, most of all — and a
-   * second binding would be a second registry, so `eventClearAll` at teardown
-   * would clear a table the plugin never wrote to. Dropped at teardown, so a
-   * remount of the same id starts from a fresh one.
+   * second binding would be a second registry with a second scope, so teardown
+   * would dispose effects the plugin never registered. Dropped at teardown, so
+   * a remount of the same id starts from a fresh surface and a fresh scope.
    */
-  const surfaces = new Map<string, Record<string, unknown>>()
-  /** The `uninject` handles each plugin has taken out; teardown item 5 calls them. */
-  const injections = new Map<string, (() => void)[]>()
-  const surfaceFor = (pluginId: string): Record<string, unknown> => {
+  const surfaces = new Map<string, { members: Record<string, unknown>, scope: OwnerScope, ready: Promise<void> }>()
+  const bound = (pluginId: string): { members: Record<string, unknown>, scope: OwnerScope, ready: Promise<void> } => {
     const existing = surfaces.get(pluginId)
     if (existing !== undefined) return existing
     const built = env.cardSurface(pluginId)
-    /*
-     * `injectPrompts` is wrapped so its handles can be collected.
-     *
-     * The member is `shared` and upstream's removal is **by id**, so nothing on
-     * the surface knows which injections belong to which owner — which would
-     * leave teardown item 5 unable to do a third of its job. The handle the
-     * member already returns is the attribution, so it is kept rather than a
-     * parallel id list being invented. The wrapper changes nothing a plugin can
-     * observe: it returns the same handle object.
-     */
-    const inject = built['injectPrompts']
-    if (typeof inject === 'function') {
-      built['injectPrompts'] = (...args: unknown[]): unknown => {
-        const handle = (inject as (...rest: unknown[]) => unknown)(...args)
-        if (handle !== null && typeof handle === 'object' && typeof (handle as { uninject?: unknown }).uninject === 'function') {
-          const list = injections.get(pluginId) ?? []
-          list.push((handle as { uninject: () => void }).uninject)
-          injections.set(pluginId, list)
-        }
-        return handle
-      }
-    }
     surfaces.set(pluginId, built)
     return built
+  }
+  const surfaceFor = (pluginId: string): Record<string, unknown> => bound(pluginId).members
+
+  /**
+   * Every inbound plugin message waits behind the frame's first context.
+   *
+   * A mount can arrive before the frame has any snapshot (`frame.ts`'s
+   * `contextReady` has the measurement), and a plugin whose `apply` runs then
+   * has no conversation and no card state to read. Held rather than refused:
+   * the context is on its way, and the order of mounts and unmounts is kept,
+   * because every message waits on the same promise and its callbacks run in
+   * the order they were attached. Once the context is there this is a
+   * resolved promise, one microtask.
+   */
+  let gate: Promise<void> | undefined
+  const afterContext = (pluginId: string): Promise<void> => {
+    gate ??= bound(pluginId).ready
+    return gate
   }
 
   const tree = createSandboxPluginTree({
@@ -122,30 +95,17 @@ export function installSandboxPluginTree(env: PluginEntryEnv): SandboxPluginTree
     styles,
     panel,
     cardSurface: surfaceFor,
+    /*
+     * Teardown item 5 is the owner scope's disposal. Every trace-bearing
+     * member (listeners, script buttons, injections, published globals)
+     * registered its own undo in this scope when the plugin called it, so this
+     * line does not need to know which members exist. It used to: three
+     * hard-coded calls, which missed `initializeGlobal`.
+     */
     clearMemberTraces: pluginId => {
       const surface = surfaces.get(pluginId)
-      const reasons: string[] = []
-      if (surface !== undefined) {
-        // Listeners this owner registered. The bound copy clears only its own,
-        // which is upstream's per-frame semantics carried to a per-plugin owner.
-        const cleared = callMember(surface, 'eventClearAll', [])
-        if (cleared !== undefined) reasons.push(cleared)
-        // The owner's button table, emptied. The one-argument form, so the
-        // bound surface resolves its own owner id (`sp:<chatId>:<pluginId>`);
-        // passing the bare plugin id would name a different, per-card table.
-        const buttons = callMember(surface, 'replaceScriptButtons', [[]])
-        if (buttons !== undefined) reasons.push(buttons)
-      }
-      for (const uninject of injections.get(pluginId) ?? []) {
-        try {
-          uninject()
-        } catch (error: unknown) {
-          reasons.push(`uninjectPrompts: ${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
-      injections.delete(pluginId)
       surfaces.delete(pluginId)
-      if (reasons.length > 0) throw new Error(reasons.join('; '))
+      return surface === undefined ? [] : surface.scope.dispose()
     },
     now: () => Date.now(),
     after: (ms, fire) => {
@@ -203,11 +163,13 @@ export function installSandboxPluginTree(env: PluginEntryEnv): SandboxPluginTree
 
   env.onMessage(message => {
     if (message.type === 'plugin:mount') {
-      void tree.mount({ pluginId: message.pluginId, version: message.version, code: message.code })
+      const request = { pluginId: message.pluginId, version: message.version, code: message.code }
+      void afterContext(message.pluginId).then(() => tree.mount(request))
       return
     }
     if (message.type === 'plugin:unmount') {
-      void tree.unmount(message.pluginId)
+      const pluginId = message.pluginId
+      void (gate ?? Promise.resolve()).then(() => tree.unmount(pluginId))
       return
     }
     if (message.type === 'plugin:panel') tree.setPanelVisible(message.visible)

@@ -34,6 +34,8 @@ import {
   type SandboxPluginFailureState,
 } from '@iris/protocol'
 
+import type { OwnerScopeStep } from './owner-scope.ts'
+
 /**
  * What a plugin's factory is handed. Three capabilities and its own id.
  *
@@ -197,14 +199,17 @@ export interface SandboxPluginTreeEnv {
    */
   cardSurface: (pluginId: string) => Record<string, unknown>
   /**
-   * Teardown item 5: take back what the member surface let this plugin register.
+   * Teardown item 5: dispose the plugin's owner scope.
    *
-   * Event listeners, script buttons and injected prompts, each by the binding
-   * this plugin's id owns. Injected because every one of them is a member call,
-   * and the tree has no business knowing which members exist.
+   * Every trace-bearing member (event listeners, script buttons, injected
+   * prompts, published globals) registered its own undo in that scope when the
+   * plugin called it (`owner-scope.ts`). Injected because the tree has no
+   * business knowing which members exist, and it no longer needs to: the
+   * answer is the scope's own per-effect checklist.
    * @param pluginId - the owner.
+   * @returns one row per effect undone; an empty list when there were none.
    */
-  clearMemberTraces: (pluginId: string) => void
+  clearMemberTraces: (pluginId: string) => readonly OwnerScopeStep[]
   /** The frame's clock. */
   now: () => number
   /**
@@ -551,12 +556,16 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
       return undefined
     })
 
-    // 5 — what the member surface let it register: listeners, script buttons,
-    // injected prompts. The item the design calls the easiest to miss, and the
-    // only reason the `card` surface is bound per plugin at all.
+    /*
+     * 5 — what the member surface let it register, as `scope.dispose()`.
+     * The item the design calls the easiest to miss, and the reason the `card`
+     * surface is bound per plugin at all. One row still, so the compared count
+     * stays six; the effects that did not come away are named in its detail.
+     */
     await record('member-traces', async () => {
-      env.clearMemberTraces(pluginId)
-      return undefined
+      const failed = env.clearMemberTraces(pluginId).filter(step => !step.ok)
+      if (failed.length === 0) return undefined
+      return failed.map(step => `${step.label}: ${step.detail ?? 'did not come away'}`).join('; ')
     })
 
     // 6 — the row itself. Same id may be mounted again afterwards.
@@ -566,6 +575,28 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
     })
 
     return steps
+  }
+
+  /**
+   * Take away what a plugin that failed to mount managed to put down first.
+   *
+   * Nothing is on the tree, so there is no checklist to run. But the facade
+   * was built and handed over, and a factory or `apply` can register a
+   * listener, publish a global or fill its panel before it throws. Styles,
+   * panel and the owner scope all come away. Before the scope was a single
+   * disposal, only the first two did, and a listener registered before the
+   * throw stayed on the bus.
+   * @param pluginId - the plugin that did not mount.
+   */
+  const abandon = (pluginId: string): void => {
+    env.styles.clear(pluginId)
+    env.panel.remove(pluginId)
+    try {
+      env.clearMemberTraces(pluginId)
+    } catch {
+      // The mount-failed row is the report; a failure to clear on top of it
+      // has nowhere better to go than the next teardown of this id.
+    }
   }
 
   const mountOne = async (request: SandboxPluginRequest): Promise<void> => {
@@ -594,10 +625,12 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
       // throw and `apply`'s throw be two different states (§5.3).
       factory = env.compile(SANDBOX_PLUGIN_FACADE_PARAM, sandboxPluginBody(code))
     } catch (error: unknown) {
+      abandon(pluginId)
       env.report({ kind: 'failed', pluginId, version, state: 'mount-failed', detail: describe(error) })
       return
     }
     if (typeof factory !== 'function') {
+      abandon(pluginId)
       env.report({
         kind: 'failed',
         pluginId,
@@ -614,8 +647,7 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
     } catch (error: unknown) {
       // The factory threw. Nothing is mounted, so nothing is torn down — but
       // whatever it managed to put in the head before throwing is ours now.
-      env.styles.clear(pluginId)
-      env.panel.remove(pluginId)
+      abandon(pluginId)
       env.report({ kind: 'failed', pluginId, version, state: 'mount-failed', detail: describe(error) })
       return
     }
@@ -629,8 +661,7 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
       try {
         applied = plugin.apply()
       } catch (error: unknown) {
-        env.styles.clear(pluginId)
-        env.panel.remove(pluginId)
+        abandon(pluginId)
         env.report({ kind: 'failed', pluginId, version, state: 'mount-failed', detail: describe(error) })
         return
       }
@@ -678,8 +709,7 @@ export function createSandboxPluginTree(env: SandboxPluginTreeEnv): SandboxPlugi
     })
 
     if (outcome.kind === 'threw') {
-      env.styles.clear(pluginId)
-      env.panel.remove(pluginId)
+      abandon(pluginId)
       env.report({ kind: 'failed', pluginId, version, state: 'mount-failed', detail: describe(outcome.error) })
       return
     }

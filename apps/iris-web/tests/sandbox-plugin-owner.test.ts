@@ -20,7 +20,7 @@ type Member = (...args: unknown[]) => unknown
 
 test('a plugin’s surface names its conversation in every per-card call it makes', () => {
   const realm = pluginRealm(contextFor('aria-chat-A'))
-  const surface = realm.sandbox.cardSurface('01-x')
+  const surface = realm.sandbox.cardSurface('01-x').members
 
   // The tooth: `cardSurface: owner => ({ ...tavernHelper, ...viewFor(owner) })`,
   // the pre-fix binding, answers `01-x` here and sends `01-x` below.
@@ -33,14 +33,14 @@ test('a plugin’s surface names its conversation in every per-card call it make
 })
 
 test('the same plugin id in another conversation is a different owner', () => {
-  const inA = pluginRealm(contextFor('aria-chat-A')).sandbox.cardSurface('01-x')
-  const inB = pluginRealm(contextFor('aria-chat-B')).sandbox.cardSurface('01-x')
+  const inA = pluginRealm(contextFor('aria-chat-A')).sandbox.cardSurface('01-x').members
+  const inB = pluginRealm(contextFor('aria-chat-B')).sandbox.cardSurface('01-x').members
   assert.notEqual((inA['getScriptId'] as Member)(), (inB['getScriptId'] as Member)())
 })
 
 test('without a chat id the plugin has no script identity, rather than a shared one', () => {
   const realm = pluginRealm(contextFor('ignored', { chatId: undefined }))
-  const surface = realm.sandbox.cardSurface('01-x')
+  const surface = realm.sandbox.cardSurface('01-x').members
   // Undefined, which the script scope refuses by name. The wrong implementation
   // is a fall back to the bare `01-x`, which is exactly the per-card table the
   // owner id exists to keep plugins out of.
@@ -56,7 +56,7 @@ test('a surface bound before the first context message names the conversation on
    * of its own". The tooth is to resolve the owner once, in `cardSurface`.
    */
   const realm = pluginRealm()
-  const surface = realm.sandbox.cardSurface('01-x')
+  const surface = realm.sandbox.cardSurface('01-x').members
   realm.send({ iris: 'tok', type: 'context', context: contextFor('aria-chat-A') })
   assert.equal((surface['getScriptId'] as Member)(), 'sp:aria-chat-A:01-x')
 })

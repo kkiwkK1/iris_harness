@@ -70,6 +70,9 @@ function fixOf(plugin: SandboxPluginView): string | undefined {
   if (plugin.failure === undefined) return undefined
   if (plugin.failure.state === 'mount-failed') return t('pluginFixMountFailed')
   if (plugin.failure.state === 'dispose-failed') return t('pluginFixDisposeFailed')
+  // The one failure the reader can fix outside this conversation, so the
+  // sentence names both roads rather than only the rewrite.
+  if (plugin.failure.state === 'facade-mismatch') return t('pluginFixFacadeMismatch')
   return undefined
 }
 
