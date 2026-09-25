@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { test, type TestContext } from 'node:test'
 
 import { importChat, parseChatFile } from '@iris/persistence'
 
+import { ChatStore } from '../src/chats.ts'
 import { ChatEntry } from '../src/entry.ts'
+import { CharacterLibrary } from '../src/library.ts'
+import { tempDir } from './support/temp-dir.ts'
 
 /**
  * Tables `hydrateVariables` cannot attach, and the report that says so.
@@ -95,4 +100,55 @@ test('hydration behaves the same when nobody is listening', () => {
   const session = importChat(file, 'silent')
   const entry = new ChatEntry({ chatId: 'silent', header: file.header, session, card: undefined })
   assert.doesNotThrow(() => { entry.hydrateVariables(file.messages) })
+})
+
+/**
+ * A store over a temporary directory holding one chat file, whose sink
+ * collects what it was told.
+ * @param t - the test, for cleanup.
+ * @param variables - the reply line's `variables` field.
+ * @returns the store, the chat's id, and the collected reports.
+ */
+async function storeWith(
+  t: TestContext,
+  variables: unknown,
+): Promise<{ store: ChatStore, chatId: string, reports: { message: string, kind: string, chatId: string }[] }> {
+  const dir = await tempDir(t, 'iris-hydrate-sink-')
+  await mkdir(join(dir, 'chats'), { recursive: true })
+  const chatId = 'surplus'
+  await writeFile(join(dir, 'chats', `${chatId}.jsonl`), chatText(variables), 'utf8')
+  const reports: { message: string, kind: string, chatId: string }[] = []
+  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
+  const store = new ChatStore(
+    join(dir, 'chats'), library,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined,
+    (message, context) => { reports.push({ message, ...context }) },
+  )
+  return { store, chatId, reports }
+}
+
+test('opening a chat reports its dropped tables through the store, once per line', async (t) => {
+  // Finding hydrate-drops-silent-on-load: the open path called all three
+  // hydrates with no reporter, so the corpus's one surplus table was dropped in
+  // silence on every open and then left the file at the next save. Three
+  // tables on a one-swipe line is two tables with nowhere to go, and one fact.
+  const { store, chatId, reports } = await storeWith(t, [{ a: 1 }, { a: 2 }, { a: 3 }])
+  const entry = await store.open(chatId)
+
+  assert.equal(reports.length, 1, `expected one report, got ${JSON.stringify(reports)}`)
+  assert.equal(reports[0]?.kind, 'variables')
+  assert.equal(reports[0]?.chatId, chatId)
+  assert.match(reports[0]?.message ?? '', /3 table\(s\) but the turn has 1 candidate\(s\); tables 1-2 dropped/u)
+
+  // The save that follows writes the one table the line can hold, and says
+  // nothing more: the loss was named when it happened, on the open.
+  await store.save(entry)
+  assert.equal(reports.length, 1, `the save reported again: ${JSON.stringify(reports)}`)
+})
+
+test('a healthy chat opens and saves through the store without a word', async (t) => {
+  const { store, chatId, reports } = await storeWith(t, [{ a: 1 }])
+  await store.save(await store.open(chatId))
+  assert.deepEqual(reports, [])
 })
