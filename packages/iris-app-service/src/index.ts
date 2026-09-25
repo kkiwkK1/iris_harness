@@ -972,6 +972,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       reportMalformedPresetRegex,
     ),
     systemPlugins,
+    // What a load or a save dropped — a per-candidate table, cost or timer
+    // with no candidate to belong to. Filed where the service files its own
+    // `variables` reports, and graded the same: the data is gone from the
+    // conversation and nothing else will say so. Usage and timing have no
+    // report kind of their own; they are the host's records, so `host`.
+    (message, { kind, chatId }) => {
+      diagnostics.record({ kind: kind === 'variables' ? 'variables' : 'host', grade: 'fault', chatId }, message)
+      ctx.logger.warn(message)
+    },
   )
   // Kept apart from `script-policy.json` because they answer to different
   // owners: the policy file is the user's decisions, this is data cards wrote.

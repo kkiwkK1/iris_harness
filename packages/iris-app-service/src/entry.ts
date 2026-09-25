@@ -440,6 +440,17 @@ export function floorFlags(session: Session): LineFlags[] {
   })
 }
 
+/**
+ * Name the positions `from` (inclusive) to `to` (exclusive) in a drop report.
+ * @param noun - what sits at each position.
+ * @param from - the first dropped position.
+ * @param to - one past the last.
+ * @returns `table 1`, or `tables 1-2`.
+ */
+function droppedRange(noun: string, from: number, to: number): string {
+  return to - from === 1 ? `${noun} ${String(from)}` : `${noun}s ${String(from)}-${String(to - 1)}`
+}
+
 /** One live conversation and everything bound to it. */
 export class ChatEntry {
   readonly chatId: string
@@ -1724,16 +1735,10 @@ export class ChatEntry {
       const turn = turns[index]
       if (turn === undefined) continue
       const candidates = listCandidates(this.session, turn)
-      for (let swipe = 0; swipe < stored.length; swipe += 1) {
+      for (let swipe = 0; swipe < Math.min(stored.length, candidates.length); swipe += 1) {
         const variables = stored[swipe]
         const candidate = candidates[swipe]
-        if (candidate === undefined) {
-          onReport?.(
-            `variables: line ${String(index)} carries ${String(stored.length)} table(s) `
-            + `but the turn has ${String(candidates.length)} candidate(s); table ${String(swipe)} dropped`,
-          )
-          continue
-        }
+        if (candidate === undefined) continue
         if (typeof variables !== 'object' || variables === null || Array.isArray(variables)) {
           onReport?.(
             `variables: line ${String(index)} table ${String(swipe)} is `
@@ -1742,6 +1747,17 @@ export class ChatEntry {
           continue
         }
         this.session.append('iris/variables', { candidateSeq: candidate.seq, variables: variables as Variables })
+      }
+      // The surplus is one fact about the line — it carries more tables than it
+      // has readings — and is said once, however many tables it costs. One
+      // report per dropped table made a line with two extra tables read as two
+      // problems on the debug page.
+      if (stored.length > candidates.length) {
+        onReport?.(
+          `variables: line ${String(index)} carries ${String(stored.length)} table(s) `
+          + `but the turn has ${String(candidates.length)} candidate(s); `
+          + `${droppedRange('table', candidates.length, stored.length)} dropped`,
+        )
       }
     }
   }
@@ -1775,7 +1791,7 @@ export class ChatEntry {
       const turn = turns[index]
       if (turn === undefined) continue
       const candidates = listCandidates(this.session, turn)
-      for (let swipe = 0; swipe < stored.length; swipe += 1) {
+      for (let swipe = 0; swipe < Math.min(stored.length, candidates.length); swipe += 1) {
         const usage = parseUsage(stored[swipe])
         // A `null` entry is the ordinary case — that swipe reported nothing —
         // and says nothing worth reporting.
@@ -1788,13 +1804,7 @@ export class ChatEntry {
           continue
         }
         const candidate = candidates[swipe]
-        if (candidate === undefined) {
-          onReport?.(
-            `usage: line ${String(index)} carries ${String(stored.length)} entr(ies) `
-            + `but the turn has ${String(candidates.length)} candidate(s); entry ${String(swipe)} dropped`,
-          )
-          continue
-        }
+        if (candidate === undefined) continue
         // The fingerprint is read from the same object, and its absence says
         // nothing: every chat written before this record existed has costs and
         // no hashes, which is exactly the state a reader must not mistake for
@@ -1805,6 +1815,20 @@ export class ChatEntry {
           usage,
           ...fingerprint === undefined ? {} : { fingerprint },
         })
+      }
+      // A surplus is said once per line, as `hydrateVariables` says it. A
+      // surplus `null` is not counted: it records that a swipe reported
+      // nothing, so dropping it loses nothing.
+      const surplus: number[] = []
+      for (let swipe = candidates.length; swipe < stored.length; swipe += 1) {
+        if (stored[swipe] !== null && stored[swipe] !== undefined) surplus.push(swipe)
+      }
+      if (surplus.length > 0) {
+        onReport?.(
+          `usage: line ${String(index)} carries ${String(stored.length)} entr(ies) `
+          + `but the turn has ${String(candidates.length)} candidate(s); `
+          + `${surplus.length === 1 ? 'entry' : 'entries'} ${surplus.join(', ')} dropped`,
+        )
       }
     }
   }

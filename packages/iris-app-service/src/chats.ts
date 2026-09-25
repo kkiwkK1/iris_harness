@@ -79,6 +79,15 @@ function stamp(when: Date): string {
   ].join('')
 }
 
+/** Which per-candidate record a load or a save dropped. */
+export type ChatReportKind = 'variables' | 'usage' | 'timing'
+
+/**
+ * Where {@link ChatStore} says what it dropped: one sentence, and the chat and
+ * record it is about. The host files it with its diagnostics.
+ */
+export type ChatReportSink = (message: string, context: { kind: ChatReportKind, chatId: string }) => void
+
 /** Reads, caches and writes conversations. */
 export class ChatStore {
   readonly #dir: string
@@ -197,6 +206,17 @@ export class ChatStore {
   readonly #backups: BackupStore
   /** Live system-plugin capabilities shared by every open entry. */
   readonly #plugins: SystemPluginCapabilities | undefined
+  /**
+   * Where a load or a save says what it dropped.
+   *
+   * One sink for the whole store, handed to every hydrate and every save,
+   * because the alternative was measured: each call site choosing whether to
+   * pass a reporter left the chat-open and branch paths silent and 20 of 21
+   * saves silent, while every `hydrate*` docblock promised the drops were
+   * audible. A per-call reporter a caller can forget is a silence waiting for
+   * a caller; a store-wide one cannot be omitted by any call site.
+   */
+  readonly #onReport: ChatReportSink | undefined
 
   /**
    * @param dir - the folder holding chat files.
@@ -205,6 +225,8 @@ export class ChatStore {
    *   in memory, which is what a host with nowhere to store it should do.
    * @param backups - the snapshot store. Absent builds one on this store's own
    *   directory with the default retention.
+   * @param onReport - told what a load or a save dropped. Absent is silence,
+   *   which only a test that asserts nothing about drops should choose.
    */
   constructor(
     dir: string,
@@ -221,6 +243,7 @@ export class ChatStore {
     scopedRegex?: (characterId: string) => Promise<ScopedRegexPolicy>,
     presetRegex?: () => Promise<PresetRegexTier | undefined>,
     plugins?: SystemPluginCapabilities,
+    onReport?: ChatReportSink,
   ) {
     this.#dir = dir
     this.#library = library
@@ -236,6 +259,19 @@ export class ChatStore {
     this.#scopedRegex = scopedRegex
     this.#presetRegex = presetRegex
     this.#plugins = plugins
+    this.#onReport = onReport
+  }
+
+  /**
+   * The sink bound to one chat and one kind of record, as a hydrate or a
+   * projection takes it.
+   * @param chatId - the conversation the drop belongs to.
+   * @param kind - which record was dropped.
+   * @returns the reporter, or undefined when the store has no sink.
+   */
+  #reporter(chatId: string, kind: ChatReportKind): ((message: string) => void) | undefined {
+    const sink = this.#onReport
+    return sink === undefined ? undefined : message => { sink(message, { kind, chatId }) }
   }
 
   /**
@@ -576,12 +612,12 @@ export class ChatStore {
     // The log carries the conversation; the variables ride alongside it and
     // have to be put back explicitly. So does what each generation cost — the
     // provider said it once and the file is the only place it survives.
-    entry.hydrateVariables(file.messages)
-    entry.hydrateUsage(file.messages)
+    entry.hydrateVariables(file.messages, this.#reporter(chatId, 'variables'))
+    entry.hydrateUsage(file.messages, this.#reporter(chatId, 'usage'))
     // And how long each one took, which unlike the cost is something upstream
     // records too — in `gen_started` / `gen_finished` — so this one reads a
     // SillyTavern chat as well as an Iris one (`./timing.ts`).
-    entry.hydrateTiming(file.messages)
+    entry.hydrateTiming(file.messages, this.#reporter(chatId, 'timing'))
     this.#entries.set(chatId, entry)
     return entry
   }
@@ -748,16 +784,16 @@ export class ChatStore {
       ...this.#persona === undefined ? {} : { persona: this.#persona },
       ...this.#plugins === undefined ? {} : { plugins: this.#plugins },
     })
-    child.hydrateVariables(lines)
+    child.hydrateVariables(lines, this.#reporter(childId, 'variables'))
     // A branch inherits the history it was cut from, and that history was paid
     // for once. The parent keeps its own copy; the two are separate
     // conversations from here, so the same figures appear in both totals — the
     // alternative is a branch whose early turns look free.
-    child.hydrateUsage(lines)
+    child.hydrateUsage(lines, this.#reporter(childId, 'usage'))
     // The same argument, one measurement over: the inherited history was
     // generated once and took the time it took, and a branch whose early turns
     // showed no speed would look like a chat played on a different host.
-    child.hydrateTiming(lines)
+    child.hydrateTiming(lines, this.#reporter(childId, 'timing'))
 
     this.#entries.set(childId, child)
     await this.save(child)
@@ -953,7 +989,8 @@ export class ChatStore {
    * (`src/endpoints/chats.js:466` → `tryWriteFileSync` → `writeFileAtomicSync`).
    * @param entry - the live conversation.
    * @param onReport - passed through to the projection, which uses it to say
-   *   what it dropped.
+   *   what it dropped. Absent falls back to the store's own sink, so a save
+   *   whose caller named no reporter still says what it dropped.
    * @returns `false`, with nothing written, when the entry is retired (see
    *   {@link isLive}); `true` once the file is written.
    */
@@ -961,7 +998,7 @@ export class ChatStore {
     if (!this.isLive(entry)) return false
     await this.ensure()
     const path = fileFor(this.#dir, entry.chatId, '.jsonl')
-    await atomicWriteFile(path, formatChatFile(entry.toFile(onReport)))
+    await atomicWriteFile(path, formatChatFile(entry.toFile(onReport ?? this.#reporter(entry.chatId, 'variables'))))
     return true
   }
 
