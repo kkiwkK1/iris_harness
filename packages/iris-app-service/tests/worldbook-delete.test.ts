@@ -21,8 +21,7 @@
 
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -30,12 +29,11 @@ import { normalizeCard, type CharacterCard } from '@iris/character'
 
 import { ChatStore } from '../src/chats.ts'
 import { DiagnosticBuffer } from '../src/diagnostics.ts'
-import { CharacterLibrary } from '../src/library.ts'
 import { WorldbookBindingStore } from '../src/materialise.ts'
-import { IrisAppService } from '../src/service.ts'
-import { SettingsStore } from '../src/settings.ts'
+import type { Handlers } from '../src/service.ts'
+import type { SettingsStore } from '../src/settings.ts'
 import { WorldbookStore } from '../src/worldbooks.ts'
-import { tempDir } from './support/temp-dir.ts'
+import { createTestService } from './support/service.ts'
 
 const entryJson = (uid: number, comment: string): Record<string, unknown> => ({
   uid, key: [], keysecondary: [], comment, content: `${comment} body`,
@@ -62,45 +60,41 @@ const cardWith = (world?: string): CharacterCard => normalizeCard({
  * can answer.
  */
 async function fixture(t: TestContext): Promise<{
-  handlers: ReturnType<IrisAppService['handlers']>
+  handlers: Handlers
   settings: SettingsStore
   bindings: WorldbookBindingStore
   dir: string
 }> {
-  const dir = await tempDir(t, 'iris-wb-delete-')
+  let bindings: WorldbookBindingStore | undefined
+  const built = await createTestService(t, async ({ dir, library, settings }) => {
+    await mkdir(join(dir, 'worlds'), { recursive: true })
+    for (const name of ['Own', 'Extra', 'Global']) {
+      await writeFile(
+        join(dir, 'worlds', `${name}.json`),
+        JSON.stringify({ entries: { 0: entryJson(0, `${name} entry`) } }),
+        'utf8',
+      )
+    }
+    await mkdir(join(dir, 'characters'), { recursive: true })
+    await writeFile(join(dir, 'characters', 'aria.json'), JSON.stringify(cardWith('Own')), 'utf8')
 
-  await mkdir(join(dir, 'worlds'), { recursive: true })
-  for (const name of ['Own', 'Extra', 'Global']) {
-    await writeFile(
-      join(dir, 'worlds', `${name}.json`),
-      JSON.stringify({ entries: { 0: entryJson(0, `${name} entry`) } }),
-      'utf8',
+    const worldbooks = new WorldbookStore(join(dir, 'worlds'))
+    bindings = new WorldbookBindingStore(join(dir, 'worldbook-bindings.json'))
+    const chats = new ChatStore(
+      join(dir, 'chats'), library, undefined, undefined, worldbooks,
+      () => settings.globalSelect(),
+      undefined, undefined, undefined,
+      characterId => settings.charBooks(characterId),
     )
-  }
-  await mkdir(join(dir, 'characters'), { recursive: true })
-  await writeFile(join(dir, 'characters', 'aria.json'), JSON.stringify(cardWith('Own')), 'utf8')
-
-  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const worldbooks = new WorldbookStore(join(dir, 'worlds'))
-  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'm' })
-  const bindings = new WorldbookBindingStore(join(dir, 'worldbook-bindings.json'))
-  const chats = new ChatStore(
-    join(dir, 'chats'), library, undefined, undefined, worldbooks,
-    () => settings.globalSelect(),
-    undefined, undefined, undefined,
-    characterId => settings.charBooks(characterId),
-  )
-
-  const handlers = new IrisAppService({
-    stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } as never,
-    library, chats, worldbooks, settings,
-    worldbookBindings: bindings,
-    diagnostics: new DiagnosticBuffer(),
-    broadcast: () => {},
-    userName: 'Traveller',
-  }).handlers()
-
-  return { handlers, settings, bindings, dir }
+    return {
+      chats, worldbooks,
+      worldbookBindings: bindings,
+      diagnostics: new DiagnosticBuffer(),
+      userName: 'Traveller',
+    }
+  }, 'iris-wb-delete-')
+  assert.ok(bindings !== undefined)
+  return { handlers: built.handlers, settings: built.options.settings, bindings, dir: built.dir }
 }
 
 test('the file goes, and the answer says so', async (t: TestContext) => {
@@ -228,17 +222,8 @@ test('a name that climbs out of the directory is refused', async (t: TestContext
 })
 
 test('a host with no book store refuses rather than answering false', async (t: TestContext) => {
-  const dir = await tempDir(t, 'iris-wb-delete-bare-')
-  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'm' })
-  const handlers = new IrisAppService({
-    stream: async function* () { yield { type: 'finish', reason: { kind: 'stop' } } } as never,
-    library,
-    chats: new ChatStore(join(dir, 'chats'), library),
-    settings,
-    broadcast: () => {},
-    userName: 'Traveller',
-  }).handlers()
+  // The builder's own chat store, and no `worldbooks`: the host shape under test.
+  const { handlers } = await createTestService(t, { userName: 'Traveller' }, 'iris-wb-delete-bare-')
 
   /*
    * The line `worldbook.create` draws, for the same reason: such a host has no

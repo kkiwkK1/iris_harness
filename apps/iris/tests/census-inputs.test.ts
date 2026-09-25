@@ -4,13 +4,13 @@ import { test } from 'node:test'
 import { UPSTREAM_CONTEXT_MEMBERS, UPSTREAM_MEMBERS } from '../../../apps/iris-web/src/sandbox/upstream-surface.ts'
 import { FRAME_MEMBERS, MEMBER_KINDS } from '../../../apps/iris-web/src/sandbox/identity.ts'
 import { VIRTUAL_PARENT_DIALOG_MEMBERS, VIRTUAL_PARENT_SCHEDULER_MEMBERS } from '../../../apps/iris-web/src/sandbox/frame.ts'
-// The two calipers are plain JavaScript with no declaration file — this file
-// *is* their declaration: each assertion pins what the census read to what the
+// The two calipers are plain JavaScript. Their types are inferred (the root
+// program has `allowJs`, and `scripts/tsconfig.json` checks their bodies), but
+// inference says only that an export is a set of strings; this file says
+// *which* strings: each assertion pins what the census read to what the
 // modules above export, so the two sides cannot drift apart quietly in either
 // direction.
-// @ts-expect-error — no declaration file; see the comment above.
 import { BUILT, MEMBERS } from '../../../scripts/th-member-census.mjs'
-// @ts-expect-error — no declaration file; see the comment above.
 import { PARENT_BRIDGED, TH_BUILT, TH_DECLARED } from '../../../scripts/card-surface-census.mjs'
 
 /**

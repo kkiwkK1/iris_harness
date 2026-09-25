@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { readTestGlobs, testGlobsOf } from '../../../scripts/lib/test-globs.ts'
+
 /**
  * Every test file on disk is actually collected by `npm test`.
  *
@@ -39,16 +41,16 @@ const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 
 const slash = (path: string): string => path.split('\\').join('/')
 
-/** The globs `npm test` actually passes to `node --test`, read from the manifest. */
+/**
+ * The globs `npm test` actually passes to `node --test`, read from the manifest.
+ *
+ * Through `scripts/lib/test-globs.ts`, the same reader CI's
+ * `scripts/check-corpus-skips.mjs` uses, so the list this guard checks is the
+ * list CI runs. Until 2026-09-25 CI ran its own copy of the globs, and this
+ * guard watched the one CI did not run.
+ */
 async function collectionPatterns(): Promise<string[]> {
-  const manifest = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')) as {
-    scripts?: Record<string, string>
-  }
-  const script = manifest.scripts?.['test']
-  assert.ok(script, 'the root manifest has no `test` script')
-  const patterns = [...script.matchAll(/"([^"]+)"/g)].map(match => match[1] as string)
-  assert.ok(patterns.length > 0, `no quoted globs found in the test script: ${script}`)
-  return patterns
+  return readTestGlobs(ROOT)
 }
 
 /**
@@ -106,4 +108,22 @@ test('a wrong pattern is reported as a miss', () => {
     files.filter(path => !wrong.has(path)).length === files.length,
     'the comparison failed to report files a broken pattern misses',
   )
+})
+
+test('CI runs the globs this guard checks, read by one reader', async () => {
+  // The CI side of the single source. check-corpus-skips.mjs must get its
+  // globs from the shared reader, not from a literal of its own, or the two
+  // lists can drift while both halves stay green.
+  const script = await readFile(join(ROOT, 'scripts', 'check-corpus-skips.mjs'), 'utf8')
+  assert.match(script, /import \{ readTestGlobs \} from '\.\/lib\/test-globs\.ts'/, 'check-corpus-skips.mjs no longer imports the shared glob reader')
+  assert.match(script, /const GLOBS = readTestGlobs\(ROOT\)/, 'check-corpus-skips.mjs no longer takes its globs from the shared reader')
+  assert.doesNotMatch(script, /\*\*\/\*\.test\.ts/, 'check-corpus-skips.mjs spells out a test glob of its own again')
+})
+
+test('the glob reader takes quoted globs and refuses a script with none', () => {
+  // Planted samples: the reader is what every consumer trusts, so a reader
+  // that returned [] for a script it did not understand would make both the
+  // guard and CI "run nothing" and pass.
+  assert.deepEqual(testGlobsOf('node --test "a/*.test.ts" "b/**/*.test.ts"'), ['a/*.test.ts', 'b/**/*.test.ts'])
+  assert.throws(() => testGlobsOf('node --test a/*.test.ts'), /no quoted globs/)
 })

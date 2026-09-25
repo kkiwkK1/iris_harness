@@ -155,6 +155,7 @@ async function buildHost(dataDir) {
 
   const captured = []
   const events = []
+  /** @type {import('../packages/iris-turn/src/driver.ts').StreamFn} */
   const stream = async function* (options) {
     captured.push(options)
     // Refused, not answered: an appended candidate would change the log and the
@@ -181,7 +182,7 @@ async function buildHost(dataDir) {
     scriptVariables,
     backups,
     preset: settings.presetBody() ?? DEFAULT_PRESET,
-    ...settings.presetName() === undefined ? {} : { presetName: settings.presetName() },
+    ...settings.presetName() === undefined ? {} : { presetName: /** @type {string} */ (settings.presetName()) },
     presets: new PresetStore(paths.presets),
     broadcast: event => { events.push(event) },
     diagnostics: new DiagnosticBuffer(),
@@ -613,7 +614,7 @@ async function main() {
 
   try {
     const host = await buildHost(dataDir)
-    const listed = (await host.handlers['chat.list']()).chats
+    const listed = (await host.handlers['chat.list']({})).chats
     console.log(`templates ${process.env.IRIS_TEMPLATES === '1' ? 'on' : 'off'}`)
     console.log(`\n${String(listed.length)} conversations in the copy:`)
     const sizes = []

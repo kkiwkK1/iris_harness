@@ -75,6 +75,7 @@ const pinnedMoment = (value) => value === undefined ? moment(NOW) : moment(value
 pinnedMoment.utc = (...args) => args.length === 0 ? moment(NOW).utc() : moment.utc(...args)
 pinnedMoment.duration = (...args) => moment.duration(...args)
 
+/** @type {Array<{ is_user: boolean, is_system: boolean, mes: string, swipes?: string[], swipe_id?: number, send_date?: number }>} */
 const stChat = CHAT.map(message => ({
   is_user: message.role === 'user',
   is_system: false,
@@ -157,7 +158,7 @@ const registry = createMacroRegistry()
 const context = createMacroContext({
   char: 'Seraphina',
   user: 'Alex',
-  chat: CHAT,
+  chat: /** @type {import('../packages/iris-macro/src/index.ts').MacroMessage[]} */ (CHAT),
   clock: { now: () => NOW, utcOffsetMinutes: HOST_OFFSET },
   outlet: key => OUTLETS[key] ?? '',
   firstIncludedMessageId: FIRST_INCLUDED,

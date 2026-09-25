@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -11,6 +10,7 @@ import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { packageSourceFiles, SOURCE_FILE_FLOOR } from './support/source-files.ts'
 import { tempDir } from './support/temp-dir.ts'
 
 /**
@@ -131,7 +131,17 @@ test('nothing evaluates the card’s string in the host process', async () => {
   //
   // Scoped to this package's own source: the evaluator package is *supposed* to
   // contain an evaluator, and it runs in the child.
-  const source = await readFile(new URL('../src/service.ts', import.meta.url), 'utf8')
+  //
+  // The **whole** `src/` tree, not `service.ts` by name. The by-name version
+  // covered 1 of 68 files and would have stayed green when an arm moved out of
+  // service.ts with a quick path in it. The floor keeps a broken walk from
+  // passing with nothing scanned.
+  const sources = await packageSourceFiles()
+  assert.ok(
+    sources.length >= SOURCE_FILE_FLOOR,
+    `the fence scanned ${String(sources.length)} source files, fewer than the floor of ${String(SOURCE_FILE_FLOOR)}. The walk is broken, and a fence over nothing passes`,
+  )
+  assert.ok(sources.some(source => source.file === 'service.ts'), 'the walk did not reach src/service.ts')
 
   // Built from character codes so this file does not itself contain the tokens
   // it forbids — otherwise a scan of the repository for them finds its own
@@ -142,16 +152,17 @@ test('nothing evaluates the card’s string in the host process', async () => {
     ['v', 'm', '.', 'r', 'u', 'n'].join(''),
   ]
   for (const token of forbidden) {
-    assert.equal(
-      source.includes(token),
-      false,
-      `service.ts contains \`${token}\` — a card's template must only ever run in the forked child`,
+    const offenders = sources.filter(source => source.text.includes(token)).map(source => source.file)
+    assert.deepEqual(
+      offenders,
+      [],
+      `src/ contains \`${token}\` in ${offenders.join(', ')}. A card's template must only ever run in the forked child`,
     )
   }
 
   // And the arm reaches the fenced evaluator rather than any other path.
   assert.ok(
-    source.includes('evaluateBatch({'),
+    sources.some(source => source.text.includes('evaluateBatch({')),
     'script.evalTemplate no longer goes through the fenced batch evaluator',
   )
 })

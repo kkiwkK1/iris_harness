@@ -1,0 +1,23 @@
+{
+  // Typechecks the scripts in this directory, which are JSDoc-typed JavaScript
+  // run directly by Node. The root program does not check them: it has no
+  // `checkJs`, and turning that on there would check every `.mjs` a test
+  // imports under the root's rules too. Run as `pnpm run typecheck:scripts`,
+  // and as its own step in CI.
+  //
+  // `noImplicitAny` is off, on purpose and for now. Measured 2026-09-25 by the
+  // review that asked for this file: with it on, the five scripts that assemble
+  // the service alone gave 294 errors, 233 of them implicit-any parameters
+  // (TS7006), which are noise in untyped JavaScript. With it off, what is left
+  // are real contract mismatches, and those are what this program is for.
+  // Tighten it once the implicit-any count is small enough to fix.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "noImplicitAny": false,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["./**/*.mjs"]
+}

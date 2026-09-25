@@ -89,16 +89,7 @@ test('the install form, the consent page and the tampered reinstall, driven by c
   const wired = createIrisStore(recorder, { transport: 'fake', origin: 'plugin install test' })
   await wired.store.getState().boot()
 
-  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as {
-    mountPluginCenter: (store: typeof wired.store, container: Element) => Promise<{
-      html: () => string
-      find: (selector: string) => Element | null
-      click: (selector: string) => Promise<void>
-      type: (selector: string, value: string) => Promise<void>
-      settle: (work?: () => void) => Promise<void>
-      unmount: () => Promise<void>
-    }>
-  }
+  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as typeof import('./plugin-center-harness.tsx')
   const page = await harness.mountPluginCenter(wired.store, dom.window.document.getElementById('root')!)
 
   t.after(async () => {
@@ -345,15 +336,7 @@ test('W5: the uninstall data checkbox is per row, default-off, and only sends `r
   } as unknown as IrisClient
   const wired = createIrisStore(recorder, { transport: 'fake', origin: 'plugin remove-data test' })
   await wired.store.getState().boot()
-  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as {
-    mountPluginCenter: (store: typeof wired.store, container: Element) => Promise<{
-      html: () => string
-      find: (selector: string) => Element | null
-      click: (selector: string) => Promise<void>
-      settle: (work?: () => void) => Promise<void>
-      unmount: () => Promise<void>
-    }>
-  }
+  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as typeof import('./plugin-center-harness.tsx')
   const page = await harness.mountPluginCenter(wired.store, dom.window.document.getElementById('root')!)
   t.after(async () => {
     await page.unmount()
@@ -427,12 +410,7 @@ test('the client-side shape check answers the four commit spellings the wire ref
   const root = fileURLToPath(new URL('..', import.meta.url))
   const server = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' })
   t.after(async () => { await server.close() })
-  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as {
-    installFormProblem: (
-      mode: 'git' | 'dev',
-      fields: { remote: string, commit: string, path: string },
-    ) => string | undefined
-  }
+  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as typeof import('./plugin-center-harness.tsx')
   const git = (remote: string, commit: string): string | undefined =>
     harness.installFormProblem('git', { remote, commit, path: '' })
   const ok = 'https://example.invalid/a.git'

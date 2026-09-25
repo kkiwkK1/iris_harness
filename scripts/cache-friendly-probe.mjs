@@ -189,6 +189,7 @@ async function buildHost(dataDir, options = {}) {
 
   const captured = []
   const events = []
+  /** @type {import('../packages/iris-turn/src/driver.ts').StreamFn} */
   const stream = async function* (generateOptions) {
     captured.push(generateOptions)
     throw new Captured('cache-friendly probe: request captured, not sent')
@@ -213,7 +214,7 @@ async function buildHost(dataDir, options = {}) {
     scriptVariables,
     backups,
     preset: settings.presetBody() ?? DEFAULT_PRESET,
-    ...settings.presetName() === undefined ? {} : { presetName: settings.presetName() },
+    ...settings.presetName() === undefined ? {} : { presetName: /** @type {string} */ (settings.presetName()) },
     presets: new PresetStore(paths.presets),
     broadcast: event => { events.push(event) },
     diagnostics: new DiagnosticBuffer(),
@@ -240,12 +241,14 @@ async function buildHost(dataDir, options = {}) {
    */
   const seedVolatility = async (chatId, options = {}) => {
     const entry = await chats.open(chatId)
+    /** @type {Record<string, number>} */
     const until = {}
     for (const id of options.volatile ?? []) until[id] = Number.MAX_SAFE_INTEGER
     // `since` in the far past is how "already observed holding still" is
     // expressed in the product's own vocabulary — the classifier reads
     // `generation - since[id]`, so a large gap settles the id on sight. Nothing
     // about the shape is the probe's invention; only the clock is.
+    /** @type {Record<string, number>} */
     const since = {}
     for (const id of options.settled ?? []) since[id] = -1_000_000
     const record = { generation: 0, seen: {}, until, since }
@@ -688,7 +691,7 @@ async function main() {
 
   try {
     const listing = await buildHost(dataDir)
-    const listed = (await listing.handlers['chat.list']()).chats
+    const listed = (await listing.handlers['chat.list']({})).chats
     const targets = []
     for (const wanted of WANTED) {
       const hits = listed.filter(chat =>

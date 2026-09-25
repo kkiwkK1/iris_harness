@@ -121,7 +121,7 @@ async function buildHost(dataDir) {
     scriptVariables,
     backups,
     preset: settings.presetBody() ?? DEFAULT_PRESET,
-    ...settings.presetName() === undefined ? {} : { presetName: settings.presetName() },
+    ...settings.presetName() === undefined ? {} : { presetName: /** @type {string} */ (settings.presetName()) },
     presets: new PresetStore(paths.presets),
     broadcast: () => {},
     diagnostics: new DiagnosticBuffer(),
@@ -188,7 +188,7 @@ async function main() {
 
   try {
     const { handlers } = await buildHost(dataDir)
-    const listed = (await handlers['chat.list']()).chats
+    const listed = (await handlers['chat.list']({})).chats
     const chosen = WANTED.length === 0
       ? listed
       : listed.filter(chat => WANTED.some(want =>
@@ -206,7 +206,9 @@ async function main() {
 
       // (a) how long the host takes, and (b) how many bytes it answers with.
       const timings = []
-      let last
+      // REPEATS is at least one, so the loop below always assigns it; the cast
+      // only tells the checker so. The initial value is still `undefined`.
+      let last = /** @type {Awaited<ReturnType<typeof handlers['script.context']>>['context']} */ (/** @type {unknown} */ (undefined))
       for (let round = 0; round < REPEATS; round += 1) {
         const started = performance.now()
         const answer = await handlers['script.context']({ chatId: chat.chatId, characterId })

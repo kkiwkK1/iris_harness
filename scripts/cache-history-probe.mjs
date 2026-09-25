@@ -156,6 +156,7 @@ async function buildHost(dataDir) {
 
   const captured = []
   const events = []
+  /** @type {import('../packages/iris-turn/src/driver.ts').StreamFn} */
   const stream = async function* (options) {
     captured.push(options)
     throw new Captured('cache-history probe: request captured, not sent')
@@ -180,7 +181,7 @@ async function buildHost(dataDir) {
     scriptVariables,
     backups,
     preset: settings.presetBody() ?? DEFAULT_PRESET,
-    ...settings.presetName() === undefined ? {} : { presetName: settings.presetName() },
+    ...settings.presetName() === undefined ? {} : { presetName: /** @type {string} */ (settings.presetName()) },
     presets: new PresetStore(paths.presets),
     broadcast: event => { events.push(event) },
     diagnostics: new DiagnosticBuffer(),
@@ -372,7 +373,7 @@ async function main() {
   await mkdir(SCRATCH, { recursive: true })
 
   const scan = await isolate(source)
-  const listed = (await scan.host.handlers['chat.list']()).chats
+  const listed = (await scan.host.handlers['chat.list']({})).chats
   await rm(scan.dir, { recursive: true, force: true })
 
   for (const wanted of WANTED) {
@@ -403,7 +404,7 @@ async function main() {
       try {
         const view = (await run.host.handlers['chat.open']({ chatId })).view
         if (view.messages.at(-1)?.role === 'assistant') {
-          await run.host.handlers['chat.deleteMessage']({ chatId, id: view.messages.at(-1).id })
+          await run.host.handlers['chat.deleteMessage']({ chatId, id: /** @type {typeof view.messages[number]} */ (view.messages.at(-1)).id })
         }
         // A swipe in Iris IS another generation for the same turn, so two
         // swipes are two assemblies of one unchanged state.

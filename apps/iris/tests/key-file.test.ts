@@ -30,8 +30,16 @@ import { fileURLToPath } from 'node:url'
  * whoever runs this, and the only thing the repository has an opinion about is
  * whether its own sources reach for it.
  *
- * Scope is `apps/`, `packages/` and `scripts/` — the three roots that hold code
- * this repository runs. `.gitignore` names the file on purpose (that is the
+ * Scope is every root that holds code this repository runs: all of `apps/`,
+ * `packages/` and `scripts/`, plus the executable files under `qa/` and
+ * `notes/`. The sentence used to say "the three roots", and that was already
+ * an omission on the day it was written (2026-09-11), when `qa/` held 15 `.mjs`
+ * drivers. On 2026-09-25 `qa/` and `notes/` held 62 executable files between
+ * them, including drivers that make paid provider calls through a host and a
+ * host launcher under `notes/st-compat/acceptance/`. In those two roots only
+ * the executable extensions are read, because their prose (`.md` records of
+ * past security work) names the file to describe the rule, and a record is
+ * not a reader. `.gitignore` names the file on purpose (that is the
  * point of an ignore list) and `CONTRIBUTING.md` / `README.md` describe the
  * rule in prose; neither is a reader. This file is the one allowed occurrence
  * inside the scanned roots, and it is excluded by path rather than by spelling
@@ -49,8 +57,17 @@ const NEEDLE = 'key.txt'
 /** Path of this file, repo-relative and posix-slashed — the one exception. */
 const SELF = 'apps/iris/tests/key-file.test.ts'
 
+/** Roots whose every file is source. */
+const WHOLE_ROOTS = ['apps', 'packages', 'scripts']
+
+/** Roots that mix prose with harness code; only their executable files are read. */
+const EXECUTABLE_ROOTS = ['qa', 'notes']
+
+/** What counts as executable under {@link EXECUTABLE_ROOTS}. */
+const EXECUTABLE = /\.(mjs|cjs|js|mts|cts|ts|tsx|ps1|sh|py|cmd|bat)$/
+
 /**
- * Tracked files plus untracked-but-not-ignored ones, under the three roots.
+ * Tracked files plus untracked-but-not-ignored ones, under the scanned roots.
  *
  * From git rather than from a directory walk for the reason
  * `md-references.test.ts` gives: `node_modules/`, `dist/` and the built
@@ -63,20 +80,35 @@ const SELF = 'apps/iris/tests/key-file.test.ts'
 function sources(): string[] {
   const listed = execFileSync(
     'git',
-    ['ls-files', '--cached', '--others', '--exclude-standard', '--', 'apps', 'packages', 'scripts'],
+    ['ls-files', '--cached', '--others', '--exclude-standard', '--', ...WHOLE_ROOTS, ...EXECUTABLE_ROOTS],
     { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
   )
   return listed
     .split('\n')
     .map(line => line.trim())
     .filter(line => line !== '')
+    .filter(path => WHOLE_ROOTS.some(root => path.startsWith(`${root}/`)) || EXECUTABLE.test(path))
     .filter(path => {
       const full = join(ROOT, path)
       return existsSync(full) && statSync(full).isFile()
     })
 }
 
-test('no source under apps/, packages/ or scripts/ reads a key file', () => {
+test('the scan list reaches the qa/ and notes/ harness code', () => {
+  // The teeth of the widened scope: a root dropped from the lists above, or an
+  // extension filter that stopped matching, removes these files and goes red
+  // here instead of quietly narrowing the check below.
+  const files = new Set(sources())
+  assert.ok(files.has('qa/rpc.mjs'), 'qa/rpc.mjs is not in the key-file scan; a root or the executable filter was dropped')
+  assert.ok(
+    files.has('notes/st-compat/acceptance/pilot-host.mjs'),
+    'notes/st-compat/acceptance/pilot-host.mjs is not in the key-file scan; the notes/ root was dropped',
+  )
+  // And the filter's other half: records under notes/ are prose, not readers.
+  assert.ok(![...files].some(path => path.startsWith('notes/') && path.endsWith('.md')), 'notes/ prose is being scanned as source')
+})
+
+test('no source under apps/, packages/, scripts/, qa/ or notes/ reads a key file', () => {
   const files = sources()
 
   // A floor on the population, because the expensive failure of a scan is the

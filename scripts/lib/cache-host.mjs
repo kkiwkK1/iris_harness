@@ -167,6 +167,7 @@ export async function buildHost(dataDir, profile = DEFAULT_PROFILE) {
 
   const captured = []
   const events = []
+  /** @type {import('../../packages/iris-turn/src/driver.ts').StreamFn} */
   const stream = async function* (options) {
     captured.push(options)
     // Refused, not answered: an appended candidate would change the log and the
@@ -193,7 +194,7 @@ export async function buildHost(dataDir, profile = DEFAULT_PROFILE) {
     scriptVariables,
     backups,
     preset: settings.presetBody() ?? DEFAULT_PRESET,
-    ...settings.presetName() === undefined ? {} : { presetName: settings.presetName() },
+    ...settings.presetName() === undefined ? {} : { presetName: /** @type {string} */ (settings.presetName()) },
     presets: new PresetStore(paths.presets),
     broadcast: event => { events.push(event) },
     diagnostics: new DiagnosticBuffer(),

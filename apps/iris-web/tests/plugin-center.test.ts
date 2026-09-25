@@ -59,10 +59,7 @@ test('plugin center renders factual lifecycle, dependency and host-error guidanc
   })
   await wired.store.getState().boot()
 
-  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as {
-    renderPluginCenter: (store: typeof wired.store) => string
-    setLanguage: (language: 'en' | 'zh') => void
-  }
+  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as typeof import('./plugin-center-harness.tsx')
   const render = (): string => harness.renderPluginCenter(wired.store)
 
   const enabled = render()
@@ -135,11 +132,7 @@ test('every failure state, every source badge and the consent page read in both 
   })
   await wired.store.getState().boot()
 
-  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as {
-    renderPluginCenter: (store: typeof wired.store) => string
-    renderConsent: (preview: SystemPluginInstallPreview, lang?: 'en' | 'zh') => string
-    setLanguage: (language: 'en' | 'zh') => void
-  }
+  const harness = await server.ssrLoadModule('/tests/plugin-center-harness.tsx') as typeof import('./plugin-center-harness.tsx')
   harness.setLanguage('en')
 
   const STATES: readonly SystemPluginFailureState[] = [

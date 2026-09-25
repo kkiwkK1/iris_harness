@@ -183,6 +183,17 @@ function chromeBinary(): string | undefined {
   return candidates.find(path => existsSync(path))
 }
 
+/**
+ * `--no-sandbox`, only when `IRIS_CHROME_NO_SANDBOX=1` asks for it.
+ *
+ * For CI runners where the OS refuses Chrome's own sandbox (ubuntu-24.04
+ * restricts the unprivileged user namespaces it needs). The browser only loads
+ * this file's fixtures, but the flag is still opt-in and never a default.
+ */
+function sandboxFlags(): string[] {
+  return process.env['IRIS_CHROME_NO_SANDBOX'] === '1' ? ['--no-sandbox'] : []
+}
+
 /** Serve the built sandbox assets and one host page, with the host's headers. */
 function serveFixture(pageHtml: string): Promise<{ server: Server, port: number }> {
   const server = createServer((req, res) => {
@@ -402,6 +413,7 @@ test(
           '--disable-gpu',
           '--no-first-run',
           '--no-default-browser-check',
+          ...sandboxFlags(),
           `--user-data-dir=${profile}`,
           `--remote-debugging-port=${String(debugPort)}`,
           'about:blank',
