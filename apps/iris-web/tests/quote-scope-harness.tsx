@@ -40,6 +40,8 @@ const HANDLERS = {
   onDelete: () => {},
   onNotify: () => {},
   onExplain: () => {},
+  onBranch: () => {},
+  onOpenBranch: () => {},
 }
 
 /** What a mounted row hands back to the test driving it. */
