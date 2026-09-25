@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 
-import { useIris, useIrisActions } from '../client/provider.tsx'
+import { useDisplayedStream, useIris, useIrisActions } from '../client/provider.tsx'
 import { buttonEventName } from '../sandbox/button-event.ts'
 import { emitToCard } from './card-bus.ts'
 import { FRAME_BAND_VARIABLE, frameBandPixels } from './frame-fit.ts'
@@ -31,8 +31,9 @@ import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
 import { DEFAULT_WINDOW, grow, readingWindow } from './reading-window.ts'
 import { stepReading } from './rail.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+import type { ResolvedButton } from './script-buttons.ts'
 import { useTreeSync } from './TreeMap.tsx'
-import { branchesAt } from './tree-map.ts'
+import { branchesAt, type BranchLink } from './tree-map.ts'
 
 /** How long a floor jumped to is held in place while the rows above it settle. */
 const FLOOR_HOLD_MS = 2500
@@ -52,7 +53,13 @@ const FLOOR_HOLD_MS = 2500
  */
 export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): ReactElement {
   const view = useIris(state => state.view)
-  const stream = useIris(state => state.stream)
+  /*
+   * The live reply at a bounded paint rate, not `state.stream` itself: a delta
+   * per token used to re-render this pane per token. Start, end and abort are
+   * published at once (`client/stream-display.ts`), so Stop, the caret and the
+   * settled row are never late; only growth of the text waits for a paint.
+   */
+  const stream = useDisplayedStream()
   const chatId = useIris(state => state.chatId)
   const booting = useIris(state => state.booting)
   const tree = useIris(state => state.tree)
@@ -77,7 +84,14 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
   const window_ = useMemo(() => readingWindow(all, shown, message => message.turn), [all, shown])
   const messages = window_.visible
   const groups = useMemo(() => groupByTurn(messages), [messages])
-  const navigation = useMemo(() => turnNavigation(all), [all])
+  /*
+   * From the settled view, not from `all`: the rail's previews are excerpts of
+   * each turn, and re-excerpting the whole conversation for every paint of the
+   * streaming reply re-rendered the navigator with it. The streaming turn's
+   * row keys are the settled ones (`withStream`), so the anchors are the same;
+   * its reply preview catches up when the reply settles.
+   */
+  const navigation = useMemo(() => turnNavigation(view?.messages ?? []), [view])
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null)
   const pendingNavigation = useRef<string | null>(null)
 
@@ -85,22 +99,40 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
    * What the frame budget plans over: the mounted rows, in conversation order.
    *
    * Derived here rather than in the provider because this is where the window is
-   * known. Only the text and the role matter to it, so a row whose reasoning or
-   * swipe index changed does not re-plan — planning claims blocks over every
-   * mounted message, which is the one part of this that is not free.
+   * known. Planning claims blocks over every mounted message, which is the one
+   * part of this that is not free, so it is planned from the **settled view**,
+   * whose identity holds still while a reply streams. It used to be derived
+   * from the rows with the stream folded in, which change identity on every
+   * delta — so every delta re-claimed every floor and handed every interface a
+   * new budget context, and the whole window re-rendered per token (review
+   * finding `streaming-render-path`).
+   *
+   * The streaming turn's reply plans as **empty text**: a streaming row builds
+   * no frames (`MessageInterfaces`), and the settled text it is replacing — the
+   * old reading, during a regenerate — is not on screen. Only the stream's
+   * identity (live, turn, role) is read here, never its text, so a delta does
+   * not re-plan. The window is the settled view's, so while a new turn streams
+   * it can reach one floor further back than the rows on screen; that floor is
+   * the oldest, and the budget spends from the newest, so at most it is
+   * rationed a share it does not use until the reply settles.
    *
    * Each row's text gets the same settled stray-fence repair the row itself
    * applies (`MessageInterfaces`), so the budget plans over the text the view
    * actually renders — a stray fence that used to hide a bare-HTML region from
    * the claim would otherwise be rationed by a budget that never saw it.
    */
+  const live = stream !== undefined
+  const streamTurn = stream?.turn
+  const streamIsUser = stream?.role === 'user'
   const budgeted = useMemo<BudgetedFloor[]>(
-    () => messages.map(message => ({
+    () => readingWindow(view?.messages ?? [], shown, message => message.turn).visible.map(message => ({
       id: message.id,
-      text: message.streaming === true ? message.text : repairStrayFences(message.text),
+      text: live && !streamIsUser && message.role === 'assistant' && message.turn === streamTurn
+        ? ''
+        : repairStrayFences(message.text),
       isUser: message.role === 'user',
     })),
-    [messages],
+    [view, shown, live, streamTurn, streamIsUser],
   )
 
   /*
@@ -361,6 +393,39 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
     return () => window.removeEventListener('keydown', onKey)
   }, [actions, generating, target?.turn, target?.count, target?.index])
 
+  /*
+   * The composer's callbacks, stable so `memo(Composer)` holds while a reply
+   * streams. `onOpenSettings` comes from the shell as an inline arrow, so it
+   * is read through a ref rather than depended on.
+   */
+  const openSettings = useRef(onOpenSettings)
+  openSettings.current = onOpenSettings
+  const onSend = useCallback((text: string) => void actions.send(text), [actions])
+  const onStop = useCallback(() => void actions.abort(), [actions])
+  const onPreviewPrompt = useCallback(() => setExplaining({ turn: undefined }), [])
+  const onComposerSettings = useCallback(() => openSettings.current(), [])
+  const onPressButton = useCallback((button: ResolvedButton) => {
+    /*
+     * The button id **is** the event name, computed here and computed
+     * again by the card, with nothing checking that the two agree. When
+     * they do not, the card's handler is simply never called — no error,
+     * no warning, a button that does nothing. That is why the name comes
+     * from one shared builder over one shared hash rather than being
+     * assembled at either end.
+     */
+    const event = buttonEventName(button.scriptId, button.name)
+    if (emitToCard(event)) return
+
+    /*
+     * Nothing was listening because no card is running — not the same as a
+     * card that ignored it, and only this one is worth saying. A press that
+     * vanishes silently is the failure this whole seam exists to avoid.
+     */
+    actions.addCardReport(
+      `button "${button.name}" (${button.scriptName}) was pressed while no card scripts are running`,
+    )
+  }, [actions])
+
   const handlers: MessageHandlers = useMemo(
     () => ({
       onSwipe: (turn, index) => void actions.swipe(turn, index),
@@ -380,6 +445,25 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
   )
   /** The lineage, when it is this conversation's: the badges read it. */
   const lineage = chatId !== undefined && tree?.chats.some(node => node.chatId === chatId) === true ? tree : undefined
+  /*
+   * The ⑂N badges, one array per floor for as long as the lineage holds.
+   * `branchesAt` builds a fresh array on every call, and a fresh prop is a row
+   * that `memo(Message)` has to re-render — every row, on every paint of the
+   * streaming reply.
+   */
+  const branchCache = useMemo(
+    () => new Map<number, readonly BranchLink[]>(),
+    // `lineage` and `chatId` are what the answer is a function of; neither is
+    // read in the body, which only makes the empty cache they invalidate.
+    [lineage, chatId],
+  )
+  const branchesFor = (floor: number): readonly BranchLink[] => {
+    const cached = branchCache.get(floor)
+    if (cached !== undefined) return cached
+    const found = chatId === undefined ? [] : branchesAt(lineage, chatId, floor)
+    branchCache.set(floor, found)
+    return found
+  }
 
   if (chatId === undefined || view === undefined) {
     return (
@@ -507,7 +591,7 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
                     message={message}
                     canRegenerate={message.id === retryId && !generating}
                     handlers={handlers}
-                    branches={message.streaming === true ? undefined : branchesAt(lineage, chatId, message.id)}
+                    branches={message.streaming === true ? undefined : branchesFor(message.id)}
                     canBranch={!generating}
                   />
                 ))}
@@ -522,31 +606,11 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
       <Composer
         chatId={chatId}
         generating={generating}
-        onSend={text => void actions.send(text)}
-        onStop={() => void actions.abort()}
-        onPreviewPrompt={() => setExplaining({ turn: undefined })}
-        onOpenSettings={onOpenSettings}
-        onPressButton={button => {
-          /*
-           * The button id **is** the event name, computed here and computed
-           * again by the card, with nothing checking that the two agree. When
-           * they do not, the card's handler is simply never called — no error,
-           * no warning, a button that does nothing. That is why the name comes
-           * from one shared builder over one shared hash rather than being
-           * assembled at either end.
-           */
-          const event = buttonEventName(button.scriptId, button.name)
-          if (emitToCard(event)) return
-
-          /*
-           * Nothing was listening because no card is running — not the same as a
-           * card that ignored it, and only this one is worth saying. A press that
-           * vanishes silently is the failure this whole seam exists to avoid.
-           */
-          actions.addCardReport(
-            `button "${button.name}" (${button.scriptName}) was pressed while no card scripts are running`,
-          )
-        }}
+        onSend={onSend}
+        onStop={onStop}
+        onPreviewPrompt={onPreviewPrompt}
+        onOpenSettings={onComposerSettings}
+        onPressButton={onPressButton}
       />
       </RegionBoundary>
       <PromptPanel

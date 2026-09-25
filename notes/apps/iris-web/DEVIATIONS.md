@@ -9184,7 +9184,7 @@ JS。页面那半从 `document` 的 module script 读（`doctor-page.ts` 的 `bo
    **同一张卡拒绝脚本后，同样的流零停顿**，页面与宿主同步到毫秒级。停顿期间的 CPU 剖面：React
    连续渲染，`MessageInterfaces` → `claimMessageSurfaces` / `scanCodeBlocks`、`repairStrayFences`、
    `splitHtmlRegions`、`locateBodyTag`，以及 `PresetPanel`、`Menu` 都在反复渲染（整棵树在重渲，
-   37 s 剖面里 `MessageInterfaces` 独占 12 s）。**这条停顿本 PR 没有修**，是下一个任务（见「何时重开」）。
+   37 s 剖面里 `MessageInterfaces` 独占 12 s）。**这条停顿本 PR 没有修**，是下一个任务（见「何时重开」）。（2026-09-26 修了，机制与读数见 §131：整棵树随每条 notice 和每个 delta 重渲。）
    主人那一轮的宿主日志与此吻合：00:00:25 生成结束，没有任何套接字错误（`terminate()` 不发 `error`），
    00:01:18 / 00:01:19 两行 `run 黑兽-…:3/4 ended, but no injection…`——**这一对正是重连的签名**：
    `beginSystemPluginSession` 把 `systemPlugins` 清空、`refreshSystemPlugins` 再填回，卡脚本的 effect
@@ -9487,3 +9487,82 @@ reads back its own system row as `assistant`. None is known.
 
 **何时重开：**(a) 若要按上游的推理模板（`reasoning.js` 的 prefix/suffix）或卡片自己的标记（如 `</konatan_planning~>`）自动切分推理与正文：
 那是上游 `auto_parse` 的领域，Iris 目前没有，需要另开一项并对齐上游的设置。(b) 若主人要「一键转成正文、不经编辑框」。
+
+## 131. 流式期间只重渲流式那一行；「光标在闪、字不来」是页面主线程被整棵树的重渲占满，不是丢帧
+
+**Kind:** Iris-only fix（主人 2026-09-26 的两条报告，卡 黑兽；review 发现 `streaming-render-path`）。宿主那半是
+host 账本 §101 的补记（`pageStallMs`）。编号待协调者重排。移植了未合并的本地提交 930efd7（`codex/performance-stream-ui`，
+「perf(web): bound streaming renders and defer frame scans」）里对的部分：`memo(Message)`、限速的流式显示、从落定 view
+规划的帧预算、流式期间给控制器空文本。
+
+**上游对照。** SillyTavern 流式时每个 token 重排整条消息（`messageFormatting` 无节流），但只动那一条：别的楼是已经
+在 DOM 里的静态 HTML，不参与。Iris 的别的楼是 React 组件，会不会跟着重渲取决于属性是否稳定——这一条让它们不跟。
+
+**测到的（`qa/stream-perf-acceptance.mjs`，端口 8801，数据目录拷贝，假端点每 50 ms 一块，黑兽 31 楼、页面上 21 个 iframe；
+React 提交由 `__REACT_DEVTOOLS_GLOBAL_HOOK__` 桩计数，CPU 由 CDP 采样剖析，以下都是「每个 delta」）：**
+
+| | 修前·打开对话 6 s 内开始流 | 修前·稳态 | 修后（3 轮） |
+| --- | --- | --- | --- |
+| React 提交 / delta | 13.8 | 2.1 | 1.6–1.7 |
+| 实际执行的组件 / delta | 10 558 | 258–271 | 36–38 |
+| 非流式楼的 `Message` 重渲 / delta | 429.5（31 楼 × 13.8） | 33.9–35.9 | **0** |
+| 非流式楼的 `MessageInterfaces` 重渲 / delta | 429.7 | 33.9–36.0 | **0**（每条流 ~2 次整窗重规划：开始与结束） |
+| `Composer` 重渲 / 条流（116 delta） | 1 559 | 121 | **0** |
+| 主线程忙 / delta | 166.9 ms | 15.5–16.4 ms | 1.5–2.4 ms |
+| 主线程最长空档 | 13.9 s | 0 | 0 |
+| 宿主 `stream.end` 之后多久落定 | 14.1 s | 1 ms | 1–210 ms |
+| 非流式楼 iframe 新建 / 发来的消息 | 9 / 1 597 | 3 / 19 | 8 / 38（首轮，是开场帧自己的引导，不是 delta 引起的）|
+
+**两条报告是同一个机制。** 第一行那一列：打开对话后几秒内开始流，`App` 这个根组件重渲了 1 435 次——每一次都是整棵树
+（边栏列表、常驻的设置页、每一楼）。起因：正在引导的界面帧（4、6、26 楼）每个都发来 476 条 CSP 拒绝（`font-src`，
+`fontsapi.zeoseven.com` 的网络字体），每条拒绝经 `frameCallbacks.onBlocked` → `notify` 合并进同一条 notice、计数加一，而
+`App` 订阅了 `state.notice`。再叠上每个 delta 本身的整窗重渲（`withStream` 每个 delta 给出新数组 → 预算重新认领每一楼 →
+context 变了 → 每个 `MessageInterfaces` 重渲并重跑 `repairStrayFences` / `claimMessageSurfaces`；`Message` 与 `Composer` 没有
+memo），主线程 21 s 的流里忙了 19.4 s。页面这时收着帧却处理不了：光标是合成器动画，照闪；字不来；宿主早写完了，刷新就是
+完整的——**正是主人描述的样子**。
+
+**为什么 dc5662d 的对账没救它（按任务书的五个候选）：**
+
+1. 看门狗没触发——**它触发了，但它是主线程上的计时器**：主线程被占着，它和它要处理的帧排在同一条队里。
+2. `stream.end` 到了没被采用——不成立：页面一旦处理到它就落定（修前 5.8–43 s 后都落定了）。
+3. EventHub 8 MiB 慢客户端上限——不成立：宿主日志只有一次**心跳**断开，`0 bytes were waiting`，没有 backpressure。
+4. **主线程饥饿——成立，而且会自我放大。** 多标签页 + 强制断线复现（`MODE=stall`，3 个标签页，4 轮 × ~400 delta，每轮在
+   标签页 0 处理到第 133 个 delta 时从页面侧断开）：修前标签页 0 在宿主 `stream.end` 之后 5.8 / 26.9 / 29.9 / 43.2 s 才落定，
+   最长空档 19.0 / 32.5 / 39.4 / 59.1 s，逐轮变长；页面处理到第 133 个 delta 是发送后 31–68 s（修后 8.5–9.0 s，与宿主同步）；
+   宿主以心跳无回应断开过它一次。放大的回路：断线 → 重连 → `beginSystemPluginSession` 重建每一楼的界面帧 → 每个帧再引导一次、
+   再发 476 条拒绝 → 更长的饥饿 → 下一次心跳断开。
+5. 答复被「事件通道赢」的守卫丢掉——不成立：宿主记下了 resync note（答复被采用了）；守卫丢掉的只是帧仍在流动时的那几次。
+
+**修法。**
+
+- **只有流式那一行跟着 delta 走。** `ChatPane` 读 `useDisplayedStream()`（`client/stream-display.ts`）：同一条回复的增长
+  每 32 ms 最多画一次（回复超过 16 / 64 KiB 时 100 / 200 ms），而开始、结束、中止、换 turn、换宿主铸的 key、换角色或名字、
+  文本不是在原文上增长——这些**立即**发布。看门狗、resync 守卫、卡片的事件 tap 仍读 `state.stream` 本身，不受限速影响。
+  `Message`、`Composer` 用 `memo`；`Composer` 的五个回调稳定（`onOpenSettings` 经 ref）；「⑂N」徽标数组按楼缓存；
+  回合导航从落定 view 取。`withStream` 的宿主铸 key 规则未动（流式行与它将落定成的那一行同 key，落定时原地更新）。
+- **帧预算从落定 view 规划。** 只读流的身份（在流、turn、角色），不读文本，所以 delta 不重规划；流式的那条回复按空文本
+  规划（它不建帧，被它替换的旧读法也不在屏幕上）。
+- **流式期间控制器拿空文本。** 之前控制器每个 delta 重认领整条增长中的回复，碰巧闭合的半截块就会建帧；落定时认领一次。
+  `repairStrayFences`、`splitBodyTag`、`claimMessageSurfaces` 在行内按文本 memo。
+- **notice 只重渲 notice 栏。** `App` 不再订阅 `state.notice`，交给新的 `NoticeBar` 组件（计时自动消失的 effect 一起搬过去）。
+  修后同一场断线复现里拒绝照样发来（`NoticeBar` 每轮重渲 2 857–4 764 次），重渲的只是 `NoticeBar` 与 `NoticeLog`，主线程最长空档 ≤ 0.7 s。
+- **留痕（宿主要能在现场分辨）。** 回复显示为生成中时，页面每 500 ms 量一次自己计时器的迟到量，随 `chat.resync` 发
+  `pageStallMs`（含 resync 那一刻仍在进行的停顿）；≥ 1 s 时宿主 note 末尾写 `its main thread had been blocked for up to N s
+  while the reply streamed`。原先现场只有「心跳断开」+「重连后 resync」两行，与真断网无法区分。
+
+**修后的同一场复现：** 3 个标签页、4 轮，全部在宿主 `stream.end` 之后 1–85 ms 落定，最长空档 ≤ 0.7 s，没有心跳断开，没有 resync note。
+
+**测试。**
+
+| 测试 | 钉的是 | 红过（改坏什么） |
+| --- | --- | --- |
+| `apps/iris-web/tests/stream-render-mount.test.ts`（真 `ChatPane`，jsdom，React 提交计数） | 40 个快于绘制间隔的 delta：非流式行 0 次重渲、其 `MessageInterfaces` 0 次、`Composer` 0 次、提交数 < delta/2；`stream.start` 与 `stream.end` 在同一个 act 里就上屏 | 去掉 `memo(Message)` → 400 次行重渲，红；去掉 `memo(Composer)` → 13 次，红；`ChatPane` 改回读 `state.stream` → 40 次提交，红 |
+| `apps/iris-web/tests/stream-display.test.ts`（移植并扩充 930efd7 的） | 增长合并成一次绘制；结束/新 turn/新 key/角色/推理被替换立即发布；最后一个订阅者离开后快照回到 store | — （新模块） |
+| `apps/iris-web/tests/notice-bar.test.ts` | `state.notice` 只有一个选择器，在 `NoticeBar` 里，`App` 的函数体不读它 | 对旧 `App.tsx` 跑 → 红 |
+| `apps/iris-web/tests/stream-resync.test.ts` 新增一条 | 30 s 不跑任务后重连：`pageStallMs` 在 29–30 s；新的一条回复从 0 算 | 只报已测到的停顿、不算进行中的 → 0，红 |
+| `packages/iris-app-service/tests/chat-resync.test.ts` 新增一条 + 原「落定」一条加断言 | 带 `pageStallMs` → note 有那一句；不带 → 没有 | — |
+| `apps/iris-web/tests/stray-fences.test.ts` | 源码断言按新形状重述（memo 后的同一个闸；控制器流式期间拿空文本；预算读落定 view 且修复同一文本） | — |
+
+**何时重开：**(a) 重连时 `beginSystemPluginSession` 重建每一楼的界面帧（上面第 4 条的放大回路）：若修后仍见重连后的引导风暴
+拖慢页面，让重建只在插件修订号真的变了时发生。(b) 同一张卡的拒绝在引导时按字体逐条上报（每帧 476 条）：`NoticeLog` 每条都
+重渲一次，若它变重，合并同帧同主机同指令的拒绝。(c) `pageStallMs` 在修后的现场仍常见：说明还有别的主线程大户，按 note 的时刻查。

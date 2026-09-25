@@ -126,6 +126,7 @@ test('after the settle, chat.resync answers with the settled reply and no genera
   assert.equal(filed.length, 1, 'the stuck page is on the record once')
   assert.match(filed[0] ?? '', /after its event socket reconnected/)
   assert.match(filed[0] ?? '', new RegExp(`turn ${String(sent.turn)} as generating, which this host had already finished`))
+  assert.doesNotMatch(filed[0] ?? '', /main thread/, 'a page that measured no stall is not said to have had one')
 })
 
 test('a resync from a page that was not stuck files nothing', async (t) => {
@@ -139,4 +140,18 @@ test('a resync from a page that was not stuck files nothing', async (t) => {
   const answer = await f.handlers['chat.resync']({ chatId: f.chatId, reason: 'reconnect' })
   assert.equal(answer.generating, undefined)
   assert.deepEqual(notes(f.diagnostics), [])
+})
+
+test('a stuck page that measured its own main-thread stall has it named in the note', async (t) => {
+  const f = await fixture(t)
+  const sent = await f.handlers['chat.send']({ chatId: f.chatId, text: 'Tell me.' })
+  await f.streaming
+  f.release()
+  await f.ended
+
+  await f.handlers['chat.resync']({ chatId: f.chatId, reason: 'reconnect', streamTurn: sent.turn, pageStallMs: 42_400 })
+  const filed = notes(f.diagnostics)
+  assert.equal(filed.length, 1)
+  assert.match(filed[0] ?? '', /its main thread had been blocked for up to 42 s while the reply streamed/)
+
 })

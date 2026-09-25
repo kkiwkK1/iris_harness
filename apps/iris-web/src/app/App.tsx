@@ -54,7 +54,6 @@ import './interaction.css'
  */
 export function App(): ReactElement {
   const actions = useIrisActions()
-  const notice = useIris(state => state.notice)
   const connected = useIris(state => state.connected)
   // Subscribed so a language switch re-renders the shell's own words. The
   // language itself lives in the i18n module, like the theme lives in its own:
@@ -121,15 +120,6 @@ export function App(): ReactElement {
   useEffect(() => {
     void actions.boot()
   }, [actions])
-
-  // Notices clear themselves. An error a reader has already read is noise, and
-  // one that mattered will happen again the moment they retry.
-  useEffect(() => {
-    // A lasting notice is a report (`/doctor`), dismissed by the reader.
-    if (notice === undefined || notice.lasting === true) return
-    const timer = setTimeout(() => actions.dismissNotice(), notice.kind === 'error' ? 8000 : 3200)
-    return () => clearTimeout(timer)
-  }, [notice, actions])
 
   const importFiles = useCallback(
     async (files: readonly File[]): Promise<void> => {
@@ -206,19 +196,7 @@ export function App(): ReactElement {
         */}
         <SandboxPluginConfirm />
 
-        {notice === undefined ? null : (
-          <div className={`iris-notice iris-notice--${notice.kind}`} role="status" key={notice.seq}>
-            {notice.text}
-            <button
-              type="button"
-              className="iris-notice__dismiss"
-              aria-label={t('dismiss')}
-              onClick={() => actions.dismissNotice()}
-            >
-              ✕
-            </button>
-          </div>
-        )}
+        <NoticeBar />
 
         <div className="iris-stage">
           {/*
@@ -356,6 +334,50 @@ export function App(): ReactElement {
         <div className="iris-scrim" role="presentation" onClick={() => foldSidebar(true)} />
       )}
 
+    </div>
+  )
+}
+
+/**
+ * The notice bar: the one place that subscribes to `state.notice`.
+ *
+ * Its own component rather than a selector in `App`, because a notice is the
+ * most frequent state change a card can cause and `App` renders the whole
+ * shell. Measured on 黑兽 (qa/stream-perf-acceptance.mjs): three interface
+ * frames reporting a refused image ~25 times a second each merged into one
+ * notice whose count moved every time, and every move re-rendered the whole
+ * tree — sidebar lists, settings pages and every message row — 1 435 times in
+ * one 20-second stream, which starved the main thread for 14–17 s while the
+ * reply's frames queued behind it.
+ * @returns the bar, or nothing when no notice is up.
+ */
+function NoticeBar(): ReactElement | null {
+  const notice = useIris(state => state.notice)
+  const actions = useIrisActions()
+  // Subscribed so a language switch re-renders the dismiss label.
+  useLanguage()
+
+  // Notices clear themselves. An error a reader has already read is noise, and
+  // one that mattered will happen again the moment they retry.
+  useEffect(() => {
+    // A lasting notice is a report (`/doctor`), dismissed by the reader.
+    if (notice === undefined || notice.lasting === true) return
+    const timer = setTimeout(() => actions.dismissNotice(), notice.kind === 'error' ? 8000 : 3200)
+    return () => clearTimeout(timer)
+  }, [notice, actions])
+
+  if (notice === undefined) return null
+  return (
+    <div className={`iris-notice iris-notice--${notice.kind}`} role="status" key={notice.seq}>
+      {notice.text}
+      <button
+        type="button"
+        className="iris-notice__dismiss"
+        aria-label={t('dismiss')}
+        onClick={() => actions.dismissNotice()}
+      >
+        ✕
+      </button>
     </div>
   )
 }

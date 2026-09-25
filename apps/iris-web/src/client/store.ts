@@ -293,6 +293,14 @@ export const NOTICE_LOG_LIMIT = 50
  */
 export const STREAM_SILENCE_MS = 20_000
 
+/**
+ * How often the page checks its own main thread while a reply is live, in
+ * milliseconds. A stall is the lateness of this timer, so anything shorter
+ * than one period is invisible — which is the intent: only a stall a reader
+ * could see (seconds) is worth a clause in the host's note.
+ */
+export const STALL_PROBE_MS = 500
+
 /** Everything the interface renders from. */
 /**
  * One line the panel keeps about a card, and the run it came from.
@@ -4285,6 +4293,41 @@ export function createIrisStore(
   let lastStreamFrameAt = Date.now()
   let silenceTimer: ReturnType<typeof setTimeout> | undefined
   let resyncing: Promise<void> | undefined
+
+  /*
+   * **How long this page's own main thread was blocked** while a reply showed
+   * as generating (web §131), sent with the resync so the host's note can say
+   * so. Measured 2026-09-26 on 黑兽: the stuck reply of that day was not a lost
+   * frame at all but a page too busy to process the frames it had — 14–59 s
+   * without running a task — and from the reader's chair, and from every
+   * record the host kept, that was indistinguishable from a dropped socket.
+   *
+   * A timer that re-arms itself every {@link STALL_PROBE_MS} and records how
+   * late it fired. Only while a reply is live, so an idle page runs nothing.
+   * The stall still in progress at the moment of a resync is counted too: a
+   * reconnect's handler can run before the probe that would have seen it.
+   */
+  let stallProbe: ReturnType<typeof setTimeout> | undefined
+  let stallTick = Date.now()
+  let longestStall = 0
+  const probeStall = (): void => {
+    const now = Date.now()
+    longestStall = Math.max(longestStall, now - stallTick - STALL_PROBE_MS)
+    stallTick = now
+    stallProbe = setTimeout(probeStall, STALL_PROBE_MS)
+  }
+  const watchStall = (live: boolean): void => {
+    if (live && stallProbe === undefined) {
+      longestStall = 0
+      stallTick = Date.now()
+      stallProbe = setTimeout(probeStall, STALL_PROBE_MS)
+    } else if (!live && stallProbe !== undefined) {
+      clearTimeout(stallProbe)
+      stallProbe = undefined
+    }
+  }
+  const pageStallMs = (): number =>
+    Math.max(0, Math.round(Math.max(longestStall, Date.now() - stallTick - STALL_PROBE_MS)))
   const resync = (reason: 'reconnect' | 'silence'): Promise<void> => {
     if (resyncing !== undefined) return resyncing
     resyncing = (async () => {
@@ -4299,7 +4342,11 @@ export function createIrisStore(
           reason,
           ...stream === undefined
             ? {}
-            : { streamTurn: stream.turn, silentMs: Math.max(0, Math.round(Date.now() - lastStreamFrameAt)) },
+            : {
+                streamTurn: stream.turn,
+                silentMs: Math.max(0, Math.round(Date.now() - lastStreamFrameAt)),
+                pageStallMs: pageStallMs(),
+              },
         })
       } catch {
         // A host that is down right now: the reconnect, or the next silence,
@@ -4337,6 +4384,7 @@ export function createIrisStore(
     if (state.stream === previous.stream) return
     lastStreamFrameAt = Date.now()
     armSilence()
+    watchStall(state.stream !== undefined)
   })
 
   let wasConnected = client.connected
@@ -4371,6 +4419,7 @@ export function createIrisStore(
       offEvents()
       offSilence()
       if (silenceTimer !== undefined) clearTimeout(silenceTimer)
+      watchStall(false)
     },
   }
 }

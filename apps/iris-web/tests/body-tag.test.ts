@@ -92,7 +92,8 @@ test('the row renders the split at the one seam everything already reads', () =>
    */
   const row = readFileSync(fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)), 'utf8')
   assert.match(row, /const bodyTag = useSyncExternalStore\(subscribeBodyTag, getBodyTag, getBodyTag\)/, 'the tag name is a live preference, not a constant frozen at boot — and the render check renders in an environment React treats as a server, where the getter must be passed explicitly')
-  assert.match(row, /const leak = splitBodyTag\(display, bodyTag\)/, 'the split reads the repaired text, after the fence ruling')
+  // Memoized on its two inputs since `streaming-render-path` (web §131); the split is the same call.
+  assert.match(row, /const leak = useMemo\(\(\) => splitBodyTag\(display, bodyTag\), \[display, bodyTag\]\)/, 'the split reads the repaired text, after the fence ruling')
   assert.match(row, /const bodyText = leak\.body \?\? display/, 'an untagged message is the identity — the compatibility zero')
   assert.match(row, /leak\.tagged && leak\.head\.trim\(\) !== '' && <BodyLeak text=\{leak\.head\}/, 'the head scaffolding renders folded, and only when there is any')
   assert.match(row, /leak\.tagged && leak\.tail\.trim\(\) !== '' && <BodyLeak text=\{leak\.tail\}/, 'the tail scaffolding renders folded at the far edge')

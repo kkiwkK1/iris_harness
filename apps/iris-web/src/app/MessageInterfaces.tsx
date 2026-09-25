@@ -14,7 +14,7 @@
  *
  * @module iris-web/app/MessageInterfaces
  */
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
 
 import type { MessageView, ScriptContext } from '@iris/protocol'
 
@@ -226,7 +226,14 @@ export function MessageInterfaces({
    * fallback — reads this one string, so no two of them derive surfaces from
    * different texts.
    */
-  const display = streaming ? text : repairStrayFences(text)
+  /*
+   * Memoized on the text: this row re-renders on subscriptions that have
+   * nothing to do with its text (the plugin snapshot, the grant, the budget),
+   * and the repair and the claim below are the two passes over a whole message
+   * that are not free — on a card with heavy interface markup they were most of
+   * a streaming delta's cost, paid again by every settled row per token.
+   */
+  const display = useMemo(() => (streaming ? text : repairStrayFences(text)), [streaming, text])
 
   /*
    * The body tag: a preset may teach the model to wrap its prose in a wrapper
@@ -267,7 +274,7 @@ export function MessageInterfaces({
     () => pluginStyleRevision(chatId),
     () => pluginStyleRevision(chatId),
   )
-  const leak = splitBodyTag(display, bodyTag)
+  const leak = useMemo(() => splitBodyTag(display, bodyTag), [display, bodyTag])
   const bodyText = leak.body ?? display
   const currentMvuEnabled =
     ready !== undefined
@@ -288,7 +295,12 @@ export function MessageInterfaces({
     // and the instance numbers it builds frames for must be the ones the splice
     // below places slots for. Two texts here is two claims, and a card whose
     // panels sit outside the wrapper would have the controller build nothing.
-    text: display,
+    // Empty while the reply streams: nothing is rendered as an interface until
+    // it settles (below), and handing the controller the growing text made its
+    // effect re-claim the whole reply per delta — and build a frame for every
+    // partial block that happened to close. It claims once, when `display`
+    // becomes the settled text.
+    text: streaming ? '' : display,
     networkGranted,
     refusedInstances,
     gate,
@@ -542,14 +554,14 @@ export function MessageInterfaces({
    * interface rebuilt per token is not a feature, and a half-arrived block shown
    * as source is honest about what has come so far.
    */
-  const { blocks, refused, styles, scripts } = streaming
+  const { blocks, refused, styles, scripts } = useMemo(() => streaming
     ? {
         blocks: [],
         refused: [] as readonly string[],
         styles: [] as readonly MessageStyle[],
         scripts: [] as readonly { start: number, end: number }[],
       }
-    : claimMessageSurfaces(display)
+    : claimMessageSurfaces(display), [streaming, display])
 
   /*
    * An unclosed region is reported, not swallowed.

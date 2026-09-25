@@ -2343,7 +2343,7 @@ export class IrisAppService {
        * after the one await, so no settle can land between them: a page told
        * "not generating" is holding a view that already contains the reply.
        */
-      'chat.resync': async ({ chatId, reason, streamTurn, silentMs }) => {
+      'chat.resync': async ({ chatId, reason, streamTurn, silentMs, pageStallMs }) => {
         const entry = await chats.open(chatId)
         const view = this.#viewOf(entry)
         const turn = entry.generating ? entry.pending?.turn : undefined
@@ -2351,12 +2351,22 @@ export class IrisAppService {
           const gap = reason === 'reconnect'
             ? 'after its event socket reconnected'
             : `after ${String(Math.round((silentMs ?? 0) / 1000))} s without a stream frame`
+          /*
+           * The page's own main-thread stall, when it measured one worth
+           * naming (web §131). A page blocked for longer than the heartbeat is
+           * dropped by this host (rpc-host §3) and reconnects, so without this
+           * clause a starved page and a lost network read identically here.
+           */
+          const stall = pageStallMs !== undefined && pageStallMs >= 1000
+            ? `; its main thread had been blocked for up to ${String(Math.round(pageStallMs / 1000))} s while the reply streamed`
+            : ''
           this.#report(
             `the page resynced this chat ${gap}: it was still showing turn ${String(streamTurn)} as generating,`
             + (turn === undefined
               ? ' which this host had already finished'
               : ` while this host is generating turn ${String(turn)}`)
-            + '; it took the settled view instead of waiting for a stream.end it had missed',
+            + '; it took the settled view instead of waiting for a stream.end it had missed'
+            + stall,
             {
               kind: 'host',
               grade: 'note',

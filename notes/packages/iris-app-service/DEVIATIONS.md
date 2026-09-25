@@ -9778,6 +9778,13 @@ rpc-transport.test.ts` 的 `PROBES` 表加了一行 `'debug.doctor': {}`——�
 补发，这个方法只留给补发窗口之外。(c) 这条 note 的次数在主线程停顿（web §124）修好之后仍然可观：
 说明断档另有来源，要从它的 `reason` 分布查起。
 
+**2026-09-26 补一个参数：`pageStallMs?`（web §131）。** 页面在回复显示为生成中期间自己测到的主线程最长停顿
+（一个 500 ms 自重排计时器的迟到量，含 resync 那一刻仍在进行的停顿）。≥ 1 s 时 note 末尾加一句
+`; its main thread had been blocked for up to N s while the reply streamed`。原因：2026-09-26 在 黑兽 上
+复现的「卡住」不是丢帧，是页面忙到处理不了手里的帧（14–59 s 不跑任务），而宿主原先记下的两行——心跳断开、
+重连后 resync——与真断网一模一样。有了这一句，现场的 note 就能区分两者。`tests/chat-resync.test.ts` 新增一条：
+带 `pageStallMs: 42_400` → note 含 `blocked for up to 42 s`；原有「落定」一条改为同时断言不带它时没有这一句。
+
 ## 102. Stop 也停卡片的侧请求；预压缩在对话的占用之内
 
 **Kind:** Iris upgrade（主人裁定 4，2026-09-25）。编号待协调者重排。

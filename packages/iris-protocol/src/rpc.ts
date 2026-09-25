@@ -415,6 +415,14 @@ export const requestSchemas = {
     streamTurn: z.number().int().nonnegative().optional(),
     /** How long the page had heard no stream frame, for the note. */
     silentMs: z.number().int().nonnegative().max(86_400_000).optional(),
+    /**
+     * The longest the page's own main thread went without running a task
+     * while this reply showed as generating, for the note. A page too busy to
+     * process the frames it has looks, from the reader's side, exactly like a
+     * page whose frames never came; this is what tells the two apart in the
+     * field (web §131).
+     */
+    pageStallMs: z.number().int().nonnegative().max(86_400_000).optional(),
   }),
   /**
    * Delete one conversation.
