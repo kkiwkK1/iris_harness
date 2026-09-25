@@ -467,7 +467,7 @@ const PROBES: { [M in RpcMethod]: RpcRequest<M> } = {
   },
   'script.deleteChatMessages': { chatId: 'no-such-chat', messageIds: [0] },
   'script.getPreset': { name: 'in_use' },
-  'script.replaceScriptButtons': { characterId: 'no-such', scriptId: 'no-such', buttons: [] },
+  'script.replaceScriptButtons': { chatId: 'no-such-chat', scriptId: 'no-such', buttons: [] },
   'script.evalTemplate': { chatId: 'no-such-chat', content: 'x' },
   // Named world books. The probes name nothing real on purpose: reachability is
   // the property under test, and a not-found answer proves the handler ran just

@@ -1231,7 +1231,11 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       return
     }
 
-    void host.call('replaceScriptButtons', { characterId, scriptId: id, buttons: next }).then(
+    // No `characterId` on the wire: the shell fills the frame's `chatId`, and
+    // the host derives the character from that chat. The id above is only the
+    // "is a card open at all" check; sending it would make it an address, and
+    // an address the frame chooses is one it could aim at another card.
+    void host.call('replaceScriptButtons', { scriptId: id, buttons: next }).then(
       undefined,
       (error: unknown) => {
         host.reportFault(

@@ -967,8 +967,9 @@ test('the script-button members are all answered, and none of them reports a gap
   replace('s1', [{ name: 'a', visible: true }])
 
   assert.deepEqual(calls.map(call => call.method), ['replaceScriptButtons'])
+  // No `characterId`: the shell fills the frame's chat and the host derives
+  // the character from it, so a frame has no address to aim elsewhere.
   assert.deepEqual(calls[0]?.params, {
-    characterId: 'char',
     scriptId: 's1',
     buttons: [{ name: 'a', visible: true }],
   })
@@ -1042,7 +1043,6 @@ test('a button writer accepts the one-argument shape MVU actually uses', () => {
 
   assert.equal(calls.length, 1, 'the one-argument call must be honoured')
   assert.deepEqual(calls[0]?.params, {
-    characterId: 'char',
     // Defaulted to the running script, which is what the omitted argument means.
     scriptId: 's1',
     buttons: [{ name: '开始', visible: false }],
