@@ -8,8 +8,11 @@ user has installed and enabled.
 A different thing from `@iris/macro`'s `{{…}}`. Macros substitute text; this
 evaluates programs.
 
-**Off unless asked for.** The composition ships `templates: false`; `IRIS_TEMPLATES=1`
-turns it on. Containment is not a reason to opt someone in.
+**Off unless asked for.** In the product this engine is the builtin plugin-center
+row "Iris EJS templates" (`iris-templates`, `packages/iris-app-service/src/plugins/template-engine.ts`),
+off by default and enabled through a risk confirmation; the retired `IRIS_TEMPLATES=1`
+only seeds that row once for an operator who used it. Containment is not a reason to
+opt someone in.
 
 ## Why it exists
 

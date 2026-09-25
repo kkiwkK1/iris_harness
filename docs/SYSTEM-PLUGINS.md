@@ -100,11 +100,13 @@ This supersedes the static-only lifecycle proposed on the unmerged
 future extension hooks must attach to it, not create a second registry.
 
 A definition reaches the catalog by one of three routes, and the registry does
-not assume every row is one of the two builtins:
+not assume every row is one of the builtins:
 
 1. **Shipped with Iris** — `BUILTIN_SYSTEM_PLUGIN_DEFINITIONS`
    (`packages/iris-app-service/src/plugins/builtins.ts`), the seed the runtime
-   is constructed with. For these, install and uninstall mean attaching and
+   is constructed with: Tavern Helper, MVU, and since 2026-09-26 Iris's own EJS
+   template engine (`iris-templates`, `plugins/template-engine.ts`), which ships
+   installed but disabled and is enabled through a risk confirmation. For these, install and uninstall mean attaching and
    detaching an implementation that is already on disk: they download nothing
    and remove no source file from the Iris installation, and uninstall retains
    chats, variable snapshots and preferences, so a builtin can be installed

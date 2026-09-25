@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
+import { RiskConfirmation } from '@deepseek-ai/dsh-client-ui-primitives'
+import { servedStExtensionRow } from '@iris/plugin-web-api'
 
 import type {
   SystemPluginFailureState, SystemPluginInstallPreview, SystemPluginSnapshot,
@@ -55,10 +57,28 @@ const PENDING_KEYS: Record<Operation, StringKey> = {
   reload: 'pluginCenterReloading',
 }
 
+/**
+ * Iris's own EJS engine, the builtin row `iris-templates` on the host
+ * (`packages/iris-app-service/src/plugins/template-engine.ts`). Restated rather
+ * than imported: the app service is a Node package, and this id is a wire
+ * value the host's own tests pin from their side.
+ */
+export const TEMPLATE_ENGINE_ID = 'iris-templates'
+
 /** Catalog rows whose description is the shell's own sentence, not the card's. */
 const DESCRIPTION_KEYS: Record<string, StringKey> = {
   'tavern-helper': 'pluginCenterDescriptionTavernHelper',
   mvu: 'pluginCenterDescriptionMvu',
+  [TEMPLATE_ENGINE_ID]: 'pluginCenterDescriptionTemplateEngine',
+}
+
+/**
+ * Catalog rows whose *name* is the shell's too. Only the template engine: its
+ * whole problem is being mistaken for the ST-Prompt-Template extension, and the
+ * name is the first thing that has to say it is Iris's own, in both languages.
+ */
+const NAME_KEYS: Record<string, StringKey> = {
+  [TEMPLATE_ENGINE_ID]: 'pluginCenterNameTemplateEngine',
 }
 
 /** The badge word for each recorded source. `dev` is marked wherever it appears (§12 ruling 1). */
@@ -200,6 +220,16 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
    * path is opt-in, never assumed.
    */
   const [removeDataFor, setRemoveDataFor] = useState<ReadonlySet<string>>(() => new Set())
+  /*
+   * Ruling 7: enabling the template engine is running card authors' JavaScript
+   * on this machine, so the enable goes through a risk confirmation first —
+   * the card network grant's shape (`ScriptPanel.tsx`): one dialog, a sentence
+   * that says what turns on, an acknowledgement box that gates the confirm.
+   * The acknowledgement resets every time the dialog opens, so a tick from an
+   * earlier, cancelled ask never carries over.
+   */
+  const [confirmingEngine, setConfirmingEngine] = useState<SystemPluginView | undefined>()
+  const [engineAcknowledged, setEngineAcknowledged] = useState(false)
 
   /*
    * Tokens whose transaction is already gone — confirmed, refused (a refused
@@ -261,8 +291,13 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
     : snapshot.plugins.find(plugin => plugin.id === request.id)
   const busy = request !== undefined || transitioning !== undefined
 
-  const run = async (plugin: SystemPluginView, operation: Operation): Promise<void> => {
+  const run = async (plugin: SystemPluginView, operation: Operation, confirmed = false): Promise<void> => {
     if (busy) return
+    if (operation === 'enable' && plugin.id === TEMPLATE_ENGINE_ID && !confirmed) {
+      setEngineAcknowledged(false)
+      setConfirmingEngine(plugin)
+      return
+    }
     const removeData = operation === 'uninstall' && removeDataFor.has(plugin.id)
     setRequest({ id: plugin.id, operation })
     setOperationError(current => current?.id === plugin.id ? undefined : current)
@@ -497,6 +532,22 @@ export function PluginCenter({ active = true }: { active?: boolean } = {}): Reac
       <p>{t('pluginCenterRetained')}</p>
       <p>{t('pluginCenterPermission')}</p>
     </aside>
+    <RiskConfirmation
+      open={confirmingEngine !== undefined}
+      title={t('templateEngineDialogTitle')}
+      description={t('templateEngineDialogBody')}
+      acknowledgeLabel={t('templateEngineDialogAck')}
+      cancelLabel={t('templateEngineDialogCancel')}
+      confirmLabel={t('templateEngineDialogConfirm')}
+      acknowledged={engineAcknowledged}
+      onAcknowledgedChange={setEngineAcknowledged}
+      onCancel={() => { setConfirmingEngine(undefined) }}
+      onConfirm={() => {
+        const target = confirmingEngine
+        setConfirmingEngine(undefined)
+        if (target !== undefined) void run(target, 'enable', true)
+      }}
+    />
   </div>
 }
 
@@ -803,7 +854,22 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
   const description = descriptionKey !== undefined
     ? translate(lang, descriptionKey)
     : copyTables?.[lang]?.description ?? copyTables?.en?.description ?? plugin.description
-  const displayName = copyTables?.[lang]?.displayName ?? copyTables?.en?.displayName ?? plugin.name
+  const nameKey = NAME_KEYS[plugin.id]
+  const displayName = nameKey !== undefined
+    ? translate(lang, nameKey)
+    : copyTables?.[lang]?.displayName ?? copyTables?.en?.displayName ?? plugin.name
+  /*
+   * Both template engines on. The host's rule (`service.ts`, `#applyTemplates`):
+   * while the ST plane serves an enabled extension, that extension expands
+   * prompts and this engine stands down for them. Said on the row, because
+   * the combination is exactly the one the two rows invite, and "I turned on
+   * Iris's engine and nothing changed" is otherwise unanswerable from here.
+   * The served row comes from the same selector the host and the plane use.
+   */
+  const stServed = plugin.id === TEMPLATE_ENGINE_ID && plugin.enabled
+    ? servedStExtensionRow(snapshot.plugins)
+    : undefined
+  const bothEngines = stServed !== undefined && stServed.status === 'enabled'
   const dependencies = plugin.dependencies.map(id => snapshot.plugins.find(row => row.id === id)?.name ?? id)
   const statusId = `iris-plugin-status-${safeId(plugin.id)}`
   const blockedId = `iris-plugin-blocked-${safeId(plugin.id)}`
@@ -857,6 +923,9 @@ function PluginRow({ plugin, snapshot, lang, busy, busyReason, requestError, ass
       <span>{translate(lang, FAILURE_FIX_KEYS[plugin.failure.state])}</span>
       {reinstallable && !recorded ? <span>{translate(lang, 'pluginCenterFailureNoRecord')}</span> : null}
     </p>}
+    {bothEngines ? <p className="iris-plugin__blocked" data-plugin-template-both>
+      {translate(lang, 'pluginCenterTemplateEngineBothOn', { name: stServed.name })}
+    </p> : null}
     {plugin.error === undefined ? null : <p className="iris-plugin__error" role="alert">
       <strong>{translate(lang, 'pluginCenterReportedError')}</strong> {plugin.error}
       <span>{translate(lang, 'pluginCenterFixError')}</span>

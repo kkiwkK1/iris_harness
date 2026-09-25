@@ -61,6 +61,20 @@ const BUNDLED = [
     enabled: true,
     status: 'enabled',
   },
+  {
+    // The host's third builtin (ruling 7): installed, off until someone
+    // confirms it in the plugin center. The fake evaluates no templates either
+    // way; the row is here so the page renders the catalog a real host sends.
+    id: 'iris-templates',
+    name: 'Iris EJS templates',
+    description: 'Iris’s own ST-Prompt-Template-compatible EJS engine.',
+    version: '0.0.0',
+    apiVersion: 1,
+    dependencies: [],
+    installed: true,
+    enabled: false,
+    status: 'disabled',
+  },
 ] satisfies readonly SystemPluginView[]
 
 /**

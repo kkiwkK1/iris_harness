@@ -1931,9 +1931,22 @@ export const en = {
   pluginCenterReportedError: 'Host error:',
   pluginCenterFixError: 'Fix the reported cause, then retry enable or uninstall this plugin.',
   pluginCenterBlocked: 'Disable {names} first.',
-  /** The two bundled plugins whose row is described by the shell, not the card. */
+  /** The bundled plugins whose row is described by the shell, not the card. */
   pluginCenterDescriptionTavernHelper: 'Compatibility APIs and managed script lifetimes for community cards.',
   pluginCenterDescriptionMvu: 'Variable initialization, updates, and replay for compatible cards.',
+  /**
+   * Iris's own EJS engine (ruling 7). Named and described so it cannot be read
+   * as the adopted ST-Prompt-Template extension, which is a different row.
+   */
+  pluginCenterNameTemplateEngine: 'Iris EJS templates',
+  pluginCenterDescriptionTemplateEngine: 'Iris’s own engine for the <% %> prompt templates that ST-Prompt-Template cards use. It is not the ST-Prompt-Template extension: it ships with Iris, and it runs the card author’s JavaScript on this machine, in a contained child process. Off until you turn it on here; a change applies from the next prompt, with no restart.',
+  pluginCenterTemplateEngineBothOn: 'An ST extension ({name}) is enabled too. While it is, that extension expands prompt templates and this engine stands down for prompts, so nothing is evaluated twice; this engine still answers a card’s evalTemplate calls.',
+  /** The risk confirmation in front of enabling it; the network grant's shape. */
+  templateEngineDialogTitle: 'Run card authors’ JavaScript on this machine?',
+  templateEngineDialogBody: 'Turning this on lets the <% %> templates in every card — its fields, its world books, the preset — run as JavaScript whenever a prompt is assembled, on this computer rather than in the browser. Iris contains it: a separate child process with no environment variables and no file writes, a memory ceiling and a time limit, in a realm none of Iris’s own objects reach into. Containment limits what the code can reach; it does not make the code trustworthy, and a template can still change the conversation’s variables. It applies to every card, not only the one open now, and stays on until you turn it off here.',
+  templateEngineDialogAck: 'I understand card authors’ JavaScript will run on this machine, for every card',
+  templateEngineDialogCancel: 'Keep it off',
+  templateEngineDialogConfirm: 'Turn on the engine',
   /** The host-reported runtime status, one wording per state it can be in. */
   pluginCenterStatusNotInstalled: 'Not installed',
   pluginCenterStatusDisabled: 'Disabled',
@@ -3558,6 +3571,16 @@ export const zh: Record<StringKey, string> = {
   /** 目录里这两条由外壳自己描述，而不是转述卡片的。 */
   pluginCenterDescriptionTavernHelper: '为社区卡片提供兼容 API，并管理脚本的运行生命周期。',
   pluginCenterDescriptionMvu: '为兼容卡片提供变量初始化、更新与重放。',
+  /** Iris 自己的 EJS 引擎（裁定 7）。名称与描述都要让人不会把它当成另一行的 ST-Prompt-Template 扩展。 */
+  pluginCenterNameTemplateEngine: 'Iris EJS 模板引擎',
+  pluginCenterDescriptionTemplateEngine: 'Iris 自带的引擎，用来执行 ST-Prompt-Template 卡片使用的 <% %> 提示词模板。它不是 ST-Prompt-Template 扩展：它随 Iris 一起提供，并在这台电脑上、在受限子进程中运行卡片作者的 JavaScript。在这里打开之前一直关闭；开关从下一次组装提示词起生效，无需重启。',
+  pluginCenterTemplateEngineBothOn: '另有一个 ST 扩展（{name}）也已启用。在它启用期间，由它展开提示词模板，本引擎不再处理提示词，因此不会重复求值；卡片调用 evalTemplate 时仍由本引擎应答。',
+  /** 启用前的风险确认，形状与网络授权相同。 */
+  templateEngineDialogTitle: '要在这台电脑上运行卡片作者的 JavaScript 吗？',
+  templateEngineDialogBody: '打开后，每张卡片里的 <% %> 模板——卡片字段、世界书、预设——都会在每次组装提示词时作为 JavaScript 运行，运行在这台电脑上而不是浏览器里。Iris 会限制它：独立的子进程，没有环境变量、不能写文件，有内存上限和时间上限，Iris 自己的对象一个也够不到。限制只约束代码能碰到什么，并不让代码变得可信；模板仍然可以改动对话的变量。它对所有卡片生效，而不只是眼前这张，并在你回到这里关闭之前一直开着。',
+  templateEngineDialogAck: '我知道卡片作者的 JavaScript 将在这台电脑上运行，对所有卡片都是如此',
+  templateEngineDialogCancel: '保持关闭',
+  templateEngineDialogConfirm: '打开引擎',
   /** 宿主回报的运行状态，每种状态一种说法。 */
   pluginCenterStatusNotInstalled: '未安装',
   pluginCenterStatusDisabled: '已停用',

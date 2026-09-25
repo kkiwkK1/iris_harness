@@ -9911,3 +9911,62 @@ Iris 数据目录（74 个 jsonl）两者都是 0。`tests/hidden-and-narrator-r
 - (b) 若要让旁白楼层在线上也是 `role: 'system'`：改 `toMessage`，而且要一起决定深度注入是否也这样发。这是跨提供方的决定（Anthropic 没有对话中段的 system）。
 - (c) 显示侧旁白行上游用 `SLASH_COMMAND` 位置跑正则（`script.js:1792-1793`），Iris 仍按 AI_OUTPUT；需要时在 `views.ts` 把 `narrator` 接到位置上。
 - (d) ST 扩展平面的 `chat` 数组里，隐藏行的 `is_system` 仍是 false，旁白行没有 `extra`；有扩展依赖它时，从 `floorFlags` 补上。
+
+## 105. Iris 的 EJS 引擎从运维开关变成插件中心的内置插件
+
+**Kind:** Upgrade（主人 2026-09-25 裁定 7：运维开关变成界面开关）。编号待协调者重排。
+
+**上游。** SillyTavern 里 `<% %>` 模板由第三方扩展 ST-Prompt-Template 执行，用户在扩展面板里装上、勾选启用，
+关掉就是原文。它在浏览器里跑，没有宿主侧的确认。
+
+**Iris 以前。** 宿主自己的兼容引擎（`@iris/compat-prompt-template`，经 `templates.ts` 在子进程里跑）是一个组合选项，
+由运维在启动前设 `IRIS_TEMPLATES=1` 打开（`apps/iris/cordis.yml`）。插件中心看不到它，页面上也没有任何地方能看出它开没开；
+主人把它和已采纳的上游 ST-Prompt-Template 扩展（ST 平面，`origin: 'st-extension'`）混成了一件事。
+
+**Iris 现在。**
+
+1. **一行内置插件。** 目录里多了第三个内置行 `iris-templates`（`plugins/template-engine.ts`），名字「Iris EJS templates /
+   Iris EJS 模板引擎」，描述里写明它是 Iris 自带的兼容引擎、**不是** ST-Prompt-Template 扩展，并在这台电脑上的受限子进程里运行卡片作者的
+   JavaScript。和 TH、MVU 一样在 `system-plugins.json` 里持久化、有状态、有具名失败。它出厂是**已安装、未启用**
+   （新的 `defaultInstalled` 运行时选项），所以行上是一个开关，不是先「安装」再「启用」两步。
+2. **启用前确认。** 插件中心对这一行的「启用」先弹 `RiskConfirmation`（与卡片网络授权同一个形状：一句说清打开了什么、
+   一个勾选框放行确认按钮、每次打开都重置勾选），取消不发任何请求。只有这一行问；别的行照旧直接启用。
+3. **在场即开关，无需重启。** 服务每次请求都向运行时要这一行的能力（`#templateEngine`）：没有能力就与以前 `templates: false`
+   逐字相同——原文 `<%` 发给模型，`script.evalTemplate` 按名拒绝（句子改成指向插件中心）。有能力就拿一个租约跑，
+   停用会等在途的求值及其写入排空再生效。子进程、空环境、堆上限、realm 隔离、已记录的围栏都没动：这一行的 `activate` 只 `provide`
+   一份调参（`deadlineMs`），与 TH/MVU 今天的形状相同。组合同时传 `plugins` 和 `templates` 会在构造时被拒——一个引擎两个开关，
+   界面上的开关就会被一个看不见的选项推翻。
+4. **迁移 `IRIS_TEMPLATES`（选择与理由）。** 变量不再是开关，`cordis.yml` 只把它原样递给 `legacyTemplatesEnv` 用于迁移：
+   值为 `1` **且**目录文件里还没有这一行时（旧版本升上来的第一次启动），这一行按默认值种为启用，等同于在插件中心确认过；
+   之后以存下的行为准，环境变量永远不覆盖存下的行（否则界面上的「关」就成了宿主会忘掉的偏好）。只要变量还设着，
+   **每次**启动都记一行日志说它已退役、这次是种下了还是被忽略、行现在是什么状态——一个被读取却默默忽略的变量正是本仓库一再吃亏的那种干净的零。
+   其它值（例如 `0`）以前也不打开，现在同样不打开，只记日志。
+5. **两个引擎都开：一次请求，一个引擎。** ST 平面在装配阶段（`#expandContributionsViaStCompat`）先展开 `<%`，
+   Iris 的引擎在流接缝（`#applyTemplates`）才看到请求。两者都跑会重复求值——扩展正确渲染成字面 `<%` 的 `<%%` 会被 Iris 当代码再执行一次——
+   写入也会做两遍。所以：**只要 ST 平面服务的扩展处于启用状态，它就是提示词的模板引擎，Iris 的引擎对提示词让位**；
+   卡片按名调用的 `script.evalTemplate` 仍由 Iris 应答。判据取目录状态而不取「这次平面答没答」，同样两行开关永远得到同一个引擎。
+   让位后请求里仍有 `<%`（没有页面接上平面，或它这一轮失败了）时记一条 `template` note，说明这些标签照原样发出以及原因。
+   插件中心在这一行上写同一句话（`data-plugin-template-both`）。
+
+**测试。** `packages/iris-app-service/tests/template-engine-plugin.test.ts` 七条：出厂已安装未启用且与 `templates: false` 一样原文直通、
+`evalTemplate` 按名拒绝；`plugin.enable` 后下一次请求展开磁盘世界书条目、`evalTemplate` 答 `2`，`plugin.disable` 后回到原文（同一个服务，没有重启）；
+`templates` + `plugins` 构造被拒；两个引擎都开且平面已接上——发出的是扩展的输出，其中字面 `<%= "NATIVE-RAN" %>` 原样保留，并记了让位 note；
+两个都开但平面没接上——原文发出并记 note；带旧目录文件（只有 TH/MVU 行）且 `IRIS_TEMPLATES=1` → 种为启用并写入文件，之后把行关掉再以
+`IRIS_TEMPLATES=1` 启动 → 仍是关，日志说被忽略；没有变量 → 新档案这一行关、`0` 只记日志。
+`apps/iris/tests/templates-env-migration.test.ts` 一条：用真实 `cordis.yml` 启动一个只有 TH/MVU 行的旧档案并设 `IRIS_TEMPLATES=1`，
+磁盘上的目录文件多出 `iris-templates: { installed: true, enabled: true }`——钉住 `cordis.yml` → `index.ts` → 运行时默认值这条接缝。
+`apps/iris-web/tests/plugin-center-template-engine.test.ts` 两条：jsdom 挂载真实插件中心，点「启用」只弹确认不发请求、未勾选时确认按钮不可用、
+取消不发请求、再次打开勾选已重置、勾选确认后恰好发出 `plugin.enable {id: 'iris-templates'}`、MVU 的启用不问；
+服务端渲染在 ST 行也启用时出现两引擎说明、任一关闭时不出现，中文下行名是壳自己的「Iris EJS 模板引擎」。
+牙齿：去掉让位判断 → 两条两引擎测试红；`#templateEngine` 在有运行时时恒开 → 出厂与开关两条红；恒关 → 开关与两条两引擎测试红；插件中心去掉确认分支 → 挂载测试红（「enable ran with no confirmation」）；
+`index.ts` 去掉种子 → 启动迁移测试红。
+
+**真浏览器验收**（`qa/ejs-builtin-acceptance.mjs`，2026-09-26，端口 8797，主人数据目录的拷贝，供应商换成本地 mock）：拷贝里的目录只有 TH/MVU 行，
+引擎行出厂已安装未启用；卡「创世回廊1.3」的请求体在关时含 44 个 `<%`；真 Chrome 里点「启用」弹出确认、未勾选时确认不可用、确认前宿主未启用；
+勾选确认后行变启用（没有重启），同一对话下一次请求体里 `<%` 为 0，`<map_info>` 后原本的 `<%_ const data = … %>` 变成展开的
+`# 当前位置：泰拉大裂隙上空 …`；目录文件记下 `enabled: true`；4 次发送全部落在 mock 上。判据取提供方收到的请求体而不是提示词面板：
+面板（`prompt.itemize`）只有标签和 token 数，Iris 的引擎也不在它的路径上（见「何时重开」(c)）。
+
+**何时重开：**(a) ST 平面不再是单扩展试点，或服务的扩展不一定是 ST-Prompt-Template：让位判据要改成「服务的扩展会展开模板」而不是「有启用的 ST 扩展」。
+(b) 主人要求两引擎都开时 Iris 的引擎兜底（平面没接上时由它求值）：那需要把「平面这次展开了没有」从装配阶段带到流接缝，并接受同一张卡随页面开没开换引擎。
+(c) 提示词面板（`prompt.itemize`）至今不跑 Iris 的引擎，记录与预览里的条目仍是模板原文的 token 数；若要让面板反映求值后的大小，另开一项。
