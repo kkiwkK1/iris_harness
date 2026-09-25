@@ -4,6 +4,7 @@ import type { UsageSummary } from '@iris/protocol'
 
 import type { IrisStore } from '../src/client/store.ts'
 import { StoreProvider } from '../src/client/provider.tsx'
+import { SandboxPluginConfirm } from '../src/app/SandboxPluginConfirm.tsx'
 import { SandboxPluginPanel } from '../src/app/SandboxPluginPanel.tsx'
 import { UsageReport } from '../src/app/UsagePanel.tsx'
 import { setLanguage } from '../src/app/i18n/language.ts'
@@ -31,6 +32,21 @@ export function renderPluginPanel(store: IrisStore): string {
   const api = store as IrisStore & { getInitialState: () => ReturnType<IrisStore['getState']> }
   api.getInitialState = () => store.getState()
   return renderToString(<StoreProvider store={store}><SandboxPluginPanel /></StoreProvider>)
+}
+
+/**
+ * The confirmation card, rendered against a booted store.
+ *
+ * Here for the same reason as the panel: what the card says is a projection of
+ * store state, and the row under test — the frame's network reach — is a
+ * projection of the card's live grant.
+ * @param store - the store, with `sandboxPluginPending` and `networkGranted` set.
+ * @returns the markup.
+ */
+export function renderPluginConfirm(store: IrisStore): string {
+  const api = store as IrisStore & { getInitialState: () => ReturnType<IrisStore['getState']> }
+  api.getInitialState = () => store.getState()
+  return renderToString(<StoreProvider store={store}><SandboxPluginConfirm /></StoreProvider>)
 }
 
 /**

@@ -102,6 +102,65 @@ test('the author document describes the facade the frame actually hands over', a
   assert.equal(inDoc, fromCode)
 })
 
+/**
+ * One directive's value in a generated policy.
+ * @param policy - the policy string.
+ * @param name - the directive.
+ * @returns its value, or undefined when the policy does not carry it.
+ */
+function directiveValue(policy: string, name: string): string | undefined {
+  for (const part of policy.split(';')) {
+    const trimmed = part.trim()
+    if (trimmed.startsWith(`${name} `)) return trimmed.slice(name.length + 1)
+  }
+  return undefined
+}
+
+test('the author document states both network branches, as framePolicy builds them', async () => {
+  /*
+   * **The model is told what the frame will actually do, in both branches.**
+   * The sentence this replaced said the network was "never open", and it was
+   * false for every card the player had allowed online: the grant widens the
+   * card frame's policy, and sandbox plugins mount in that frame (owner ruling
+   * 2, 2026-09-25 — the grant reaches them, deliberately).
+   *
+   * Bound to the generated policy rather than restating it, in the same way
+   * `GRANT_WIDENED_DIRECTIVES` is bound in `sandbox-policy.test.ts`: every row
+   * of the document's table is looked up in `framePolicy(false)` and
+   * `framePolicy(true)` and must say exactly what they say. The tooth is to
+   * write `'none'` in the "allowed online" column of `connect-src` — the old
+   * sentence's claim — which fails here and nowhere else, since nothing at
+   * runtime reads the document.
+   */
+  const doc = await readFile(DOC, 'utf8')
+  const { framePolicy } = await import('../src/sandbox/srcdoc.ts')
+  const { GRANT_WIDENED_DIRECTIVES } = await import('../src/sandbox/policy.ts')
+  const origin = 'http://127.0.0.1:8796'
+  const off = framePolicy(false, origin)
+  const on = framePolicy(true, origin)
+
+  const rows = [...doc.matchAll(/^\s*\| `([a-z-]+)` \| `([^`]*)` \| `([^`]*)` \|\s*$/gmu)]
+  const compared: string[] = []
+  for (const [, name = '', offline, online] of rows) {
+    assert.equal(offline, directiveValue(off, name), `the document's offline ${name} is not the policy's`)
+    assert.equal(online, directiveValue(on, name), `the document's online ${name} is not the policy's`)
+    // A row whose two columns agree is not describing a grant at all, and a
+    // directive the grant does not widen has no business in this table.
+    assert.ok(GRANT_WIDENED_DIRECTIVES.includes(name), `${name} is in the table but the grant does not widen it`)
+    compared.push(name)
+  }
+  /*
+   * The two directives that are the network — requests and image loads — are
+   * the floor. `style-src` is widened too but carries Iris's own origin, which
+   * differs per install and is not something the model can act on; the prose
+   * does not claim it is closed, which is the property that matters.
+   */
+  assert.ok(compared.includes('connect-src'), 'the table no longer states what connect-src does')
+  assert.ok(compared.includes('img-src'), 'the table no longer states what img-src does')
+  assert.ok(compared.length >= 2, `compared ${String(compared.length)} rows, fewer than the two that are the network`)
+  assert.doesNotMatch(doc, /never open/u, 'the document still claims the network was never open')
+})
+
 test('the author document stays inside the budget it is sent on', async () => {
   const bytes = (await stat(DOC)).size
   assert.ok(

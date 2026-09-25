@@ -332,3 +332,47 @@ test('the usage page draws the plugin row when the share is there, and nothing w
   assert.match(chinese, /写插件 2 次/)
   harness.setLanguage('en')
 })
+
+test('the confirmation card says what network the frame has, from the card’s live grant', async t => {
+  installShellGlobals()
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const server = await createServer(viteOptions(root))
+  const client = createFakeClient({ chunkDelayMs: 0 })
+  const wired = createIrisStore(client, { transport: 'fake', origin: 'plugin confirm network test' })
+  t.after(async () => {
+    wired.dispose()
+    client.dispose()
+    await server.close()
+  })
+  await wired.store.getState().boot()
+
+  const harness = await server.ssrLoadModule('/tests/sandbox-plugin-panel-harness.tsx') as typeof import('./sandbox-plugin-panel-harness.tsx')
+  const render = (): string => harness.renderPluginConfirm(wired.store)
+
+  /*
+   * **Granted: the row says the code can reach out.** A plugin mounts in the
+   * card's own frame, so a card the player allowed online hands this code an
+   * https way out (owner ruling 2, 2026-09-25). The tooth is to drop the row,
+   * or to read anything but the live grant: the sentence below is the only
+   * place on the card that says the conversation can leave.
+   */
+  wired.store.setState({ chatId: 'c1', sandboxPluginPending: pluginRow({ authorized: false }), networkGranted: true })
+  const online = render()
+  assert.match(online, /data-plugin-confirm="network"/, 'the card has no network row')
+  assert.match(online, /allowed online, so this code can also send requests/)
+  assert.doesNotMatch(online, /cannot reach the network/)
+
+  // Not granted: the row is still there and says the other branch. A row that
+  // only appeared when the news was bad would teach a reader its absence meant
+  // nothing — the control that makes the assertion above discriminate.
+  wired.store.setState({ networkGranted: false })
+  const offline = render()
+  assert.match(offline, /data-plugin-confirm="network"/)
+  assert.match(offline, /offline, so this code cannot reach the network either/)
+  assert.doesNotMatch(offline, /allowed online/)
+
+  harness.setLanguage('zh')
+  wired.store.setState({ networkGranted: true })
+  assert.match(render(), /这张卡已允许联网，所以这段代码也能向任意 https 地址发请求/)
+  harness.setLanguage('en')
+})

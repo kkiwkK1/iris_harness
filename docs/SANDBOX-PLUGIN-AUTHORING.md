@@ -83,8 +83,17 @@ removed. It is not a new capability: it is exactly what the card can already do.
 
 ## 3. What you do not have, and why
 
-- **`fetch`, and the network.** The frame's policy forbids it. Nothing was
-  narrowed for you; it was never open.
+- **The network, unless the player gave this card one.** You run under the
+  card frame's policy, and nothing is narrowed or widened for you. The player
+  switches network access on or off per card:
+
+  | directive | card offline (default) | card allowed online |
+  | --- | --- | --- |
+  | `connect-src` | `'none'` | `https:` |
+  | `img-src` | `data: blob:` | `https: data: blob:` |
+
+  Plain `http:` is refused either way. Do not depend on being online: the
+  player you are writing for has probably not switched it on.
 - **`window`, `document`, `parent` as parameters.** They exist in the frame and
   you can reach them. The facade is a surface, not a wall — the wall is the
   iframe. Use `iris` anyway: what you take through it can be given back.
