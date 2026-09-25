@@ -205,10 +205,14 @@ test('the streaming gate holds where the text enters, and every consumer repairs
    * combined-claim test, because the agreement only shows across files.
    */
   const row = readFileSync(fileURLToPath(new URL('../src/app/MessageInterfaces.tsx', import.meta.url)), 'utf8')
-  assert.match(row, /const display = streaming \? text : repairStrayFences\(text\)/, 'the row repairs only settled text')
+  // Memoized on the text since `streaming-render-path`; the gate is the same.
+  assert.match(row, /const display = useMemo\(\(\) => \(streaming \? text : repairStrayFences\(text\)\), \[streaming, text\]\)/, 'the row repairs only settled text')
   /*
-   * The claim, the controller and the splice all read `display` — the whole
-   * repaired message.
+   * Once settled, the claim, the controller and the splice all read `display`
+   * — the whole repaired message. While the reply streams the controller is
+   * handed nothing at all (`streaming-render-path`): it used to re-claim the
+   * growing text per delta and build a frame for any partial block that closed,
+   * while the row showed that same text as prose.
    *
    * These lines used to pin `bodyText`, the body tag's prose, and that is the
    * defect `notes/apps/iris-web/DEVIATIONS.md` §110 records: a card's panels
@@ -220,7 +224,7 @@ test('the streaming gate holds where the text enters, and every consumer repairs
    * range, which is the shape that cannot decide membership.
    */
   assert.match(row, /claimMessageSurfaces\(display\)/, 'the row claims over the whole repaired message, not over the body tag’s prose')
-  assert.match(row, /text: display,/, 'the controller claims the same string the row splices')
+  assert.match(row, /text: streaming \? '' : display,/, 'the controller claims the settled string the row splices, and nothing while it streams')
   assert.match(
     row,
     /const segments = layOutMessageBody\(display, bodyTag, blocks, styles, scripts\)/,
@@ -249,9 +253,11 @@ test('the streaming gate holds where the text enters, and every consumer repairs
   assert.match(row, /if \(!leak\.tagged\) return prose/, 'an untagged message renders the fallback with nothing around it')
 
   const pane = readFileSync(fileURLToPath(new URL('../src/app/ChatPane.tsx', import.meta.url)), 'utf8')
-  assert.match(
-    pane,
-    /message\.streaming === true \? message\.text : repairStrayFences\(message\.text\)/,
-    'the budget plans over the same settled text the row renders',
-  )
+  /*
+   * The budget plans from the settled view (so a delta does not re-plan), and
+   * over the same repaired text the row renders; the streaming turn's reply,
+   * which builds no frame, plans as nothing.
+   */
+  assert.match(pane, /readingWindow\(view\?\.messages \?\? \[\], shown, message => message\.turn\)/, 'the budget reads the settled view, not the stream')
+  assert.match(pane, /\? ''\s+: repairStrayFences\(message\.text\)/, 'the budget repairs the same settled text the row renders')
 })

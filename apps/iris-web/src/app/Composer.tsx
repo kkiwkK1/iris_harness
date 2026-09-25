@@ -37,7 +37,7 @@
  * @module iris-web/app/Composer
  */
 
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PromptDivergence, PromptItemization, ReasoningEffort } from '@iris/protocol'
@@ -104,7 +104,12 @@ type ModelListRead =
  * @param props.onOpenSettings - opens the settings drawer, for `/config`.
  * @returns the composer.
  */
-export function Composer({
+/*
+ * Memoized: the pane re-renders on every paint of a streaming reply, and the
+ * composer's inputs (chat, generating, five stable callbacks) change only at
+ * the stream's start and end. Its own subscriptions still reach it.
+ */
+export const Composer = memo(function Composer({
   chatId,
   generating,
   onSend,
@@ -1465,7 +1470,7 @@ export function Composer({
       </div>
     </div>
   )
-}
+})
 
 /**
  * The bar's four icons.

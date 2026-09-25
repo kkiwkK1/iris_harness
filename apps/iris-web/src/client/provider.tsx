@@ -9,12 +9,13 @@
  * @module iris-web/client/provider
  */
 
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useMemo, useSyncExternalStore } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { useStore } from 'zustand'
 
 import { actionsOf } from './store.ts'
 import type { IrisActions, IrisState, IrisStore } from './store.ts'
+import { createStreamDisplay } from './stream-display.ts'
 
 /**
  * The store's context. Exported for the one reader that must not throw outside
@@ -46,6 +47,22 @@ export function useIrisStore(): IrisStore {
  */
 export function useIris<T>(select: (state: IrisState & IrisActions) => T): T {
   return useStore(useIrisStore(), select)
+}
+
+/**
+ * Read the live reply at a bounded paint rate (`stream-display.ts`).
+ *
+ * For the component that renders the streaming row, and only for it: growth
+ * of the reply repaints at most once per interval, while a start, an end, an
+ * abort or a new turn is published immediately. Everything that decides
+ * behaviour rather than pixels — the watchdog, the resync guard, Stop — keeps
+ * reading `state.stream` itself.
+ * @returns the reply as the screen should show it, or undefined when none is live.
+ */
+export function useDisplayedStream(): IrisState['stream'] {
+  const store = useIrisStore()
+  const display = useMemo(() => createStreamDisplay(store), [store])
+  return useSyncExternalStore(display.subscribe, display.getSnapshot, display.getSnapshot)
 }
 
 /**

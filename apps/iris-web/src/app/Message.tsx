@@ -10,7 +10,7 @@
  * @module iris-web/app/Message
  */
 
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { Menu, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 
@@ -59,7 +59,14 @@ export interface MessageHandlers {
  * @param props.handlers - the actions the row offers.
  * @returns the message row.
  */
-export function Message({
+/*
+ * Memoized, and the pane keeps every prop stable for a settled row — the
+ * message object (`withStream` reuses the settled rows), the handlers, the
+ * branch badges — so a paint of the streaming reply re-renders the streaming
+ * row and no other. The row still re-renders on its own subscriptions
+ * (language, body tag, quote scope), which `memo` does not block.
+ */
+export const Message = memo(function Message({
   message,
   canRegenerate,
   handlers,
@@ -423,4 +430,4 @@ export function Message({
       </div>
     </article>
   )
-}
+})

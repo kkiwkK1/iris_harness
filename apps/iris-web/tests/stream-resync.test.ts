@@ -18,7 +18,7 @@ import { test } from 'node:test'
 
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
 
-import { applyEvent, createIrisStore, STREAM_SILENCE_MS, type IrisStore } from '../src/client/store.ts'
+import { applyEvent, createIrisStore, STALL_PROBE_MS, STREAM_SILENCE_MS, type IrisStore } from '../src/client/store.ts'
 
 const TEST_SOURCE = { transport: 'fake' as const, origin: 'test' }
 
@@ -198,4 +198,35 @@ test('a resync that finds the host generating a turn the page never heard open s
   h.resyncs[0]?.answer({ view: half, generating: { turn: 0 } })
   await settle()
   assert.equal(h.store.getState().stream?.turn, 0, 'Stop appears for the turn the host is generating')
+})
+
+/*
+ * Web §131. A page whose main thread was blocked while the reply streamed says
+ * so with its resync: the stall of 2026-09-26 was a page too busy to process
+ * the frames it had, and without this the host's record of it read exactly
+ * like a lost socket.
+ */
+test('a resync carries how long the page itself was blocked while the reply streamed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const h = harness()
+  t.after(h.dispose)
+  streamingHalf(h.store)
+  for (let at = 0; at < 4; at += 1) t.mock.timers.tick(STALL_PROBE_MS)
+
+  // Thirty seconds pass with no task run: the clock moves, the timers do not.
+  t.mock.timers.setTime(Date.now() + 30_000)
+  h.setConnected(false)
+  h.setConnected(true)
+  assert.equal(h.resyncs.length, 1)
+  const stalled = h.resyncs[0]?.params.pageStallMs as number
+  assert.ok(stalled >= 29_000 && stalled <= 30_000, `the stall in progress is counted: ${String(stalled)} ms`)
+  h.resyncs[0]?.answer({ view: settled })
+  await settle()
+
+  // A new reply starts from zero: the last one's stall is not this one's.
+  applyEvent(h.store, { type: 'stream.start', chatId: 'c1', turn: 1, key: 'a1' })
+  for (let at = 0; at < 4; at += 1) t.mock.timers.tick(STALL_PROBE_MS)
+  h.setConnected(false)
+  h.setConnected(true)
+  assert.equal(h.resyncs[1]?.params.pageStallMs, 0, 'a page that kept up reports no stall')
 })
