@@ -2397,12 +2397,20 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    */
   const begun = new Set<string | undefined>()
 
-  const viewFor = (forScript: string | undefined): Record<string, unknown> => {
+  /**
+   * @param forScript - the owner id, as known at bind time.
+   * @param identity - how the host-visible id is resolved per call, when it is
+   *   not fixed at bind time (a plugin's, which names the conversation of the
+   *   context the frame holds when the member is called). Absent means
+   *   `forScript`.
+   * @returns the owner's identity members.
+   */
+  const viewFor = (forScript: string | undefined, identity?: () => string | undefined): Record<string, unknown> => {
     begun.add(forScript)
     if (!hasTavernHelper) return {}
     const bound = env.members.createFrameTavernHelper({
       context: () => context,
-      scriptId: () => forScript,
+      scriptId: identity ?? (() => forScript),
       currentMessageId: () => currentFloor,
       reportGap,
       reportFault,
@@ -3173,17 +3181,20 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * globally unique plugin ids. The host forgets and copies the same key
      * (`sandbox-plugins/owner-state.ts`).
      *
-     * Read at bind time. The tree mounts plugins after `context` has arrived,
-     * and a surface is dropped at teardown, so a remount binds afresh. Without
-     * a chat id the owner has no script identity at all, and the script scope
+     * **Resolved per call, not at bind time.** The acceptance run on a real
+     * host measured why: the shell posts `plugin:mount` as soon as the frame is
+     * ready, which can be before the first `context` message, so a bind-time
+     * read found no chat id and every script-scope write was refused. The id
+     * follows the context the frame holds when the member is called. Without a
+     * chat id the owner has no script identity at all, and the script scope
      * refuses by name rather than falling back to a bare, shared id.
      */
     cardSurface: pluginId => {
-      const chatId = context?.chatId
-      return {
-        ...tavernHelper,
-        ...viewFor(chatId === undefined ? undefined : sandboxPluginOwnerId(chatId, pluginId)),
+      const ownerNow = (): string | undefined => {
+        const chatId = context?.chatId
+        return chatId === undefined ? undefined : sandboxPluginOwnerId(chatId, pluginId)
       }
+      return { ...tavernHelper, ...viewFor(`plugin:${pluginId}`, ownerNow) }
     },
   }
 }

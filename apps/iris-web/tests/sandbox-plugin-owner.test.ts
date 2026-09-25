@@ -47,3 +47,16 @@ test('without a chat id the plugin has no script identity, rather than a shared 
   assert.equal((surface['getScriptId'] as Member)(), undefined)
   assert.throws(() => (surface['getVariables'] as Member)({ type: 'script' }), /script_id/u)
 })
+
+test('a surface bound before the first context message names the conversation once it arrives', () => {
+  /*
+   * The real shell posts `plugin:mount` as soon as the frame is ready, which
+   * can precede `context`. Measured on a real host: with the id read at bind
+   * time, every script-scope write from the plugin was refused as "no identity
+   * of its own". The tooth is to resolve the owner once, in `cardSurface`.
+   */
+  const realm = pluginRealm()
+  const surface = realm.sandbox.cardSurface('01-x')
+  realm.send({ iris: 'tok', type: 'context', context: contextFor('aria-chat-A') })
+  assert.equal((surface['getScriptId'] as Member)(), 'sp:aria-chat-A:01-x')
+})
