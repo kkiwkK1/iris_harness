@@ -87,18 +87,10 @@ jobs:
       # fail, rather than skip, when Chrome or the build is missing, so this
       # step cannot pass by running nothing. Separate from the test step below
       # so that step's skip count (IRIS_BROWSER unset) stays what it pins.
-      #
-      # IRIS_CHROME_NO_SANDBOX is CI-only. Measured 2026-09-25 (run
-      # 36149190965): without it, Chrome on this runner never opened its
-      # debugging endpoint and all 5 tests failed; ubuntu-24.04 restricts the
-      # unprivileged user namespaces Chrome's sandbox needs. The browser here
-      # loads only the tests' own fixtures. Never set it on an operator's
-      # machine.
       - name: Drive a real browser over the shell CSP and the frame bootstrap
         run: node --test apps/iris/tests/shell-csp-live.test.ts apps/iris-web/tests/frame-bootstrap-live.test.ts
         env:
           IRIS_BROWSER: '1'
-          IRIS_CHROME_NO_SANDBOX: '1'
 
       # Not `pnpm test`: this runs the same suite with the corpus forced absent
       # and then checks the shape of the result. A corpus-gated test that guards
