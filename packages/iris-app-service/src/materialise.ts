@@ -90,7 +90,13 @@ export class WorldbookBindingStore {
   readonly #onProblem: ((message: string) => void) | undefined
   // Keyed by character id, which is a filename — see `wireKeyedTable`.
   #bindings: Bindings = wireKeyedTable()
-  #loaded = false
+  /**
+   * The first load, memoised as a promise rather than a flag set before the
+   * read, so a caller arriving during it waits for it instead of mutating
+   * the empty defaults the finishing load then replaces (`connections.ts`
+   * records the same defect and fix).
+   */
+  #loading: Promise<void> | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -118,8 +124,12 @@ export class WorldbookBindingStore {
    * materialise a second copy under a fresh name.
    */
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
       this.#bindings = wireKeyedTable(parsed as Bindings)

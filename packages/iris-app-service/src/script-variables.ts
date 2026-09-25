@@ -97,7 +97,13 @@ export class ScriptVariableStore {
   readonly #onProblem: ((message: string) => void) | undefined
   // Keyed by character id, which is a filename — see `wireKeyedTable`.
   #partitions: Partitions = wireKeyedTable()
-  #loaded = false
+  /**
+   * The first load, memoised as a promise rather than a flag set before the
+   * read, so a caller arriving during it waits for it instead of mutating
+   * the empty defaults the finishing load then replaces (`connections.ts`
+   * records the same defect and fix).
+   */
+  #loading: Promise<void> | undefined
   /** Writes are serialised through one chain so two flushes cannot interleave. */
   #queue: Promise<void> = Promise.resolve()
   /** Set by {@link flush}; a store whose host unloaded no longer accepts writes. */
@@ -130,8 +136,12 @@ export class ScriptVariableStore {
    * rather than merely announced.
    */
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
       this.#partitions = wireKeyedTable(parsed as Partitions)
@@ -224,7 +234,7 @@ export class ScriptVariableStore {
    * Write anything still queued, now, and close the store.
    *
    * The unload-path counterpart of `CardStorageStore.flush`, from the same
-   * dispose (`index.ts`'s handlers effect). This store has no debounce — every
+   * dispose (`index.ts`'s awaited `irisApp.storeDrains` effect). This store has no debounce — every
    * write is queued the moment it happens — so unlike card storage there is
    * nothing to *force*; what a hot reload loses is quieter. The process stays
    * alive, so the queued writes would still run eventually, but "eventually"

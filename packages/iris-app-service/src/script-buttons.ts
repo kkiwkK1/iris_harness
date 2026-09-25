@@ -59,7 +59,13 @@ export class ScriptButtonStore {
   readonly #onProblem: ((message: string) => void) | undefined
   // Keyed by character id, which is a filename — see `wireKeyedTable`.
   #partitions: Partitions = wireKeyedTable()
-  #loaded = false
+  /**
+   * The first load, memoised as a promise rather than a flag set before the
+   * read, so a caller arriving during it waits for it instead of mutating
+   * the empty defaults the finishing load then replaces (`connections.ts`
+   * records the same defect and fix).
+   */
+  #loading: Promise<void> | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -79,8 +85,12 @@ export class ScriptButtonStore {
 
   /** Load on first use; a missing file is an empty store, an unparsable one is set aside. */
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
     // An empty store means every script shows the buttons its card declared,
     // which is the correct first-run state — and the wrong state to write over
     // a file that only failed to parse.

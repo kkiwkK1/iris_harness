@@ -138,7 +138,13 @@ export class ScriptLibraryStore {
   readonly #path: string
   readonly #onProblem: ((message: string) => void) | undefined
   #file: LibraryFile = { global: [], characters: {} }
-  #loaded = false
+  /**
+   * The first load, memoised as a promise rather than a flag set before the
+   * read, so a caller arriving during it waits for it instead of mutating
+   * the empty defaults the finishing load then replaces (`connections.ts`
+   * records the same defect and fix).
+   */
+  #loading: Promise<void> | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -160,8 +166,12 @@ export class ScriptLibraryStore {
    * rather than quietly replaced by the next edit.
    */
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
     const parsed = await readJsonStore(this.#path, this.#onProblem)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return
     const file = parsed as Record<string, unknown>

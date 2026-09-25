@@ -35,7 +35,13 @@ export class ChatOrderStore {
   readonly #path: string
   readonly #onProblem: ((message: string) => void) | undefined
   #order: string[] = []
-  #loaded = false
+  /**
+   * The first load, memoised as a promise rather than a flag set before the
+   * read, so a caller arriving during it waits for it instead of mutating
+   * the empty defaults the finishing load then replaces (`connections.ts`
+   * records the same defect and fix).
+   */
+  #loading: Promise<void> | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -48,8 +54,12 @@ export class ChatOrderStore {
   }
 
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
     // Absent: nothing is arranged, which is the state every profile starts in
     // and a valid state to stay in. Present and unparsable is set aside, so a
     // single drag does not write an empty order over the reader's arrangement.
