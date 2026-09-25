@@ -37,6 +37,7 @@ export type {
   SystemPluginFailure,
   SystemPluginFailureState,
   SystemPluginInstallPreview,
+  SystemPluginOrigin,
   SystemPluginProvenance,
   SystemPluginSnapshot,
   SystemPluginSource,

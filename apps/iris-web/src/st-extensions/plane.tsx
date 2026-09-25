@@ -23,24 +23,12 @@ import { useIris, useIrisActions } from '../client/provider.tsx'
 import { useLanguage } from '../app/i18n/use-language.ts'
 import { useSlots } from '../slots/Slot.tsx'
 import { buildExtensionSrcdoc } from './srcdoc.ts'
-import { servedExtensionEnabled, servedExtensionRow, isCardMemberProxyCall } from './plane-extension.ts'
+import { listedExtensionFor, servedExtensionEnabled, servedExtensionRow, isCardMemberProxyCall, type ListedExtension } from './plane-extension.ts'
 import { StExtPlane, type StExtPlaneHost } from './plane-core.ts'
 import { subscribeStCompatRequests } from './plane-bus.ts'
 
 /** The settings-section id this pilot registers under. */
 const SECTION_ID = 'st-compat-settings'
-
-/**
- * The host's two bundled system plugins.
- *
- * The pilot serves the INSTALLED row that is neither of these — the same rule
- * the app service's `extensionId()` applies when it resolves which extension to
- * bridge and whose settings to load. Kept here as data rather than as a second
- * selection rule: if the host grows a third bundled plugin, this set and that
- * function are one edit apart, and the symptom of drift is a plane that thinks
- * a bundled plugin is its extension.
- */
-const BUNDLED_PLUGIN_IDS = new Set(['tavern-helper', 'mvu'])
 
 /**
  * The projection retry schedule.
@@ -108,10 +96,10 @@ export function StExtensionPlane(): ReactElement | null {
 
   // Which ST extension row this plane belongs to.
   //
-  // The host answers the same question the same way — its `extensionId()` picks
-  // the installed row that is not one of the two bundled plugins — so this is
-  // the page's copy of ONE contract, not a second opinion about which extension
-  // the pilot serves.
+  // The host answers the same question with the same function — its
+  // `extensionId()` calls `servedStExtensionRow` from `@iris/plugin-web-api`
+  // over the same snapshot — so this is ONE contract, not a second opinion
+  // about which extension the pilot serves.
   //
   // **"Is some plugin enabled" was the earlier reading, and it was wrong**: the
   // bundled plugins are installed and enabled on every profile, so that
@@ -119,7 +107,7 @@ export function StExtensionPlane(): ReactElement | null {
   // panel on screen. The mount case only looked correct because the manifest
   // then 404s and no frame is ever built — the live case had a frame already,
   // and nothing took it down.
-  const served = servedExtensionRow(snapshot?.plugins, BUNDLED_PLUGIN_IDS)
+  const served = servedExtensionRow(snapshot?.plugins)
   const servedEnabled = servedExtensionEnabled(served)
 
   useEffect(() => {
@@ -136,17 +124,19 @@ export function StExtensionPlane(): ReactElement | null {
       return () => { alive = false }
     }
     // Enabled: read the top-level manifest (the route lists every enabled
-    // extension's composed manifest), then build a fresh frame from the row.
+    // extension's composed manifest), then build a fresh frame from the entry
+    // for the SERVED row — not from the listing's first entry, which is the
+    // served one only by coincidence of order.
     void (async () => {
       try {
         const response = await fetch('/iris-st-ext/manifest.json')
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const listing = await response.json() as { extensions?: Array<{ id?: unknown, rev?: unknown, dirName?: unknown, build?: unknown }> }
-        const row = listing.extensions?.[0]
+        const listing = await response.json() as { extensions?: ListedExtension[] }
+        const row = listedExtensionFor(listing.extensions, served?.id)
         if (!alive) return
         if (row === undefined || typeof row.id !== 'string' || typeof row.rev !== 'string'
           || typeof row.dirName !== 'string' || row.rev === '' || row.dirName === '') {
-          throw new Error('the manifest listing carries no usable extension row')
+          throw new Error(`the manifest listing carries no usable entry for the served extension "${String(served?.id)}"`)
         }
         setSpec({
           extensionId: row.id,

@@ -10,32 +10,56 @@
  * manifest 404s and no frame is built. Extracting the question makes the
  * difference testable without a DOM.
  *
- * The host applies the same rule in `extensionId()` when it resolves which
- * extension to bridge, whose settings to load, and which revision to arm — so
- * this is the page's copy of one contract, not a second opinion.
+ * **The row is chosen by `@iris/plugin-web-api`'s `servedStExtensionRow`**,
+ * the same function the host's `extensionId()` calls when it resolves which
+ * extension to bridge, whose settings to load and which revision to arm. The
+ * page used to keep its own copy of the rule ("the first installed row that is
+ * not a bundled plugin", with the bundled ids spelled here), and the frame took
+ * its id from a third place, the asset listing's first row; an installed
+ * git/dev package captured the first two, and two ST extensions with the first
+ * one disabled split the frame from both. One selector, three readers.
  */
 
+import { servedStExtensionRow, type StExtensionRowLike } from '@iris/plugin-web-api'
+
 /** The minimum a snapshot row must carry for this rule. */
-export interface SystemPluginRow {
-  id: string
-  installed: boolean
-  status: string
+export type SystemPluginRow = StExtensionRowLike
+
+/**
+ * The ST extension the plane serves, if one is installed.
+ * @param rows - the snapshot's plugin rows, or undefined before the first snapshot.
+ * @returns the row the plane serves, or undefined when none is installed.
+ */
+export function servedExtensionRow<R extends SystemPluginRow>(rows: readonly R[] | undefined): R | undefined {
+  return servedStExtensionRow(rows)
+}
+
+/** One entry of `/iris-st-ext/manifest.json`'s `extensions` listing, as read off the wire. */
+export interface ListedExtension {
+  id?: unknown
+  rev?: unknown
+  dirName?: unknown
+  build?: unknown
 }
 
 /**
- * The installed row that is not a bundled plugin, if there is one.
+ * The listing entry the frame is built from: the one for the served row.
  *
- * `bundled` is passed in rather than imported so the ids stay declared once, at
- * the composition site that also mirrors the host's list.
- * @param rows - the snapshot's plugin rows, or undefined before the first snapshot.
- * @param bundled - the host's bundled plugin ids.
- * @returns the row the plane serves, or undefined when none is installed.
+ * Not the listing's first entry. The listing holds every *enabled* ST
+ * extension in its own order, so its first entry is the served row only by
+ * coincidence; the frame's extension id has to be the id the host bridges and
+ * the plane gates on, or the frame attaches for an extension the host is not
+ * arming.
+ * @param listing - the parsed `extensions` array, or undefined.
+ * @param servedId - the id {@link servedExtensionRow} answered.
+ * @returns the matching entry, or undefined when the listing does not carry it.
  */
-export function servedExtensionRow(
-  rows: readonly SystemPluginRow[] | undefined,
-  bundled: ReadonlySet<string>,
-): SystemPluginRow | undefined {
-  return rows?.find(row => row.installed && !bundled.has(row.id))
+export function listedExtensionFor(
+  listing: readonly ListedExtension[] | undefined,
+  servedId: string | undefined,
+): ListedExtension | undefined {
+  if (servedId === undefined) return undefined
+  return listing?.find(entry => entry.id === servedId)
 }
 
 /**

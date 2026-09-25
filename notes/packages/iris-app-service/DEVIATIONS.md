@@ -7900,7 +7900,9 @@ The sheet's U2 section describes four things the code at `269a97e` contradicts:
    capability has no writable surface).
 3. **The `'prompt-template'` literal was wrong in production.** The pilot's
    real id is `st.extensionId()` (`service.ts:482`, implemented at
-   `index.ts:863` as the first installed row that is neither builtin), which
+   `index.ts:863` as the first installed row that is neither builtin; since
+   2026-09-25 it is `@iris/plugin-web-api`'s `servedStExtensionRow`, which
+   selects by the row's `origin: 'st-extension'`), which
    equals the literal only when the installed directory happens to be named
    `prompt-template`. The fixture used the literal
    (`variable-arbitration.test.ts:143`), so nothing could catch it. The bridge
