@@ -87,6 +87,12 @@ jobs:
       # fail, rather than skip, when Chrome or the build is missing, so this
       # step cannot pass by running nothing. Separate from the test step below
       # so that step's skip count (IRIS_BROWSER unset) stays what it pins.
+      #
+      # Chrome keeps its own sandbox here. Measured 2026-09-25: the first runs
+      # failed because Chrome's first launch on a fresh runner took 12-14 s,
+      # longer than the tests' old 6 s wait for the debugging endpoint, and
+      # `--no-sandbox` alone did not change that (run 36149385557). With a
+      # 30 s wait and the sandbox on, all 5 pass (run 36150079181).
       - name: Drive a real browser over the shell CSP and the frame bootstrap
         run: node --test apps/iris/tests/shell-csp-live.test.ts apps/iris-web/tests/frame-bootstrap-live.test.ts
         env:
