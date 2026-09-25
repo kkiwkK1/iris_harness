@@ -443,8 +443,8 @@ test(
       const seen = watchBrowser(chrome)
 
       // The endpoint answering is the only honest signal that the port is ours.
-      // 100 tries (about 15 s) rather than the default 40: a first launch on
-      // a fresh CI runner is slower than on a warm workstation.
+      // 200 tries (about 30 s) rather than the default 40: a first launch on
+      // a fresh CI runner took 13.7 s (run 36149662750).
       try {
         await until('the browser debugging endpoint came up', async () => {
           try {
@@ -453,7 +453,7 @@ test(
           } catch {
             return undefined
           }
-        }, 100)
+        }, 200)
       } catch (error) {
         throw new Error(`${(error as Error).message}\n${seen()}`)
       }

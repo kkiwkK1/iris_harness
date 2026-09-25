@@ -476,8 +476,8 @@ before(async () => {
   ], { stdio: ['ignore', 'ignore', 'pipe'] })
   const seen = watchBrowser(chrome)
 
-  // 100 tries (about 15 s) rather than the default 40: a first launch on a
-  // fresh CI runner is slower than on a warm workstation.
+  // 200 tries (about 30 s) rather than the default 40: a first launch on a
+  // fresh CI runner took 13.7 s (run 36149662750).
   try {
     await until('the browser debugging endpoint came up', async () => {
       try {
@@ -486,7 +486,7 @@ before(async () => {
       } catch {
         return undefined
       }
-    }, 100)
+    }, 200)
   } catch (error) {
     throw new Error(`${(error as Error).message}\n${seen()}`)
   }
