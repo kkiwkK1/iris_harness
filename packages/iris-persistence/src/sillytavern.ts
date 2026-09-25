@@ -182,6 +182,97 @@ function rememberFields(
 }
 
 /**
+ * Where a reply's reasoning lives in the file: `extra.reasoning`, the key
+ * upstream's `ReasoningHandler.updateReasoning({ persist: true })` writes
+ * (`public/scripts/reasoning.js:415`), beside `extra.reasoning_type`.
+ *
+ * **Until 2026-09-26 Iris wrote neither and read neither.** A reply's reasoning
+ * lived only as a block on the in-memory candidate, so it vanished on a host
+ * restart, on a reload, and on every log rebuild — which an edit, a card's
+ * `setChatMessages` and a sentence trim all perform. For a reply whose model put
+ * everything in `reasoning_content` and sent no `content` at all (measured in
+ * the owner's 黑兽 chats: three generations whose provider-reported
+ * `reasoning_tokens` equal their `completion_tokens`, 4086 of 4086 on the
+ * newest), that erased the whole reply: the file kept `mes: ""` and nothing
+ * else. And a chat imported from SillyTavern showed none of the reasoning its
+ * file carried.
+ */
+export const REASONING_FIELD = 'reasoning'
+/** Beside {@link REASONING_FIELD}; upstream's `ReasoningType.Model` is what a provider-sent trace is marked with. */
+export const REASONING_TYPE_FIELD = 'reasoning_type'
+/** The {@link REASONING_TYPE_FIELD} upstream gives a trace the model sent (`reasoning.js:57`). */
+const REASONING_TYPE_MODEL = 'model'
+
+/** A value as a plain object, or undefined when it is anything else. */
+function objectOf(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+/**
+ * The reasoning one swipe of an imported line carries.
+ *
+ * The line's own `extra` describes the swipe it is showing, and upstream keeps
+ * every swipe's copy in `swipe_info[i].extra` (`setFirstSwipe`,
+ * `public/script.js:3774`), so the selected swipe reads the line and the others
+ * read their `swipe_info` entry. Any non-empty string is taken exactly as it
+ * is, whitespace included: the export compares against it to decide whether
+ * the line changed, and a trimmed copy would make every imported line look
+ * edited.
+ * @param line - the file line.
+ * @param swipe - which swipe.
+ * @param chosen - the line's `swipe_id`.
+ * @returns the reasoning, or undefined when that swipe has none.
+ */
+function importedReasoning(line: SillyTavernMessage, swipe: number, chosen: number): string | undefined {
+  const extra = swipe === chosen
+    ? objectOf(line.extra)
+    : objectOf(objectOf(Array.isArray(line['swipe_info']) ? (line['swipe_info'] as unknown[])[swipe] : undefined)?.['extra'])
+  const value = extra?.[REASONING_FIELD]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/**
+ * Put the selected candidate's reasoning on an exported line's `extra`.
+ *
+ * **Only a change is written.** An imported line whose selected swipe still
+ * carries the reasoning it came with is left alone, so an untouched file still
+ * exports byte for byte. A line whose selected candidate reasons differently
+ * gets a *copy* of `extra` with the new value (the carried object is the log's
+ * frozen record, see `writeTiming`); one whose selected candidate has none but
+ * whose carried `extra` still holds another swipe's trace loses that trace,
+ * because the line's `extra` describes the swipe it shows and would otherwise
+ * be read back onto the wrong reading.
+ *
+ * Only the selected candidate's is written, as with the generation timer: the
+ * other readings' traces stay in the log until the chat is reloaded, when a
+ * swipe Iris generated shows no reasoning. Upstream keeps them in
+ * `swipe_info[i].extra`; a line Iris wrote carries no `swipe_info` today.
+ * @param line - the line, mutated in place.
+ * @param reasoning - the selected candidate's reasoning, `''` for none.
+ */
+function writeReasoning(line: SillyTavernMessage, reasoning: string): void {
+  const carried = objectOf(line.extra)
+  const current = carried?.[REASONING_FIELD]
+  if (reasoning.length > 0) {
+    if (current === reasoning) return
+    const extra: Record<string, unknown> = { ...carried, [REASONING_FIELD]: reasoning }
+    if (extra[REASONING_TYPE_FIELD] === undefined) extra[REASONING_TYPE_FIELD] = REASONING_TYPE_MODEL
+    line.extra = extra
+    return
+  }
+  if (typeof current !== 'string' || current.length === 0 || carried === undefined) return
+  const { [REASONING_FIELD]: _dropped, [REASONING_TYPE_FIELD]: _type, ...rest } = carried
+  line.extra = rest
+}
+
+/** The reasoning blocks of a message, joined. */
+function reasoningOf(message: { content: readonly { type: string, text?: string }[] }): string {
+  return message.content.filter(block => block.type === 'reasoning').map(block => block.text ?? '').join('')
+}
+
+/**
  * Rebuild an Iris chat log from a SillyTavern file.
  *
  * Swipes come back as real candidates rather than a flattened current reply, so
@@ -231,17 +322,23 @@ export function importChat(chat: SillyTavernChat, id: string): Session {
     // An assistant line carries its whole swipe set; `mes` is whichever one is
     // selected, so the list is the source of truth and `mes` only picks from it.
     const texts = line.swipes !== undefined && line.swipes.length > 0 ? line.swipes : [line.mes]
+    const chosen = line.swipe_id ?? 0
     let firstSeq: number | undefined
-    for (const text of texts) {
+    for (const [swipe, text] of texts.entries()) {
+      const reasoning = importedReasoning(line, swipe, chosen)
       const candidate = appendCandidate(session, {
         turn,
         step: 0,
-        message: createAssistantMessage({ content: [{ type: 'text', text }], source: IMPORTED }),
+        message: createAssistantMessage({
+          content: reasoning === undefined
+            ? [{ type: 'text', text }]
+            : [{ type: 'reasoning', text: reasoning }, { type: 'text', text }],
+          source: IMPORTED,
+        }),
       })
       firstSeq ??= candidate.seq
     }
 
-    const chosen = line.swipe_id ?? 0
     if (chosen < texts.length - 1) selectCandidate(session, turn, chosen)
     if (firstSeq !== undefined) rememberFields(session, firstSeq, line, orders)
 
@@ -451,7 +548,7 @@ export function exportMessages(session: Session, header: SillyTavernChatHeader):
     const first = candidates[0]
     const fields = first === undefined ? {} : rowFields(session, first.seq)
 
-    lines.push(first === undefined
+    const line: SillyTavernMessage = first === undefined
       ? {
           name: header.character_name,
           is_user: false,
@@ -467,7 +564,9 @@ export function exportMessages(session: Session, header: SillyTavernChatHeader):
           swipe_id: swipeId,
           ...fields,
           ...lineIdFields(session, first.seq, fields),
-        }))
+        })
+    writeReasoning(line, current === undefined ? '' : reasoningOf(current.message))
+    lines.push(line)
   }
 
   return lines

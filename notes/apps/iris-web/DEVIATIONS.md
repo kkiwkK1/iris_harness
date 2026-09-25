@@ -9463,3 +9463,27 @@ reads back its own system row as `assistant`. None is known.
 验收里删掉 A、B、P 之后 E 由第 3 色回到它本来的第 1 色；要绝对不变就得把分配记下来（每家族一份），而不是每次算。
 (b) 「⑂N」楼层徽标的列表里也要能删：那个列表在 `Message.tsx`，本次有另一位在改 `ChatPane` / `Message`，所以没有动；
 删除框（`BranchDeleteDialog`）与 `deleteChat` 都已就位，接上是几行的事。(c) 家族超过六条分支：颜色开始重复，届时考虑按深度或按父亲分组取色。
+
+## 130. 只有推理、没有正文的回复：推理块自己展开，说明原因，并提供「用作正文」
+
+**Kind:** Upgrade。宿主那半——推理写进 `extra.reasoning`、从那里读回——是 host 账本 §107。编号待协调者重排。
+
+**上游怎么做。** 模型只送 `reasoning_content`、`content` 为空时，SillyTavern 存下空的 `mes` 和 `extra.reasoning`，界面上是一个空正文，
+上面一个折叠着的推理块。上游没有任何提示，也没有把推理转成正文的操作：用户要打开推理块、复制、再编辑消息粘贴进去。
+
+**Iris 的做法。** 已经结束（不在流式中）、正文为空（`trim()` 后）、而推理不为空的助手回复：
+- 推理块默认展开（读者点过以后就按读者的选择）；
+- 块里多一行说明「模型把整条回复都放进了推理，正文为空」，旁边一个「用作正文」；
+- 点「用作正文」打开这一楼的编辑框，内容是推理原文，读者可以删掉规划部分再保存；保存走原有的 `chat.editMessage`，不点保存就什么也不写。
+  推理本身留在原处。
+正文不为空的回复、仍在流式中的回复，行为不变（折叠；流式中照旧自动展开）。
+
+**为什么。** 主人在 黑兽 对话里遇到它（host §107 有测量：4086 个输出 token 全部是推理），看到的是「这一楼没有正文」，
+而正文其实就在折叠着的推理里。上游的手工流程能走通，但界面上没有任何东西说明正文去了哪里。
+
+**测量。** `apps/iris-web/tests/reasoning-orphan.test.ts` 一条（jsdom 挂载真实的 `Message`）：正文为空、推理是脱敏的 黑兽 形状时推理可见、有说明、
+点「用作正文」后编辑框里是推理原文且尚未写入、保存后恰好一次 `onEdit(33, 推理)`；正文不为空时推理折叠、没有说明；流式中推理展开、没有说明。
+牙齿：`Message.tsx` 不传 `onUseAsReply` → 红（「the whole reply sat behind a collapsed label」）；推理块默认一律展开 → 红（「a footnote opened itself on an ordinary reply」）。
+
+**何时重开：**(a) 若要按上游的推理模板（`reasoning.js` 的 prefix/suffix）或卡片自己的标记（如 `</konatan_planning~>`）自动切分推理与正文：
+那是上游 `auto_parse` 的领域，Iris 目前没有，需要另开一项并对齐上游的设置。(b) 若主人要「一键转成正文、不经编辑框」。

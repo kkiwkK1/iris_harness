@@ -222,7 +222,15 @@ export function Message({
         <div className="iris-msg__who">{message.name}</div>
 
         {message.reasoning !== undefined ? (
-          <Reasoning text={message.reasoning} streaming={streaming && message.text === ''} />
+          <Reasoning
+            text={message.reasoning}
+            streaming={streaming && message.text === ''}
+            // A settled reply with no body: the trace is the reply, and the
+            // offer opens the editor on it for the reader to keep or trim.
+            onUseAsReply={!streaming && !editing && message.text.trim() === ''
+              ? () => { setDraft(message.reasoning ?? ''); setEditing(true) }
+              : undefined}
+          />
         ) : null}
 
         {editing ? (
