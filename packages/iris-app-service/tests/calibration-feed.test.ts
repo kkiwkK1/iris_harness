@@ -30,12 +30,10 @@ import { promptTokensOf } from '@iris/protocol'
 import { createCalibratingCounter } from '@iris/tokenizer'
 import type { StreamFn } from '@iris/turn'
 
-import { CharacterLibrary } from '../src/library.ts'
-import { IrisAppService, type Handlers } from '../src/service.ts'
-import { SettingsStore } from '../src/settings.ts'
+import type { IrisAppService, Handlers } from '../src/service.ts'
 import { textOf } from '../src/views.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
-import { tempDir } from './support/temp-dir.ts'
+import { createTestService } from './support/service.ts'
 
 const CARD = JSON.stringify({
   spec: 'chara_card_v2',
@@ -61,12 +59,6 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await tempDir(t, 'iris-calibration-feed-')
-  await mkdir(join(dir, 'characters'), { recursive: true })
-  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
-  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = materialisingChatStore(dir, library)
-  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   const reported: number[] = []
   let ends = 0
   let waited = 0
@@ -92,13 +84,18 @@ async function fixture(t: TestContext): Promise<Fixture> {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 
-  const service = new IrisAppService({
-    stream, library, chats, settings,
-    broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
-    userName: 'Traveller',
-  })
+  const { service, handlers } = await createTestService(t, async ({ dir, library }) => {
+    await mkdir(join(dir, 'characters'), { recursive: true })
+    await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+    return {
+      stream,
+      chats: materialisingChatStore(dir, library),
+      broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
+      userName: 'Traveller',
+    }
+  }, 'iris-calibration-feed-')
   return {
-    handlers: service.handlers(),
+    handlers,
     service,
     reported,
     settled: async () => {
