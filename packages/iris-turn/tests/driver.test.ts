@@ -430,6 +430,43 @@ test('historyFromSession drops the trailing reply only when asked, and only a re
     historyFromSession(session, { dropTrailingReply: true }).map(entry => entry.text),
     ['Hello?'],
   )
-  // The pin follows the projection: it is index 0 of what is being sent.
+  // The pin names the log's floor 0, which the trailing drop leaves in place.
   assert.equal(historyFromSession(session, { dropTrailingReply: true })[0]?.pinned, true)
+})
+
+test('historyFromSession sends a floor under the role roleOf names and leaves out what omit names', async () => {
+  const { driver, session } = harness(['First.', 'Second.'])
+  await driver.send(session, 'Hello?')
+  await driver.send(session, 'And?')
+  // Floors: 0 'Hello?' (user), 1 'First.', 2 'And?' (user), 3 'Second.'.
+
+  const narrated = historyFromSession(session, {
+    characterName: 'Aria',
+    userName: 'Traveller',
+    roleOf: floor => floor === 1 ? 'system' : undefined,
+  })
+  assert.deepEqual(narrated.map(entry => `${entry.role}:${entry.name ?? '-'}:${entry.text}`), [
+    'user:Traveller:Hello?',
+    // Upstream's narrator line carries no speaker name.
+    'system:-:First.',
+    'user:Traveller:And?',
+    'assistant:Aria:Second.',
+  ])
+
+  const hidden = historyFromSession(session, { omit: floor => floor === 0 || floor === 2 })
+  // Floor numbers survive the omission: a trace compares floor 3 with floor 3.
+  assert.deepEqual(hidden.map(entry => `${entry.id ?? ''} ${entry.text}`), ['history.1 First.', 'history.3 Second.'])
+  // A hidden opening is not replaced as the pinned floor by whatever follows it.
+  assert.equal(hidden.some(entry => entry.pinned === true), false)
+
+  // The opening stays pinned under a system role: a narrator floor 0 is the
+  // corpus's character sheet, and it sets the conversation up as a greeting does.
+  assert.equal(historyFromSession(session, { roleOf: floor => floor === 0 ? 'system' : undefined })[0]?.pinned, true)
+
+  // The drop is decided on the log, before omission: a reroll replaces the
+  // log's last line, and hiding the line before it does not change which.
+  assert.deepEqual(
+    historyFromSession(session, { dropTrailingReply: true, omit: floor => floor === 2 }).map(entry => entry.text),
+    ['Hello?', 'First.'],
+  )
 })

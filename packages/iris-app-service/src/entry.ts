@@ -46,6 +46,7 @@ import { parseFingerprint, type PromptFingerprint } from './fingerprint.ts'
 import {
   appendSideUsage, compactionUsage, readSideUsage, scriptUsage, type SideUsage,
 } from './side-usage.ts'
+import { lineFlagsBySeq, PLAIN_LINE, type LineFlags } from './line-flags.ts'
 import { parseTiming, timingBySeq, writeTiming } from './timing.ts'
 import { fingerprintBySeq, parseUsage, usageBySeq, usageFieldOf, USAGE_FIELD } from './usage.ts'
 import { projectMessages, textOf, toChatView, type Names, type PendingTurn, type UsageRoute } from './views.ts'
@@ -383,17 +384,60 @@ export function lineTurns(session: Session): number[] {
  *
  * `is_system` is not a field this host models — an imported system row becomes
  * an ordinary candidate and the flag rides through `iris/st-meta` — so this
- * reads it back from there rather than from the log's own shape.
+ * reads it back from there, through {@link lineFlagsOf}, which is the same
+ * reading the prompt projection ({@link floorFlags}) and chat search use.
  * @param session - the chat log.
  * @returns one flag per line, in the same order as {@link lineTurns}.
  */
 export function lineSystemFlags(session: Session): boolean[] {
-  const bySeq = new Map<number, boolean>()
+  return lineFlags(session).map(flags => flags.hidden)
+}
+
+/**
+ * Each chat line's {@link LineFlags}, in line order.
+ * @param session - the chat log.
+ * @returns one entry per line, in the same order as {@link chatLines}.
+ */
+export function lineFlags(session: Session): LineFlags[] {
+  const bySeq = lineFlagsBySeq(session)
+  return chatLines(session).map(line => bySeq.get(line.seq) ?? PLAIN_LINE)
+}
+
+/**
+ * Each **derived message's** {@link LineFlags}, in `session.deriveMessages()`
+ * order — the index `historyFromSession`'s `roleOf` and `omit` are asked in.
+ *
+ * Matched by the message itself, not by position. The derivation and the line
+ * walk ({@link chatLines}) agree on every chat this host writes, but they are
+ * two walks with different rules — the derivation skips an assistant message
+ * with no content, the line walk does not — and a flag applied one floor off
+ * hides the wrong floor from the model with nothing anywhere saying so. The
+ * derived messages are the log's own frozen objects (a user event's `data`,
+ * an assistant event's `data.message`), so each one names the event it came
+ * from, and a swiped-to candidate names its turn's line through the turn.
+ * @param session - the chat log.
+ * @returns one entry per derived message.
+ */
+export function floorFlags(session: Session): LineFlags[] {
+  const bySeq = lineFlagsBySeq(session)
+  const lineOf = new Map<object, number>()
+  const turnLine = new Map<number, number>()
   for (const event of session.events) {
-    if (event.type !== 'iris/st-meta') continue
-    bySeq.set(event.data.seq, event.data.fields['is_system'] === true)
+    if (event.type === 'user/message') {
+      lineOf.set(event.data, event.seq)
+      continue
+    }
+    if (event.type !== 'assistant/message') continue
+    // A turn's line is its first assistant message, as `chatLines` counts it,
+    // and every later candidate of the turn belongs to that same line.
+    const line = turnLine.get(event.data.turn) ?? event.seq
+    turnLine.set(event.data.turn, line)
+    lineOf.set(event.data.message, line)
   }
-  return chatLines(session).map(line => bySeq.get(line.seq) ?? false)
+  return session.deriveMessages().map(message => {
+    const seq = lineOf.get(message)
+    return seq === undefined ? PLAIN_LINE : bySeq.get(seq) ?? PLAIN_LINE
+  })
 }
 
 /** One live conversation and everything bound to it. */

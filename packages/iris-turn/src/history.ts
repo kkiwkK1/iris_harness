@@ -8,7 +8,7 @@
  */
 
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { HistoryEntry } from '@iris/pipeline'
+import type { HistoryEntry, Role } from '@iris/pipeline'
 
 /**
  * What one generation needs left OUT of the conversation it is given.
@@ -52,6 +52,34 @@ export interface HistoryOptions extends HistoryProjection {
   characterName?: string
   /** Speaker name for user turns. */
   userName?: string
+  /**
+   * The role a floor is sent as, when it is not the one the log gives it.
+   *
+   * The log models two speakers, and upstream sends a third: a row whose
+   * `extra.type` is `'narrator'` (`/sys`, and a Tavern Helper
+   * `createChatMessages` row with `role: 'system'`) reaches the model as
+   * `role: 'system'` — 「100% legal way to send a message as system」,
+   * `public/scripts/openai.js:580-582`. That marker is not in the log's shape
+   * (it rides in `iris/st-meta`, which this package cannot read), so the
+   * caller that can read it answers here. A floor with a `'system'` role
+   * carries no speaker name, as upstream's narrator line carries none.
+   *
+   * **Indexed by floor**, the position in `session.deriveMessages()` before
+   * {@link HistoryProjection.dropTrailingReply} — the same number the caller
+   * reads its line index in. Undefined keeps the log's own role.
+   */
+  roleOf?: (floor: number) => Role | undefined
+  /**
+   * Floors the model is not shown at all.
+   *
+   * Upstream's `is_system` rows — what `/hide` writes, and a card row created
+   * with `is_hidden: true` — are filtered out of the conversation before it is
+   * built (`coreChat = chat.filter(x => !x.is_system …)`,
+   * `public/script.js:4437`). Indexed like {@link roleOf}. The floors that
+   * remain keep their own floor number as their id, so hiding one floor does
+   * not renumber every floor after it in a cache trace.
+   */
+  omit?: (floor: number) => boolean
 }
 
 /**
@@ -73,27 +101,40 @@ export function historyFromSession(session: Session, options: HistoryOptions = {
     ? derived.slice(0, -1)
     : derived
 
-  return messages.map((message, index) => {
+  const entries: HistoryEntry[] = []
+  messages.forEach((message, floor) => {
+    // Left out after the trailing drop, not before it: the reply a reroll
+    // replaces is the log's last line whatever its flags, and upstream's
+    // regenerate removes it from `chat` before `coreChat` is filtered.
+    if (options.omit?.(floor) === true) return
     const text = message.content
       .filter(block => block.type === 'text')
       .map(block => block.text)
       .join('')
-    const role = message.role === 'assistant' ? ('assistant' as const) : ('user' as const)
-    const name = role === 'assistant' ? options.characterName : options.userName
+    const role: Role = options.roleOf?.(floor) ?? (message.role === 'assistant' ? 'assistant' : 'user')
+    const name = role === 'assistant' ? options.characterName : role === 'user' ? options.userName : undefined
 
-    return {
+    entries.push({
       role,
       text,
       // The floor number, so a cache trace can name *which* floor changed
-      // rather than saying "the conversation did". The index is over the
-      // projection, and the projection only ever drops from the tail
-      // (`dropTrailingReply`), so a floor keeps this id from one turn to the
-      // next — which is the whole reason two turns' records can be compared
-      // item by item. Provenance, never content: `PipelineMessage.id` says why
-      // it cannot reach a provider.
-      id: `history.${String(index)}`,
+      // rather than saying "the conversation did". It is the floor's position
+      // in the log, not in this projection: the projection drops from the tail
+      // (`dropTrailingReply`) and leaves out hidden floors (`omit`), and
+      // numbering after either would give every later floor a new id the turn
+      // a floor was hidden — while comparing two turns' records item by item
+      // is the whole reason the id exists. Provenance, never content:
+      // `PipelineMessage.id` says why it cannot reach a provider.
+      id: `history.${String(floor)}`,
       ...name === undefined ? {} : { name },
-      ...pinFirst && index === 0 ? { pinned: true } : {},
-    }
+      // The log's opening floor, whatever role it is sent as. The pin exists
+      // because the opening sets the conversation up, and a narrator opening
+      // (the corpus's two, in 缄默之秋2.5 MVU, are a character sheet at floor 0)
+      // sets it up no less than a greeting does. A hidden opening is not sent,
+      // and nothing else is pinned in its place: the pin names a floor, not
+      // whichever floor happens to come first.
+      ...pinFirst && floor === 0 ? { pinned: true } : {},
+    })
   })
+  return entries
 }
