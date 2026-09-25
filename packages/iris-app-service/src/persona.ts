@@ -125,7 +125,13 @@ export class PersonaStore {
   readonly #path: string
   readonly #onProblem: ((message: string) => void) | undefined
   #file: PersonaFile = { personas: [] }
-  #loaded = false
+  /**
+   * The first load, memoised as a promise rather than a flag set before the
+   * read, so a caller arriving during it waits for it instead of mutating
+   * the empty defaults the finishing load then replaces (`connections.ts`
+   * records the same defect and fix).
+   */
+  #loading: Promise<void> | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -139,8 +145,12 @@ export class PersonaStore {
 
   /** Load on first use; a missing file is an empty list, a corrupt one is set aside. */
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
     const parsed = await readJsonStore(this.#path, this.#onProblem) as Partial<PersonaFile> | undefined
     // Nothing saved yet is the state every install starts in; a file that is
     // there and does not parse is now kept under its own name rather than

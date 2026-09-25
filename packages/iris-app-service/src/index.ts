@@ -1051,6 +1051,49 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const cardStorage = new CardStorageStore(
     paths.cardStorage, error => { ctx.logger.warn(error.message) }, reportStoreProblem)
 
+  /*
+   * **The store drains, awaited.** Registered here — after the three stores
+   * exist and before `irisApp.handlers` — so reverse disposal runs it after the
+   * handlers are revoked (nothing new can be written) and before
+   * `irisApp.hostLock` releases the lock (a successor host cannot take the
+   * directory while a write is still landing).
+   *
+   * The disposer is `async` and returns its promise, which Cordis awaits — the
+   * lock effect above records that as measured. These drains used to be
+   * `void`-fired inside the handlers' synchronous disposer, so `fiber.dispose()`
+   * resolved, the lock was released and `bin.ts` exited while the writes were
+   * still in flight: the loss each drain exists to prevent, on every Ctrl+C.
+   *
+   * - Card storage: its writes are debounced, so without the drain a shutdown
+   *   loses "the last few hundred milliseconds of a card's state", which a
+   *   card cannot tell apart from a refused write, since neither says anything.
+   * - Script variables: the queue has no debounce to blame
+   *   (`notes/AUDIT-CORDIS.md` §3, gap 4). This one also closes the store, so
+   *   a frame the reload retires cannot land a late write under the next
+   *   generation's load. Its failures report through the store's own `onError`.
+   * - Plugins' private stores: the chains are per plugin. The drain waits out
+   *   a write a plugin made from its own dispose (the save that has no other
+   *   moment) and then closes the stores, so a later `set` answers
+   *   invalid-request. A failing write was already thrown to its own caller
+   *   and reported through the runtime's `onError`.
+   *
+   * `allSettled`, so one failing drain neither skips the others nor aborts
+   * the rest of disposal; each rejection is still logged, by name.
+   */
+  ctx.effect(() => async () => {
+    const drains = [
+      ['card storage', cardStorage.flush()],
+      ['script variables', scriptVariables.flush()],
+      ['plugin data', systemPlugins.flushPluginData()],
+    ] as const
+    const settled = await Promise.allSettled(drains.map(([, drain]) => drain))
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') return
+      const error: unknown = result.reason
+      ctx.logger.warn(`${drains[index]?.[0] ?? 'store'} drain: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  }, 'irisApp.storeDrains')
+
   // The folders are created on first write, not on boot: a host that has never
   // been used should leave nothing behind, and both stores already tolerate a
   // directory that does not exist yet.
@@ -1182,38 +1225,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // One loop over the protocol's method list (`./registration.ts`, which also
   // records the decision this reversed: the hand list's "a loop needs a cast"
   // premise is true of a naive loop and false of a generic per-method helper).
+  // The store drains are not in this disposer: they are `irisApp.storeDrains`,
+  // registered before this effect, so reverse disposal revokes the handlers
+  // first (no new write can arrive) and only then awaits the drains.
   ctx.effect(() => {
     const unregister = registerHandlers((method, handler) => ctx.irisRpc.register(method, handler), handlers)
-    return () => {
-      unregister()
-      // Drain the coalesced storage writes. Without this the debounce turns a
-      // shutdown into "the last few hundred milliseconds of a card's state
-      // never happened" — and a card cannot tell that apart from a write that
-      // was refused, because neither says anything.
-      void cardStorage.flush().catch((error: unknown) => {
-        ctx.logger.warn(error instanceof Error ? error.message : String(error))
-      })
-      // Same drain for the script variables, whose queue has no debounce to
-      // blame (`notes/AUDIT-CORDIS.md` §3, gap 4: both stores serialise writes
-      // through a chain, and only one of them had a recovery point here). This
-      // one also closes the store, so a frame the reload retires cannot land a
-      // late write under the next generation's load; its failures report
-      // through the store's own `onError`, and the catch is the same belt
-      // card storage's is.
-      void scriptVariables.flush().catch((error: unknown) => {
-        ctx.logger.warn(error instanceof Error ? error.message : String(error))
-      })
-      // Same drain for the plugins' private stores. The chains are per plugin,
-      // so this waits out a write a plugin made from its own dispose — the
-      // save that has no other moment — and then closes the stores: a `set`
-      // after it answers invalid-request, named after the script-variables
-      // refusal above. A failing write never rejects here; it was already
-      // thrown to its own caller and reported through the runtime's
-      // `onError`, and the catch is the same belt the two drains above wear.
-      void systemPlugins.flushPluginData().catch((error: unknown) => {
-        ctx.logger.warn(error instanceof Error ? error.message : String(error))
-      })
-    }
+    return () => { unregister() }
   }, 'irisApp.handlers')
 
   /*

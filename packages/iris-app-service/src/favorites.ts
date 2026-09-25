@@ -33,7 +33,13 @@ export class FavoriteStore {
   readonly #path: string
   readonly #onProblem: ((message: string) => void) | undefined
   #ids: string[] = []
-  #loaded = false
+  /**
+   * The first load, memoised as a promise rather than a flag set before the
+   * read, so a caller arriving during it waits for it instead of mutating
+   * the empty defaults the finishing load then replaces (`connections.ts`
+   * records the same defect and fix).
+   */
+  #loading: Promise<void> | undefined
 
   /**
    * @param path - the JSON file backing the store.
@@ -46,8 +52,12 @@ export class FavoriteStore {
   }
 
   async #load(): Promise<void> {
-    if (this.#loaded) return
-    this.#loaded = true
+    this.#loading ??= this.#loadOnce()
+    return this.#loading
+  }
+
+  /** The body of {@link #load}, run once per store. */
+  async #loadOnce(): Promise<void> {
     // Absent stays "nothing is starred", which is the state every profile
     // starts in and a valid state to stay in. A file that is *there* and will
     // not parse is set aside first, so the `#save` below writes a new file

@@ -1099,7 +1099,8 @@ export class SystemPluginRuntime {
    * Drain every plugin's private store and close it to new writes.
    *
    * The teardown counterpart of `cardStorage.flush()` and
-   * `scriptVariables.flush()`, from the same handlers-effect dispose: the
+   * `scriptVariables.flush()`, from the same awaited `irisApp.storeDrains`
+   * dispose in `index.ts`: the
    * chains run per plugin, so this returns only when every write enqueued
    * before it — including one a plugin made from its own dispose, the save it
    * could not have made at any other moment — is on disk. After it, `set` and

@@ -65,6 +65,19 @@ interface StoreCase {
   readonly fallback: unknown
   /** Write something, so the store persists its degraded state. */
   readonly write: (store: never) => Promise<unknown>
+  /**
+   * The concurrent first-use probe's half of the row: a `prior` write (made
+   * through a first store over the file, so the seed is in the store's own
+   * shape) and a `probe` that answers, from one store's memory, whether both
+   * the prior write and {@link write} are there. Or the reason a store is
+   * exempt — which the test pins by name, so an exemption cannot grow quietly.
+   */
+  readonly firstUse:
+    | {
+      readonly prior: (store: never) => Promise<unknown>
+      readonly probe: (store: never) => Promise<Record<string, boolean>>
+    }
+    | { readonly exempt: string }
 }
 
 /**
@@ -77,6 +90,13 @@ interface StoreCase {
  */
 const COVERED = 12
 
+/**
+ * How many stores the concurrent first-use probe actually compares — the same
+ * kind of floor, asserted on the compared count, so a row that slides into
+ * `exempt` (or a probe that stops running) goes red instead of green.
+ */
+const COVERED_FIRST_USE = 11
+
 const cases: readonly StoreCase[] = [
   {
     name: 'SettingsStore',
@@ -86,6 +106,9 @@ const cases: readonly StoreCase[] = [
     read: async (store: SettingsStore) => { await store.load(); return store.get().model },
     fallback: 'local-model',
     write: async (store: SettingsStore) => store.set(undefined, { model: 'after' }),
+    firstUse: {
+      exempt: 'not lazy: the composition awaits `settings.load()` at boot, before any handler is registered',
+    },
   },
   {
     name: 'ConnectionStore',
@@ -94,6 +117,13 @@ const cases: readonly StoreCase[] = [
     read: async (store: ConnectionStore) => (await store.list()).profiles.length,
     fallback: 0,
     write: async (store: ConnectionStore) => store.save({ provider: 'p', model: 'm' }),
+    firstUse: {
+      prior: async (store: ConnectionStore) => store.save({ provider: 'p0', model: 'm0' }),
+      probe: async (store: ConnectionStore) => {
+        const providers = (await store.list()).profiles.map(profile => profile.provider)
+        return { prior: providers.includes('p0'), written: providers.includes('p') }
+      },
+    },
   },
   {
     name: 'ScriptPolicyStore',
@@ -102,6 +132,13 @@ const cases: readonly StoreCase[] = [
     read: async (store: ScriptPolicyStore) => store.scriptsAllowed('aria'),
     fallback: undefined,
     write: async (store: ScriptPolicyStore) => store.setScriptsAllowed('aria', true),
+    firstUse: {
+      prior: async (store: ScriptPolicyStore) => store.setScriptsAllowed('prior', true),
+      probe: async (store: ScriptPolicyStore) => ({
+        prior: await store.scriptsAllowed('prior') === true,
+        written: await store.scriptsAllowed('aria') === true,
+      }),
+    },
   },
   {
     name: 'ScriptLibraryStore',
@@ -111,6 +148,14 @@ const cases: readonly StoreCase[] = [
     fallback: 0,
     write: async (store: ScriptLibraryStore) =>
       store.save('global', undefined, { name: 'n', content: 'c' }),
+    firstUse: {
+      prior: async (store: ScriptLibraryStore) =>
+        store.save('global', undefined, { name: 'prior', content: 'c' }),
+      probe: async (store: ScriptLibraryStore) => {
+        const names = (await store.views()).map(view => view.name)
+        return { prior: names.includes('prior'), written: names.includes('n') }
+      },
+    },
   },
   {
     name: 'PersonaStore',
@@ -119,6 +164,13 @@ const cases: readonly StoreCase[] = [
     read: async (store: PersonaStore) => (await store.list()).personas.length,
     fallback: 0,
     write: async (store: PersonaStore) => store.upsert({ name: 'me', description: 'd' }),
+    firstUse: {
+      prior: async (store: PersonaStore) => store.upsert({ name: 'prior', description: 'd' }),
+      probe: async (store: PersonaStore) => {
+        const names = (await store.list()).personas.map(persona => persona.name)
+        return { prior: names.includes('prior'), written: names.includes('me') }
+      },
+    },
   },
   {
     name: 'FavoriteStore',
@@ -127,6 +179,13 @@ const cases: readonly StoreCase[] = [
     read: async (store: FavoriteStore) => (await store.list()).length,
     fallback: 0,
     write: async (store: FavoriteStore) => store.set('aria', true),
+    firstUse: {
+      prior: async (store: FavoriteStore) => store.set('prior', true),
+      probe: async (store: FavoriteStore) => {
+        const ids = await store.list()
+        return { prior: ids.includes('prior'), written: ids.includes('aria') }
+      },
+    },
   },
   {
     name: 'ChatOrderStore',
@@ -135,6 +194,14 @@ const cases: readonly StoreCase[] = [
     read: async (store: ChatOrderStore) => (await store.list()).length,
     fallback: 0,
     write: async (store: ChatOrderStore) => store.set(['a', 'b']),
+    firstUse: {
+      // `set` replaces the whole arrangement, so the prior order is *meant* to
+      // be gone; what must hold is that the write is what memory and disk say.
+      prior: async (store: ChatOrderStore) => store.set(['prior']),
+      probe: async (store: ChatOrderStore) => ({
+        written: JSON.stringify(await store.list()) === JSON.stringify(['a', 'b']),
+      }),
+    },
   },
   {
     name: 'CardStorageStore',
@@ -145,6 +212,16 @@ const cases: readonly StoreCase[] = [
     write: async (store: CardStorageStore) => {
       await store.set('k', 'v', { characterId: 'aria' })
       await store.flush()
+    },
+    firstUse: {
+      prior: async (store: CardStorageStore) => {
+        await store.set('prior', '1', { characterId: 'aria' })
+        await store.flush()
+      },
+      probe: async (store: CardStorageStore) => {
+        const snapshot = await store.snapshot()
+        return { prior: snapshot['prior'] === '1', written: snapshot['k'] === 'v' }
+      },
     },
   },
   {
@@ -159,6 +236,17 @@ const cases: readonly StoreCase[] = [
       store.backendFor(tables).write({ type: 'script', script_id: 's' }, { hp: 1 })
       await store.settled()
     },
+    firstUse: {
+      prior: async (store: ScriptVariableStore) => {
+        const tables = await store.open('prior', undefined)
+        store.backendFor(tables).write({ type: 'script', script_id: 's' }, { mp: 2 })
+        await store.settled()
+      },
+      probe: async (store: ScriptVariableStore) => ({
+        prior: JSON.stringify(await store.open('prior', undefined)).includes('"mp":2'),
+        written: JSON.stringify(await store.open('aria', undefined)).includes('"hp":1'),
+      }),
+    },
   },
   {
     name: 'ScriptButtonStore',
@@ -168,6 +256,13 @@ const cases: readonly StoreCase[] = [
     fallback: 0,
     write: async (store: ScriptButtonStore) =>
       store.set('aria', 's', [{ name: 'go', visible: true }]),
+    firstUse: {
+      prior: async (store: ScriptButtonStore) => store.set('prior', 's', [{ name: 'p', visible: true }]),
+      probe: async (store: ScriptButtonStore) => ({
+        prior: (await store.get('prior', 's'))?.[0]?.name === 'p',
+        written: (await store.get('aria', 's'))?.[0]?.name === 'go',
+      }),
+    },
   },
   {
     name: 'ExtensionSettingsStore',
@@ -176,6 +271,13 @@ const cases: readonly StoreCase[] = [
     read: async (store: ExtensionSettingsStore) => Object.keys(await store.get('aria')).length,
     fallback: 0,
     write: async (store: ExtensionSettingsStore) => store.set('aria', { seen: true }),
+    firstUse: {
+      prior: async (store: ExtensionSettingsStore) => store.set('prior', { seen: true }),
+      probe: async (store: ExtensionSettingsStore) => ({
+        prior: (await store.get('prior'))['seen'] === true,
+        written: (await store.get('aria'))['seen'] === true,
+      }),
+    },
   },
   {
     name: 'WorldbookBindingStore',
@@ -186,6 +288,15 @@ const cases: readonly StoreCase[] = [
     write: async (store: WorldbookBindingStore) => store.set('aria', {
       name: 'aria-book', sourceHash: 'a', materialisedHash: 'b', origin: 'minted', at: 1,
     }),
+    firstUse: {
+      prior: async (store: WorldbookBindingStore) => store.set('prior', {
+        name: 'prior-book', sourceHash: 'a', materialisedHash: 'b', origin: 'minted', at: 1,
+      }),
+      probe: async (store: WorldbookBindingStore) => ({
+        prior: (await store.get('prior'))?.name === 'prior-book',
+        written: (await store.get('aria'))?.name === 'aria-book',
+      }),
+    },
   },
 ]
 
@@ -284,4 +395,52 @@ test('a first run is not reported and nothing is set aside', async (t) => {
     assert.deepEqual((await readdir(dir)).filter(name => name.includes('.corrupt-')), [],
       `${subject.name} quarantined a file that was never there`)
   }
+})
+
+test('a read and a write during the first load both land, in memory and on disk', async (t) => {
+  // **The lost-write class this is about.** A store that set a `#loaded` flag
+  // *before* awaiting its file let a second caller arriving during that read
+  // return at once, mutate the empty defaults and save them; the finishing
+  // load then replaced the table. Measured on FavoriteStore: memory kept the
+  // prior star and lost the new one, while disk kept the new one and lost the
+  // prior star. Only ConnectionStore memoised the load *promise*; the other
+  // lazy stores now do too, and this is the probe over the whole population.
+  //
+  // Each row seeds its file through a first store (so the seed is in the
+  // store's own shape), then a fresh store over the same file takes a read and
+  // a write at the same moment — both inside its first load — and must answer
+  // both the prior and the new write from memory, and a third store reopened
+  // from disk must answer the same.
+  const exempt = cases.flatMap(subject => 'exempt' in subject.firstUse ? [subject.name] : [])
+  assert.deepEqual(exempt, ['SettingsStore'], 'the exemption list grew or shrank; say why in the row')
+
+  let compared = 0
+  for (const subject of cases) {
+    const firstUse = subject.firstUse
+    if ('exempt' in firstUse) continue
+    await t.test(subject.name, async (inner) => {
+      const dir = await tempDir(inner, 'iris-first-use-')
+      const path = join(dir, subject.file)
+      const quiet = (): void => {}
+
+      await (firstUse.prior as (s: object) => Promise<unknown>)(subject.open(path, quiet))
+
+      const racing = subject.open(path, quiet)
+      await Promise.all([
+        (subject.read as (s: object) => Promise<unknown>)(racing),
+        (subject.write as (s: object) => Promise<unknown>)(racing),
+      ])
+      const probe = firstUse.probe as (s: object) => Promise<Record<string, boolean>>
+      const inMemory = await probe(racing)
+      assert.ok(Object.keys(inMemory).length > 0, `${subject.name}'s probe checks nothing`)
+      assert.deepEqual(inMemory, Object.fromEntries(Object.keys(inMemory).map(key => [key, true])),
+        `${subject.name} lost a write made during its first load (in memory)`)
+
+      const onDisk = await probe(subject.open(path, quiet))
+      assert.deepEqual(onDisk, inMemory, `${subject.name}'s file disagrees with its memory after the first load`)
+    })
+    compared += 1
+  }
+  assert.ok(compared >= COVERED_FIRST_USE,
+    `the first-use probe compared ${String(compared)} stores, ${String(COVERED_FIRST_USE)} required`)
 })
