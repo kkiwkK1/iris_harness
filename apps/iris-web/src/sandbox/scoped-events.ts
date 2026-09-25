@@ -48,10 +48,45 @@ export function scopedEvents(
   /** What this script registered, so teardown can be limited to it. */
   const mine = new Map<string, Set<Listener>>()
 
-  const remember = (event: string, listener: Listener): void => {
+  /**
+   * The bus's own handles for what this script registered, so a clear can
+   * remove what the bus actually holds.
+   *
+   * Needed for `eventOnce`, and found by the sandbox-plugin teardown test: the
+   * bus registers a **wrapper** for a once-listener, so removing by the card's
+   * own function finds nothing, and `eventClearAll` left every unfired
+   * once-listener on the bus. Upstream's `pagehide` clear takes everything the
+   * iframe registered, once-listeners included, so the clears here stop each
+   * registration's bus handle rather than removing by function.
+   */
+  const handles = new Map<string, Map<Listener, Subscription[]>>()
+
+  const remember = (event: string, listener: Listener, handle?: Subscription): void => {
     const slot = mine.get(event) ?? new Set<Listener>()
     slot.add(listener)
     mine.set(event, slot)
+    if (handle === undefined) return
+    const byListener = handles.get(event) ?? new Map<Listener, Subscription[]>()
+    byListener.set(listener, [...byListener.get(listener) ?? [], handle])
+    handles.set(event, byListener)
+  }
+
+  /**
+   * Remove one of this script's listeners from the bus, through each of its
+   * registrations' handles.
+   * @param event - the event.
+   * @param listener - the card's own function.
+   */
+  const detach = (event: string, listener: Listener): void => {
+    const byListener = handles.get(event)
+    const held = byListener?.get(listener) ?? []
+    // One removal per registration, through its own handle. Removing by
+    // function as well would take a sibling's registration of the same
+    // function object, since the bus removes the first match it finds.
+    if (held.length === 0) events.eventRemoveListener(event, listener)
+    for (const handle of held) handle.stop()
+    byListener?.delete(listener)
+    if (byListener?.size === 0) handles.delete(event)
   }
 
   const forget = (event: string, listener: Listener): void => {
@@ -59,6 +94,11 @@ export function scopedEvents(
     if (slot === undefined) return
     slot.delete(listener)
     if (slot.size === 0) mine.delete(event)
+    // The handles go with the record, so a later clear cannot stop a handle
+    // whose removal (by function, on the bus) would now hit a sibling.
+    const byListener = handles.get(event)
+    byListener?.delete(listener)
+    if (byListener?.size === 0) handles.delete(event)
   }
 
   const register = (
@@ -67,8 +107,8 @@ export function scopedEvents(
   ): ((event: string, listener: Listener) => Subscription) => {
     return (event, listener) => {
       const name = guard(member, event)
-      remember(name, listener)
       const subscription = add(name, listener)
+      remember(name, listener, subscription)
       // The handle also forgets, so a card that stops its own subscription does
       // not leave this record claiming a listener the bus no longer holds.
       return {
@@ -84,10 +124,14 @@ export function scopedEvents(
     eventOn: register('eventOn', (event, listener) => events.eventOn(event, listener)),
     /*
      * `eventOnce` is recorded like any other, and deliberately not un-recorded
-     * when it fires. A stale entry costs one wasted removal at teardown; the
-     * alternative — wrapping the listener to forget itself — would change the
-     * function identity the bus holds, and `eventRemoveListener(event, listener)`
-     * would then fail to find it.
+     * when it fires. A stale entry costs one wasted removal at teardown.
+     *
+     * The bus itself already wraps a once-listener, so the function it holds
+     * is not the card's. The clears reach that wrapper through the bus's own
+     * handle (`detach`). `eventRemoveListener(event, listener)` still removes
+     * by the card's function only and so misses an unfired once-listener, as
+     * the bus always has; that member is left as it was (a parity question,
+     * not a teardown one).
      */
     eventOnce: register('eventOnce', (event, listener) => events.eventOnce(event, listener)),
     eventMakeFirst: register('eventMakeFirst', (event, listener) =>
@@ -111,14 +155,14 @@ export function scopedEvents(
      */
     eventClearEvent: event => {
       const name = guard('eventClearEvent', event)
-      for (const listener of mine.get(name) ?? []) events.eventRemoveListener(name, listener)
+      for (const listener of mine.get(name) ?? []) detach(name, listener)
       mine.delete(name)
     },
 
     eventClearListener: listener => {
       for (const [event, listeners] of [...mine]) {
         if (!listeners.has(listener)) continue
-        events.eventRemoveListener(event, listener)
+        detach(event, listener)
         forget(event, listener)
       }
     },
@@ -126,7 +170,7 @@ export function scopedEvents(
     /** What upstream fires on `pagehide`: everything *this* script registered. */
     eventClearAll: () => {
       for (const [event, listeners] of [...mine]) {
-        for (const listener of listeners) events.eventRemoveListener(event, listener)
+        for (const listener of listeners) detach(event, listener)
       }
       mine.clear()
     },

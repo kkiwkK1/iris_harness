@@ -149,7 +149,7 @@ B 族受字节预算约束：`FRAME_OVERHEAD_BYTES = 4 * 1024`（`apps/iris-web/
 | 持久化 | profile 级（`system-plugins.json` + 安装树） | **按对话**（chatId），Iris 自己的 sidecar |
 | 生命周期 | list / install / enable / disable / reload / uninstall（六个） | define / confirm / mount / replace / disable / remove（六个，名字刻意不同） |
 | 安装同意 | 一张同意页，一次决定，装完就在（[SYSTEM-PLUGIN-INSTALL](SYSTEM-PLUGIN-INSTALL.md) §5.3） | **每个新版本一张确认卡**；单勾只授权这一版，双勾授权这个 id 的将来版本（§4.1） |
-| 失败态 | 七个（`SystemPluginFailureState`，`packages/iris-protocol/src/system-plugins.ts:35`） | 七个，**另一套名字**（§6），因为阶段不同 |
+| 失败态 | 七个（`SystemPluginFailureState`，`packages/iris-protocol/src/system-plugins.ts:35`） | 八个（2026-09-26 加了 `facade-mismatch`），**另一套名字**（§6），因为阶段不同 |
 | 谁能装 | 用户，在插件中心 | 用户，在对话里，对着**这一个聊天** |
 | 卸载留下什么 | 聊天、变量、`plugin-data/<id>/`（用户数据） | **什么都不留**：记录、样式、面板、注册全消失（§5.7） |
 
@@ -310,6 +310,8 @@ export interface SandboxPluginRecord {
        「有可跑脚本 **或** 有要挂的插件」（§5.1，对着 card-scripts.ts:281）
  6  frame ready → context → run（既有）
  7  [壳：每个插件一条 plugin:mount]
+       ——帧里的插件入口把它压到帧**第一次拿到 context 之后**才挂（2026-09-26 实测：壳在帧 ready 时就发 mount，
+         早于第一条 context，插件的 apply 看不到对话，owner id 组不出来；见 frame.ts 的 contextReady）
  8  [帧：按 id 字典序挨个挂（§9）]
 ```
 
@@ -468,8 +470,10 @@ mini 树在帧里的全局名是 `__iris_sandbox_plugins__`，形状与 `MEMBERS
 | 2 | 面板 | `[data-iris-plugin-panel="<id>"]` 整格移除 |
 | 3 | 样式（本帧） | `[data-iris-plugin-style="<id>"]` 全删 |
 | 4 | 样式（B 族帧） | 壳丢掉 `(chatId, pluginId)` 的那份 CSS，相关 B 族帧重建 |
-| 5 | 成员面留下的东西 | 事件监听（`eventClearAll` 的按 owner 版本）、脚本按钮（`replaceScriptButtons` 置空）、注入的提示词（`uninjectPrompts`）——**逐项，按 `pluginId` 绑定的那份** |
+| 5 | 成员面留下的东西 | **`scope.dispose()`**：这个插件的 `OwnerScope`（`apps/iris-web/src/sandbox/owner-scope.ts`）按注册的逆序撤销每一个 effect，逐个回一行。事件监听、脚本按钮、注入的提示词、`initializeGlobal` 发布的名字，都是成员被调用时自己往调用者的 scope 里登记的撤销（`TRACE_MEMBERS` 是这张名单） |
 | 6 | 树上的行 | 从 `__iris_sandbox_plugins__` 移除；同 id 可以再挂 |
+
+**第 5 项的形状，2026-09-26 起**（owner 裁决 1，2026-09-25；finding `owner-scope-for-teardown`、`frame-plugin-kernel-on-cordis` 的更正方向）：原来是三个写死的成员调用（`eventClearAll`、`replaceScriptButtons`、收集来的 `uninject`），**漏了 `initializeGlobal`**，插件发布的全局名在卸载后还在。现在是一个借 Cordis **形状**、不引 Cordis 库的 `OwnerScope`：`scope.effect(() => dispose)` 当场执行并留下撤销，`dispose()` 逆序、串行地撤销并返回逐 effect 的清单（与 Cordis 的 `Promise.all` 并发卸载、错误进日志不同，两处都是有意的）。每次挂载一个 scope，拆卸时丢弃，重挂从新的开始。**发布是按发布时记下的 owner 撤销的**：卡脚本后来又发布了同名的，名字就是卡的，插件卸载不动它；插件覆盖了卡先发布的，卸载时还原卡的值。挂载失败（factory 或 `apply` 抛错）的路径也 dispose 这个 scope，原来只清样式和面板，抛错前注册的监听会留在总线上。清单仍是六项，第 5 项仍是一行，未拆掉的 effect 名写在它的 `detail` 里。测试：`apps/iris-web/tests/sandbox-plugin-teardown-scope.test.ts`（逐个调用 `TRACE_MEMBERS` 的每个成员再卸载，比较数量做下限）。这次还顺带发现并修了一处：`eventOnce` 在总线上登记的是包装函数，按卡自己的函数移除找不到它，所以 `eventClearAll` 一直留下未触发的 once 监听（`scoped-events.ts` 的 `detach`）。
 
 **第 5 项是整个设计里最容易漏的一格，也是 §5.3 坚持「`card` 成员按插件绑定」的唯一理由。** 一个共享的成员面拆不掉它注册过的东西，因为没人知道哪一条是谁注册的——这正是 `registerPluginMembers` 今天没有撤销口的同一个病（§2.2）。
 
@@ -479,7 +483,7 @@ mini 树在帧里的全局名是 `__iris_sandbox_plugins__`，形状与 `MEMBERS
 
 ## 6. 失败语义（裁决 Q18）
 
-七个具名状态，一个都不静默，每一个都对着一条 `debug.reports` 行（§8）。名字**刻意不与系统插件的七个重合**（`SystemPluginFailureState`，`packages/iris-protocol/src/system-plugins.ts:35`）——阶段完全不同，共用名字会让两张表上的同一个词指两件事。
+八个具名状态（第八个 `facade-mismatch` 见 §6.8），一个都不静默，每一个都对着一条 `debug.reports` 行（§8）。名字**刻意不与系统插件的七个重合**（`SystemPluginFailureState`，`packages/iris-protocol/src/system-plugins.ts:35`）——阶段完全不同，共用名字会让两张表上的同一个词指两件事。
 
 ```ts
 export type SandboxPluginFailureState =
@@ -490,6 +494,7 @@ export type SandboxPluginFailureState =
   | 'mount-timeout'    // apply 超过 3 s
   | 'dispose-failed'   // 拆卸时 dispose 抛错/超时，或某一格没拆掉
   | 'orphaned'         // sidecar 有行，帧里挂不上（帧没起来 / 未授权 / 聊天不匹配）
+  | 'facade-mismatch'  // 这一版的 facade 戳高于本构建交出的门面（§6.8）
 ```
 
 ### 6.1 `syntax-failed`：预检必须用挂载用的那个包装器
@@ -527,6 +532,12 @@ sidecar 里有行、帧里没有对应的挂载。四种成因，报告要分得
 ### 6.7 id 撞车
 
 不会发生，因为 id 由宿主用 `uniqueId`（`packages/iris-app-service/src/paths.ts:86`）对着**这段对话已有的 id** 铸（Q1）。真撞上（并发两条「创造」请求）是宿主的 bug：整条拒绝，记 `internal`，不写 sidecar。**不给它一个失败状态**——一个永远不该发生的情形有了名字，就会有人去处理它而不是修它。
+
+### 6.8 `facade-mismatch`（2026-09-26，finding `sandbox-facade-unversioned`）
+
+每个版本在 define 时由**宿主**盖一个 `facade` 戳（`SANDBOX_PLUGIN_FACADE_VERSION`，`@iris/protocol`），**绝不取自模型的输出**：模型不知道哪个构建会挂它，而一个它能写的字段只会被写成「兼容」。没有戳的版本读作 1，因为戳出现之前只发过门面 1。挂载一侧（宿主的 `mountsOf`）拒绝戳高于本构建的版本，不交给帧；列表面板经 `viewOf` 看到派生出来的 `facade-mismatch`（不写盘：它是「这一版 × 这个构建」的事实，升级后自然消失），并给出两条路：升级 Iris，或再说一句话按这一版重写。
+
+守的是什么：`card` 面随上游**追加**生长，而本构建没有的成员读作 `undefined`，所以追加不需要升号。**删掉或改名** `styles`/`panel`/`card` 的成员时才升号；这也顺带覆盖了降级（旧构建打开新构建写的插件）。
 
 ---
 

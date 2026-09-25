@@ -28,7 +28,8 @@
 /**
  * Why a sandbox plugin is not running.
  *
- * Seven, and the names are **not** `SystemPluginFailureState`'s seven. A system
+ * Eight since `facade-mismatch` (2026-09-26), and the names are **not**
+ * `SystemPluginFailureState`'s seven. A system
  * plugin is full-privilege Node code installed from a place; a sandbox plugin is
  * untrusted code written a minute ago, and the only word the two stages share
  * honestly is "failed".
@@ -37,6 +38,7 @@
  * able to test them: `mount-failed`, `mount-timeout`, `dispose-failed`.
  * `syntax-failed` is reachable through the precheck below. `unparseable`,
  * `too-large` and `orphaned` belong to the record and the sidecar (PR-B).
+ * `facade-mismatch` is decided by the host from the version's stamp.
  */
 export type SandboxPluginFailureState =
   /** The model's completion did not yield a record — neither route parsed. */
@@ -53,6 +55,13 @@ export type SandboxPluginFailureState =
   | 'dispose-failed'
   /** The record exists and nothing is mounted for it. */
   | 'orphaned'
+  /**
+   * The version was written for a newer facade than this build hands over
+   * (its `facade` stamp is above {@link SANDBOX_PLUGIN_FACADE_VERSION}), so it
+   * is not mounted. Named rather than left to surface as `mount-failed` on the
+   * first member the older build lacks.
+   */
+  | 'facade-mismatch'
 
 /** Every failure state, in the order the type declares them. */
 export const SANDBOX_PLUGIN_FAILURE_STATES: readonly SandboxPluginFailureState[] = [
@@ -63,6 +72,7 @@ export const SANDBOX_PLUGIN_FAILURE_STATES: readonly SandboxPluginFailureState[]
   'mount-timeout',
   'dispose-failed',
   'orphaned',
+  'facade-mismatch',
 ]
 
 /**
@@ -72,7 +82,7 @@ export const SANDBOX_PLUGIN_FAILURE_STATES: readonly SandboxPluginFailureState[]
  * validates rather than casts — the same rule `sizing`'s single mode already
  * follows in the frame protocol.
  * @param value - the raw field.
- * @returns whether it is one of the seven.
+ * @returns whether it is one of the eight.
  */
 export function isSandboxPluginFailureState(value: unknown): value is SandboxPluginFailureState {
   return typeof value === 'string'
@@ -142,6 +152,22 @@ export const SANDBOX_PLUGIN_LIMITS = {
  * compiles `function(plugin)` would pass code that cannot run.
  */
 export const SANDBOX_PLUGIN_FACADE_PARAM = 'iris'
+
+/**
+ * Which facade this build hands a plugin: `iris` = { id, styles, panel, card }.
+ *
+ * The host stamps it on every version at define time, from this constant and
+ * never from the model's output. A version with no stamp was written before
+ * the stamp existed, and only facade 1 has ever shipped, so absent reads as 1.
+ *
+ * **What it guards, and what it does not.** The `card` surface tracks upstream
+ * and grows by addition, and a member a build lacks reads as `undefined`, so
+ * additive growth needs no bump. Bump this on a **removal or rename** of a
+ * `styles`, `panel` or `card` member. The mount side then refuses a version
+ * stamped above it by name (`facade-mismatch`), which is also what an older
+ * build does with a newer build's plugins after a downgrade.
+ */
+export const SANDBOX_PLUGIN_FACADE_VERSION = 1
 
 /**
  * The function body a plugin's source is compiled as.

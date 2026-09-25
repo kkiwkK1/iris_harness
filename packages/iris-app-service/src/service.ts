@@ -28,6 +28,7 @@ import { GLOBAL_ORDER_ID, LEGACY_ORDER_ID, type ChatCompletionPreset, type Promp
 import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView, ConnectionKeySource, ConnectionProfile, ContinuePostfix, GenerationSettings, HostDefaultConnection, HostDoctorFacts, IrisEvent, ModelContextLength, PluginRevisionRequest, PresetManagerView, PresetPromptView, PresetRegexAnswer, PromptItemExplanation, PromptItemization, RpcMethod, RpcRequest, RpcResponse, ScriptView, SystemPluginSnapshot, TavernRegexTier, TurnUsage, ScriptContext } from '@iris/protocol'
 import { MAX_CONTEXT_WINDOW, providerPreset, precheckSandboxPluginSyntax, SANDBOX_PLUGIN_QUOTAS } from '@iris/protocol'
 import type { SandboxPluginFailureState } from '@iris/protocol'
+import { SANDBOX_PLUGIN_FACADE_VERSION } from '@iris/protocol'
 import { toId, uniqueId } from './paths.ts'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -8385,6 +8386,9 @@ export class IrisAppService {
       hash: hashOfPluginCode(code),
       prompt: sentence.slice(0, SANDBOX_PLUGIN_QUOTAS.promptChars),
       authored: { connectionId: profile.id, model: authoring.model, at: Date.now() },
+      // The host's own facade, never the model's say-so: the model cannot know
+      // which build mounts it, and a field it set could only ever read 'fine'.
+      facade: SANDBOX_PLUGIN_FACADE_VERSION,
     }
 
     let pending: SandboxPluginRecord | undefined

@@ -96,6 +96,7 @@ function bench(overrides: Partial<SandboxPluginTreeEnv> = {}): Bench {
     cardSurface: () => ({}),
     clearMemberTraces: pluginId => {
       tracesCleared.push(pluginId)
+      return []
     },
     now: () => clock,
     after: (ms, fire) => {

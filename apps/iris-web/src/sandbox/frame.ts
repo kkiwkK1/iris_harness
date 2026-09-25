@@ -27,6 +27,7 @@ import { isOnSillyTavernSurface } from './card-api.ts'
 import type { MemberTable } from './members-contract.ts'
 import { MEMBER_KINDS, SHARED_ORIGINAL, identityMembers } from './identity.ts'
 import { scopedEvents } from './scoped-events.ts'
+import { createOwnerScope, refuseIfDisposed, TRACE_MEMBERS, type OwnerScope } from './owner-scope.ts'
 import { SCRIPT_REGISTRY, WINDOW_GLOBAL, withPreamble } from './preamble.ts'
 // Names only. Every value in this API is built in the fetched member table
 // (`popup-api.ts`), so nothing but this one list is inlined per frame.
@@ -402,9 +403,11 @@ export interface FrameSandbox {
    * owner id, `sp:<chatId>:<pluginId>` (`sandboxPluginOwnerId`), so state the
    * host keeps per card cannot be shared across conversations.
    * @param owner - the plugin id asking, as minted for this conversation.
-   * @returns the bound surface.
+   * @returns the bound surface; the owner scope its lasting effects
+   *   registered their undo in, whose disposal is teardown item 5; and a promise
+   *   that settles once the frame holds a context, which a mount waits for.
    */
-  cardSurface: (owner: string) => Record<string, unknown>
+  cardSurface: (owner: string) => { members: Record<string, unknown>, scope: OwnerScope, ready: Promise<void> }
 }
 
 /** Bind a function so calling it off the proxy does not trip an illegal invocation. */
@@ -634,6 +637,21 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * cannot run before the channel has been used.
    */
   let context: ScriptContext | undefined = env.seededContext?.()
+
+  /**
+   * Settles when this frame first holds a context, at once if it was seeded.
+   *
+   * For sandbox plugins. The shell posts `plugin:mount` as soon as the frame is
+   * ready, and in a script frame that is before the first `context` message.
+   * Measured on a real host: a plugin's `apply` ran with no snapshot at all,
+   * so `getCurrentChatId()` answered `undefined`, its owner id could not be
+   * formed, and every script-scope write was refused. The plugin entry holds
+   * mounts behind this instead. A card script is never affected: its body is
+   * handed over on `run`, which the shell sends after the context.
+   */
+  let contextArrived: () => void = () => undefined
+  const contextReady = new Promise<void>(resolve => { contextArrived = resolve })
+  if (context !== undefined) contextArrived()
 
   /**
    * The journal behind the chat array a card is holding, if it has one.
@@ -1192,6 +1210,19 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const published = new Map<string, unknown>()
 
   /**
+   * Which owner last published each name through `initializeGlobal`.
+   *
+   * Recorded **at publish time**, so an owner's teardown can take back only
+   * what is still its own. `publishName` is shared by three routes (the parent
+   * proxy's `set`, `initializeGlobal`, the frame's own seeding), and only the
+   * second knows who is calling. The other two clear the entry, so a name a
+   * card script published over a plugin's is the card's afterwards, and the
+   * plugin's unmount leaves it alone. Keyed by the scope object rather than the
+   * owner's id, because two owners may share an id-less identity.
+   */
+  const publisher = new Map<string, OwnerScope>()
+
+  /**
    * Names already given a `predefine`-shaped accessor in this frame.
    *
    * Only to avoid redefining on every subsequent script. Deliberately **not**
@@ -1499,6 +1530,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         throw new UnsupportedApiError(`parent.${String(property)}`, 'The sandbox is not writable.')
       }
       published.delete(property)
+      publisher.delete(property)
       return true
     },
     has(_target, property): boolean {
@@ -2158,9 +2190,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * be attached to two of them and forgotten on the third.
    * @param name - the published name.
    * @param value - what to publish.
+   * @param by - the owner publishing, when the route knows one
+   *   (`initializeGlobal` from a bound surface). Absent clears the record, so
+   *   the name is nobody's to take back.
    */
-  const publishName = (name: string, value: unknown): void => {
+  const publishName = (name: string, value: unknown, by?: OwnerScope): void => {
     published.set(name, value)
+    if (by === undefined) publisher.delete(name)
+    else publisher.set(name, by)
     if (!reportedAbsent.delete(name)) return
     /*
      * Said once per name, and only when a note actually went out for it. The
@@ -2301,9 +2338,14 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
    * carries on rather than hanging forever. What upstream does not do is *say*
    * that it waited, and that silence is the whole reason the frame reports it.
    * @param forScript - who is waiting, for the report.
+   * @param scope - the calling owner's scope, when there is one; a publish is
+   *   then recorded against it and undone when it is disposed.
    * @returns the two members.
    */
-  const coordination = (forScript: string | undefined): Record<string, unknown> => ({
+  const coordination = (forScript: string | undefined, scope?: OwnerScope): Record<string, unknown> => {
+    /** Names this owner has already registered an undo for. */
+    const undone = new Set<string>()
+    return {
     initializeGlobal: (name: unknown, value: unknown): void => {
       const global = requireGlobalName('initializeGlobal', name)
       if (!hasMvu && global === 'Mvu') {
@@ -2312,7 +2354,34 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
           'The MVU system plugin is disabled for this frame lifetime.',
         )
       }
-      publishName(global, value)
+      /*
+       * **The undo restores what was there before this owner's first publish.**
+       * One effect per name, registered on the first publish, so however many
+       * times an owner republishes, disposing it returns the name to its state
+       * before this owner touched it: another owner's value if there was one,
+       * absent if there was none. And only while the name is still this
+       * owner's. A card script that republished it since owns it now, and a
+       * plugin's unmount must not delete it.
+       */
+      if (scope !== undefined) refuseIfDisposed(scope, 'initializeGlobal')
+      if (scope !== undefined && !undone.has(global)) {
+        const had = published.has(global)
+        const prior = published.get(global)
+        const priorBy = publisher.get(global)
+        scope.effect(() => () => {
+          if (publisher.get(global) !== scope) return
+          if (had) {
+            published.set(global, prior)
+            if (priorBy === undefined) publisher.delete(global)
+            else publisher.set(global, priorBy)
+          } else {
+            published.delete(global)
+            publisher.delete(global)
+          }
+        }, `global:${global}`)
+        undone.add(global)
+      }
+      publishName(global, value, scope)
       void events.eventEmit(`global_${global}_initialized`)
     },
     waitGlobalInitialized: async (name: unknown): Promise<void> => {
@@ -2380,7 +2449,8 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       makeUsable()
       env.post({ iris: env.token, type: 'waited', scriptId: forScript, global, arrived: true })
     },
-  })
+    }
+  }
 
   /**
    * Scripts whose module body has begun executing.
@@ -2398,16 +2468,26 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
   const begun = new Set<string | undefined>()
 
   /**
+   * One owner's bound identity members, and the scope their lasting effects
+   * register their undo in.
+   *
+   * A card script's scope is never disposed: its effects end with the frame,
+   * which is upstream's per-iframe lifetime. A sandbox plugin's scope is
+   * disposed at its teardown (item 5), which is the reason it exists.
    * @param forScript - the owner id, as known at bind time.
    * @param identity - how the host-visible id is resolved per call, when it is
    *   not fixed at bind time (a plugin's, which names the conversation of the
    *   context the frame holds when the member is called). Absent means
    *   `forScript`.
-   * @returns the owner's identity members.
+   * @returns the view and its scope.
    */
-  const viewFor = (forScript: string | undefined, identity?: () => string | undefined): Record<string, unknown> => {
+  const bindOwner = (
+    forScript: string | undefined,
+    identity?: () => string | undefined,
+  ): { view: Record<string, unknown>, scope: OwnerScope } => {
+    const scope = createOwnerScope()
     begun.add(forScript)
-    if (!hasTavernHelper) return {}
+    if (!hasTavernHelper) return { view: {}, scope }
     const bound = env.members.createFrameTavernHelper({
       context: () => context,
       scriptId: identity ?? (() => forScript),
@@ -2432,7 +2512,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       return event
     }) as unknown as Record<string, unknown>
 
-    const view: Record<string, unknown> = { ...coordination(forScript) }
+    const view: Record<string, unknown> = { ...coordination(forScript, scope) }
     for (const name of identityMembers()) {
       // Only from a surface that actually has it. The coordination pair is
       // identity-bearing *and* built here rather than by the helper, so copying
@@ -2442,8 +2522,41 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       if (Object.hasOwn(scoped, name)) view[name] = scoped[name]
       else if (Object.hasOwn(bound, name)) view[name] = bound[name]
     }
-    return view
+
+    /*
+     * The two whole-owner families register **one** undo each, on first use:
+     * clearing every listener this owner holds, and emptying its button table.
+     * Once, rather than per call, because the undo is already "all of this
+     * owner's", and a per-call effect would grow without bound for a script
+     * that registers in a loop. The other two families (`initializeGlobal`
+     * above, `injectPrompts` in `cardSurface`) undo per name and per handle.
+     */
+    const armed = new Set<string>()
+    const arm = (family: 'events' | 'buttons'): void => {
+      if (armed.has(family) || scope.disposed()) return
+      armed.add(family)
+      if (family === 'events') {
+        scope.effect(() => () => { (scoped['eventClearAll'] as () => void)() }, 'events')
+      } else {
+        // The one-argument form, so the bound surface resolves its own owner.
+        scope.effect(() => () => { (bound['replaceScriptButtons'] as (buttons: unknown[]) => void)([]) }, 'buttons')
+      }
+    }
+    for (const [name, family] of Object.entries(TRACE_MEMBERS)) {
+      if (family !== 'events' && family !== 'buttons') continue
+      const member = view[name]
+      if (typeof member !== 'function') continue
+      view[name] = (...args: unknown[]): unknown => {
+        refuseIfDisposed(scope, name)
+        const answer = (member as (...rest: unknown[]) => unknown)(...args)
+        arm(family)
+        return answer
+      }
+    }
+    return { view, scope }
   }
+
+  const viewFor = (forScript: string | undefined): Record<string, unknown> => bindOwner(forScript).view
 
   const core = [
     'window',
@@ -2704,6 +2817,7 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
       context = carried === undefined
         ? message.context
         : { ...message.context, chatMetadata: carried }
+      contextArrived()
       /*
        * The chat a card gets is a **recording** array, not the snapshot's own.
        *
@@ -3194,7 +3308,28 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
         const chatId = context?.chatId
         return chatId === undefined ? undefined : sandboxPluginOwnerId(chatId, pluginId)
       }
-      return { ...tavernHelper, ...viewFor(`plugin:${pluginId}`, ownerNow) }
+      const { view, scope } = bindOwner(`plugin:${pluginId}`, ownerNow)
+      const members: Record<string, unknown> = { ...tavernHelper, ...view }
+      /*
+       * `injectPrompts` is `shared`, so the view above does not carry it, and
+       * upstream removes injections by id, so nothing on the surface knows
+       * whose they are. The handle the member returns is the attribution: each
+       * one becomes an effect in this owner's scope, and the handle's own
+       * `uninject` also releases that effect, so a plugin that cleans up after
+       * itself leaves nothing for teardown to repeat.
+       */
+      const inject = members['injectPrompts']
+      if (typeof inject === 'function') {
+        members['injectPrompts'] = (...args: unknown[]): unknown => {
+          refuseIfDisposed(scope, 'injectPrompts')
+          const handle = (inject as (...rest: unknown[]) => unknown)(...args)
+          const uninject = (handle as { uninject?: unknown } | null)?.uninject
+          if (typeof uninject !== 'function') return handle
+          const release = scope.effect(() => () => { (uninject as () => void)() }, 'injection')
+          return { ...(handle as object), uninject: release }
+        }
+      }
+      return { members, scope, ready: contextReady }
     },
   }
 }

@@ -22,6 +22,7 @@ import { test } from 'node:test'
 
 import { runCard, type RunnerHost } from '../src/sandbox/runner.ts'
 import { installSandboxPluginTree } from '../src/sandbox/plugin-entry.ts'
+import { createOwnerScope } from '../src/sandbox/owner-scope.ts'
 import { PLUGIN_PANELS_ATTRIBUTE, PLUGIN_STYLE_ATTRIBUTE } from '../src/sandbox/plugin-surface.ts'
 
 /** A stand-in frame element and document, enough for `runCard`. */
@@ -159,7 +160,7 @@ test('installing the tree touches no DOM until a plugin asks for something', () 
     document: document as never,
     post: () => undefined,
     onMessage: () => undefined,
-    cardSurface: () => ({}),
+    cardSurface: () => ({ members: {}, scope: createOwnerScope(), ready: Promise.resolve() }),
     origin: 'https://iris.test',
   })
 

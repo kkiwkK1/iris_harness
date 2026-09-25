@@ -124,3 +124,19 @@ test('a bad event name is refused before it is recorded', () => {
 
   assert.throws(() => one.eventOn(undefined as never, () => undefined), /eventOn: bad event/)
 })
+
+test('eventClearAll takes an unfired once-listener too, and leaves the sibling alone', async () => {
+  // The bus registers a wrapper for `eventOnce`, so a removal by the card's
+  // own function finds nothing. Before the clears stopped the bus handle, a
+  // teardown left every unfired once-listener on the bus, which the sandbox
+  // plugin teardown test found.
+  const { bus, one, two } = card()
+  const heard: string[] = []
+  one.eventOnce('later', () => heard.push('one'))
+  two.eventOnce('later', () => heard.push('two'))
+
+  one.eventClearAll()
+  await bus.eventEmit('later')
+
+  assert.deepEqual(heard, ['two'])
+})
