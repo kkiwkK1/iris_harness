@@ -191,6 +191,26 @@ function sandboxFlags(): string[] {
   return process.env['IRIS_CHROME_NO_SANDBOX'] === '1' ? ['--no-sandbox'] : []
 }
 
+/**
+ * What a spawned Chrome said before it failed to come up.
+ *
+ * The browser's stderr and exit, kept so that "the debugging endpoint never
+ * came up" can say whether Chrome died (and why) or was still starting. On a
+ * CI runner this is the only view of the browser there is.
+ *
+ * @param child - the spawned browser, with stderr piped.
+ * @returns a function that describes what was seen so far.
+ */
+function watchBrowser(child: ChildProcess): () => string {
+  let stderr = ''
+  let exit = 'still running'
+  child.stderr?.setEncoding('utf8')
+  child.stderr?.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-2000) })
+  child.on('exit', (code, signal) => { exit = `exited with code ${String(code)}, signal ${String(signal)}` })
+  child.on('error', (error) => { exit = `failed to start: ${error.message}` })
+  return () => `browser ${exit}; stderr tail:\n${stderr === '' ? '(empty)' : stderr}`
+}
+
 /** Wait a while. */
 async function pause(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -453,16 +473,23 @@ before(async () => {
     `--user-data-dir=${profile}`,
     `--remote-debugging-port=${String(debugPort)}`,
     'about:blank',
-  ], { stdio: 'ignore' })
+  ], { stdio: ['ignore', 'ignore', 'pipe'] })
+  const seen = watchBrowser(chrome)
 
-  await until('the browser debugging endpoint came up', async () => {
-    try {
-      const probe = await fetch(`http://127.0.0.1:${String(debugPort)}/json/version`)
-      return probe.ok ? true : undefined
-    } catch {
-      return undefined
-    }
-  })
+  // 100 tries (about 15 s) rather than the default 40: a first launch on a
+  // fresh CI runner is slower than on a warm workstation.
+  try {
+    await until('the browser debugging endpoint came up', async () => {
+      try {
+        const probe = await fetch(`http://127.0.0.1:${String(debugPort)}/json/version`)
+        return probe.ok ? true : undefined
+      } catch {
+        return undefined
+      }
+    }, 100)
+  } catch (error) {
+    throw new Error(`${(error as Error).message}\n${seen()}`)
+  }
   cdp = await connect(debugPort)
 })
 
