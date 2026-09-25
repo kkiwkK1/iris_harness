@@ -22,14 +22,12 @@ import type { MessageStyle } from './html-regions.ts'
 
 import { actionsOf, tapHostEvents } from '../client/store.ts'
 import type { FrameBinding } from '../client/card-gateway.ts'
-import { describeRefusal } from './blocked-line.ts'
 import { cardPopupBridge } from './card-popups.ts'
 import { useIris, useIrisStore } from '../client/provider.tsx'
 import {
-  SANDBOX_MANIFEST_PATH,
-  parseSandboxManifest,
   type SandboxAssets,
 } from '../sandbox/asset-manifest.ts'
+import { sharedSandboxAssets } from './sandbox-assets.ts'
 import { interfacesMayBuild } from '../sandbox/consent.ts'
 import { MVU_UPDATE_ENDED_EVENT } from '../sandbox/tavern-helper.ts'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -44,7 +42,7 @@ import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
 import { sandboxPluginRuntime, type SandboxPluginRuntime } from '@iris/plugin-web-api'
 import { usePluginAssetManifest } from './use-plugin-manifest.ts'
-import { broadcastWindowEvent } from './window-events.ts'
+import { frameCallbacks, interfaceConsoleGate } from './frame-callbacks.ts'
 import {
   pluginStyleRevision,
   pluginStyleSheets,
@@ -55,40 +53,6 @@ import { repairStrayFences } from './stray-fences.ts'
 import { getBodyTag, splitBodyTag, subscribeBodyTag } from './body-tag.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
-
-/**
- * This build's asset names, fetched at most once per page.
- *
- * Memoised at module scope deliberately. Every displayed message would otherwise
- * ask for the same manifest, and on a long conversation that is a request per
- * row for something that cannot have changed — the manifest names content-hashed
- * artifacts, so "the same build" is the only thing it can mean.
- *
- * The promise is cached rather than the value, so concurrent rows share one
- * in-flight fetch instead of racing.
- *
- * **It used to fetch the bootstrap's 53 KB of source too**, and validate it
- * before injection, because the frame carried that text inlined. The frame loads
- * it by URL now (§91), so what this resolves is names; the bytes are checked at
- * build time and, in the frame that actually loaded them, by the frame's own
- * guard.
- */
-let supply: Promise<SandboxAssets> | undefined
-
-/**
- * Resolve the asset names for this build.
- * @returns the shared supply.
- */
-function sandboxSupply(): Promise<SandboxAssets> {
-  supply ??= (async () => {
-    const manifest = await fetch(SANDBOX_MANIFEST_PATH)
-    if (!manifest.ok) throw new Error(`sandbox manifest: HTTP ${String(manifest.status)}`)
-    const assets = parseSandboxManifest(await manifest.text())
-    if (typeof assets === 'string') throw new Error(`sandbox manifest: ${assets}`)
-    return assets
-  })()
-  return supply
-}
 
 /**
  * A message's body, with any card interface in place of its block — whatever
@@ -177,7 +141,7 @@ export function MessageInterfaces({
       try {
         if (chatId === undefined) return
         const [assets, grants, snapshot] = await Promise.all([
-          sandboxSupply(),
+          sharedSandboxAssets(),
           /*
            * Asked of the host, not read from `state.documentGranted`. The
            * store's copy is keyed on a character id, and a deleted card frees
@@ -382,29 +346,25 @@ export function MessageInterfaces({
           fetch: async () => {
             throw new Error('a message frame fetches nothing on the shell’s behalf')
           },
-          onSettings: () => undefined,
-          onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision, binding),
-          onCall: async (method, params) => actionsOf(store).runCardAction(method, params, binding),
           /*
-           * The dialog bridge, with the same wording and split the script
-           * frame uses: the sandbox answers `alert` with silence, and a
-           * console button that reports its own failure through `alert` was
-           * invisible to the reader. An alert is a fault on both channels; a
-           * confirm or a prompt is a note that names what was asked and that
-           * it was answered "cancel"/"nothing".
+           * The callbacks both frame hosts share, built once from this
+           * frame's binding (`frame-callbacks.ts`): call, slash, dialog,
+           * blocked, note and window event, as before, and now **settings and
+           * console** too. This host used to pass no `onConsole`, which dropped
+           * every console line an interface frame printed, and `onSettings: ()
+           * => undefined` made every extension-settings write evaporate — the
+           * script host's own comment names what that breaks. Console lines are
+           * labelled with the floor and pass one rate gate shared by all of
+           * this card's interface frames, since N frames each allowed the
+           * per-frame budget is no budget at all.
            */
-          onDialog: (kind, text) => {
-            actionsOf(store).addCardReport(
-              kind === 'alert'
-                ? text
-                : `a card asked ${kind}("${text}") — answered ${kind === 'confirm' ? '"cancel"' : 'nothing'}`,
-              { channel: 'dialog', grade: kind === 'alert' ? 'fault' : 'note' },
-            )
-            actionsOf(store).notify(kind === 'alert' ? 'error' : 'info', text)
-          },
+          ...frameCallbacks(store, binding, {
+            label: `interface · floor ${String(floor)}`,
+            gate: interfaceConsoleGate(characterId),
+          }),
           /*
            * SillyTavern's own popup, drawn by the shell. Asynchronous upstream
-           * too, so unlike the three above the reader's real answer reaches the
+           * too, so unlike the three dialogs the reader's real answer reaches the
            * card. An interface frame is clipped to this message's height, which
            * is the sharpest form of why the dialog cannot be drawn inside it.
            */
@@ -432,26 +392,6 @@ export function MessageInterfaces({
               channel: 'interface',
             })
             actionsOf(store).notify('error', message)
-          },
-          onBlocked: (host, directive, detail, covered) => {
-            const refusal = describeRefusal(
-              host, directive, detail, covered, store.getState().networkGranted,
-            )
-            actionsOf(store).addCardReport(refusal.text, {
-              grade: refusal.grade,
-              grant: refusal.grant ?? 'no',
-            })
-            if (refusal.notify) actionsOf(store).notify('info', refusal.text)
-          },
-          onNote: note => actionsOf(store).addCardReport(note),
-          /*
-           * A dispatch on the page window this interface sees, fanned out to the
-           * card's other frames — a status bar that broadcasts on the page and a
-           * projector that listens on it live in different frames, and only the
-           * shell can stand between them.
-           */
-          onWindowEvent: (event, detail) => {
-            broadcastWindowEvent(event, detail)
           },
           onReady: input.onReady,
           /*
