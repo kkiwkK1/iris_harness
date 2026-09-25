@@ -197,14 +197,20 @@ test('createChatMessages maps roles onto the wire rows the host arm takes', asyn
     { role: 'assistant', message: 'Established.' },
     { role: 'system', message: '(narrator)' },
   ])
+  /*
+   * Upstream's `convert`: `is_system` is `is_hidden ?? false` on every row —
+   * never derived from the role — and a `system` row is named `'system'` and
+   * marked `extra.type = 'narrator'`. This used to send `is_system: true` for
+   * the system row and nothing on the others.
+   */
   assert.deepEqual(calls.calls, [
     {
       method: 'createChatMessages',
       params: {
         messages: [
-          { name: 'You', is_user: true, mes: '<PolSimInit>…</PolSimInit>' },
-          { name: 'Her', is_user: false, mes: 'Established.' },
-          { name: 'Her', is_user: false, mes: '(narrator)', is_system: true },
+          { name: 'You', is_user: true, is_system: false, mes: '<PolSimInit>…</PolSimInit>' },
+          { name: 'Her', is_user: false, is_system: false, mes: 'Established.' },
+          { name: 'system', is_user: false, extra: { type: 'narrator' }, is_system: false, mes: '(narrator)' },
         ],
       },
     },
@@ -212,6 +218,97 @@ test('createChatMessages maps roles onto the wire rows the host arm takes', asyn
   // Upstream answers with the ids the floors landed at — here the tail after
   // the three floors the snapshot already had.
   assert.deepEqual(ids, [3, 4, 5])
+})
+
+/**
+ * Upstream's `convert` (JS-Slash-Runner `src/function/chat_message.ts`,
+ * `createChatMessages`), transcribed as the oracle this member must agree
+ * with. Deliberately a second copy written from the upstream source, not an
+ * import of the implementation: the test is only as strong as its oracle's
+ * independence.
+ */
+function upstreamConvert(
+  row: { name?: string, role: 'system' | 'assistant' | 'user', is_hidden?: boolean, message: string, data?: Record<string, unknown>, extra?: Record<string, unknown> },
+  name1: string,
+  name2: string,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  if (row.name !== undefined) result['name'] = row.name
+  else if (row.role === 'system') result['name'] = 'system'
+  else if (row.role === 'user') result['name'] = name1
+  else result['name'] = name2
+  result['is_user'] = row.role === 'user'
+  if (row.role === 'system') result['extra'] = { type: 'narrator' }
+  result['is_system'] = row.is_hidden ?? false
+  result['mes'] = row.message
+  if (row.data) result['variables'] = [row.data]
+  if (row.extra) result['extra'] = row.extra
+  return result
+}
+
+test('createChatMessages is upstream’s convert, on the three corpus shapes, and reads back as upstream does', async () => {
+  /*
+   * The three shapes cards call it with: a visible system instruction
+   * (魔法禁书目录: `{ role: 'system', message, is_hidden: false }` then
+   * `triggerSlash('/trigger')`), a user row with its own `name`, and a plain
+   * user row. Plus `data` and `extra`, which upstream stores and this member
+   * used to drop.
+   */
+  const rows = [
+    { role: 'system' as const, message: '发送给AI并触发回复', is_hidden: false },
+    { role: 'user' as const, name: '旁白者', message: 'named' },
+    { role: 'user' as const, message: 'plain', data: { hp: 3 }, extra: { note: 'kept' } },
+  ]
+  const scope = surface({
+    answers: {
+      createChatMessages: {
+        view: { messages: Array.from({ length: 6 }, (_unused, id) => ({ id })) },
+      },
+    },
+  })
+  const create = scope.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+  ) => Promise<number[]>
+  await create(rows)
+  const sent = (scope.calls[0]?.params['messages'] as Record<string, unknown>[] | undefined) ?? []
+  assert.equal(sent.length, 3)
+  // The wire carries `data` as the single layer the host stores at
+  // `variables[0]`; upstream's line holds the array, so compare through that.
+  const asLine = (row: Record<string, unknown>): Record<string, unknown> => {
+    const { variables, ...rest } = row
+    return variables === undefined ? rest : { ...rest, variables: [variables] }
+  }
+  assert.deepEqual(sent.map(asLine), rows.map(row => upstreamConvert(row, 'You', 'Her')))
+  assert.deepEqual(scope.gaps, [], 'a carried field was reported as a gap')
+
+  // And reading the stored lines back gives upstream's read: the system row
+  // is `role: 'system'`, not hidden, under its given name.
+  const stored = sent.map(row => {
+    const { variables, ...rest } = row
+    return variables === undefined ? rest : { ...rest, variables: JSON.stringify([variables]) }
+  })
+  const base = context()
+  const readBack = surface({ context: { ...base, chat: [...base.chat, ...stored] as ScriptContext['chat'] } })
+  const read = readBack.api['getChatMessages'] as (range: string | number) => Record<string, unknown>[]
+  const [system, named, plain] = read('3-5')
+  assert.equal(system?.['role'], 'system')
+  assert.equal(system?.['is_hidden'], false)
+  assert.equal(system?.['name'], 'system')
+  assert.equal(named?.['role'], 'user')
+  assert.equal(named?.['name'], '旁白者')
+  assert.equal(plain?.['role'], 'user')
+  assert.equal(plain?.['name'], 'You')
+  assert.deepEqual(plain?.['data'], { hp: 3 })
+  assert.deepEqual(plain?.['extra'], { note: 'kept' })
+})
+
+test('createChatMessages names a field it could not carry instead of guessing', async () => {
+  const scope = surface({ answers: { createChatMessages: { view: { messages: [] } } } })
+  const create = scope.api['createChatMessages'] as (
+    messages: readonly Record<string, unknown>[],
+  ) => Promise<number[]>
+  await create([{ role: 'user', message: 'x', is_hidden: 'yes', data: [1, 2] }])
+  assert.match(scope.gaps.join(' '), /is_hidden, data/)
 })
 
 test('createChatMessages carries insert_at and reports the landed ids', async () => {

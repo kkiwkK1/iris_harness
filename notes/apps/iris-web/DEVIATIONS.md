@@ -9277,3 +9277,37 @@ now …`, and raises the card-call notice. Upstream-shaped cards never pass `cha
 **What would overturn it.** A corpus card that legitimately addresses a chat or card other than its
 own through a card method. `storage.*` takes `characterId` for attribution only; the frame sends its
 snapshot's, which equals the binding.
+
+## 127. `createChatMessages` in the frame is a transcription of upstream's `convert`
+
+**Kind:** compatibility gap closed (review wave 1, finding `frame-createchatmessages-drops-fields`).
+Number to be renumbered by the coordinator on landing.
+
+**Upstream.** JS-Slash-Runner `src/function/chat_message.ts`, `createChatMessages` → `convert`:
+`name` as given, else `'system'` / `name1` / `name2` by role; `is_user = role === 'user'`;
+`extra.type = 'narrator'` for role `system`; `is_system = is_hidden ?? false`; `data` stored at
+`variables[0]`; a supplied `extra` replaces the whole object, narrator marker included.
+
+**Iris before.** The frame member built every row as `{ name: name1|name2, is_user, mes }`, with
+`is_system: true` for role `system`, and it never read `name`, `is_hidden`, `data` or `extra`.
+A card that created a *visible* system instruction (魔法禁书目录:
+`createChatMessages([{ role: 'system', message, is_hidden: false }])` then `triggerSlash('/trigger')`)
+got a **hidden** row, stored under the character's name and without the narrator marker. SillyTavern
+would exclude that row from the prompt, and this frame read it back as `role: 'assistant', is_hidden: true`.
+The host arm already accepted and stored `is_system`, `extra` and `variables`. Only the frame member lost
+them, and it reported nothing.
+
+**Iris now.** The member follows upstream's order field by field. A value upstream would store
+but the wire cannot type (a non-string `name`, a non-boolean `is_hidden`, a non-object `data` or
+`extra`) is left out and **named** on the gap channel instead of being guessed at. Read back
+through `getChatMessages`, the three corpus shapes answer as they do upstream: the system row is
+`role: 'system'` and not hidden, under the name `system`.
+
+**Still open (host side, not this entry).** Iris's prompt projection sends every non-user row as
+`assistant` and ignores `extra.type === 'narrator'` (finding `narrator-role-lost-in-prompt`).
+Upstream sends narrator rows as `system`. This fix is also the precondition for a host-side `is_system`
+prompt filter. Before it, the card-created instruction above was stored with `is_system: true`,
+so such a filter would have dropped the very row the card meant the model to read.
+
+**What would overturn it.** A corpus card that depends on the old shape, for example one that
+reads back its own system row as `assistant`. None is known.

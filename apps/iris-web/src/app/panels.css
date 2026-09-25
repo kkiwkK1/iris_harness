@@ -1810,6 +1810,17 @@
   color: var(--iris-ink-secondary);
 }
 
+/* One region that failed to render (`RegionBoundary`): a line in its place,
+   in the error notice's colours, so the rest of the page stays usable. */
+.iris-region-failed {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--iris-danger-wash);
+  color: var(--iris-danger);
+  font-size: 12.5px;
+}
+
 .iris-notice__dismiss {
   margin-left: auto;
   background: none;
