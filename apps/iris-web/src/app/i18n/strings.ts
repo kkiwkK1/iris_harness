@@ -280,6 +280,18 @@ export const en = {
   pluginConfirmCode: 'Code',
   pluginConfirmBytes: '{bytes} bytes (version {version})',
   pluginConfirmSentence: 'You said',
+  /*
+   * The frame's network reach, read from this card's live grant. A plugin runs
+   * in the card's frame and gets the card's policy, so on a card allowed online
+   * this code can send what it sees to an https address of its choosing — which
+   * the reader must be told before the tick, not after (owner ruling 2,
+   * 2026-09-25; `docs/SANDBOX-PLUGINS.md` §1).
+   */
+  pluginConfirmNetwork: 'Network',
+  pluginConfirmNetworkOff: 'This card is offline, so this code cannot reach the network either.',
+  pluginConfirmNetworkOn:
+    'This card is allowed online, so this code can also send requests to, and load images from, any https address — '
+    + 'including sending what it can see there.',
   /**
    * The sandbox sentence, which is the whole of what this card can honestly
    * promise: the code is a model's, the containment is the card's own frame,
@@ -2306,6 +2318,9 @@ export const zh: Record<StringKey, string> = {
   pluginConfirmCode: '代码',
   pluginConfirmBytes: '{bytes} 字节（版本 {version}）',
   pluginConfirmSentence: '这句话',
+  pluginConfirmNetwork: '网络',
+  pluginConfirmNetworkOff: '这张卡没有联网，所以这段代码也连不了网。',
+  pluginConfirmNetworkOn: '这张卡已允许联网，所以这段代码也能向任意 https 地址发请求、取图片——包括把它看得见的东西发出去。',
   pluginConfirmSandbox:
     '这段代码是模型写的，和这张卡的脚本跑在同一个隔离沙箱里，碰不到你的页面、碰不到别的对话。',
   pluginAcceptVersion: '✓ 这一版',

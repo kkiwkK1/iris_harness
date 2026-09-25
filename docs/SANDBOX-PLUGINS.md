@@ -45,7 +45,10 @@
 
 - **不给沙箱插件宿主半边。** dsh 的动态包可以有 host half（`.reference/deepseek-harness/packages/extensions/cordis-host-runner`），那是因为它的信任前提是「会话等同 shell 访问」。这里的代码是**模型写的**，跑在**玩家的机器**上，唯一能守住的边界是那个不透明源 iframe。没有宿主半边，也就没有 `node:vm`、没有 `vmTimeoutMs`、没有 `host.call`。
 - **不新增 RPC 给插件调。** 插件调不到任何卡今天调不到的东西（§7）。新增的 RPC 只有宿主自己用的三个（§10.2），插件够不着。
-- **不加网络。** 帧的 `connect-src` 与 `script-src` 一个字节不动（`framePolicy`，`apps/iris-web/src/sandbox/srcdoc.ts:104`；远端白名单 `REMOTE_ALLOWLIST`，`apps/iris-web/src/sandbox/policy.ts:77`）。插件跑在既有策略里，不为它开任何一条。
+- **不为插件加网络，也不为插件收网络。** 插件跑在它所在的卡脚本帧的既有策略里（`framePolicy`，`apps/iris-web/src/sandbox/srcdoc.ts`；远端白名单 `REMOTE_ALLOWLIST`，`apps/iris-web/src/sandbox/policy.ts`），不为它开任何一条，也不为它关任何一条。策略有两支，**两支都要说**：
+  - **卡未授权联网（默认）**：`connect-src 'none'`、`img-src data: blob:`——插件没有网络。
+  - **卡已授权联网**（玩家在卡的设置里开的，`b0a9e11` 起；`GRANT_WIDENED_DIRECTIVES` 列出变宽的三条）：`connect-src https:`、`img-src https: data: blob:`、`style-src` 放宽到 `https:`——**同一个帧里的插件也有这条 https 出口**。这是 owner 裁决（2026-09-25，裁决 2）：卡的联网授权延伸到挂在这张卡帧里的沙箱插件，不另设按插件的授权，也不把插件挪到未授权的帧里。代价写明：一个授权联网的卡上，一个玩家点过头的、模型写的插件可以把帧里看得见的东西（包括这段对话）经 https 发出去。所以确认卡上有一行说出帧此刻的网络可达性（§4.1），作者文档也写明两支（`docs/SANDBOX-PLUGIN-AUTHORING.md` §3，由 `apps/iris-web/tests/sandbox-plugin-doc.test.ts` 钉在 `framePolicy` 的两支上）。
+  - 两支里 `script-src` 都一个字节不动，`http:` 都拒绝。
 - **不进 ST 兼容面。** 插件不写进 PNG，不写进 chat 的 jsonl，`chat.export`（`packages/iris-protocol/src/rpc.ts:825`）的字节与今天逐字节相同。一张没有沙箱插件的卡，行为与今天**完全一样**——这是 [SYSTEM-PLUGINS](SYSTEM-PLUGINS.md) 那条「兼容是地板」在这件事上的具体形态，由 §16 的一个测试钉住。
 - **不做插件之间的依赖、插槽链（chain）、接管（takeover）。** dsh 有四种插槽与一条 chain（`.reference/deepseek-harness/.agents/notes/implemented/architecture/2026-07-22-slot-type-chain-implementation.md`）；第一阶段只要一个 list 槽（§5.5）。
 - **不做跨对话复用、不做导出、不做导入。** 一个插件属于一段对话（裁决 2）。「把这个插件搬到另一个聊天」是将来的事，本文不设计（§14.4 说明为什么现在不做）。
@@ -272,6 +275,8 @@ export interface SandboxPluginRecord {
       · 成员：<names>
   代码    <bytes> 字节（版本 <version>）
   这句话  「<prompt>」        ← 玩家自己说的那句，原样
+  网络    这张卡没有联网：它也连不了网
+       或 这张卡已允许联网：它也能向任意 https 地址发请求、取图片   ← 读卡此刻的授权（§1）
 
   这段代码是**模型写的**，和这张卡的脚本跑在同一个隔离沙箱里，
   碰不到你的页面、碰不到别的对话。
@@ -528,7 +533,7 @@ sidecar 里有行、帧里没有对应的挂载。四种成因，报告要分得
 **1. 浏览器强制执行的（真边界）：**
 
 - 不透明源 iframe（`frameSandbox`，`apps/iris-web/src/sandbox/policy.ts:36`）：碰不到壳的页面、碰不到别的聊天、碰不到别的卡的帧。`window.parent.document` 在 Iris 的任何代码被咨询之前就抛 SecurityError。
-- 帧的 CSP（`framePolicy`，`apps/iris-web/src/sandbox/srcdoc.ts:104`）：`connect-src` 在未授权网络时是 `'none'`，`form-action 'none'`、`base-uri 'none'`、`frame-src 'none'`。
+- 帧的 CSP（`framePolicy`，`apps/iris-web/src/sandbox/srcdoc.ts`）：`connect-src` 在卡未授权联网时是 `'none'`，**在卡已授权联网时是 `https:`——同一帧里的插件同样拿到这条出口**（§1，裁决 2）；`form-action 'none'`、`base-uri 'none'`、`frame-src 'none'` 两支都不变。这一条是浏览器强制的，但它的宽度由**卡的**授权决定，不由插件决定：插件既不能打开它，也不会被单独关在它外面。
 - 代码来源白名单（`REMOTE_ALLOWLIST`，`policy.ts:77`）：插件 `import()` 一个不在名单上的地址，宿主侧的 `checkScriptFetch` 再拒一次。
 
 **2. 宿主强制执行的（我们写的闸门）：**

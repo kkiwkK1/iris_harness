@@ -52,6 +52,9 @@ function describeDeclaration(declaration: SandboxPluginDeclaration): string {
  */
 export function SandboxPluginConfirm(): ReactElement | null {
   const pending = useIris(state => state.sandboxPluginPending)
+  // The grant of the card this conversation is played with — the same field the
+  // live frame's policy is switched by (`useCardScripts`' `applyNetworkGrant`).
+  const networkGranted = useIris(state => state.networkGranted)
   const actions = useIrisActions()
   // Before the early return: hook order must not depend on what is on screen.
   useLanguage()
@@ -105,6 +108,20 @@ export function SandboxPluginConfirm(): ReactElement | null {
           {/* Verbatim. It is the reader's own words, and the answer to 「what did
               I ask for」 has to be the string that was sent. */}
           <dd className="iris-var__value">「{version.prompt}」</dd>
+        </div>
+        <div className="iris-var__row" data-plugin-confirm="network">
+          <dt className="iris-var__key">{t('pluginConfirmNetwork')}</dt>
+          {/*
+            The frame's reach, from the card's **live** grant. A plugin mounts in
+            the card's own frame and runs under that frame's policy, so a card
+            allowed online gives this code an https way out (owner ruling 2,
+            2026-09-25). Both branches are said, because 「offline」 is also a
+            fact a reader weighs, and a row that appeared only when the news was
+            bad would teach that its absence means nothing.
+          */}
+          <dd className="iris-var__value">
+            {networkGranted ? t('pluginConfirmNetworkOn') : t('pluginConfirmNetworkOff')}
+          </dd>
         </div>
       </dl>
       <p className="iris-field__note">{t('pluginConfirmSandbox')}</p>
