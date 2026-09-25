@@ -41,7 +41,7 @@
  * @module @iris/app-service/cache-trace
  */
 
-import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rmdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { atomicWriteFile } from './atomic.ts'
@@ -682,6 +682,53 @@ export class CacheTraceStore {
         this.#options.onError?.(error instanceof Error ? error : new Error(String(error)))
       }
     }
+  }
+
+  /**
+   * Delete every trace one conversation left, and its directory.
+   *
+   * Called when the conversation is deleted (owner ruling 5, 2026-09-25:
+   * deleting a chat clears its per-id data). Chat ids are minted against the
+   * files that exist, so a deleted conversation's id can be handed to the
+   * next one of the same name — and a trace left behind would be compared
+   * against a stranger's first request, besides keeping whole request bodies
+   * of a conversation the user removed.
+   *
+   * Runs whether or not recording is enabled now: traces written while it was
+   * on are still on disk. Only names this store writes are removed, so a file
+   * a user put in the directory survives, and so does the directory then.
+   * Never throws; a failure is reported through `onError`.
+   * @param chatId - the conversation.
+   * @returns how many trace files were removed.
+   */
+  async forgetChat(chatId: string): Promise<number> {
+    this.#next.delete(chatId)
+    let dir: string
+    let names: string[]
+    try {
+      dir = this.#chatDir(chatId)
+      names = await readdir(dir)
+    } catch {
+      return 0
+    }
+    let removed = 0
+    for (const name of names) {
+      if (!TRACE_FILE.test(name)) continue
+      try {
+        await unlink(join(dir, name))
+        removed += 1
+      } catch (error: unknown) {
+        this.#options.onError?.(error instanceof Error ? error : new Error(String(error)))
+      }
+    }
+    try {
+      // Not recursive, on purpose: a directory still holding a file this
+      // store does not own is left, with that file.
+      await rmdir(dir)
+    } catch {
+      // Not empty, or already gone.
+    }
+    return removed
   }
 
   /**

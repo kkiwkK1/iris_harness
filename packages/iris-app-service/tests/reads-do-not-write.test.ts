@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { StCompatBridge } from '@iris/compat-st-extension'
 import type { IrisEvent, RpcMethod } from '@iris/protocol'
 import type { StreamFn } from '@iris/turn'
 
@@ -89,10 +90,68 @@ async function seedPersona(path: string): Promise<PersonaStore> {
   return store
 }
 
-async function fixture(t: TestContext): Promise<Fixture> {
+/**
+ * The same card with a prompt template in its description, so an armed ST
+ * extension plane has something to expand: the bridge only runs a `generate`
+ * round over contributions that carry `<%`.
+ */
+const TEMPLATED_CARD = CARD.replace('A retired cartographer.', 'A retired cartographer. <%= 1 %>')
+
+/**
+ * An armed ST extension plane whose every `generate` round answers with
+ * **changed** variables — a chat scope and a global scope that differ each
+ * round, the shape ST-Prompt-Template's `setvar` leaves — and whose settings
+ * blob lives in a file under the profile, so a persisted global write is a
+ * byte on disk the snapshot sees.
+ */
+function armedPlane(dir: string, answer: () => Handlers): NonNullable<ConstructorParameters<typeof IrisAppService>[0]['stCompat']> & { onRequest: (event: IrisEvent) => void } {
+  const blob = join(dir, 'st-ext-settings.json')
+  let round = 0
+  return {
+    bridge: new StCompatBridge(),
+    extensionId: () => 'st-ext',
+    revisionOf: () => 7,
+    settingsFor: async () => {
+      try {
+        return JSON.parse(await readFile(blob, 'utf8')) as unknown
+      } catch {
+        return {}
+      }
+    },
+    persistSettings: async (_id, value) => { await writeFile(blob, JSON.stringify(value), 'utf8') },
+    installFromDirectory: async () => { throw new Error('not under test') },
+    onRequest: (event) => {
+      if (event.type !== 'st-compat.request') return
+      round += 1
+      if (event.kind === 'generate') {
+        const payload = event.payload as { messages: Array<{ role: string, content: string }> }
+        void answer()['stCompat.submit']({
+          token: event.token, kind: 'generate', pluginRevision: event.revision,
+          result: {
+            kind: 'generate', messages: payload.messages,
+            chatVariables: { bridged: round }, globalVariables: { bridgedGlobal: round },
+          },
+        })
+      } else if (event.kind === 'reply') {
+        // The reply round changes nothing: it hands back the variables it was
+        // shown, so the generate round's writes are what the fixture holds.
+        const payload = event.payload as { turn: number, text: string, chatVariables: Record<string, unknown> }
+        void answer()['stCompat.submit']({
+          token: event.token, kind: 'reply', pluginRevision: event.revision,
+          result: {
+            kind: 'reply', turn: payload.turn, mes: payload.text,
+            chatVariables: payload.chatVariables, globalVariables: { bridgedGlobal: round - 1 }, floorVariables: {},
+          },
+        })
+      }
+    },
+  }
+}
+
+async function fixture(t: TestContext, options: { armed?: boolean } = {}): Promise<Fixture> {
   const dir = await tempDir(t, 'iris-reads-')
   await mkdir(join(dir, 'characters'), { recursive: true })
-  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+  await writeFile(join(dir, 'characters', 'aria.json'), options.armed === true ? TEMPLATED_CARD : CARD, 'utf8')
   // A real book, so `worldbook.get` below performs an actual read. Pointed at a
   // host with no store it would refuse before touching anything, and pass this
   // check without ever exercising the code it is supposed to be checking.
@@ -119,8 +178,11 @@ async function fixture(t: TestContext): Promise<Fixture> {
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
-  const handlers = new IrisAppService({
+  let handlers: Handlers | undefined
+  const plane = options.armed === true ? armedPlane(dir, () => handlers as Handlers) : undefined
+  handlers = new IrisAppService({
     stream, library, chats, scriptVariables,
+    ...plane === undefined ? {} : { stCompat: plane },
     settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
     scripts: new ScriptPolicyStore(join(dir, 'script-policy.json')),
     extensionSettings: new ExtensionSettingsStore(join(dir, 'extension-settings.json')),
@@ -131,9 +193,13 @@ async function fixture(t: TestContext): Promise<Fixture> {
     // refusing their way past the check.
     personas: await seedPersona(join(dir, 'personas.json')),
     backups,
-    broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
+    broadcast: (event: IrisEvent) => {
+      if (event.type === 'stream.end') ends += 1
+      plane?.onRequest(event)
+    },
     userName: 'Traveller',
   }).handlers()
+  if (plane !== undefined) await handlers['stCompat.plane.attach']({ extensionId: 'st-ext', pluginRevision: 7 })
 
   // A conversation with state worth not disturbing: a folded variable table, a
   // sticky world-info window, an itemization, and something on disk.
@@ -278,6 +344,52 @@ for (const { method, params } of READS) {
     assert.equal(after, before, `${method} changed something about the conversation or the store`)
   })
 }
+
+/*
+ * **The same check with the ST extension plane armed.** The list above composes
+ * the service without `stCompat`, so its `prompt.itemize` never reaches the
+ * bridge — and with the plane armed, the preview used to run a real
+ * `generate` round and commit its variable effects: chat variables into the
+ * entry (saved by the next save) and global variables straight to disk. The
+ * premise is asserted first, so a bridge that never ran cannot pass as a
+ * bridge whose effects were discarded.
+ */
+test('prompt.itemize with the ST extension plane armed leaves the conversation as it found it', async (t) => {
+  const fixed = await fixture(t, { armed: true })
+  const entry = await fixed.chats.open(fixed.chatId)
+  assert.ok(typeof entry.variables.getVariables({ type: 'chat' })['bridged'] === 'number',
+    'premise: the real turn in the fixture ran a bridge round and committed its effects')
+  const before = await snapshot(fixed)
+
+  const { itemization } = await fixed.handlers['prompt.itemize']({ chatId: fixed.chatId })
+  assert.equal(itemization.preview, true)
+
+  assert.equal(await snapshot(fixed), before, 'the preview committed the bridge round’s variable effects')
+})
+
+test('the host’s own compaction does not commit the ST bridge’s variable effects', async (t) => {
+  const fixed = await fixture(t, { armed: true })
+  const entry = await fixed.chats.open(fixed.chatId)
+  const chat = JSON.stringify(entry.variables.getVariables({ type: 'chat' }))
+  let blob: string | undefined
+  try {
+    blob = await readFile(join(fixed.dir, 'st-ext-settings.json'), 'utf8')
+  } catch {
+    blob = undefined
+  }
+  // One exchange is enough history to compact: the greeting and the turn.
+  await fixed.handlers['chat.compact']({ chatId: fixed.chatId }).catch(() => undefined)
+
+  assert.equal(JSON.stringify(entry.variables.getVariables({ type: 'chat' })), chat,
+    'the compaction assembly wrote the bridge’s chat variables')
+  let after: string | undefined
+  try {
+    after = await readFile(join(fixed.dir, 'st-ext-settings.json'), 'utf8')
+  } catch {
+    after = undefined
+  }
+  assert.equal(after, blob, 'the compaction assembly persisted the bridge’s global variables')
+})
 
 test('the read list is not silently incomplete', async (t) => {
   // A read added to the contract and not to the list above would be unchecked,

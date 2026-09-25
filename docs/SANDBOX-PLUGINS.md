@@ -103,7 +103,7 @@ B 族受字节预算约束：`FRAME_OVERHEAD_BYTES = 4 * 1024`（`apps/iris-web/
 - 一个 dataDir 一个宿主进程：`HOST_LOCK_FILE`（`packages/iris-app-service/src/host-lock.ts:62`）、`acquireHostLock`（`host-lock.ts:238`）。**进程内**不保证单写者，读-改-写要自己串行（`PluginDataStore`，`packages/iris-app-service/src/plugins/storage.ts:107`，每个 id 一条 promise 链，`storageFor` 在 `plugins/storage.ts:155`）。
 - **chatId 是文件名去掉 `.jsonl`**（`ChatStore.ids`，`packages/iris-app-service/src/chats.ts:274`），铸自 `toId(名字)-时间戳` 再过 `uniqueId`（`packages/iris-app-service/src/paths.ts:86`）；安全性由 `isSafeId`（`paths.ts:47`）与 `fileFor`（`paths.ts:114`，resolve 之后再查包含性）保证。**它可以被回收**：删掉一个聊天，同名的下一个聊天可能拿到同一个 id——`chat.delete`（`packages/iris-app-service/src/service.ts:2183`）为此显式调 `settings.forget(chatId)`（`service.ts:2186`，实现在 `packages/iris-app-service/src/settings.ts:633`）。
 
-最像的 sidecar 先例是 `cache-trace/<chatId>/`（`CacheTraceStore`，`packages/iris-app-service/src/cache-trace.ts:558`；`#chatDir` 在 `cache-trace.ts:586` 用同一个 `fileFor` 过白名单；`write` 在 `cache-trace.ts:639` 建目录、原子写、轮转，**从不抛**）。它同时是**反面教材**：没有任何地方在 `chat.delete` 时清理它。
+最像的 sidecar 先例是 `cache-trace/<chatId>/`（`CacheTraceStore`，`packages/iris-app-service/src/cache-trace.ts:558`；`#chatDir` 在 `cache-trace.ts:586` 用同一个 `fileFor` 过白名单；`write` 在 `cache-trace.ts:639` 建目录、原子写、轮转，**从不抛**）。它同时是**反面教材**：写这份设计时，没有任何地方在 `chat.delete` 时清理它。2026-09-25 起已补上：`CacheTraceStore.forgetChat` 由 `chat.delete` 调用（主人裁定 5），`tests/entity-lifecycle.test.ts` 核对每个按 id 分区的存储。
 
 聊天生命周期的既有行为（本文 §10.3 按它设计）：
 
@@ -112,7 +112,7 @@ B 族受字节预算约束：`FRAME_OVERHEAD_BYTES = 4 * 1024`（`apps/iris-web/
 | `create`（`chats.ts:562`） | 新铸 | 新 `.jsonl` | —— |
 | `rename`（`service.ts:2231`） | **不变** | 路径不变，只改 header 的 title（`ChatEntry.touch`，`packages/iris-app-service/src/entry.ts:866`；`IrisChatMeta` 在 `entry.ts:77`） | —— |
 | `branch`（`chats.ts:622`） | **新的子 id**（`chats.ts:656`），`parentChatId` 指回父（`chats.ts:672`） | 新子文件 + 父文件被改写 | **什么都不复制** |
-| `delete`（`chats.ts:938`） | 消失，**id 可回收** | `unlink` | settings、chat order 被 forget；**cache-trace 不被 forget** |
+| `delete`（`chats.ts:938`） | 消失，**id 可回收** | `unlink` | settings、chat order 被 forget；**cache-trace 当时不被 forget**（2026-09-25 起会被 forget） |
 | `export`（`chats.ts:819`） | —— | 只产文本，磁盘不落 | sidecar 不随行 |
 | `import`（`chats.ts:747`） | **重铸**，`parentChatId` 被刻意丢弃 | 新文件 | sidecar 不随行 |
 
@@ -640,7 +640,7 @@ id 以 `<序号>-<slug>` 开头（Q1）意味着字典序大体等于创建序�
 | **import** | **空。** chatId 被重铸（`chats.ts:747`），落地就是一段没有插件的新对话 | 裁决 |
 | **branch** | 见下：复制，带授权，标 `branchedFrom` | **裁决**（协调人，2026-09-19） |
 
-**delete 这条是硬要求，不是整洁。** `chat.delete` 里那段注释（`service.ts:2186` 附近）已经把理由写完了：chat id 是对着现存文件铸的，所以删掉之后同一个 id 可以被下一个同名对话拿到——一个留下来的 sidecar 会让**新对话开机就挂上陌生人的插件**，而且是已授权状态。`cache-trace/<chatId>/` 今天就有这个洞（没人 forget 它），它在那里的后果只是一份多余的诊断文件；在这里的后果是**执行**。所以这条要有自己的测试（§16.3）。
+**delete 这条是硬要求，不是整洁。** `chat.delete` 里那段注释（`service.ts:2186` 附近）已经把理由写完了：chat id 是对着现存文件铸的，所以删掉之后同一个 id 可以被下一个同名对话拿到——一个留下来的 sidecar 会让**新对话开机就挂上陌生人的插件**，而且是已授权状态。`cache-trace/<chatId>/` 写这份设计时就有这个洞（没人 forget 它，2026-09-25 已补），它在那里的后果只是一份多余的诊断文件；在这里的后果是**执行**。所以这条要有自己的测试（§16.3）。
 
 **branch（裁决：复制，且插件标记来源；协调人 2026-09-19 采纳下列推荐）**：
 
@@ -881,7 +881,7 @@ interface ConnectionsFile {
 | 长度/形状校验 | 七个上限各一条 | 把 64 KiB 改成 64 KB（1000 vs 1024）：必须红 |
 | 语法预检共用包装器 | 宿主试编译的源与帧求值的源**逐字节相同** | 在宿主那半的模板里多加一个空格：必须红。**这是 §6.1 那条「同一个包装器」唯一的执行者** |
 | sidecar store | 写-读往返、坏文件隔离、schema version 不等即拒读 | 把 `version` 检查改成 `>=`：必须红 |
-| **`chat.delete` 的 forget** | 删掉聊天之后 sidecar 文件不在了 | 注释掉那一行 forget：必须红。**这条是 §10.3 硬要求的唯一执行者，`cache-trace` 今天缺的就是它** |
+| **`chat.delete` 的 forget** | 删掉聊天之后 sidecar 文件不在了 | 注释掉那一行 forget：必须红。**这条是 §10.3 硬要求的唯一执行者，`cache-trace` 当时缺的就是它**（2026-09-25 已补，`tests/entity-lifecycle.test.ts`） |
 | 拆卸清单 | 六格逐格断言，**并断言「比较过的格数 = 6」** | 在被测对象里跳过第 5 格：必须红。计数断言是为了挡住「循环里 `continue` 掉五格还绿」那一类 |
 | 门面签名 vs 作者文档 | `docs/SANDBOX-PLUGIN-AUTHORING.md` 里的签名与 §5.3 的类型逐字一致 | 改文档里的一个参数名：必须红 |
 | 作者文档字节上限 | ≤ 8 KiB（§11.2） | —— |

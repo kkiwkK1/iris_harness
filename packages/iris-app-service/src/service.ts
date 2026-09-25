@@ -2302,11 +2302,20 @@ export class IrisAppService {
          * degree worse: a leftover settings layer changes a temperature, a
          * leftover shelf position moves a row, and a leftover sandbox-plugin
          * file makes the next conversation of this name **open with a
-         * stranger's code already authorised and mount it**. `cache-trace/` has
-         * this hole today and gets away with it because what it leaves behind is
-         * a diagnostic file; here what is left behind executes.
+         * stranger's code already authorised and mount it**.
          */
         await this.#options.sandboxPlugins?.forget(chatId)
+        /*
+         * And its cache traces: whole request bodies of a conversation the user
+         * removed, which the next conversation of this id would otherwise be
+         * compared against (owner ruling 5, 2026-09-25).
+         *
+         * **Backups are kept, and that is the same ruling.** A snapshot is the
+         * way back from exactly this action, so `backups/<character>/<chat>/`
+         * outlives the delete; `tests/entity-lifecycle.test.ts` holds the
+         * retention with its reason beside every store that is forgotten.
+         */
+        await this.#options.cacheTrace?.forgetChat(chatId)
         await this.#announceChats()
         return {}
       },
@@ -3607,6 +3616,24 @@ export class IrisAppService {
         // list: what a reused id would inherit here is arbitrary code, which
         // would then start running in a stranger's conversations.
         await scriptLibrary?.forget(characterId)
+        // Its world-info binding (owner ruling 5, 2026-09-25). A row left
+        // behind names the book this card materialised and the hash it came
+        // from, so the next card imported under this id would be judged
+        // "already materialised" against a stranger's source and either reuse
+        // that book or rewrite it (`materialiseEmbeddedBook`). The book itself
+        // stays: the user may have edited it, and removing a card is not a
+        // statement about their world info (`WorldbookBindingStore.forget`).
+        await this.#options.worldbookBindings?.forget(characterId)
+        // And the cache traces of its conversations. The conversations stay —
+        // a card's chats outlive it here, listed and openable as before — but
+        // the traces hold whole request bodies built from the deleted card.
+        // Backups are kept, by the same ruling.
+        const traces = this.#options.cacheTrace
+        if (traces !== undefined) {
+          for (const chat of await chats.list()) {
+            if (chat.characterId === characterId) await traces.forgetChat(chat.chatId)
+          }
+        }
         // **`cardStorage` is deliberately not in this list, and it is the one
         // store where forgetting would be wrong.** The others are partitioned
         // *by* character, so a leftover partition is a stale answer waiting for
@@ -6192,6 +6219,11 @@ export class IrisAppService {
    * @param count - the token counter the budget uses.
    * @param record - whether this is a real turn whose state advances.
    * @param generationType - what is being generated, for the preset filters.
+   * @param applyBridgeEffects - whether the ST extension plane's variable
+   *   writes from its `generate` round are committed. True for a turn and for
+   *   a card's own `generate` (both are upstream generations, where the
+   *   template's `setvar` lands); false for the host's own compaction
+   *   assembly, which has no upstream counterpart.
    * @returns the contributions for this generation.
    */
   async #contributions(
@@ -6200,6 +6232,7 @@ export class IrisAppService {
     count: (text: string) => number,
     record = true,
     generationType = 'normal',
+    applyBridgeEffects = true,
   ): Promise<Contribution[]> {
     const names = entry.names
     const settings: GenerationSettings = this.#options.settings.get(entry.chatId)
@@ -6288,7 +6321,7 @@ export class IrisAppService {
     // The extension plane expands templates here — before classification and
     // before the itemization records — so the recorded account and the sent
     // request are the same bytes. A no-op when the plane is absent or unarmed.
-    await this.#expandContributionsViaStCompat(entry, resolved, generationType)
+    await this.#expandContributionsViaStCompat(entry, resolved, generationType, applyBridgeEffects)
 
     // Which parts change between turns, and therefore which ones the reorder
     // moves out of the stable prefix. Two phases on purpose: the **verdict** is
@@ -6593,7 +6626,11 @@ export class IrisAppService {
     })
     const resolved = [...built.contributions, ...injectedContributions(entry, built.contributions)]
     // The preview bridges too: the panel must show what would actually be sent.
-    await this.#expandContributionsViaStCompat(entry, resolved, 'normal')
+    // **Its text only.** The round's variable writes are discarded: this is a
+    // read, and committing them wrote chat variables into the entry and
+    // persisted global ones on every panel open (`reads-do-not-write.test.ts`,
+    // the armed-plane case).
+    await this.#expandContributionsViaStCompat(entry, resolved, 'normal', false)
     // The verdict, not the record: a preview must show the layout the next real
     // turn will send, and must not advance the classifier's generation counter
     // — `prompt.itemize` is a read.
@@ -6956,7 +6993,10 @@ export class IrisAppService {
 
     const span = effective.slice(0, keepFrom)
     const spanTokens = historyTokens(span, count)
-    const contributions = await this.#contributions(entry, entry.session, count, false)
+    // The bridge's text, not its variable writes: the summary request is the
+    // host's own, and upstream has no generation here for a template's
+    // `setvar` to belong to.
+    const contributions = await this.#contributions(entry, entry.session, count, false, 'normal', false)
     const summary = await this.#summarize(entry, span, contributions, signal)
     if (summary === '') {
       throw new AppError('provider-error', 'the summarization produced no text to keep')
@@ -7251,8 +7291,11 @@ export class IrisAppService {
    * UC-1's site: expand prompt templates through the extension plane.
    * Mutates `contributions` in place before classification and itemization, so
    * `prompt.itemize` and the sent request carry the same expanded bytes.
+   * @param apply - whether the round's chat and global variable writes are
+   *   committed. A preview and the host's compaction pass `false`: they keep
+   *   the expanded text and discard the effects.
    */
-  async #expandContributionsViaStCompat(entry: ChatEntry, contributions: Contribution[], generationType: string): Promise<void> {
+  async #expandContributionsViaStCompat(entry: ChatEntry, contributions: Contribution[], generationType: string, apply = true): Promise<void> {
     const st = this.#options.stCompat
     if (st === undefined) return
     if (!contributionsHaveTemplates(contributions)) return
@@ -7281,6 +7324,7 @@ export class IrisAppService {
       this.#report(`the ST-compat bridge's expansion was refused: ${cause instanceof Error ? cause.message : String(cause)}`, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
       return
     }
+    if (!apply) return
     await this.#stCompatApplyVariables(entry, result.chatVariables, result.globalVariables)
   }
 
