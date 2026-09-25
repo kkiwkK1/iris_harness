@@ -130,9 +130,10 @@ export function installSandboxPluginTree(env: PluginEntryEnv): SandboxPluginTree
         // which is upstream's per-frame semantics carried to a per-plugin owner.
         const cleared = callMember(surface, 'eventClearAll', [])
         if (cleared !== undefined) reasons.push(cleared)
-        // The owner's button table, emptied. Two arguments, as upstream's own
-        // signature requires.
-        const buttons = callMember(surface, 'replaceScriptButtons', [pluginId, []])
+        // The owner's button table, emptied. The one-argument form, so the
+        // bound surface resolves its own owner id (`sp:<chatId>:<pluginId>`);
+        // passing the bare plugin id would name a different, per-card table.
+        const buttons = callMember(surface, 'replaceScriptButtons', [[]])
         if (buttons !== undefined) reasons.push(buttons)
       }
       for (const uninject of injections.get(pluginId) ?? []) {

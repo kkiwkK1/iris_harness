@@ -203,6 +203,47 @@ export function precheckSandboxPluginSyntax(
 }
 
 /**
+ * The owner id a plugin's card surface uses in place of a script id for any
+ * state the host keeps per card: `sp:<chatId>:<pluginId>`.
+ *
+ * **Why it is needed.** Plugin ids are minted unique within one conversation
+ * only (`01-status-bar` is the first status bar in every chat), and the host
+ * keeps script-scope variables per `(characterId, scriptId)`. Under a bare
+ * plugin id, two conversations with the same card would share one table and
+ * would keep it after the plugin was removed or the chat deleted. That
+ * contradicts "a plugin belongs to one conversation and leaves nothing behind"
+ * (`docs/SANDBOX-PLUGINS.md` §3.1, §10.3).
+ *
+ * **Why an owner id rather than globally unique plugin ids.** The plugin id is
+ * also the display key and the mount order (§9 sorts by `<seq>-<slug>`), it is
+ * stored in sidecars that already exist, and it is what the player sees. The
+ * owner id changes none of that. It confines the fix to the one seam where a
+ * per-card store is reached. Because it carries the conversation in the key,
+ * forgetting a chat is a prefix match ({@link sandboxPluginOwnerPrefix}) that
+ * needs no list of which plugins the chat once had.
+ *
+ * The `sp:` prefix does not collide with a card's own script ids in practice,
+ * since those are author-minted, UUID-shaped ids. The host refuses a script
+ * button write for any id the card does not declare, so this id never reaches
+ * the button table at all.
+ * @param chatId - the conversation.
+ * @param pluginId - the plugin, as minted for that conversation.
+ * @returns the owner id.
+ */
+export function sandboxPluginOwnerId(chatId: string, pluginId: string): string {
+  return `${sandboxPluginOwnerPrefix(chatId)}${pluginId}`
+}
+
+/**
+ * The prefix every plugin owner id of one conversation starts with.
+ * @param chatId - the conversation.
+ * @returns `sp:<chatId>:`.
+ */
+export function sandboxPluginOwnerPrefix(chatId: string): string {
+  return `sp:${chatId}:`
+}
+
+/**
  * The ceilings a whole conversation's plugins are held to, and the text fields'.
  *
  * Separate from {@link SANDBOX_PLUGIN_LIMITS} because the two answer different

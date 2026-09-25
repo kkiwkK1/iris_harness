@@ -33,7 +33,7 @@ import { SCRIPT_REGISTRY, WINDOW_GLOBAL, withPreamble } from './preamble.ts'
 import { POPUP_MEMBERS } from './popup.ts'
 import { EventBus, MVU_EVENTS, TAVERN_EVENTS } from '@iris/compat-tavernhelper-core'
 import type { Listener } from '@iris/compat-tavernhelper-core'
-import type { ScriptContext } from '@iris/protocol'
+import { sandboxPluginOwnerId, type ScriptContext } from '@iris/protocol'
 import {
   DEFAULT_SANDBOX_PLUGIN_RUNTIME,
   type SandboxPluginRuntime,
@@ -397,7 +397,11 @@ export interface FrameSandbox {
    * (`docs/SANDBOX-PLUGINS.md` §5.3) and has to be bound the same way. Binding
    * per plugin is not tidiness: it is the precondition for teardown item 5,
    * because a shared surface cannot take back what it cannot attribute.
-   * @param owner - the script id or plugin id asking.
+   *
+   * The identity it binds is not the bare plugin id: it is the conversation's
+   * owner id, `sp:<chatId>:<pluginId>` (`sandboxPluginOwnerId`), so state the
+   * host keeps per card cannot be shared across conversations.
+   * @param owner - the plugin id asking, as minted for this conversation.
    * @returns the bound surface.
    */
   cardSurface: (owner: string) => Record<string, unknown>
@@ -3159,6 +3163,27 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
      * `eventOn` and `replaceScriptButtons` answer for this owner rather than for
      * whoever ran last, which is the failure `identity.ts` exists to prevent.
      */
-    cardSurface: owner => ({ ...tavernHelper, ...viewFor(owner) }),
+    /*
+     * **The plugin's host-visible identity names its conversation.** Bound as
+     * `sp:<chatId>:<pluginId>` rather than the bare plugin id, because plugin
+     * ids are unique within one conversation only and the host keeps the
+     * script scope per card: under `01-x`, two chats with the same card would
+     * read and write one table, and it would outlive the plugin and the chat.
+     * `@iris/protocol`'s `sandboxPluginOwnerId` records why this rather than
+     * globally unique plugin ids. The host forgets and copies the same key
+     * (`sandbox-plugins/owner-state.ts`).
+     *
+     * Read at bind time. The tree mounts plugins after `context` has arrived,
+     * and a surface is dropped at teardown, so a remount binds afresh. Without
+     * a chat id the owner has no script identity at all, and the script scope
+     * refuses by name rather than falling back to a bare, shared id.
+     */
+    cardSurface: pluginId => {
+      const chatId = context?.chatId
+      return {
+        ...tavernHelper,
+        ...viewFor(chatId === undefined ? undefined : sandboxPluginOwnerId(chatId, pluginId)),
+      }
+    },
   }
 }

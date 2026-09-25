@@ -77,9 +77,14 @@ return {
 
 **`iris.card`** — the member surface this card's own scripts get, bound to you:
 `eventOn`, `eventEmit`, the variable members, the world-book members,
-`replaceScriptButtons`, `triggerSlash`, and the rest. Anything you register
-through it is attributed to you, which is how it is taken back when you are
-removed. It is not a new capability: it is exactly what the card can already do.
+`triggerSlash`, and the rest. Anything you register through it is attributed to
+you, which is how it is taken back when you are removed. It is not a new
+capability: it is exactly what the card can already do.
+
+To remember something across reloads, use **chat** variables
+(`{ type: 'chat' }`): they belong to this conversation and follow it into
+branches. Script buttons are refused (you have no button bar), so put controls in
+your panel.
 
 ## 3. What you do not have, and why
 

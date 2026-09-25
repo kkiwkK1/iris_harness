@@ -418,6 +418,10 @@ interface SandboxPluginFacade {
 
 **`card` 是既有的，不是新的。** 它就是 `MEMBER_KINDS`（`apps/iris-web/src/sandbox/identity.ts:69`）那 124 个成员的一份**按插件绑定**的副本：`identity` 类的成员绑到这个 `pluginId`（就像它们对每个 script 各绑一份一样，[SANDBOX](SANDBOX.md)「The frame carries the card's own script list」），`shared` 类的原样共享。这样一个插件注册的事件监听、写的 `script` 域变量、发布的脚本按钮，都记在它自己名下——**这是 §5.7 能拆干净的前提**，不是可选的整洁。
 
+**「它自己名下」是对话级的名字，不是裸 `pluginId`**（2026-09-26，finding `sandbox-plugin-state-keyed-per-card`）。插件 id 只在一段对话里唯一（每个聊天的第一个状态栏都是 `01-status-bar`），而宿主的 `script` 域变量按 `(characterId, scriptId)` 存。用裸 id 绑定时，同一张卡的两段对话共用一张表，删插件、删对话都带不走它。现在帧把插件的成员面绑成 `sp:<chatId>:<pluginId>`（`@iris/protocol` 的 `sandboxPluginOwnerId`；不改插件 id 的理由写在那里：它还是显示键和 §9 的挂载顺序）。宿主侧见 `packages/iris-app-service/src/sandbox-plugins/owner-state.ts`：删插件时 forget 这张表，删对话时按前缀 `sp:<chatId>:` forget，分支时复制到子对话的 owner id（§10.3）。脚本按钮不在其中：`script.replaceScriptButtons` 拒绝卡没声明的 script id，插件 owner 根本存不进按钮表（有测试钉住这条拒绝）。
+
+已知的缺口（未修）：快照的 `variableLayers.script` 只带卡**声明**的 script id（`packages/iris-app-service/src/context.ts` 的 `variableLayersOf`），所以插件的 `script` 域变量写得进，重载后读不回。作者文档因此让插件用 `chat` 域变量做跨重载的持久化：它本来就属于这段对话，随分支复制，随对话删除。
+
 门面**没有**的东西，逐条写明：`fetch`、`window`、`document`、`parent`、`import`。插件当然可以用 `Function('return this')()` 绕过参数拿到真全局——遮蔽不是墙——拿到的是**帧的**全局，也就是卡脚本已经有的那一套，被 iframe 关着。这正是 [SANDBOX](SANDBOX.md) 说的「沙箱 fails closed」。**本文不假装门面是边界**（§7）。
 
 ### 5.4 样式注入（裁决 Q7）
@@ -514,7 +518,7 @@ sidecar 里有行、帧里没有对应的挂载。四种成因，报告要分得
 
 ### 6.5 帧重载
 
-帧被拆重建（切聊天、卡换了、revision 变了）时，mini 树随帧消失。**重建后按 §4.2 重挂**，这是既有的形状，不需要新机制。要写明的是**丢什么**——抄 dsh 那句写得很准的话（研究记录 §十）：**fresh tree, fresh plugins, 插件的内存状态全丢，sidecar 里的记录不动**。插件想跨重建保存东西，用 `card` 面里的变量成员（那是卡今天就有的持久化），不是别的。
+帧被拆重建（切聊天、卡换了、revision 变了）时，mini 树随帧消失。**重建后按 §4.2 重挂**，这是既有的形状，不需要新机制。要写明的是**丢什么**——抄 dsh 那句写得很准的话（研究记录 §十）：**fresh tree, fresh plugins, 插件的内存状态全丢，sidecar 里的记录不动**。插件想跨重建保存东西，用 `card` 面里的 **`chat` 域**变量成员（那是卡今天就有的持久化，属于这段对话），不是别的；`script` 域见 §5.3 末尾的缺口。
 
 ### 6.6 `dispose-failed`
 
@@ -640,10 +644,10 @@ id 以 `<序号>-<slug>` 开头（Q1）意味着字典序大体等于创建序�
 | 事件 | sidecar 怎么办 | 判定 |
 | --- | --- | --- |
 | **rename** | **什么都不做。** chatId 不变（`service.ts:2231` 只改 header 的 title，经 `entry.ts:866`） | 裁决 |
-| **delete** | **必须 forget。** 在 `chat.delete`（`packages/iris-app-service/src/service.ts:2183`）里加一行，紧挨着既有的 `settings.forget(chatId)`（`service.ts:2186`） | **裁决，且是硬要求** |
+| **delete** | **必须 forget。** 在 `chat.delete`（`packages/iris-app-service/src/service.ts:2183`）里加一行，紧挨着既有的 `settings.forget(chatId)`（`service.ts:2186`）；插件的 `script` 域变量按 owner 前缀 `sp:<chatId>:` 一起 forget（§5.3） | **裁决，且是硬要求** |
 | **export** | **不带。** `chat.export`（`packages/iris-app-service/src/chats.ts:819`）的字节与今天逐字节相同 | 裁决（裁决 2 的直接后果） |
 | **import** | **空。** chatId 被重铸（`chats.ts:747`），落地就是一段没有插件的新对话 | 裁决 |
-| **branch** | 见下：复制，带授权，标 `branchedFrom` | **裁决**（协调人，2026-09-19） |
+| **branch** | 见下：复制，带授权，标 `branchedFrom`；插件的 `script` 域变量表随之复制到子对话的 owner id（§5.3） | **裁决**（协调人，2026-09-19） |
 
 **delete 这条是硬要求，不是整洁。** `chat.delete` 里那段注释（`service.ts:2186` 附近）已经把理由写完了：chat id 是对着现存文件铸的，所以删掉之后同一个 id 可以被下一个同名对话拿到——一个留下来的 sidecar 会让**新对话开机就挂上陌生人的插件**，而且是已授权状态。`cache-trace/<chatId>/` 写这份设计时就有这个洞（没人 forget 它，2026-09-25 已补），它在那里的后果只是一份多余的诊断文件；在这里的后果是**执行**。所以这条要有自己的测试（§16.3）。
 

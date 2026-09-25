@@ -65,6 +65,8 @@ export {
   SANDBOX_PLUGIN_STYLE_ATTRIBUTE,
   SANDBOX_PLUGIN_VERDICTS,
   sandboxPluginBody,
+  sandboxPluginOwnerId,
+  sandboxPluginOwnerPrefix,
   type SandboxPluginDeclaration,
   type SandboxPluginFailureState,
   type SandboxPluginSyntaxRefusal,

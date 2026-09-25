@@ -66,7 +66,19 @@ const LIFECYCLE: Record<string, { character: Fate, chat: Fate, call?: { characte
   scriptLibrary: { character: 'forget', chat: 'unkeyed', call: { character: /scriptLibrary\?\.forget\(characterId\)/u } },
   extensionSettings: { character: 'forget', chat: 'unkeyed', call: { character: /extensionSettings\?\.forget\(characterId\)/u } },
   scriptButtons: { character: 'forget', chat: 'unkeyed', call: { character: /scriptButtons\?\.forget\(characterId\)/u } },
-  scriptVariables: { character: 'forget', chat: 'unkeyed', call: { character: /scriptVariables\?\.forget\(characterId\)/u } },
+  /*
+   * Keyed by chat too since sandbox plugins bind as `sp:<chatId>:<pluginId>`:
+   * a deleted conversation's plugin tables go by prefix
+   * (`sandbox-plugins/owner-state.ts`).
+   */
+  scriptVariables: {
+    character: 'forget',
+    chat: 'forget',
+    call: {
+      character: /scriptVariables\?\.forget\(characterId\)/u,
+      chat: /forgetChatPluginState\(this\.#options\.scriptVariables, chatId\)/u,
+    },
+  },
   favorites: { character: 'forget', chat: 'unkeyed', call: { character: /favorites\?\.forget\(characterId\)/u } },
   worldbookBindings: { character: 'forget', chat: 'unkeyed', call: { character: /worldbookBindings\?\.forget\(characterId\)/u } },
   chatOrder: { character: 'unkeyed', chat: 'forget', call: { chat: /chatOrder\?\.forget\(chatId\)/u } },
