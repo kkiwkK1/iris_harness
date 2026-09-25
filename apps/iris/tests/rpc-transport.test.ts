@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { boot } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { requestSchemas, type IrisEvent } from '@iris/protocol'
+import { parseRequest, RPC_METHODS, type IrisEvent, type RpcMethod, type RpcRequest } from '@iris/protocol'
 import { IrisHttpClient } from '@iris/rpc-client'
 
 import { startMockProvider, type MockProvider } from './mock-provider.ts'
@@ -255,8 +255,16 @@ test('the avatar route answers only for cards that have a picture', async () => 
  * whether anything is registered. The ids are deliberately bogus — reaching a
  * handler is the whole assertion, and what it then says about a chat that does
  * not exist is not this test's business.
+ *
+ * That requirement used to live only in this comment, and it rotted: the
+ * `script.setExtensionPrompt` probe predates `runId` becoming required, so for
+ * weeks it answered `invalid-request` and was counted as reachable. It is now
+ * held three ways: the table is typed per method (`RpcRequest<M>` is the
+ * schema's *output* type, so defaulted fields such as `position`/`depth` are
+ * spelled out too), every probe is run through `parseRequest` before any HTTP
+ * call, and the wire loop fails on any `invalid-request` answer.
  */
-const PROBES: Record<string, unknown> = {
+const PROBES: { [M in RpcMethod]: RpcRequest<M> } = {
   'plugin.list': {},
   'plugin.install': { id: 'no-such-plugin' },
   'plugin.uninstall': { id: 'no-such-plugin' },
@@ -439,7 +447,14 @@ const PROBES: Record<string, unknown> = {
   'script.context': { chatId: 'no-such-chat', characterId: 'no-such-card' },
   'script.saveMetadata': { chatId: 'no-such-chat', metadata: {} },
   'script.saveChat': { chatId: 'no-such-chat' },
-  'script.setExtensionPrompt': { chatId: 'no-such-chat', key: 'k', value: 'v' },
+  'script.setExtensionPrompt': {
+    chatId: 'no-such-chat',
+    key: 'k',
+    value: 'v',
+    position: 'at-depth',
+    depth: 0,
+    runId: 'probe-run',
+  },
   'script.setExtensionSettings': { characterId: 'no-such-card', settings: {} },
   'script.generateRaw': { chatId: 'no-such-chat', prompt: 'x' },
   'script.generate': { chatId: 'no-such-chat', userInput: 'x' },
@@ -539,20 +554,45 @@ const PROBES: Record<string, unknown> = {
   'stExtension.install': { path: 'no-such-directory' },
 }
 
+/**
+ * Probes whose handler — not the schema — answers `invalid-request`, each with
+ * the handler's own sentence, so a schema refusal on the same method still
+ * fails. Reaching the handler is the proof; these bogus inputs are refused by
+ * it on purpose (the probe would otherwise write into the data directory).
+ */
+const HANDLER_REFUSALS: Partial<Record<RpcMethod, RegExp>> = {
+  'plugin.previewInstall': /^install-failed: \[missing-source\]/,
+  'plugin.confirmInstall': /^install-failed: no staged install for token/,
+  'scriptLibrary.save': /^a character script repository needs a character id$/,
+}
+
 test('every method in the contract is actually reachable over the wire', async () => {
   // Implementing a handler and registering it are two different lists, and
   // only one of them was being checked: five bridge methods were written,
   // tested through the handler table, and unreachable from a browser, while
   // the suite stayed green. This asserts the property that was missing —
   // reachability — against a running host rather than against source text.
-  const methods = Object.keys(requestSchemas)
+  const methods = RPC_METHODS
   assert.ok(methods.length > 20, `read ${String(methods.length)} methods from the contract`)
 
+  // Every probe must pass its own schema before any of them goes on the wire:
+  // the host validates before it looks the handler up, so a probe that fails
+  // here would be answered `invalid-request` and prove nothing. Checked in
+  // process, all at once, so the failure names every stale probe.
+  const invalidProbes = methods.flatMap(method => {
+    const parsed = parseRequest(method, PROBES[method])
+    return parsed.ok ? [] : [`${method}: ${parsed.error.message}`]
+  })
+  assert.deepEqual(invalidProbes, [], `probes that fail their own schema: ${invalidProbes.join('; ')}`)
+
   const unreachable: string[] = []
+  const refusedAsInvalid: string[] = []
   for (const method of methods) {
     const params = PROBES[method]
     // A method with no probe cannot be checked, so the absence is the failure:
     // this is what makes the table maintain itself when the contract grows.
+    // (The table's type already demands one per method; this is the runtime
+    // half, for a probe that is present but `undefined`.)
     assert.ok(params !== undefined, `no probe for "${method}" — add one so it is covered`)
 
     const response = await fetch(`${origin}/iris/rpc`, {
@@ -568,9 +608,22 @@ test('every method in the contract is actually reachable over the wire', async (
     if (frame.ok === false && /no handler is registered/.test(frame.error?.message ?? '')) {
       unreachable.push(method)
     }
+    // A probe the host refused as malformed never reached the handler lookup,
+    // so it would count as reachable while proving nothing. The code alone
+    // cannot tell that apart from a handler refusing a bogus id with the same
+    // code, so the three handlers known to do that are named with their own
+    // sentence; any other invalid-request answer fails.
+    const own = HANDLER_REFUSALS[method]
+    if (
+      frame.ok === false && frame.error?.code === 'invalid-request'
+      && !(own !== undefined && own.test(frame.error.message))
+    ) {
+      refusedAsInvalid.push(`${method}: ${frame.error.message}`)
+    }
   }
 
   assert.deepEqual(unreachable, [], `methods with no handler registered: ${unreachable.join(', ')}`)
+  assert.deepEqual(refusedAsInvalid, [], `probes the host answered invalid-request: ${refusedAsInvalid.join('; ')}`)
 })
 
 test('the third state crosses the wire as an absent key, not a present undefined', async () => {

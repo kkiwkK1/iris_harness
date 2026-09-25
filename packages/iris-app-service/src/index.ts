@@ -51,6 +51,7 @@ import { AppError } from './errors.ts'
 import type { SystemPluginSnapshot } from '@iris/protocol'
 import type { StCompatOptions } from './service.ts'
 import { IrisAppService } from './service.ts'
+import { registerHandlers } from './registration.ts'
 import { ConnectionStore } from './connections.ts'
 import { PersonaStore } from './persona.ts'
 import { FavoriteStore } from './favorites.ts'
@@ -1178,169 +1179,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const handlers = service.handlers()
 
-  // Registered one by one rather than by iterating the table: `register` is
-  // generic per method, and a loop would need a cast that throws away exactly
-  // the check worth having here.
+  // One loop over the protocol's method list (`./registration.ts`, which also
+  // records the decision this reversed: the hand list's "a loop needs a cast"
+  // premise is true of a naive loop and false of a generic per-method helper).
   ctx.effect(() => {
-    const disposers = [
-      ctx.irisRpc.register('plugin.list', handlers['plugin.list']),
-      ctx.irisRpc.register('plugin.install', handlers['plugin.install']),
-      ctx.irisRpc.register('plugin.uninstall', handlers['plugin.uninstall']),
-      ctx.irisRpc.register('plugin.enable', handlers['plugin.enable']),
-      ctx.irisRpc.register('plugin.disable', handlers['plugin.disable']),
-      ctx.irisRpc.register('plugin.reload', handlers['plugin.reload']),
-      ctx.irisRpc.register('plugin.previewInstall', handlers['plugin.previewInstall']),
-      ctx.irisRpc.register('plugin.confirmInstall', handlers['plugin.confirmInstall']),
-      ctx.irisRpc.register('plugin.cancelInstall', handlers['plugin.cancelInstall']),
-      ctx.irisRpc.register('plugin.update', handlers['plugin.update']),
-      ctx.irisRpc.register('stCompat.plane.attach', handlers['stCompat.plane.attach']),
-      ctx.irisRpc.register('stCompat.plane.detach', handlers['stCompat.plane.detach']),
-      ctx.irisRpc.register('stCompat.submit', handlers['stCompat.submit']),
-      ctx.irisRpc.register('stCompat.settings', handlers['stCompat.settings']),
-      ctx.irisRpc.register('stExtension.install', handlers['stExtension.install']),
-      ctx.irisRpc.register('debug.reports', handlers['debug.reports']),
-      ctx.irisRpc.register('debug.doctor', handlers['debug.doctor']),
-      ctx.irisRpc.register('storage.set', handlers['storage.set']),
-      ctx.irisRpc.register('storage.remove', handlers['storage.remove']),
-      ctx.irisRpc.register('storage.clear', handlers['storage.clear']),
-      ctx.irisRpc.register('chat.list', handlers['chat.list']),
-      ctx.irisRpc.register('chat.create', handlers['chat.create']),
-      ctx.irisRpc.register('chat.open', handlers['chat.open']),
-      ctx.irisRpc.register('chat.resync', handlers['chat.resync']),
-      ctx.irisRpc.register('chat.delete', handlers['chat.delete']),
-      ctx.irisRpc.register('chat.rename', handlers['chat.rename']),
-      ctx.irisRpc.register('chat.reorder', handlers['chat.reorder']),
-      ctx.irisRpc.register('chat.search', handlers['chat.search']),
-      // Beside `chat.search` because it is the same file scan; it is not a
-      // `chat.` method because it is not about a chat — it answers across every
-      // conversation in the profile.
-      ctx.irisRpc.register('usage.summary', handlers['usage.summary']),
-      ctx.irisRpc.register('chat.answerCleanup', handlers['chat.answerCleanup']),
-      ctx.irisRpc.register('chat.send', handlers['chat.send']),
-      ctx.irisRpc.register('chat.regenerate', handlers['chat.regenerate']),
-      ctx.irisRpc.register('chat.compact', handlers['chat.compact']),
-      ctx.irisRpc.register('chat.abort', handlers['chat.abort']),
-      ctx.irisRpc.register('chat.swipe', handlers['chat.swipe']),
-      ctx.irisRpc.register('chat.editMessage', handlers['chat.editMessage']),
-      ctx.irisRpc.register('chat.deleteMessage', handlers['chat.deleteMessage']),
-      ctx.irisRpc.register('chat.branch', handlers['chat.branch']),
-      ctx.irisRpc.register('chat.import', handlers['chat.import']),
-      ctx.irisRpc.register('chat.export', handlers['chat.export']),
-      ctx.irisRpc.register('sandboxPlugin.list', handlers['sandboxPlugin.list']),
-      ctx.irisRpc.register('sandboxPlugin.define', handlers['sandboxPlugin.define']),
-      ctx.irisRpc.register('sandboxPlugin.decide', handlers['sandboxPlugin.decide']),
-      ctx.irisRpc.register('sandboxPlugin.source', handlers['sandboxPlugin.source']),
-      ctx.irisRpc.register('backup.list', handlers['backup.list']),
-      ctx.irisRpc.register('backup.preview', handlers['backup.preview']),
-      ctx.irisRpc.register('backup.restore', handlers['backup.restore']),
-      ctx.irisRpc.register('backup.delete', handlers['backup.delete']),
-      ctx.irisRpc.register('prompt.itemize', handlers['prompt.itemize']),
-      ctx.irisRpc.register('prompt.divergence', handlers['prompt.divergence']),
-      ctx.irisRpc.register('script.getVariables', handlers['script.getVariables']),
-      ctx.irisRpc.register('script.setVariables', handlers['script.setVariables']),
-      ctx.irisRpc.register('script.swipeTo', handlers['script.swipeTo']),
-      ctx.irisRpc.register('script.slash', handlers['script.slash']),
-      ctx.irisRpc.register('connection.list', handlers['connection.list']),
-      ctx.irisRpc.register('connection.authoring', handlers['connection.authoring']),
-      ctx.irisRpc.register('connection.save', handlers['connection.save']),
-      ctx.irisRpc.register('connection.delete', handlers['connection.delete']),
-      ctx.irisRpc.register('connection.activate', handlers['connection.activate']),
-      ctx.irisRpc.register('connection.test', handlers['connection.test']),
-      ctx.irisRpc.register('character.list', handlers['character.list']),
-      ctx.irisRpc.register('character.import', handlers['character.import']),
-      ctx.irisRpc.register('character.delete', handlers['character.delete']),
-      ctx.irisRpc.register('character.duplicate', handlers['character.duplicate']),
-      ctx.irisRpc.register('character.rename', handlers['character.rename']),
-      ctx.irisRpc.register('character.export', handlers['character.export']),
-      ctx.irisRpc.register('character.setTags', handlers['character.setTags']),
-      ctx.irisRpc.register('character.favorite', handlers['character.favorite']),
-      ctx.irisRpc.register('settings.get', handlers['settings.get']),
-      ctx.irisRpc.register('settings.set', handlers['settings.set']),
-      ctx.irisRpc.register('persona.list', handlers['persona.list']),
-      ctx.irisRpc.register('persona.get', handlers['persona.get']),
-      ctx.irisRpc.register('persona.set', handlers['persona.set']),
-      ctx.irisRpc.register('persona.delete', handlers['persona.delete']),
-      ctx.irisRpc.register('preset.list', handlers['preset.list']),
-      ctx.irisRpc.register('preset.select', handlers['preset.select']),
-      ctx.irisRpc.register('preset.view', handlers['preset.view']),
-      ctx.irisRpc.register('preset.setEnabled', handlers['preset.setEnabled']),
-      ctx.irisRpc.register('preset.move', handlers['preset.move']),
-      ctx.irisRpc.register('preset.upsertPrompt', handlers['preset.upsertPrompt']),
-      ctx.irisRpc.register('preset.removePrompt', handlers['preset.removePrompt']),
-      ctx.irisRpc.register('preset.save', handlers['preset.save']),
-      ctx.irisRpc.register('preset.delete', handlers['preset.delete']),
-      ctx.irisRpc.register('preset.read', handlers['preset.read']),
-      ctx.irisRpc.register('preset.import', handlers['preset.import']),
-      ctx.irisRpc.register('preset.importFile', handlers['preset.importFile']),
-      ctx.irisRpc.register('regex.list', handlers['regex.list']),
-      ctx.irisRpc.register('regex.set', handlers['regex.set']),
-      ctx.irisRpc.register('regex.scopedList', handlers['regex.scopedList']),
-      ctx.irisRpc.register('regex.setScopedAllowed', handlers['regex.setScopedAllowed']),
-      ctx.irisRpc.register('regex.setScopedEnabled', handlers['regex.setScopedEnabled']),
-      ctx.irisRpc.register('regex.presetList', handlers['regex.presetList']),
-      ctx.irisRpc.register('regex.setPresetAllowed', handlers['regex.setPresetAllowed']),
-      ctx.irisRpc.register('regex.setPresetEnabled', handlers['regex.setPresetEnabled']),
-      ctx.irisRpc.register('scriptLibrary.list', handlers['scriptLibrary.list']),
-      ctx.irisRpc.register('scriptLibrary.read', handlers['scriptLibrary.read']),
-      ctx.irisRpc.register('scriptLibrary.save', handlers['scriptLibrary.save']),
-      ctx.irisRpc.register('scriptLibrary.delete', handlers['scriptLibrary.delete']),
-      ctx.irisRpc.register('scriptLibrary.setEnabled', handlers['scriptLibrary.setEnabled']),
-      ctx.irisRpc.register('script.list', handlers['script.list']),
-      ctx.irisRpc.register('script.setEnabled', handlers['script.setEnabled']),
-      ctx.irisRpc.register('script.body', handlers['script.body']),
-      ctx.irisRpc.register('script.setDocumentGrant', handlers['script.setDocumentGrant']),
-      ctx.irisRpc.register('script.setNetworkGrant', handlers['script.setNetworkGrant']),
-      ctx.irisRpc.register('script.setScriptsAllowed', handlers['script.setScriptsAllowed']),
-      ctx.irisRpc.register('script.fetch', handlers['script.fetch']),
-      ctx.irisRpc.register('script.context', handlers['script.context']),
-      ctx.irisRpc.register('script.saveMetadata', handlers['script.saveMetadata']),
-      ctx.irisRpc.register('script.saveChat', handlers['script.saveChat']),
-      ctx.irisRpc.register('script.setExtensionPrompt', handlers['script.setExtensionPrompt']),
-      ctx.irisRpc.register('script.runEnded', handlers['script.runEnded']),
-      ctx.irisRpc.register('script.report', handlers['script.report']),
-      ctx.irisRpc.register('script.setExtensionSettings', handlers['script.setExtensionSettings']),
-      ctx.irisRpc.register('script.generateRaw', handlers['script.generateRaw']),
-      ctx.irisRpc.register('script.generate', handlers['script.generate']),
-      ctx.irisRpc.register('script.setChatMessages', handlers['script.setChatMessages']),
-      ctx.irisRpc.register('script.evalTemplate', handlers['script.evalTemplate']),
-      ctx.irisRpc.register('script.replaceScriptButtons', handlers['script.replaceScriptButtons']),
-      ctx.irisRpc.register('script.getPreset', handlers['script.getPreset']),
-      ctx.irisRpc.register('script.createChatMessages', handlers['script.createChatMessages']),
-      ctx.irisRpc.register('script.deleteChatMessages', handlers['script.deleteChatMessages']),
-      ctx.irisRpc.register('worldbook.names', handlers['worldbook.names']),
-      ctx.irisRpc.register('worldbook.get', handlers['worldbook.get']),
-      ctx.irisRpc.register('worldbook.load', handlers['worldbook.load']),
-      ctx.irisRpc.register('worldbook.charNames', handlers['worldbook.charNames']),
-      ctx.irisRpc.register('worldbook.charDigest', handlers['worldbook.charDigest']),
-      ctx.irisRpc.register('worldbook.replace', handlers['worldbook.replace']),
-      ctx.irisRpc.register('worldbook.create', handlers['worldbook.create']),
-      ctx.irisRpc.register('worldbook.globalSelect', handlers['worldbook.globalSelect']),
-      ctx.irisRpc.register('worldbook.setGlobalSelect', handlers['worldbook.setGlobalSelect']),
-      ctx.irisRpc.register('worldbook.bindChat', handlers['worldbook.bindChat']),
-      ctx.irisRpc.register('worldbook.setCharBooks', handlers['worldbook.setCharBooks']),
-      ctx.irisRpc.register('worldbook.settings', handlers['worldbook.settings']),
-      ctx.irisRpc.register('worldbook.setSettings', handlers['worldbook.setSettings']),
-      // —— family②: regex ——
-      ctx.irisRpc.register('regex.tavernList', handlers['regex.tavernList']),
-      ctx.irisRpc.register('regex.tavernReplace', handlers['regex.tavernReplace']),
-      ctx.irisRpc.register('regex.tavernFormat', handlers['regex.tavernFormat']),
-
-      // —— family④: lorebook / worldbook ——
-      ctx.irisRpc.register('worldbook.delete', handlers['worldbook.delete']),
-      // —— family①: identity & messages ——
-      ctx.irisRpc.register('script.getCharacter', handlers['script.getCharacter']),
-      ctx.irisRpc.register('script.chatHistoryBrief', handlers['script.chatHistoryBrief']),
-      ctx.irisRpc.register('script.chatHistoryDetail', handlers['script.chatHistoryDetail']),
-      ctx.irisRpc.register('script.rotateChatMessages', handlers['script.rotateChatMessages']),
-      // —— family③: preset ——
-      ctx.irisRpc.register('script.createOrReplacePreset', handlers['script.createOrReplacePreset']),
-      ctx.irisRpc.register('script.deletePreset', handlers['script.deletePreset']),
-      ctx.irisRpc.register('script.renamePreset', handlers['script.renamePreset']),
-      ctx.irisRpc.register('script.loadPreset', handlers['script.loadPreset']),
-      // —— family③ end ——
-    ]
+    const unregister = registerHandlers((method, handler) => ctx.irisRpc.register(method, handler), handlers)
     return () => {
-      for (const dispose of disposers.reverse()) dispose()
+      unregister()
       // Drain the coalesced storage writes. Without this the debounce turns a
       // shutdown into "the last few hundred milliseconds of a card's state
       // never happened" — and a card cannot tell that apart from a write that

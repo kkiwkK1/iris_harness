@@ -9739,7 +9739,8 @@ lockPid? }, corpusDir?: { path, readable }, cardStorage?: { bytes, limit } }`。
 假客户端（`@iris/client-fake`）同样拒绝：它没有宿主进程。
 
 **方法数的不变量照旧，没有改任何数字。** 新方法进了 `requestSchemas`，`index.ts` 里按方法
-逐条 `register`（`tests/registration.test.ts` 从源码核对每个方法都注册了），`apps/iris/tests/
+逐条 `register`（`tests/registration.test.ts` 从源码核对每个方法都注册了；2026-09-25 起
+逐条清单换成 `src/registration.ts` 的类型化循环，该测试改为驱动循环本身），`apps/iris/tests/
 rpc-transport.test.ts` 的 `PROBES` 表加了一行 `'debug.doctor': {}`——那张表对每个方法都要一条
 探针，缺了会以「no probe for …」红掉，所以它是随契约自动生长的，不是一个要手动加一的计数。
 

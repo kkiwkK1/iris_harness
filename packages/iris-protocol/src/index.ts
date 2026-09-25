@@ -85,6 +85,7 @@ export {
   type PluginRevisionRequest,
   type PresetRegexAnswer,
   requestSchemas,
+  RPC_METHODS,
   RpcCallError,
   type RpcError,
   type RpcMethod,

@@ -2593,6 +2593,19 @@ export const requestSchemas = {
 export type RpcMethod = keyof typeof requestSchemas
 
 /**
+ * Every callable method, as a value: the keys of {@link requestSchemas}, in
+ * declaration order.
+ *
+ * The one `as` here is sound and is the only place it is written: the table is
+ * a closed `as const` literal, so its own keys are exactly `RpcMethod`, and
+ * methods a system plugin registers at runtime live in the separate registry
+ * (`./rpc-registry.ts`), never on this object. Consumers that iterate the
+ * vocabulary — the host's registration loop, the transport's reachability
+ * probe — read this instead of each casting `Object.keys` at its own use site.
+ */
+export const RPC_METHODS: readonly RpcMethod[] = Object.freeze(Object.keys(requestSchemas) as RpcMethod[])
+
+/**
  * Any callable method name: the built-in vocabulary above, plus names whose
  * schemas a system plugin registered at runtime (`./rpc-registry.ts`).
  *
