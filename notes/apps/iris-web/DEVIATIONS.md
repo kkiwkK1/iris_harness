@@ -7413,10 +7413,14 @@ against `035094e`). The host half is §91 on `notes/packages/iris-app-service`.
 **壳→宿主（`client/store.ts` 的 `reportCardConsole`）**
 
 - 帧的 `console` 消息 → `runner.ts` 的新 hook `onConsole` →
-  `useCardScripts.tsx` → `actions.reportCardConsole` → `script.report`。
+  `app/frame-callbacks.ts`（两个帧宿主共用：`useCardScripts.tsx` 与
+  `MessageInterfaces.tsx`）→ `actions.reportCardConsole` → `script.report`。
+  （2026-09-25 更正：此前只有 `useCardScripts.tsx` 接了这个 hook，界面帧的
+  console 行全部无声丢弃；见 §126。）
 - 不 await：一次 console 调用不该等一个往返。
-- 无 `chatId` 就丢，不编一个：宿主会拒一个不存在的会话，编一个只是把错放到更
-  远的地方。
+- 记在**帧自己的**会话下（`FrameBinding.chatId`，§125），不是调用时打开的那个：
+  切换窗口里打印的行属于打印它的那张卡的会话。（2026-09-25 更正：原来读
+  `get().chatId`，无打开会话就丢。）
 - 失败**不吞**：宿主拒了就 `addCardReport(..., { grade: 'fault', channel:
   'card-console' })`，落在读者已经在看的那张列表上——否则「宿主没记下卡的
   console 行」和「卡什么都没打印」长得一样。
@@ -9277,6 +9281,40 @@ now …`, and raises the card-call notice. Upstream-shaped cards never pass `cha
 **What would overturn it.** A corpus card that legitimately addresses a chat or card other than its
 own through a card method. `storage.*` takes `characterId` for attribution only; the frame sends its
 snapshot's, which equals the binding.
+
+## 126. Interface frames forward the card's console lines and extension-settings writes
+
+**Kind:** Iris-only fix, with one compatibility gap recorded (review wave 1, findings
+`interface-frames-drop-console-and-settings`, `shell-frame-host-factory`,
+`frame-host-controller-out-of-react`). Number to be renumbered by the coordinator on landing.
+
+**Before.** The two frame hosts wrote their `runCard` callbacks out by hand, and the interface
+host had drifted from the script host in two silent ways. It passed no `onConsole`, so every
+console line an interface frame captured was dropped at `runner.ts` (`host.onConsole?.(…)`),
+even though `frame-entry.ts` installs the capture in interface frames on purpose. It also passed
+`onSettings: () => undefined`, so every `extensionSettings` write from an interface frame
+evaporated, and a write-after-read loop in that frame recomputed forever. Neither drop was
+recorded anywhere.
+
+**Now.** `app/frame-callbacks.ts` builds the callbacks both hosts share from the frame's binding
+(§125): call, slash, dialog, blocked, note, window event, settings and console. Interface-frame
+console lines are labelled `[interface · floor N]` and go through **one rate gate per card**
+(`CONSOLE_BUDGET_PER_SECOND`), shared by every interface frame of that card. The dropped count
+rides on the next admitted line. The frame's own per-frame gate still applies before it.
+
+**Compatibility gap (settings).** Upstream has one `extension_settings` object shared by every
+frame of the page. In Iris each frame holds its own snapshot copy and posts its **whole**
+partition, so when two frames of one card write different keys at nearly the same moment, the
+last writer wins. Upstream would keep both writes. Closing the gap would take a key-level merge
+on the host, or a shell-side partition that every frame writes through. Forwarding with this gap
+is still strictly closer to upstream than dropping every write.
+
+**Also.** The interface host's asset-manifest memo used to cache a rejection forever. It now
+shares one resolver with the script host (`app/sandbox-assets.ts`), and it drops a failed attempt,
+so the next row asks again.
+
+**What would overturn it.** A corpus card whose interface frames print enough to crowd the card's
+own script lines out of the 50-per-second budget. The gate would then need a per-frame-kind split.
 
 ## 127. `createChatMessages` in the frame is a transcription of upstream's `convert`
 

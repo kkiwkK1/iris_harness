@@ -35,13 +35,13 @@ import {
   publishPluginStyle,
   retractPluginStyles,
 } from './plugin-style-fanout.ts'
-import { broadcastWindowEvent, registerWindowEventSink } from './window-events.ts'
+import { registerWindowEventSink } from './window-events.ts'
+import { frameCallbacks } from './frame-callbacks.ts'
 import { librariesFor } from '../sandbox/libraries.ts'
-import {
-  SANDBOX_MANIFEST_PATH,
-  parseSandboxManifest,
-  type SandboxAssets,
-} from '../sandbox/asset-manifest.ts'
+import type { SandboxAssets } from '../sandbox/asset-manifest.ts'
+// Fresh per run, deliberately not the interface host's shared promise: the
+// script frame is one per chat open, so a request per run costs nothing.
+import { sandboxAssets } from './sandbox-assets.ts'
 import { runCard } from '../sandbox/runner.ts'
 import type { RunningCard } from '../sandbox/runner.ts'
 import { overlayViewport } from './overlay-surface.ts'
@@ -51,26 +51,8 @@ import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun, isFailure } from '../sandbox/script-run-state.ts'
 import { sandboxPluginRuntime } from '@iris/plugin-web-api'
 import { usePluginAssetManifest } from './use-plugin-manifest.ts'
-import { describeRefusal } from './blocked-line.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
-
-/**
- * Resolve this build's sandbox artifacts, once per run.
- *
- * The names carry content hashes, so nothing may hardcode them. The manifest is
- * the one fixed path, and it is validated rather than trusted for the reason the
- * bootstrap already was: a dev server answers an unknown path with its index at
- * status 200, so `response.ok` is not evidence of anything.
- * @returns the asset URLs for this build.
- */
-async function sandboxAssets(): Promise<SandboxAssets> {
-  const response = await fetch(SANDBOX_MANIFEST_PATH)
-  if (!response.ok) throw new Error(`sandbox manifest: HTTP ${String(response.status)}`)
-  const parsed = parseSandboxManifest(await response.text())
-  if (typeof parsed === 'string') throw new Error(`sandbox manifest: ${parsed}`)
-  return parsed
-}
 
 /**
  * Run the foreground chat's card scripts, and tear them down when it leaves.
@@ -411,30 +393,16 @@ export function CardScriptFrames(): ReactElement {
                */
               sizedByHost: true,
               fetch: async (url, revision) => actionsOf(store).fetchScriptDependency(url, revision),
-              onCall: async (method, params) => actionsOf(store).runCardAction(method, params, binding),
-              onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision, binding),
               /*
-               * The dialog bridge. The sandbox never carries `allow-modals`, so
-               * the browser's own answer to all three dialogs is silence —
-               * which is how a card's `alert("发送失败: …")` became a button
-               * that "does nothing". Now the text reaches the panel: an `alert`
-               * as a fault the reader actually sees, and a `confirm`/`prompt`
-               * as a note saying what was asked and that it was answered
-               * "cancel"/"nothing" — the same answers the no-modal sandbox
-               * gave, on the record instead of swallowed.
+               * The callbacks both frame hosts share — call, slash, dialog,
+               * blocked, note, window event, settings, console — built once
+               * from this frame's binding (`frame-callbacks.ts`). The ones below
+               * are this host's own.
                */
-              onDialog: (kind, text) => {
-                actionsOf(store).addCardReport(
-                  kind === 'alert'
-                    ? text
-                    : `a card asked ${kind}("${text}") — answered ${kind === 'confirm' ? '"cancel"' : 'nothing'}`,
-                  { channel: 'dialog', grade: kind === 'alert' ? 'fault' : 'note' },
-                )
-                actionsOf(store).notify(kind === 'alert' ? 'error' : 'info', text)
-              },
+              ...frameCallbacks(store, binding),
               /*
                * SillyTavern's own popup, which is a different thing from the
-               * three above: it is asynchronous upstream too, so the reader's
+               * three dialogs `frameCallbacks` bridges: it is asynchronous upstream too, so the reader's
                * real answer can be carried back instead of being answered
                * "cancel" on their behalf. It is drawn by the shell — this frame
                * is the overlay surface and a modal inside it would be under the
@@ -443,22 +411,6 @@ export function CardScriptFrames(): ReactElement {
                */
               onPopup: popups.onPopup,
               onPopupWithdrawn: popups.onPopupWithdrawn,
-              /*
-               * A settings report is the card's extension settings partition —
-               * the whole object, posted on every proxied write and on
-               * `SillyTavern.saveSettings[Debounced]`. Dropped here, every
-               * write-after-read loop a card runs (`if
-               * (!extensionSettings.key) { …; extensionSettings.key = … }`)
-               * recomputes forever and a settings key it probes for never
-               * reads back — upstream's `saveSettingsDebounced` persists, and
-               * this is the one road to that same answer.
-               */
-              onSettings: settings => {
-                void actionsOf(store).saveCardExtensionSettings(settings, binding)
-              },
-              // Reported, not swallowed: a blocked subresource is the policy
-              // doing its job, and the card author needs the host and directive
-              // to know what they reached for.
               /*
                * The card's overlay surface is this frame, so the clip decides
                * which parts of the viewport it may catch a click on.
@@ -486,64 +438,6 @@ export function CardScriptFrames(): ReactElement {
                 if (detail !== undefined) {
                   actionsOf(store).addCardReport(detail, { channel: 'overlay' })
                 }
-              },
-              /*
-               * A dispatch on the page window this frame sees. Handed to the
-               * fan-out rather than emitted straight back into this frame, so a
-               * listener in the message frames hears a dispatch made here — the
-               * page-wide reach `parent.dispatchEvent` promises upstream.
-               */
-              onWindowEvent: (event, detail) => {
-                broadcastWindowEvent(event, detail)
-              },
-              onBlocked: (blocked, directive, detail, covered) => {
-                /*
-                 * The grant is read from the store at the moment of the report,
-                 * not captured when the frame was built.
-                 *
-                 * Captured, this would answer with the grant as it stood at
-                 * frame construction — so a refusal arriving after the reader
-                 * turned the switch on would be filed as `'offer'` and put a
-                 * button on screen offering what they had just done. The store
-                 * is the live answer; the frame's policy is the stale one.
-                 */
-                const refusal = describeRefusal(
-                  blocked, directive, detail, covered, store.getState().networkGranted,
-                )
-                /*
-                 * The durable channel always, the notice bar only when it is
-                 * worth interrupting for.
-                 *
-                 * The report list exists because this used to be the notice bar
-                 * alone — one slot that clears itself after eight seconds, so a
-                 * card making five refused requests overwrote its own evidence
-                 * four times and then erased the survivor. A refusal is the
-                 * sandbox working, and the author still needs to find out which
-                 * host and which directive.
-                 */
-                actionsOf(store).addCardReport(refusal.text, {
-                  grade: refusal.grade,
-                  grant: refusal.grant ?? 'no',
-                })
-                if (refusal.notify) actionsOf(store).notify('info', refusal.text)
-              },
-              /*
-               * What the frame paid for its libraries. Durable, because it is a
-               * standing fact about cost rather than a passing event, and because
-               * the experiment it exists for compares two frames opened minutes
-               * apart.
-               */
-              onNote: text => actionsOf(store).addCardReport(text),
-              /*
-               * W7: the card's own console output. Forwarded to the host so it
-               * lands in the same `DiagnosticBuffer` the debug page reads —
-               * local only, never a log file (the buffer does not persist) —
-               * and, because the debug page needs the chat to have been loaded,
-               * the shell always has one when a card frame runs. Not awaited:
-               * a console call must not wait on a round trip.
-               */
-              onConsole: (level, message, at, scriptId) => {
-                void actionsOf(store).reportCardConsole(level, message, at, scriptId, binding)
               },
               /*
                * Readiness belongs to the frame, so it is reported for every
