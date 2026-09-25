@@ -151,8 +151,10 @@ for (const file of readdirSync(CARDS).filter(name => name.toLowerCase().endsWith
 
   if (items.length === 0) continue
 
+  /** @typedef {import('../packages/iris-compat-prompt-template/src/index.ts').Json} Json */
+  /** @type {Json} */
   let initial = {}
-  try { initial = extractScripts(card).variables ?? {} } catch { initial = {} }
+  try { initial = /** @type {Json} */ (extractScripts(card).variables ?? {}) } catch { initial = {} }
 
   const bound = data.extensions?.world
   // The card's own embedded book, plus every disk book, so `getwi` can resolve
@@ -200,6 +202,7 @@ for (const file of readdirSync(CARDS).filter(name => name.toLowerCase().endsWith
  * @returns {Promise<Map<string, {ok: boolean, text?: string, error?: string}>>} results by item id.
  */
 async function renderWithUpstream(card) {
+  // @ts-expect-error — real drift since 9d932809 (H-1): createState now takes (snapshot, realm) and calls realm.adopt, so this side throws on the first card; needs side B reworked onto createRealm + child.ts buildScope
   const state = createState(card.snapshot)
   const out = new Map()
 
@@ -223,14 +226,16 @@ async function renderWithUpstream(card) {
   }
 
   for (const item of card.items) {
+    // @ts-expect-error — real drift since 9d932809 (H-1): EnvironmentOptions now requires `realm`
     const environment = buildEnvironment({
       snapshot: card.snapshot,
       evaluateNested: (text, origin, locals) => render(text, origin, locals),
     }, state)
     try {
+      // @ts-expect-error — real drift since 9d932809 (H-1): Environment is now a description ({ members, ops }); there is no `locals`, child.ts's buildScope assembles the scope
       out.set(item.id, { ok: true, text: await render(item.text, item.origin, environment.locals) })
     } catch (error) {
-      out.set(item.id, { ok: false, error: String(error?.message ?? error) })
+      out.set(item.id, { ok: false, error: String(/** @type {any} */ (error)?.message ?? error) })
     }
   }
   return out
@@ -324,7 +329,8 @@ if (disagreements.length) {
       console.log(`    upstream: ${entry.upstream.ok ? 'rendered' : `failed — ${entry.upstream.error?.slice(0, 160)}`}`)
       continue
     }
-    const a = entry.iris.text ?? ''
+    // Both failing never reaches this list, so equal `ok` here means both rendered.
+    const a = /** @type {{ text?: string }} */ (entry.iris).text ?? ''
     const b = entry.upstream.text ?? ''
     let at = 0
     while (at < a.length && at < b.length && a[at] === b[at]) at++

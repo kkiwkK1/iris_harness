@@ -45,9 +45,7 @@ test('old-turn navigation mounts its target and keeps the reader there during st
     server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent',
   })
   try {
-    const harness = await server.ssrLoadModule('/tests/turn-navigation-harness.tsx') as {
-      checkNavigation: (container: HTMLElement) => Promise<void>
-    }
+    const harness = await server.ssrLoadModule('/tests/turn-navigation-harness.tsx') as typeof import('./turn-navigation-harness.tsx')
     await harness.checkNavigation(win.document.getElementById('root')!)
   } finally {
     await server.close()

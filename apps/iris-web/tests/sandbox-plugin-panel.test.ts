@@ -6,7 +6,7 @@ import { createFakeClient } from '@iris/client-fake'
 import type { SandboxPluginView, UsageBuckets, UsageSummary, UsageTotals } from '@iris/protocol'
 import { createServer } from 'vite'
 
-import { createIrisStore, type IrisStore } from '../src/client/store.ts'
+import { createIrisStore } from '../src/client/store.ts'
 
 /**
  * What the panel and the usage page say once PR-D landed.
@@ -174,10 +174,7 @@ test('「see the code」 opens the stored bytes, read-only, and closes again', a
   })
   await wired.store.getState().boot()
 
-  const harness = await server.ssrLoadModule('/tests/sandbox-plugin-panel-harness.tsx') as {
-    renderPluginPanel: (store: IrisStore) => string
-    setLanguage: (language: 'en' | 'zh') => void
-  }
+  const harness = await server.ssrLoadModule('/tests/sandbox-plugin-panel-harness.tsx') as typeof import('./sandbox-plugin-panel-harness.tsx')
   const render = (): string => harness.renderPluginPanel(wired.store)
 
   wired.store.setState({
@@ -243,10 +240,7 @@ test('the empty panel says what 「create」 is, and says the model is unset fir
   })
   await wired.store.getState().boot()
 
-  const harness = await server.ssrLoadModule('/tests/sandbox-plugin-panel-harness.tsx') as {
-    renderPluginPanel: (store: IrisStore) => string
-    setLanguage: (language: 'en' | 'zh') => void
-  }
+  const harness = await server.ssrLoadModule('/tests/sandbox-plugin-panel-harness.tsx') as typeof import('./sandbox-plugin-panel-harness.tsx')
   const render = (): string => harness.renderPluginPanel(wired.store)
 
   wired.store.setState({
@@ -292,10 +286,7 @@ test('the usage page draws the plugin row when the share is there, and nothing w
   const server = await createServer(viteOptions(root))
   t.after(async () => { await server.close() })
 
-  const harness = await server.ssrLoadModule('/tests/sandbox-plugin-panel-harness.tsx') as {
-    renderUsageReport: (summary: UsageSummary) => string
-    setLanguage: (language: 'en' | 'zh') => void
-  }
+  const harness = await server.ssrLoadModule('/tests/sandbox-plugin-panel-harness.tsx') as typeof import('./sandbox-plugin-panel-harness.tsx')
 
   const grew = harness.renderUsageReport(summaryWith({
     script: buckets({ cacheMiss: 100, output: 40, turns: 1, cacheTurns: 1, cachePrompt: 150 }),

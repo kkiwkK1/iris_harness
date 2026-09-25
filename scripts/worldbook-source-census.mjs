@@ -81,6 +81,7 @@ const available = new Set(
 /** Every book name some card binds, whether or not the file exists. */
 const boundNames = new Set()
 
+/** @type {Record<'both' | 'namedOnly' | 'embeddedOnly' | 'dangling' | 'neither', string[]>} */
 const buckets = {
   both: [],
   namedOnly: [],

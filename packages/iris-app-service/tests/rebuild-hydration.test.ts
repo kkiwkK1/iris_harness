@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
+
+import { packageSourceFiles, SOURCE_FILE_FLOOR } from './support/source-files.ts'
 
 /**
  * Every log rebuild is classified: does it need the variable tables put back?
@@ -30,12 +31,15 @@ import { test } from 'node:test'
  * So the table below is keyed by the **site name derived from the source**, and
  * the check is set equality. A site that appears, moves, or is renamed shows up
  * as a named difference rather than a number.
+ *
+ * **The sources are the whole `src/` tree.** They used to be a two-row table,
+ * `service.ts` and `chats.ts`. That fails safe when a classified site moves
+ * (it goes stale), but a *new* rebuild in a third file, for example an arm
+ * split out of service.ts, was invisible to it. The walk sees every file, and
+ * the call needles carry the leading `.` so that the method definitions in
+ * `entry.ts` (`rebuild(` and `hydrateVariables(` at the start of a line) are
+ * not counted as call sites.
  */
-
-const SOURCES = [
-  { file: 'service.ts', path: '../src/service.ts' },
-  { file: 'chats.ts', path: '../src/chats.ts' },
-] as const
 
 /**
  * Every `rebuild` call site, keyed by its enclosing site name, and why it does
@@ -105,9 +109,13 @@ const SITE = /^\s*(?:'([\w.]+)':\s*async|(?:async\s+)?([#a-zA-Z][\w]*)\s*\()/
  */
 async function sitesCalling(needle: string): Promise<string[]> {
   const found: string[] = []
-  for (const source of SOURCES) {
-    const text = await readFile(new URL(source.path, import.meta.url), 'utf8')
-    const lines = text.split(String.fromCharCode(10))
+  const sources = await packageSourceFiles()
+  assert.ok(
+    sources.length >= SOURCE_FILE_FLOOR,
+    `scanned ${String(sources.length)} source files, fewer than the floor of ${String(SOURCE_FILE_FLOOR)}; the walk is broken`,
+  )
+  for (const source of sources) {
+    const lines = source.text.split(String.fromCharCode(10))
     lines.forEach((line, index) => {
       if (!line.includes(needle)) return
       for (let above = index; above >= 0; above -= 1) {
@@ -149,7 +157,7 @@ test('the classified sites are exactly the sites that rebuild', async () => {
 })
 
 test('the classified hydration sites are exactly the sites that hydrate', async () => {
-  const found = new Set(await sitesCalling('hydrateVariables('))
+  const found = new Set(await sitesCalling('.hydrateVariables('))
   assert.deepEqual([...found].sort(), [...HYDRATION_SITES].sort())
 })
 

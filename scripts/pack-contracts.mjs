@@ -168,7 +168,10 @@ export function publishedManifest(manifest, version, peers = []) {
   return published
 }
 
-/** @param {string} message - what went wrong; printed, then the process exits 1. */
+/**
+ * @param {string} message - what went wrong; printed, then the process exits 1.
+ * @returns {never}
+ */
 function fail(message) {
   console.error(`pack-contracts: ${message}`)
   process.exit(1)

@@ -166,6 +166,9 @@ function matchesIn(text) {
   return found
 }
 
+/** @typedef {ReturnType<typeof matchesIn>[number] & { where: string }} Hit */
+
+/** @type {Record<string, Hit[]>} */
 const populations = {
   'chat files': [],
   'card text': [],

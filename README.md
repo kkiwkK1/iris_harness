@@ -54,7 +54,7 @@ Iris 支持 SillyTavern 的角色卡、世界书、Chat Completion 预设和聊�
 
 ## 开始使用
 
-需要 **Node.js 24+、pnpm 10 和 npm**。目前从源码安装。
+需要 **Node.js 24+、pnpm 11 和 npm**（pnpm 的确切版本见根 `package.json` 的 `packageManager`）。目前从源码安装。
 
 ```sh
 git clone https://github.com/kkiwkK1/iris_harness.git

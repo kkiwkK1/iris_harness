@@ -50,7 +50,7 @@ import { createFakeClient } from '@iris/client-fake'
 import type { IrisClient } from '@iris/protocol'
 import { createServer } from 'vite'
 
-import { createIrisStore, type IrisStore } from '../src/client/store.ts'
+import { createIrisStore } from '../src/client/store.ts'
 import type { MountedConnectionPanel } from './connection-panel-harness.tsx'
 
 /** One RPC the panel made, with what it sent. */
@@ -189,9 +189,7 @@ test('the authoring row, driven by its own controls', async t => {
   await wired.store.getState().boot()
   await wired.store.getState().loadConnections()
 
-  const harness = await server.ssrLoadModule('/tests/connection-panel-harness.tsx') as {
-    mountConnectionPanel: (store: IrisStore, container: Element) => Promise<MountedConnectionPanel>
-  }
+  const harness = await server.ssrLoadModule('/tests/connection-panel-harness.tsx') as typeof import('./connection-panel-harness.tsx')
   page = await harness.mountConnectionPanel(wired.store, dom.window.document.getElementById('root')!)
   const mounted = page
 

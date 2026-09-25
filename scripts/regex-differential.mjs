@@ -46,7 +46,7 @@ register('./st-stub-loader.mjs', import.meta.url, { data: { stPublic: ST_PUBLIC 
 // per fixture (never the references), so the engine's reads stay live.
 globalThis.__stStubCharacters = []
 globalThis.__stStubPresetScripts = []
-globalThis.__stStubExtensionSettings = { disabledExtensions: [], regex: [] }
+globalThis.__stStubExtensionSettings = { disabledExtensions: [], regex: /** @type {any[]} */ ([]) }
 const stub = {
   characters: globalThis.__stStubCharacters,
   presetScripts: globalThis.__stStubPresetScripts,
@@ -57,8 +57,8 @@ stub.characters.push({
   data: { extensions: { regex_scripts: [] } },
 })
 
-const USER_INPUT = 1
-const AI_OUTPUT = 2
+const USER_INPUT = /** @type {const} */ (1)
+const AI_OUTPUT = /** @type {const} */ (2)
 
 /**
  * A script with every field both engines read, as the Izumi preset family

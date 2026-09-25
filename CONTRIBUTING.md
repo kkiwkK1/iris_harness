@@ -18,7 +18,7 @@
 
 Iris 面向真实角色卡和本地聊天数据。兼容性改动需要说明对应的上游行为，并尽量留下可重跑的测试；只有夹具通过，还不足以证明真实卡片可用。
 
-需要 Node.js 24+、pnpm 10 和 npm。根工作区使用 pnpm，Web 子项目使用 npm；不要互换锁文件。
+需要 Node.js 24+、pnpm（版本以根 `package.json` 的 `packageManager` 为准，当前 11.24.0；CI 也读这一处）和 npm。根工作区使用 pnpm，Web 子项目使用 npm；不要互换锁文件。
 
 ```sh
 pnpm install --frozen-lockfile
@@ -44,15 +44,14 @@ pnpm start
 从仓库根目录运行：
 
 ```sh
-pnpm run typecheck
-npm --prefix apps/iris-web run typecheck
-pnpm build:web
-pnpm test
-pnpm run test:no-corpus
-npm --prefix apps/iris-web run check:render
+pnpm gate
 ```
 
-前端构建放在相关测试之前。`test:no-corpus` 用于验证不依赖本地私有语料的路径；不要把它当成真实卡片验收的替代品。CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
+`pnpm gate`（`scripts/gate.mjs`）从 [.github/workflows/ci.yml](.github/workflows/ci.yml) 读出 CI 的步骤，按同样的顺序逐一运行，最后列出每一步各自的退出码：两次类型检查、脚本类型检查（`pnpm run typecheck:scripts`）、前端构建、真实浏览器测试（`IRIS_BROWSER=1`，需要本机装有 Chrome）、`test:no-corpus` 和 `check:render`。步骤清单只在 ci.yml 里写一次，本地检查因此不会和 CI 走样。某一步失败后其余步骤照常运行，便于一次看到全部失败；`--bail` 在第一次失败时停下。依赖安装默认跳过，`--install` 会一并运行。引用结果时抄摘要里的退出码，不要用 `tail` 管道之后的退出码。
+
+本机有私有语料时，另外运行 `pnpm test`：它跑同一套测试，但语料相关的测试会真正执行，CI 上没有这一步。
+
+前端构建放在相关测试之前。`test:no-corpus` 用于验证不依赖本地私有语料的路径；不要把它当成真实卡片验收的替代品。
 
 修改 `plugin-api`、`plugin-web-api` 或 `protocol` 后，还应按[契约打包说明](docs/PLUGIN-CONTRACT-PACKAGING.md)验证独立包消费。
 

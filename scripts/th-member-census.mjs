@@ -62,7 +62,7 @@ import { join } from 'node:path'
 import { decodeCardPng, normalizeCard } from '../packages/iris-character/src/index.ts'
 import { extractScripts } from '../packages/iris-script/src/index.ts'
 import { parseChatFile } from '../packages/iris-persistence/src/index.ts'
-import { PLACEMENT, applyRegexScripts, orderScripts } from '../packages/iris-regex/src/index.ts'
+import { PLACEMENT, SCRIPT_TYPE, applyRegexScripts, orderScripts } from '../packages/iris-regex/src/index.ts'
 import { UPSTREAM_MEMBERS } from '../apps/iris-web/src/sandbox/upstream-surface.ts'
 import { MEMBER_KINDS } from '../apps/iris-web/src/sandbox/identity.ts'
 
@@ -265,7 +265,7 @@ function run() {
     if (!resolved) continue
     const card = resolved.card
     const cardFile = resolved.file
-    const scripts = orderScripts((card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: 'character' })))
+    const scripts = orderScripts((card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: SCRIPT_TYPE.SCOPED })))
     if (scripts.length === 0) continue
     for (const file of readdirSync(join(CHATS, dir.name))) {
       if (!file.endsWith('.jsonl')) continue
@@ -304,7 +304,11 @@ function run() {
     }
   }
 
-  /** @type {Map<string, {cards: Set<string>, calls: number, origins: Set<string>}>} */
+  /**
+   * Seeded for every member below, so a lookup by a member name is present.
+   * @typedef {{cards: Set<string>, calls: number, origins: Set<string>}} MemberUsage
+   */
+  /** @type {Map<string, MemberUsage>} */
   const usage = new Map()
   for (const name of MEMBERS) usage.set(name, { cards: new Set(), calls: 0, origins: new Set() })
 
@@ -312,18 +316,18 @@ function run() {
     for (const name of MEMBERS) {
       const hits = reachesFor(source.code, name)
       if (hits === 0) continue
-      const entry = usage.get(name)
+      const entry = /** @type {MemberUsage} */ (usage.get(name))
       entry.calls += hits
       entry.cards.add(source.card)
       entry.origins.add(source.origin.split(':')[0])
     }
   }
 
-  const used = MEMBERS.filter(n => (usage.get(n)).cards.size > 0)
+  const used = MEMBERS.filter(n => /** @type {MemberUsage} */ (usage.get(n)).cards.size > 0)
   const builtUsed = used.filter(n => BUILT.has(n))
   const unbuiltUsed = used.filter(n => !BUILT.has(n))
-  const unbuiltUnused = MEMBERS.filter(n => !BUILT.has(n) && (usage.get(n)).cards.size === 0)
-  const builtUnused = MEMBERS.filter(n => BUILT.has(n) && (usage.get(n)).cards.size === 0)
+  const unbuiltUnused = MEMBERS.filter(n => !BUILT.has(n) && /** @type {MemberUsage} */ (usage.get(n)).cards.size === 0)
+  const builtUnused = MEMBERS.filter(n => BUILT.has(n) && /** @type {MemberUsage} */ (usage.get(n)).cards.size === 0)
 
   if (detectorFailures.length > 0) {
     console.log('## DETECTOR FIXTURE FAILED — every number below is unreliable')
@@ -348,16 +352,16 @@ function run() {
   console.log('\n## THE PRIORITY TABLE — unbuilt and used, by cards touched')
   console.log('  cards  calls  member                          seen in')
   for (const name of unbuiltUsed.sort((a, b) => {
-    const d = (usage.get(b)).cards.size - (usage.get(a)).cards.size
-    return d !== 0 ? d : (usage.get(b)).calls - (usage.get(a)).calls
+    const d = /** @type {MemberUsage} */ (usage.get(b)).cards.size - /** @type {MemberUsage} */ (usage.get(a)).cards.size
+    return d !== 0 ? d : /** @type {MemberUsage} */ (usage.get(b)).calls - /** @type {MemberUsage} */ (usage.get(a)).calls
   })) {
-    const u = usage.get(name)
+    const u = /** @type {MemberUsage} */ (usage.get(name))
     console.log(`  ${String(u.cards.size).padStart(5)}  ${String(u.calls).padStart(5)}  ${name.padEnd(30)} ${[...u.origins].join(', ')}${GENERIC.has(name) ? '   [GENERIC NAME — verify]' : ''}`)
   }
 
   console.log('\n## built and used (the members we built that cards do call)')
-  for (const name of builtUsed.sort((a, b) => (usage.get(b)).cards.size - (usage.get(a)).cards.size)) {
-    const u = usage.get(name)
+  for (const name of builtUsed.sort((a, b) => /** @type {MemberUsage} */ (usage.get(b)).cards.size - /** @type {MemberUsage} */ (usage.get(a)).cards.size)) {
+    const u = /** @type {MemberUsage} */ (usage.get(name))
     console.log(`  ${String(u.cards.size).padStart(5)}  ${String(u.calls).padStart(5)}  ${name}${GENERIC.has(name) ? '   [GENERIC NAME — verify]' : ''}`)
   }
 

@@ -420,7 +420,7 @@ async function injectionExperiment(host, chatId, names, label) {
 async function censusChat(source, chatId, chatsDir, wantInjection) {
   const names = await namesOf(chatsDir, chatId)
   const usage = await usageOf(chatsDir, chatId)
-  const result = { chatId, names, usage, notes: [] }
+  const result = { chatId, names, usage, notes: /** @type {string[]} */ ([]) }
 
   // --- one host for the inventory, the same-state control and the real pairs
   const first = await copyProfile(source, PROFILE, SCRATCH_ROOT)
@@ -484,7 +484,7 @@ async function censusChat(source, chatId, chatsDir, wantInjection) {
       const current = (await host.handlers['chat.open']({ chatId })).view.messages
       if (current.length < 2) break
       if (current.at(-1)?.role === 'assistant') {
-        await host.handlers['chat.deleteMessage']({ chatId, id: current.at(-1).id })
+        await host.handlers['chat.deleteMessage']({ chatId, id: /** @type {typeof current[number]} */ (current.at(-1)).id })
         continue
       }
       try {
@@ -497,7 +497,7 @@ async function censusChat(source, chatId, chatsDir, wantInjection) {
       for (let peel = 0; peel < 2; peel += 1) {
         const now = (await host.handlers['chat.open']({ chatId })).view.messages
         if (now.length <= 1) break
-        await host.handlers['chat.deleteMessage']({ chatId, id: now.at(-1).id })
+        await host.handlers['chat.deleteMessage']({ chatId, id: /** @type {typeof now[number]} */ (now.at(-1)).id })
       }
     }
     result.realPairs = rounds.slice(0, -1).map((_unused, index) => {
@@ -759,11 +759,11 @@ async function main() {
   // boundary. A cause can be large in one ledger and absent from the other —
   // new history is the whole of the first and none of the second — and reading
   // either one alone picks the wrong target.
-  for (const [title, pick] of [
+  for (const [title, pick] of /** @type {Array<[string, (result: any) => any[]]>} */ ([
     ['rent by cause, over REAL adjacent pairs', result => result.realPairs ?? []],
     ['rent by cause, over SYNTHETIC pairs', result =>
       result.syntheticPair === undefined ? [] : [result.syntheticPair]],
-  ]) {
+  ])) {
     const ledger = new Map()
     for (const result of results) {
       for (const row of pick(result)) {

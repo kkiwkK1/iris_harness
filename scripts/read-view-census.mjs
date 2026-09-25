@@ -76,7 +76,7 @@ if (!existsSync(CHATS)) {
 
 const { decodeCardPng } = await import('../packages/iris-character/src/index.ts')
 const { parseChatFile } = await import('../packages/iris-persistence/src/index.ts')
-const { PLACEMENT, applyRegexScripts, orderScripts } = await import('../packages/iris-regex/src/index.ts')
+const { PLACEMENT, SCRIPT_TYPE, applyRegexScripts, orderScripts } = await import('../packages/iris-regex/src/index.ts')
 
 const bytes = value => Buffer.byteLength(value, 'utf8')
 const kib = n => `${(n / 1024).toFixed(1)} KiB`
@@ -130,7 +130,7 @@ for (const dir of readdirSync(CHATS, { withFileTypes: true })) {
   if (!dir.isDirectory()) continue
   const card = cardFor(dir.name)
   if (card === undefined) missingCards.add(dir.name)
-  const owned = (card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: 'character' }))
+  const owned = (card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: SCRIPT_TYPE.SCOPED }))
   const scripts = orderScripts(owned)
 
   for (const file of readdirSync(join(CHATS, dir.name))) {

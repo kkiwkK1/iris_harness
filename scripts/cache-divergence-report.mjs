@@ -152,7 +152,8 @@ for (const chatId of chatDirs) {
     const previous = traces[index - 1]
     const current = traces[index]
     const row = divergenceOf(previous, current)
-    pairs.push({ chatId, ...row })
+    // `divergenceOf` already stamps the row with the current trace's chatId.
+    pairs.push({ ...row })
     if (!row.attributed) unattributed += 1
 
     const served = row.cacheReadTokens === undefined

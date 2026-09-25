@@ -23,6 +23,9 @@
  */
 
 import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+import { readTestGlobs } from './lib/test-globs.ts'
 
 /**
  * **Every** test that skips in this rehearsal, whatever gates it.
@@ -129,7 +132,33 @@ import { spawn } from 'node:child_process'
  */
 const EXPECTED_SKIPPED = 40
 
-const GLOBS = ['packages/*/tests/**/*.test.ts', 'apps/*/tests/**/*.test.ts']
+/**
+ * The fewest tests a healthy rehearsal runs, skips included.
+ *
+ * The skip count above cannot see a test file that stopped being collected:
+ * a narrowed glob, or a file moved out of every glob, drops its tests from
+ * the run, and unless one of them happened to skip, `failed == 0` and
+ * `skipped == 40` both still hold. This floor is the check that the run still
+ * holds the suite.
+ *
+ * Measured 2026-09-25 on dev/safety-nets (origin/main dc5662d plus the
+ * tests that branch added), with a web build present: `ℹ tests 4527`. The floor sits about 3% below, so
+ * that deleting a handful of tests is not a failure while losing one of the
+ * large test trees (apps/iris-web/tests alone holds over a thousand) is.
+ * Raise it when the suite grows well past it. Lowering it needs a reason
+ * written here, in the style of {@link EXPECTED_SKIPPED}.
+ */
+const MIN_TESTS = 4400
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
+
+/**
+ * The globs `pnpm test` declares, read from `package.json` rather than copied
+ * here. This used to be its own constant, a third copy of the globs that no
+ * collection guard read (`apps/iris/tests/test-collection.test.ts` reads
+ * `scripts.test`, through the same {@link readTestGlobs}).
+ */
+const GLOBS = readTestGlobs(ROOT)
 
 /** The gate each skip reason names, in the order the report prints them. */
 const GATES = ['corpus', 'samples', 'IRIS_LIVE', 'IRIS_BROWSER', 'IRIS_DPAPI', 'provider key', 'unlabelled', 'other']
@@ -200,6 +229,9 @@ const child = spawn(
   process.execPath,
   ['--test', ...GLOBS],
   {
+    // The globs are repository-relative, so the run is too, wherever this
+    // script was started from.
+    cwd: ROOT,
     // Paths no filesystem will have. Every corpus gate is an `existsSync` on a
     // path built from one of these, so all of them take their absent branch.
     env: {
@@ -225,9 +257,18 @@ child.on('exit', (code) => {
   }
   const failed = read('fail')
   const skipped = read('skipped')
+  const tests = read('tests')
 
-  if (failed === undefined || skipped === undefined) {
+  if (failed === undefined || skipped === undefined || tests === undefined) {
     console.error('\ncheck-corpus-skips: could not read the summary; node:test output format changed')
+    process.exit(1)
+  }
+  if (tests < MIN_TESTS) {
+    console.error(
+      `\ncheck-corpus-skips: ${String(tests)} tests ran, fewer than the floor of ${String(MIN_TESTS)}.\n`
+      + `The globs were ${GLOBS.join(' ')} (from package.json scripts.test). A narrowed glob or a test tree\n`
+      + 'moved out of them drops its tests without failing or skipping any, which only this floor sees.',
+    )
     process.exit(1)
   }
   if (code !== 0 || failed > 0) {
@@ -258,5 +299,5 @@ child.on('exit', (code) => {
     )
     process.exit(1)
   }
-  console.log(`\ncheck-corpus-skips: ${String(skipped)} skipped, 0 failed, as expected with no corpus present.`)
+  console.log(`\ncheck-corpus-skips: ${String(tests)} tests (floor ${String(MIN_TESTS)}), ${String(skipped)} skipped, 0 failed, as expected with no corpus present.`)
 })

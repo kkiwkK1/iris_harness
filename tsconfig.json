@@ -1,9 +1,21 @@
 {
   "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // A test may import a `.mjs` script (census-inputs.test.ts reads two
+    // census calipers). `allowJs` lets that import resolve to the script's
+    // inferred types instead of needing a suppressed "no declaration file"
+    // error. The scripts themselves are checked by `scripts/tsconfig.json`
+    // (`pnpm run typecheck:scripts`), under `checkJs`, not here.
+    "allowJs": true,
+    "checkJs": false
+  },
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/tests/**/*.ts",
     "apps/iris/**/*.ts",
-    "scripts/**/*.mjs"
+    // The TypeScript helpers the scripts share. The `.mjs` scripts are
+    // `scripts/tsconfig.json`'s; this line used to include them here, where
+    // without `allowJs` it matched nothing.
+    "scripts/**/*.ts"
   ]
 }

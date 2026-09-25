@@ -117,16 +117,7 @@ test('a message on screen re-colours itself when the setting flips', async t => 
      */
     ssr: { noExternal: ['@deepseek-ai/dsh-client-ui-primitives'] },
   })
-  const harness = await server.ssrLoadModule('/tests/quote-scope-harness.tsx') as {
-    mountMessage: (container: Element, text: string) => Promise<{
-      quotes: () => number
-      text: () => string
-      settle: (work?: () => void) => Promise<void>
-      unmount: () => Promise<void>
-    }>
-    getQuoteScope: () => QuoteScope
-    setQuoteScope: (scope: QuoteScope) => void
-  }
+  const harness = await server.ssrLoadModule('/tests/quote-scope-harness.tsx') as typeof import('./quote-scope-harness.tsx')
 
   const container = dom.window.document.getElementById('root')
   assert.ok(container !== null)

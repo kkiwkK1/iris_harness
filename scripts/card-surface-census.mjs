@@ -128,7 +128,7 @@ import { join } from 'node:path'
 import { decodeCardPng, normalizeCard } from '../packages/iris-character/src/index.ts'
 import { extractScripts } from '../packages/iris-script/src/index.ts'
 import { parseChatFile } from '../packages/iris-persistence/src/index.ts'
-import { PLACEMENT, applyRegexScripts, orderScripts } from '../packages/iris-regex/src/index.ts'
+import { PLACEMENT, SCRIPT_TYPE, applyRegexScripts, orderScripts } from '../packages/iris-regex/src/index.ts'
 import { UPSTREAM_CONTEXT_MEMBERS, UPSTREAM_MEMBERS } from '../apps/iris-web/src/sandbox/upstream-surface.ts'
 import { FRAME_MEMBERS, MEMBER_KINDS } from '../apps/iris-web/src/sandbox/identity.ts'
 import { VIRTUAL_PARENT_DIALOG_MEMBERS, VIRTUAL_PARENT_SCHEDULER_MEMBERS } from '../apps/iris-web/src/sandbox/frame.ts'
@@ -622,6 +622,7 @@ function reachesBare(code, name, owner) {
  * detector is handed source written on purpose. Every `mustNotSee` row below is
  * a shape the prototype of this script counted as a real hit.
  */
+/** @type {Array<[face: string, run: () => boolean, expected: boolean, label: string]>} */
 const FIXTURE = [
   ['th', () => reachesTh('await TavernHelper.getWorldbook("b")', 'getWorldbook', 'fixture') > 0, true, 'through the namespace'],
   ['th', () => reachesTh('getWorldbook(name)', 'getWorldbook', 'fixture') > 0, true, 'bare call'],
@@ -718,12 +719,18 @@ const fixtureFailures = FIXTURE.filter(([, run, expected]) => run() !== expected
 // ---------------------------------------------------------------------------
 
 /**
+ * One name's row in a face's tally. `tally` seeds a row for every declared
+ * name, so a lookup by a declared name is always present.
+ * @typedef {{script: Set<string>, iface: Set<string>, kinds: Set<string>, calls: number}} UsageEntry
+ */
+
+/**
  * Tally one face.
  * @param {string[]} declared - the names upstream declares.
  * @param {Set<string>} built - the names Iris answers.
  * @param {(source: object, name: string) => number} probe - hits in one body.
  * @param {object[]} prepared - the corpus, with per-source alias tables.
- * @returns {Map<string, {script: Set<string>, iface: Set<string>, kinds: Set<string>, calls: number}>}
+ * @returns {Map<string, UsageEntry>}
  */
 function tally(declared, built, probe, prepared) {
   const usage = new Map()
@@ -917,7 +924,7 @@ function run() {
         if (card === undefined) continue
         const owner = cardOwner(card, dir.name)
         const scripts = orderScripts(
-          (card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: 'character' })),
+          (card?.data?.extensions?.regex_scripts ?? []).map(script => ({ script, type: SCRIPT_TYPE.SCOPED })),
         )
         if (scripts.length === 0) continue
         for (const file of readdirSync(join(corpus.chats, dir.name)).filter(name => name.endsWith('.jsonl'))) {
@@ -1032,8 +1039,10 @@ function run() {
   for (const face of FACES) {
     const declared = face.declared ?? [...new Set([...face.built, ...discoverParentNames(prepared)])]
     const usage = tally(declared, face.built, face.probe, prepared)
-    const used = declared.filter(name => usage.get(name).script.size + usage.get(name).iface.size > 0)
-    const sourcesOf = name => usage.get(name).script.size + usage.get(name).iface.size
+    /** @type {(name: string) => UsageEntry} */
+    const rowOf = name => /** @type {UsageEntry} */ (usage.get(name))
+    const used = declared.filter(name => rowOf(name).script.size + rowOf(name).iface.size > 0)
+    const sourcesOf = name => rowOf(name).script.size + rowOf(name).iface.size
 
     console.log(`\n\n═══ ${face.key} ${face.label}`)
     console.log(`    逐成员账目曾在 ${face.authority}；现状以下表为准，此处只给来源计数与两列`)
@@ -1042,13 +1051,13 @@ function run() {
       + ` · 语料用到 ${String(used.length)}`
       + ` · 用到但没建 ${String(used.filter(name => !face.built.has(name)).length)}`)
 
-    const rows = [...used].sort((a, b) => sourcesOf(b) - sourcesOf(a) || usage.get(b).calls - usage.get(a).calls)
+    const rows = [...used].sort((a, b) => sourcesOf(b) - sourcesOf(a) || rowOf(b).calls - rowOf(a).calls)
     const table = (label, names) => {
       if (names.length === 0) return
       console.log(`\n  ── ${label}`)
       console.log('     脚本  界面  调用  成员                             来源种类')
       for (const name of names) {
-        const entry = usage.get(name)
+        const entry = rowOf(name)
         console.log(
           `     ${pad(entry.script.size, 4)}  ${pad(entry.iface.size, 4)}  ${pad(entry.calls, 4)}  ${name.padEnd(32)} ${[...entry.kinds].join(',')}`,
         )
@@ -1101,7 +1110,7 @@ function run() {
     const declared = face.declared ?? [...new Set([...face.built, ...discoverParentNames(prepared)])]
     const usage = tally(declared, face.built, face.probe, prepared)
     for (const name of declared) {
-      const entry = usage.get(name)
+      const entry = /** @type {UsageEntry} */ (usage.get(name))
       if (entry.script.size + entry.iface.size === 0) continue
       if (entry.kinds.has('card')) continue
       onlyNewPopulations.push({

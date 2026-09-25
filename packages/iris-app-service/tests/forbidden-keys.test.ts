@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -17,6 +17,7 @@ import { assertStorable } from '../src/context.ts'
 import { ChatEntry, createSession } from '../src/entry.ts'
 import { seedGreeting } from '../src/chats.ts'
 import { applyOps, writePath } from '../src/template.ts'
+import { createTestService } from './support/service.ts'
 import { tempDir } from './support/temp-dir.ts'
 
 /**
@@ -216,18 +217,49 @@ test('every store partitioned by a string from outside this process uses wireKey
     assert.ok(uses >= 2, `${name} builds only ${String(uses)} of its tables through wireKeyedTable`)
   }
   assert.equal(partitioned.length, 6, 'the count is asserted so a shortened list cannot pass quietly')
+})
 
-  // And the one face whose refusal is about vocabulary rather than about the
+test('script.setVariables refuses a reserved delete path in its own vocabulary', async (t: TestContext) => {
+  // The one face whose refusal is about vocabulary rather than about the
   // write: `deletePath` already throws for this path, so removing the guard in
-  // `service.ts` would still refuse — as a `ForbiddenKeyError` escaping onto
-  // the wire instead of an `invalid-request`. Nothing observable distinguishes
-  // them from inside this package, so the guard is pinned in source.
-  const service = await readFile(join(here, '..', 'src', 'service.ts'), 'utf8')
-  assert.match(
-    service,
-    /'script\.setVariables'[\s\S]{0,900}forbiddenSegmentIn\(path\)/,
-    'the delete leg of script.setVariables must refuse a reserved path in its own vocabulary',
-  )
+  // the handler would still refuse, as a `ForbiddenKeyError` escaping onto the
+  // wire instead of an `invalid-request`. The two outcomes differ in the error
+  // **code**, which is observable at the handler. This used to be a source pin
+  // (`'script.setVariables'` within 900 characters of `forbiddenSegmentIn(path)`
+  // in service.ts), which went red when the arm moved and stayed green if the
+  // guard sat in the arm but no longer ran. Asserted the same way `applyOps`
+  // is asserted above.
+  const { handlers } = await createTestService(t, async ({ dir }) => {
+    await mkdir(join(dir, 'characters'), { recursive: true })
+    await writeFile(join(dir, 'characters', 'luoluo.json'), JSON.stringify({
+      spec: 'chara_card_v2', spec_version: '2.0',
+      data: {
+        name: '络络', description: '', personality: '', scenario: '',
+        first_mes: 'Hello.', mes_example: '', creator_notes: '', system_prompt: '',
+        post_history_instructions: '', alternate_greetings: [], tags: [],
+        creator: '', character_version: '1', extensions: {},
+      },
+    }), 'utf8')
+    return { userName: '旅人' }
+  }, 'iris-keys-set-')
+  const { view } = await handlers['chat.create']({ characterId: 'luoluo' })
+  const chatId = view.chatId
+
+  for (const key of FORBIDDEN) {
+    await assert.rejects(
+      handlers['script.setVariables']({ chatId, scope: 'chat', op: 'delete', path: `a.${key}.b` }),
+      (error: unknown) => error instanceof AppError
+        && error.code === 'invalid-request'
+        && new RegExp(`walks through "${key}"`).test(error.message),
+      `delete through ${key} must be refused as invalid-request, naming the segment`,
+    )
+  }
+
+  // The control: an ordinary delete of a key that exists still lands, so the
+  // refusal above is about the path and not about deletes.
+  await handlers['script.setVariables']({ chatId, scope: 'chat', op: 'replace', variables: { a: { b: 1 }, keep: 2 } })
+  const after = await handlers['script.setVariables']({ chatId, scope: 'chat', op: 'delete', path: 'a.b' })
+  assert.deepEqual(after.variables, { a: {}, keep: 2 })
 })
 
 test('card storage keyed by a card\'s own string stores a key instead of moving a prototype', async (t: TestContext) => {

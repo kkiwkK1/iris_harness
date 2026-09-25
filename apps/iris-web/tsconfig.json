@@ -34,5 +34,5 @@
       "@iris/compat-tavernhelper-core": ["../../packages/iris-compat-tavernhelper-core/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tools/**/*.tsx", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tests/**/*.tsx", "tools/**/*.tsx", "vite.config.ts"]
 }
