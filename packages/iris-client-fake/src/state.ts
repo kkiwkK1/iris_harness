@@ -77,6 +77,14 @@ export interface FakeChat {
   chatId: string
   title: string
   characterId?: string
+  /** The conversation this one was branched from, as the host records it. */
+  parentChatId?: string
+  /**
+   * Where the branch was cut, as the host's `iris.branchAt` records it, plus
+   * whether the cut took another reading of that floor (a swipe turned into a
+   * branch) — the host infers that from the text; the fake knows it.
+   */
+  branchAt?: { floor: number, swiped: boolean }
   messages: FakeMessage[]
   /** Unix epoch milliseconds of the last activity. */
   updatedAt: number
@@ -384,6 +392,7 @@ export function toChatSummary(chat: FakeChat): ChatSummary {
     chatId: chat.chatId,
     title: chat.title,
     ...(chat.characterId === undefined ? {} : { characterId: chat.characterId }),
+    ...(chat.parentChatId === undefined ? {} : { parentChatId: chat.parentChatId }),
     updatedAt: chat.updatedAt,
     messageCount: chat.messages.length,
   }

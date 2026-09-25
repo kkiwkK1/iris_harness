@@ -82,6 +82,31 @@ export interface IrisChatMeta {
   updatedAt: number
   /** The conversation this one was branched from, when it was. */
   parentChatId?: string
+  /**
+   * Where in the parent this branch was cut: the last floor `chat.branch`
+   * copied, and that floor's durable line id (`@iris/persistence`'s
+   * `iris_id`). Absent on branches made before it was recorded, whose fork
+   * point `chat-tree.ts` infers instead.
+   */
+  branchAt?: BranchAt
+}
+
+/** Where a branch was cut from its parent. */
+export interface BranchAt {
+  floor: number
+  lineId?: string
+}
+
+/**
+ * Read a `branchAt` record, refusing anything that is not one.
+ * @param raw - the header's value.
+ * @returns the record, or undefined.
+ */
+function readBranchAt(raw: unknown): BranchAt | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const { floor, lineId } = raw as { floor?: unknown, lineId?: unknown }
+  if (typeof floor !== 'number' || !Number.isInteger(floor) || floor < 0) return undefined
+  return { floor, ...typeof lineId === 'string' && lineId.length > 0 ? { lineId } : {} }
 }
 
 /**
@@ -130,12 +155,16 @@ export interface ScriptInjection {
 export function readMeta(header: SillyTavernChatHeader): IrisChatMeta {
   const raw = header['iris']
   const meta = typeof raw === 'object' && raw !== null ? raw as Partial<IrisChatMeta> : {}
+  const branchAt = readBranchAt(meta.branchAt)
   return {
     chatId: typeof meta.chatId === 'string' ? meta.chatId : '',
     ...typeof meta.characterId === 'string' ? { characterId: meta.characterId } : {},
     title: typeof meta.title === 'string' && meta.title.length > 0 ? meta.title : header.character_name,
     updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : 0,
     ...typeof meta.parentChatId === 'string' ? { parentChatId: meta.parentChatId } : {},
+    // Read through, not dropped: `touch` rewrites the whole block from this
+    // reading, so a field left out here is erased by the branch's first turn.
+    ...branchAt === undefined ? {} : { branchAt },
   }
 }
 
