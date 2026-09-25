@@ -1,8 +1,12 @@
 /**
  * A counter that learns the provider's real ratio.
  *
- * Every request comes back with `usage.inputTokens` — the exact count for a
- * prompt we just estimated. That pairing is free and it is the only way a
+ * Every request comes back with the provider's own count for a prompt we just
+ * estimated — the *whole* prompt, which in the harness's disjoint convention is
+ * `inputTokens + cacheReadTokens + cacheWriteTokens` (`@iris/protocol`'s
+ * `promptTokensOf`), never `inputTokens` alone, which excludes what the cache
+ * served and on a cache-hitting provider is a fraction of the request. That
+ * pairing is free and it is the only way a
  * budget gets tighter than the ±30% a per-character model can offer, because
  * the residual error is vocabulary-specific: a model whose tokenizer merges
  * common Chinese words differs from one that does not, and no static table
@@ -33,8 +37,8 @@ export interface CalibrationOptions {
    */
   smoothing?: number
   /**
-   * Bounds on the correction. A provider reporting something absurd — a cached
-   * prompt, a request that failed mid-flight — must not be able to make the
+   * Bounds on the correction. A provider reporting something absurd — a
+   * request that failed mid-flight — must not be able to make the
    * budget nonsense; clamping turns a bad observation into a small error
    * instead of a broken session.
    */

@@ -44,6 +44,7 @@ import type { SillyTavernChatHeader, SillyTavernMessage } from '@iris/persistenc
 import type {
   TurnUsage, UsageBucket, UsageBuckets, UsageChat, UsageGranularity, UsageSummary, UsageTotals,
 } from '@iris/protocol'
+import { promptTokensOf } from '@iris/protocol'
 
 import { readMeta } from './entry.ts'
 import { readSideUsage } from './side-usage.ts'
@@ -202,9 +203,7 @@ function foldBuckets(into: UsageBuckets, usage: TurnUsage): void {
   // below covers exactly the generations whose numerator is known.
   into.cacheRead = (into.cacheRead ?? 0) + countable(usage.cacheReadTokens)
   into.cacheTurns += 1
-  into.cachePrompt += countable(usage.inputTokens)
-    + countable(usage.cacheReadTokens)
-    + countable(usage.cacheWriteTokens ?? 0)
+  into.cachePrompt += promptTokensOf(usage)
 }
 
 /**

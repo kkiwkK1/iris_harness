@@ -28,6 +28,7 @@
  */
 
 import type { TurnGeneration, TurnUsage } from '@iris/protocol'
+import { promptTokensOf } from '@iris/protocol'
 
 import type { Language } from './i18n/strings.ts'
 import { translate } from './i18n/strings.ts'
@@ -196,14 +197,13 @@ export function formatCacheHitPercent(
  * `inputTokens` excludes what the cache served (`TurnUsage`'s own contract), so
  * the sum is the whole prompt side and not a double count. An absent bucket
  * contributes nothing, which is the only reading available: the provider did
- * not report it.
+ * not report it. The sum itself is `@iris/protocol`'s `promptTokensOf`, the
+ * one copy the host's calibrator and summary read too.
  * @param usage - one generation's usage, or a conversation's sum.
  * @returns the billed prompt tokens.
  */
 export function billedInputTokens(usage: TurnUsage): number {
-  return countable(usage.inputTokens)
-    + countable(usage.cacheReadTokens ?? 0)
-    + countable(usage.cacheWriteTokens ?? 0)
+  return promptTokensOf(usage)
 }
 
 /**

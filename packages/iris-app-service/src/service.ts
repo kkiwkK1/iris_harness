@@ -90,6 +90,7 @@ import { forbiddenSegmentIn, type Variables } from '@iris/variables'
 // —— family①: identity & messages ——
 import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
+import { promptTokensOf } from '@iris/protocol'
 import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, clearanceNote, QuotaExceeded, removalNote } from './card-storage.ts'
@@ -4287,6 +4288,12 @@ export class IrisAppService {
           previous = await backups.snapshot(intent.chatId, 'pre-restore', intent.characterId)
         }
 
+        // A turn streaming into the conversation being restored is stopped: its
+        // target is about to be replaced. Its settle cannot write over the
+        // restored file either way — `restoreFile` retires the entry and
+        // `ChatStore.save` refuses a retired one — but letting it run on would
+        // bill a reply nobody can keep.
+        chats.cached(intent.chatId)?.abort()
         await chats.restoreFile(intent.chatId, intent.text)
         // An open page sees the conversation come back: pushed, not left for
         // the next open to discover.
@@ -5789,9 +5796,19 @@ export class IrisAppService {
           this.#report(message, { kind: 'variables', grade: 'note', chatId: entry.chatId, irreversible: true })
         })
       }
-      await this.#options.chats.save(entry, message => {
+      const saved = await this.#options.chats.save(entry, message => {
         this.#report(message, { kind: 'variables', grade: 'fault', chatId: entry.chatId })
       })
+      // A chat deleted or restored while this turn streamed: the store has let
+      // this entry go and refused its write (`ChatStore.isLive`), so the file
+      // stays what the delete or restore left. Said once, as a note — the user
+      // asked for the delete or restore, and the refusal is what honours it.
+      if (!saved) {
+        this.#report(
+          `turn ${String(turn)} settled after its conversation was deleted or restored; its reply was not written`,
+          { kind: 'host', grade: 'note', chatId: entry.chatId },
+        )
+      }
       terminal = true
       this.#options.broadcast({
         type: 'stream.end', chatId: entry.chatId, turn, view: this.#viewOf(entry), reason,
@@ -7464,11 +7481,22 @@ export class IrisAppService {
           }
         }
         if (chunk.type === 'usage') {
-          this.#counter.observe(estimated, chunk.usage.inputTokens)
+          // **The whole prompt, and only a turn's.** `inputTokens` is the
+          // harness's *uncached* remainder (the buckets are disjoint), so on a
+          // cache-hitting provider it reads a fraction of the request this
+          // estimate describes and pinned the scale at its 0.5 floor within
+          // two turns; `promptTokensOf` adds the cached buckets back. And only
+          // a request with an `entry` is a turn: a side request (a card's
+          // `generate`/`generateRaw`, the compaction summary, the authoring
+          // call) is estimated over a different prompt shape, and the docblock
+          // above says it must not move the turn's calibration.
+          // `tests/calibration-feed.test.ts` holds both halves.
+          const prompt = promptTokensOf(chunk.usage)
+          if (entry !== undefined) this.#counter.observe(estimated, prompt)
           // Recorded beside the estimate so a user can see whether to trust it.
           const turn = entry?.pending?.turn
           const recorded = turn === undefined ? undefined : entry?.itemizations.get(turn)
-          if (recorded !== undefined) recorded.actualTokens = chunk.usage.inputTokens
+          if (recorded !== undefined) recorded.actualTokens = prompt
           cacheReadTokens = chunk.usage.cacheReadTokens
           inputTokens = chunk.usage.inputTokens
           // **The whole report, kept.** The estimator above takes one number out
