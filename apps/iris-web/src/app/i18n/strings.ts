@@ -1397,6 +1397,9 @@ export const en = {
   errNoProvider: 'No provider is in use, so there is nothing to generate through. Add one under Settings → Connection, then press Use.',
   irisOwnFault: 'Iris hit a problem of its own: {detail}',
   cardCallFailed: 'A card’s call "{method}" failed: {detail}',
+  /** A region's render failure, drawn in its place (`RegionBoundary`). */
+  regionFailed: 'This part of the page ({region}) failed to render: {detail}',
+  regionFailedNotice: 'The {region} region failed to render and was replaced by a one-line note: {detail}',
   cleanedOne: 'cleaned 1 message',
   cleanedMessages: 'cleaned {n} messages',
   backedUpTo: 'the chat was backed up to {path}',
@@ -3231,6 +3234,8 @@ export const zh: Record<StringKey, string> = {
   errNoProvider: '没有在用的供应商，无从生成。请到 设置 → 连接 添加一个，然后点「使用」。',
   irisOwnFault: 'Iris 自身出了问题：{detail}',
   cardCallFailed: '卡片调用 "{method}" 失败：{detail}',
+  regionFailed: '页面的这一块（{region}）渲染失败：{detail}',
+  regionFailedNotice: '「{region}」区域渲染失败，已换成一行说明：{detail}',
   cleanedOne: '已清理 1 条消息',
   cleanedMessages: '已清理 {n} 条消息',
   backedUpTo: '对话已备份到 {path}',

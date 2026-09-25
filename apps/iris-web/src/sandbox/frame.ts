@@ -15,7 +15,7 @@
  * @module iris-web/sandbox/frame
  */
 
-import { UnsupportedApiError } from './errors.ts'
+import { UnsupportedApiError, refusedMember } from './errors.ts'
 import { topFrame } from './failure-attribution.ts'
 import { UNBRIDGED_GLOBALS } from './policy.ts'
 import type { FromFrame, ToFrame } from './protocol.ts'
@@ -2820,7 +2820,9 @@ export function installSandbox(env: FrameEnv): FrameSandbox {
     const failed = (error: unknown): void => {
       // A refusal and a bug in the card both land here, and the shell shows them
       // differently: `member` is what tells them apart.
-      const member = error instanceof UnsupportedApiError ? error.member : undefined
+      // By brand, not `instanceof`: a refusal thrown by the member table is
+      // another bundle's `UnsupportedApiError` class (`errors.ts`).
+      const member = refusedMember(error)
       /*
        * The message **and** where it was thrown.
        *

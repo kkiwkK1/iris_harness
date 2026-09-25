@@ -16,7 +16,11 @@ import { useStore } from 'zustand'
 import { actionsOf } from './store.ts'
 import type { IrisActions, IrisState, IrisStore } from './store.ts'
 
-const StoreContext = createContext<IrisStore | undefined>(undefined)
+/**
+ * The store's context. Exported for the one reader that must not throw outside
+ * a provider: `RegionBoundary`, which is the last thing allowed to fail.
+ */
+export const StoreContext = createContext<IrisStore | undefined>(undefined)
 
 /**
  * Publish a store.

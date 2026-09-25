@@ -20,6 +20,7 @@ import { FRAME_BAND_VARIABLE, frameBandPixels } from './frame-fit.ts'
 import { FrameBudgetProvider, type BudgetedFloor } from './FrameBudget.tsx'
 import { CompactionNote } from './CompactionNote.tsx'
 import { Composer } from './Composer.tsx'
+import { RegionBoundary } from './RegionBoundary.tsx'
 import { TurnNavigator } from './TurnNavigator.tsx'
 import { turnNavigation, type TurnNavigationItem } from './turn-navigation.ts'
 import { PlumSpray } from './marks.tsx'
@@ -296,6 +297,12 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
 
   return (
     <>
+      {/*
+       * The reading pane and the composer fail separately: a message row that
+       * throws while rendering leaves the composer usable, and the other way
+       * round (`RegionBoundary`). Without these one bad row unmounted the root.
+       */}
+      <RegionBoundary region="reading pane">
       <div className={`iris-scroll${navigation.length > 1 ? ' iris-scroll--navigable' : ''}`} ref={attachScroller} onScroll={onScroll}>
         <TurnNavigator key={chatId} items={navigation} activeTurn={activeAnchor} onNavigate={navigateTo} />
         <div className="iris-column">
@@ -407,6 +414,8 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
           )}
         </div>
       </div>
+      </RegionBoundary>
+      <RegionBoundary region="composer">
       <Composer
         chatId={chatId}
         generating={generating}
@@ -436,6 +445,7 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
           )
         }}
       />
+      </RegionBoundary>
       <PromptPanel
         open={explaining !== undefined}
         turn={explaining?.turn}

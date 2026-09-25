@@ -1031,6 +1031,15 @@ function toCardChatMessage(
   return { ...base, swipe_id: swipeId, swipes: [...swipes], swipes_data: swipesData }
 }
 
+/**
+ * Whether a card-supplied value is a plain object the wire can carry as a record.
+ * @param value - what the card passed.
+ * @returns true for a non-null, non-array object.
+ */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<string, unknown> {
   /**
    * The in-use preset, parsed, and the text it was parsed from.
@@ -3280,9 +3289,21 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * cannot see is worse than a throwing one — it is the swallowed failure
      * the panel exists for.
      *
-     * Upstream appends floors to the chat file, one per `{role, message}`:
-     * `user` becomes the reader's line, `assistant` the character's, and
-     * `system` a narrator line (`is_system`). Upstream then repaints; this
+     * Upstream appends floors to the chat file, one per row, and each row is
+     * a transcription of upstream's own `convert` (JS-Slash-Runner
+     * `chat_message.ts`, `createChatMessages`): `name` as given, else
+     * `'system'` / `name1` / `name2` by role; `is_user` from the role;
+     * `extra.type = 'narrator'` for a `system` row; `is_system` = the row's
+     * `is_hidden ?? false`; `data` stored as the floor's variable layer; and a
+     * supplied `extra` **replacing** the whole object, narrator marker
+     * included — upstream's asymmetry, copied rather than corrected.
+     *
+     * This used to derive `is_system` from the role and drop `name`,
+     * `is_hidden`, `data` and `extra`. A card that created a visible system
+     * instruction (`{ role: 'system', message, is_hidden: false }`, 魔法禁书目录)
+     * got a **hidden** row under the character's name with no narrator marker,
+     * which ST excludes from the prompt and this frame read back as
+     * `role: 'assistant', is_hidden: true`. Upstream then repaints; this
      * host announces the changed chat itself (`script.createChatMessages`
      * answers with the view and every attached page hears it). What it does
      * NOT do is generate — upstream leaves the turn for the caller to trigger,
@@ -3290,7 +3311,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
      * Accepted and ignored: `refresh` (the host repaints every page) and
      * `type` (`'one_off'` only ever accompanied chat-history edits this host
      * answers through the same arm).
-     * @param messages - `{role, message}` rows, in order.
+     * @param messages - upstream's `ChatMessageCreating` rows, in order.
      * @param options - upstream's `insert_at` position (absent appends).
      * @returns the ids the floors landed at, upstream's own answer shape.
      */
@@ -3302,6 +3323,7 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
       if (messages.length === 0) return []
       const before = chatOf('createChatMessages').length
       const insertAt = options?.['insert_at']
+      const dropped = new Set<string>()
       const wire = messages.map(row => {
         const role = row['role']
         const message = row['message']
@@ -3317,15 +3339,43 @@ export function createFrameTavernHelper(host: TavernHelperFrameHost): Record<str
             `the role ${String(role)} is not one upstream defines (user, assistant, system)`,
           )
         }
+        const name = row['name']
+        const hidden = row['is_hidden']
+        const data = row['data']
+        const extra = row['extra']
+        /*
+         * A value upstream would store but this wire cannot carry is named,
+         * not guessed at: the host arm types `name` as a string, `is_system`
+         * as a boolean and both objects as records.
+         */
+        if (name !== undefined && typeof name !== 'string') dropped.add('name')
+        if (hidden !== undefined && typeof hidden !== 'boolean') dropped.add('is_hidden')
+        if (data !== undefined && data !== null && !isPlainRecord(data)) dropped.add('data')
+        if (extra !== undefined && extra !== null && !isPlainRecord(extra)) dropped.add('extra')
         return {
-          // `name` rides the chat's own speaker table, which is exactly how
-          // upstream defaults it (`name1`/`name2`).
-          name: role === 'user' ? names.name1 : names.name2,
+          // Upstream's `convert`, in its own order. `name` defaults from the
+          // chat's own speaker table, as upstream does (`name1`/`name2`).
+          name: typeof name === 'string'
+            ? name
+            : role === 'system' ? 'system' : role === 'user' ? names.name1 : names.name2,
           is_user: role === 'user',
+          ...role === 'system' ? { extra: { type: 'narrator' } } : {},
+          is_system: typeof hidden === 'boolean' ? hidden : false,
           mes: message,
-          ...role === 'system' ? { is_system: true } : {},
+          // `if (chat_message.data)` upstream: stored as `variables[0]`, which
+          // is what the wire's `variables` means.
+          ...isPlainRecord(data) ? { variables: data } : {},
+          // Replaces the narrator marker above when supplied — upstream's
+          // `result.set('extra', chat_message.extra)` does the same.
+          ...isPlainRecord(extra) ? { extra } : {},
         }
       })
+      if (dropped.size > 0) {
+        host.reportGap(
+          `a card created chat messages with fields Iris could not carry`
+            + ` (${[...dropped].join(', ')}); each such field was left out of the row`,
+        )
+      }
       const answer = await host.call('createChatMessages', {
         messages: wire,
         ...typeof insertAt === 'number' ? { insertAt } : {},

@@ -1,4 +1,7 @@
+import { Children, isValidElement } from 'react'
 import type { ReactElement, ReactNode } from 'react'
+
+import { RegionBoundary } from './RegionBoundary.tsx'
 
 import type { Language } from './i18n/strings.ts'
 
@@ -120,5 +123,13 @@ export function SettingsCountBadge({ count }: { count: number }): ReactElement {
 }
 
 export function SettingsPage({ route, active, children }: { route: Exclude<SettingsRoute, 'home'>, active: boolean, children: ReactNode }): ReactElement {
-  return <section className="iris-settings__page" data-settings-route={route} hidden={!active}>{children}</section>
+  /*
+   * Each child in its own boundary: every page mounts at boot (a page is
+   * hidden, never unmounted), so one throwing panel used to unmount the whole
+   * shell — reading surface included — before anyone opened it.
+   */
+  return <section className="iris-settings__page" data-settings-route={route} hidden={!active}>
+    {Children.toArray(children).map((child, at) =>
+      <RegionBoundary key={isValidElement(child) && child.key !== null ? child.key : at} region={`settings/${route}`}>{child}</RegionBoundary>)}
+  </section>
 }

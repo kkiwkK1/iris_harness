@@ -15,6 +15,7 @@ import type { ReactElement, ReactNode } from 'react'
 import type { SlotCore, StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 
 import type { IrisSlotName } from './slots.ts'
+import { RegionBoundary } from '../app/RegionBoundary.tsx'
 
 const SlotsContext = createContext<SlotCore | undefined>(undefined)
 
@@ -88,7 +89,11 @@ export function Slot<K extends IrisSlotName>({
   return (
     <>
       {entries.map((entry, at) => (
-        <SlotEntry key={entry.options.id ?? String(at)} entry={entry} owner={owner} />
+        // One boundary per contribution: a plugin's component that throws takes
+        // down its own entry, not the shell it was contributed into.
+        <RegionBoundary key={entry.options.id ?? String(at)} region={`${name}:${entry.options.id ?? String(at)}`}>
+          <SlotEntry entry={entry} owner={owner} />
+        </RegionBoundary>
       ))}
     </>
   )
