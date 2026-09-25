@@ -929,7 +929,7 @@ export class SystemPluginInstallService {
         // uninstall, with the id still occupied in the catalog file.
         this.#runtime.adoptDefinition(
           this.#placeholderDefinition(id, failure),
-          { installed: true, removable: true },
+          { installed: true, origin: 'package', removable: true },
         )
         this.#runtime.markFailure(id, failure)
         this.#log(`system plugin "${id}" is ${failure.state}: ${failure.reason}`)
@@ -1040,7 +1040,7 @@ export class SystemPluginInstallService {
     await this.#publishCopyBundles(id, root, manifest)
     this.#runtime.adoptDefinition(
       this.#lazyDefinition(manifest, path.join(root, ...manifest.host.split('/')), generation),
-      { installed: true, removable: true, permissions: [...manifest.permissions] },
+      { installed: true, origin: 'package', removable: true, permissions: [...manifest.permissions] },
     )
   }
 

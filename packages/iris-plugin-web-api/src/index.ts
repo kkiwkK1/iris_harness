@@ -319,3 +319,52 @@ export function parsePluginAssetManifest(text: string): PluginAssetManifest | st
   }
   return { revision: bag['revision'], plugins }
 }
+
+/** The minimum a catalog row must carry for the ST-extension selector. */
+export interface StExtensionRowLike {
+  id: string
+  installed: boolean
+  status: string
+  origin?: SystemPluginView['origin']
+}
+
+/**
+ * The installed SillyTavern-extension rows of a catalog, in snapshot order.
+ *
+ * Selected by the host-stamped `origin`, never by exclusion. The rule this
+ * replaced — "the first installed row that is neither `tavern-helper` nor
+ * `mvu`" — was written when a catalog held only builtins and ST rows, and any
+ * installed git/dev package (even a tampered placeholder, which is still
+ * `installed: true`) captured it: package rows are adopted before ST rows, so
+ * the host bridged the package id, the bridge was armed for the ST id, and
+ * template expansion stopped with no error. A row with no `origin` (an older
+ * host's snapshot) is not an ST extension here.
+ * @param rows - the snapshot's rows, or undefined before the first snapshot.
+ * @returns every installed row whose origin is `st-extension`.
+ */
+export function stExtensionRows<R extends StExtensionRowLike>(rows: readonly R[] | undefined): R[] {
+  return (rows ?? []).filter(row => row.installed && row.origin === 'st-extension')
+}
+
+/**
+ * The one ST extension the ST-compat pilot serves.
+ *
+ * The pilot serves one extension on purpose. Which one is this function's
+ * answer, and the host (`extensionId()`: which extension to bridge, whose
+ * settings to load, which revision to arm, which floor writer to register),
+ * the page's plane (whether a frame and its settings panel exist) and the
+ * frame (whose id it is built for) all ask it, so the three cannot disagree.
+ *
+ * The first *enabled* ST row wins, and failing that the first installed one:
+ * with two extensions where the first adopted is disabled, taking the first
+ * row would serve the disabled one, and the enabled one would never run.
+ * "Enabled" is `status === 'enabled'`, the field that also folds in the
+ * transition states.
+ * @param rows - the snapshot's rows, or undefined before the first snapshot.
+ * @returns the served row, or undefined when no ST extension is installed.
+ */
+export function servedStExtensionRow<R extends StExtensionRowLike>(rows: readonly R[] | undefined): R | undefined {
+  const candidates = stExtensionRows(rows)
+  return candidates.find(row => row.status === 'enabled') ?? candidates[0]
+}
+

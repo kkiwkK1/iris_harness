@@ -289,7 +289,7 @@ function storerDefinition(
 }
 
 async function adoptAndEnable(harness: RuntimeHarness, definition: SystemPluginDefinition, permissions: readonly string[]): Promise<void> {
-  harness.runtime.adoptDefinition(definition, { installed: true, permissions: [...permissions] })
+  harness.runtime.adoptDefinition(definition, { installed: true, origin: 'package', permissions: [...permissions] })
   await harness.runtime.enable(definition.id)
 }
 
@@ -332,7 +332,7 @@ test('a declared plugin gets the real store, and a host with no root refuses as 
   const bare = await runtimeHarness(t, { withRoot: false })
   const builtinCaptured: { storage?: PluginStorage } = {}
   const builtin = storerDefinition(builtinCaptured)
-  bare.runtime.adoptDefinition(builtin, { installed: true })
+  bare.runtime.adoptDefinition(builtin, { installed: true, origin: 'package' })
   await bare.runtime.enable(builtin.id)
   let tried = 0
   for (const attempt of [

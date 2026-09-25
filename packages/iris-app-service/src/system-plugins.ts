@@ -5,6 +5,7 @@ import {
   registerRequestSchema,
   type SystemPluginFailure,
   type SystemPluginFailureState,
+  type SystemPluginOrigin,
   type SystemPluginProvenance,
   type SystemPluginSnapshot,
   type SystemPluginSource,
@@ -140,6 +141,12 @@ interface RuntimePlugin {
    * pointing at a tree that no longer exists would be a lie.
    */
   removable: boolean
+  /**
+   * The row's kind, stamped once where the row enters the catalog: the
+   * constructor stamps `builtin`, and every adopter names its own kind, so no
+   * reader ever has to infer "the ST extension" by excluding builtin ids.
+   */
+  origin: SystemPluginOrigin
 }
 
 interface Activation {
@@ -390,6 +397,7 @@ export class SystemPluginRuntime {
         activation: undefined,
         incarnation: 0,
         removable: false,
+        origin: 'builtin',
       })
       this.#builtinIds.add(raw.id)
     }
@@ -407,11 +415,20 @@ export class SystemPluginRuntime {
    *   both did). Recorded once, at adoption, because that is the one moment
    *   the manifest and the catalog row are in the same pair of hands. An
    *   adopter without a manifest omits it and the row declares nothing.
+   * @param options.origin - what kind of row this is: an installed package
+   *   (`plugins/install.ts`) or an installed SillyTavern extension
+   *   (`st-extension-adopt.ts`). Required, so an adopter cannot leave the kind
+   *   to be guessed later.
    * @returns true when the definition was adopted, false when it already existed.
    */
   adoptDefinition(
     raw: SystemPluginDefinition,
-    options: { installed: boolean, removable?: boolean, permissions?: readonly string[] },
+    options: {
+      installed: boolean
+      origin: Exclude<SystemPluginOrigin, 'builtin'>
+      removable?: boolean
+      permissions?: readonly string[]
+    },
   ): boolean {
     if (this.#plugins.has(raw.id)) return false
     if (raw.id.length === 0 || raw.id.length > 200) {
@@ -429,6 +446,7 @@ export class SystemPluginRuntime {
       activation: undefined,
       incarnation: 0,
       removable: options.removable ?? false,
+      origin: options.origin,
     })
     if (options.permissions !== undefined) {
       this.#declaredPermissions.set(raw.id, new Set(options.permissions))
@@ -506,6 +524,7 @@ export class SystemPluginRuntime {
       }
       this.adoptDefinition(raw, {
         installed: true,
+        origin: 'package',
         removable: true,
         ...(permissions === undefined ? {} : { permissions }),
       })
@@ -874,6 +893,7 @@ export class SystemPluginRuntime {
           // undefined, so a row with no provenance serializes to exactly the
           // bytes it serialized to before this round.
           ...stored?.source === undefined ? {} : { source: stored.source },
+          origin: plugin.origin,
           ...provenance === undefined ? {} : { provenance },
           ...failure === undefined ? {} : { failure: { ...failure } },
           // W5's display-only footprint. Omitted when nothing is stored (no

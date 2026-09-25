@@ -37,7 +37,6 @@ import { acquireHostLock } from './host-lock.ts'
 import { materialiseEmbeddedBook, WorldbookBindingStore } from './materialise.ts'
 import { refuseOverlappingInstall, StInstall } from './st-install.ts'
 import {
-  buildStExtensionDefinition,
   defaultSettingsBlob,
   hydrateSettingsBlob,
   normalizeManifest,
@@ -75,7 +74,8 @@ import { SettingsStore } from './settings.ts'
 import { SystemPluginRuntime } from './system-plugins.ts'
 import { SystemPluginInstallService } from './plugins/install.ts'
 import { BUILTIN_SYSTEM_PLUGIN_DEFINITIONS } from './plugins/builtins.ts'
-import { PLUGIN_ASSET_PREFIX } from '@iris/plugin-web-api'
+import { PLUGIN_ASSET_PREFIX, servedStExtensionRow, stExtensionRows } from '@iris/plugin-web-api'
+import { adoptStExtension } from './st-extension-adopt.ts'
 
 export {
   BackupStore,
@@ -829,7 +829,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // under installed/ with a valid lock becomes a definition the runtime runs
   // with the same lifecycle it gives TH and MVU, and the bridge the generation
   // path consults is built beside them. The pilot serves ONE extension id —
-  // the first installed one — and says so rather than pretending otherwise.
+  // the one `servedStExtensionRow` picks (the first enabled ST-extension row,
+  // else the first installed one) — and says so rather than pretending
+  // otherwise.
   const stExtensionSettingsStore = new StExtensionSettingsStore(
     join(paths.root, 'st-extension-settings'),
     message => { ctx.logger.warn(message) },
@@ -862,11 +864,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           ctx.logger.warn(`the installed extension "${entry}" has a manifest Iris refuses (${parsed.issues.map(issue => issue.field).join(', ')}); it stays inactive`)
           continue
         }
-        systemPlugins.adoptDefinition(buildStExtensionDefinition({
-          id: entry,
-          manifest: parsed.manifest,
-          memberBundlePath: join(dataDir, 'system-plugins', entry, 'client', 'client.js'),
-        }), { installed: true })
+        adoptStExtension(systemPlugins, { id: entry, manifest: parsed.manifest, dataDir })
       } catch (cause: unknown) {
         ctx.logger.warn(`the installed extension "${entry}" could not be adopted: ${String(cause)}`)
       }
@@ -875,11 +873,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const stCompat: StCompatOptions = {
     bridge: stCompatBridge,
-    // The pilot serves the one ST-compat extension: an installed row that is
-    // neither builtin. The builtins install true by default and would
-    // otherwise shadow the find.
-    extensionId: () => systemPlugins.snapshot().plugins
-      .find(plugin => plugin.installed && plugin.id !== 'tavern-helper' && plugin.id !== 'mvu')?.id ?? '',
+    // The pilot serves ONE ST-compat extension, chosen by the selector the
+    // browser plane uses too (`@iris/plugin-web-api`), so the host bridges,
+    // arms and loads settings for the same row the page builds its frame for.
+    extensionId: () => servedStExtensionRow(systemPlugins.snapshot().plugins)?.id ?? '',
     revisionOf: (extensionId: string): number | undefined => stExtensionEnabledRevision(extensionId),
     settingsFor: (extensionId: string): Promise<unknown> => stExtensionSettings(extensionId),
     persistSettings: async (extensionId: string, blob: unknown): Promise<void> => {
@@ -917,11 +914,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (!parsed.ok) {
         throw new AppError('invalid-request', `the installed manifest.json is not one Iris accepts (${parsed.issues.map(issue => issue.field).join(', ')})`)
       }
-      systemPlugins.adoptDefinition(buildStExtensionDefinition({
-        id,
-        manifest: parsed.manifest,
-        memberBundlePath: join(dataDir, 'system-plugins', id, 'client', 'client.js'),
-      }), { installed: true })
+      adoptStExtension(systemPlugins, { id, manifest: parsed.manifest, dataDir })
       return systemPlugins.snapshot()
     },
   }
@@ -1401,11 +1394,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const facadeFiles = await readFacadeFiles(webDistDir)
     const facadeBuildStamp = await facadeStamp(facadeFiles)
     const stExtAssets = new StExtensionAssetStore(paths.extensions, webDistDir, facadeFiles, facadeBuildStamp)
+    // Only ST-extension rows, by the same selector the pilot uses: this route
+    // serves upstream extension trees, and a package or builtin id is never one.
     const stExtState = () => {
       const snapshot = systemPlugins.snapshot()
       return {
-        enabled: new Set(snapshot.plugins
-          .filter(plugin => plugin.installed && plugin.enabled && plugin.status === 'enabled')
+        enabled: new Set(stExtensionRows(snapshot.plugins)
+          .filter(plugin => plugin.enabled && plugin.status === 'enabled')
           .map(plugin => plugin.id)),
       }
     }

@@ -14,6 +14,24 @@
 export type SystemPluginSource = 'builtin' | 'git' | 'dev'
 
 /**
+ * What kind of row this is, stamped by the host when the row enters the
+ * catalog.
+ *
+ * `builtin` is a plugin compiled into Iris; `package` an installed git/dev
+ * system-plugin package (including the placeholder a tampered or missing tree
+ * leaves); `st-extension` an installed SillyTavern extension served by the
+ * ST-compat plane.
+ *
+ * Not the same question as {@link SystemPluginSource}: `source` says where a
+ * row's bytes came from and is persisted with its provenance, and an ST row has
+ * none, so "the ST extension" used to be found by exclusion (the first
+ * installed row that was neither builtin id), which any installed package row
+ * silently captured. The kind is now said once, at adoption, and read by one
+ * selector (`@iris/plugin-web-api`'s `stExtensionRows`).
+ */
+export type SystemPluginOrigin = 'builtin' | 'package' | 'st-extension'
+
+/**
  * The seven named ways a system plugin row can carry a fault.
  *
  * Every one of them is a row the user can see and act on
@@ -99,6 +117,12 @@ export interface SystemPluginView {
   status: 'not-installed' | 'disabled' | 'enabling' | 'enabled' | 'disabling' | 'error'
   error?: string
   source?: SystemPluginSource
+  /**
+   * The row's kind (see {@link SystemPluginOrigin}). Additive and optional on
+   * the same terms as `source`: an older browser ignores it; an older host's
+   * snapshot parses, and its rows then match no ST-extension selection.
+   */
+  origin?: SystemPluginOrigin
   provenance?: SystemPluginProvenance
   failure?: SystemPluginFailure
   /**
