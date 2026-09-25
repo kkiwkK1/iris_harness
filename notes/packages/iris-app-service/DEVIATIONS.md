@@ -9777,3 +9777,43 @@ rpc-transport.test.ts` 的 `PROBES` 表加了一行 `'debug.doctor': {}`——�
 `chat.open`」，或者被 `chat.open` 的一个只读变体吸收。(b) 事件带上序号、宿主能按序号补发：对账换成
 补发，这个方法只留给补发窗口之外。(c) 这条 note 的次数在主线程停顿（web §124）修好之后仍然可观：
 说明断档另有来源，要从它的 `reason` 分布查起。
+
+## 102. Stop 也停卡片的侧请求；预压缩在对话的占用之内
+
+**Kind:** Iris upgrade（主人裁定 4，2026-09-25）。编号待协调者重排。
+
+**上游。** 酒馆的停止按钮只停当前这一轮生成。卡片经 Tavern Helper 发起的 `generate` /
+`generateRaw` 不受它影响，要停得调 TH 自己的 `stopGenerationById` / `stopAllGeneration`
+（`function/generate.d.ts:223`）。Iris 目前没有实现这两个成员（web 账本 4932 行记着的原因就是
+宿主缺一个停止臂）。
+
+**Iris。** `ChatEntry` 现在有一张侧请求登记表（`sideCall()`）。`script.generate`、`script.generateRaw`
+和 `sandboxPlugin.define` 在请求期间各登记一个 `AbortController`，并把它的 signal 传进 `#stream`。
+`ChatEntry.abort()` 会停掉这张表里的全部请求，也会停掉当前 turn。它的调用方有三个：`chat.abort`（Stop）、
+`chat.delete` 和 `backup.restore`。被停下的侧请求按名字拒绝（`provider-error`，句子里写着「was stopped
+before it finished」），不会把半截文本当作完整答复交给卡片。卡片若解析这份答复，把半截当成整段读，比收到
+一个拒绝更糟。停之前提供方已经报过的用量照样记账，因为 `#stream` 的 `finally` 不管流怎么结束都会写侧账。
+
+**同一个改动里的占用。** 预压缩（`#autoCompact`）是一次完整的模型请求，以前跑在 `entry.begin(turn)`
+之前，对话在这段时间里没有被占用。结果是：第二次发送能通过校验，再跑一份摘要；`/compact` 和所有 `#idle`
+检查都能通过；Stop 找不到可停的东西。现在 `#start` 先 `entry.claim()` 再压缩，`begin(turn, signal)`
+接手这个占用。手动 `chat.compact` 也在占用之内，摘要请求带着占用的 signal。压缩期间按 Stop，摘要会被停下，
+什么都不写（`#compact` 只在收缩检查之后才写）。这一轮会以已经停下的 signal 开始；`#stream` 看到停下的
+signal 就不发请求，所以这一轮以 `stream.error` / `aborted` 结束，提供方只收到那一个摘要请求。
+
+**测试。** `tests/chat-claim.test.ts` 有六条：
+- 预压缩期间的第二次发送和 `/compact` 都被拒为 `busy`，而且没有第二份摘要。
+- 预压缩期间按 Stop，这一轮以 `aborted` 结束，没有发出 turn 请求，也没有写入压缩。
+- 手动压缩期间发送被拒；按 Stop 后压缩以 `provider-error` 结束，什么都没写。
+- Stop 停下 `generateRaw` 后，报过的用量已经记了账。
+- Stop 停下 `generate`。
+- 删除对话会停下 `generateRaw`。
+
+把 service 退回改动前的版本，六条全红（超时）。只去掉 `#stream` 里的 `throwIfAborted`，第二条红，报「the turn's
+request went out after Stop」。
+
+**何时重开：**
+- (a) 传输层有了取消帧（rpc-client 发 cancel、rpc-host 停下对应 handler）：那时 frame 拆除也应该停它发起的
+  侧请求，TH 的 `stopGenerationById` / `stopAllGeneration` 可以建在这张登记表上。
+- (b) 主人要求 Stop 只停 turn、不停卡片请求：删掉 `abort()` 里遍历登记表的那一段，把这一节改成「上游一致」。
+- (c) 页面需要知道「正在压缩」：现在压缩期间没有任何事件，页面在 `stream.start` 之前看不到进度，也没有可按的停止按钮。
