@@ -10011,3 +10011,45 @@ B 的楼层行逐字节不变、`updatedAt` 不变、`main_chat` 改为根的标
 **何时重开：**(a) 主人要「删根就拒绝」或「删根连同全家」作为默认：`planBranchDelete` 的根分支就是那一个选择点。
 (b) 父亲那一层上游的 `extra.branches` 仍写着被删分支的名字（本条不改父亲的行，以保持父亲逐字节不变）：若要让导回 SillyTavern 的书签也干净，
 需要接受父亲那一行被改写并在这里写明。
+
+## 107. 回复的推理写进 `extra.reasoning`，也从那里读回（对齐上游，原先是偏离）
+
+**Kind:** 对齐修正（parity fix）。这一节记的是一处**被撤销**的偏离，外加一处留下的差异（只写选中读法的推理）。编号待协调者重排。
+
+**上游。** `ReasoningHandler.updateReasoning({ persist: true })` 把推理写进消息的 `extra.reasoning`，旁边是
+`extra.reasoning_duration` 和 `extra.reasoning_type`（提供方送来的是 `'model'`）（`public/scripts/reasoning.js:413-418`）；
+每个读法各自的一份在 `swipe_info[i].extra`（`setFirstSwipe`，`public/script.js:3774`）。模型只送 `reasoning_content`、`content` 为空时，
+上游照样存：`mes` 是空串，推理在 `extra.reasoning`，界面上是一个空正文加一个推理块，用户要自己把推理复制进编辑框。
+
+**Iris 以前。** 推理只作为内存里候选消息上的一个 `reasoning` 块存在。`exportMessages` 只写正文，`importChat` 只读正文，
+`extra.reasoning` 既不写也不读（导入的 ST 文件里它作为未建模字段原样穿过，但界面看不到）。所以推理在三种时候消失：宿主重启、
+重新打开对话、以及每一次日志重建——编辑、卡片的 `setChatMessages`、句子裁剪都会重建。
+
+**测量（主人的 黑兽 对话，2026-09-26 从 `apps/iris/data/default-user/chats` 拷出，只读）。** 主人报告「最新一楼有时没有正文，整条回复算成了推理」。
+按提供方自己报的用量逐个生成数（按 `at` + `promptHash` 去重，分支文件抄来的楼层只算一次）：本机 86 次带 `iris_usage` 的生成里，`reasoningTokens === outputTokens` 的有 3 次，正文为空的也是这 3 次，两者完全重合：`黑兽---Branch-1-20260925-235927` 第 33 楼（4086/4086，DeepSeek `deepseek-v4.1-flash-expires-on-0910`，maxTokens 30000，远没到上限；文件不记 finish_reason）、`黑兽-20260923-233644` 第 3 楼读法 0（2317/2317，分支文件第 3 楼是它的拷贝）、`爱衣-20260909-001924` 第 5 楼读法 0（1899/1899，`deepseek-v4-flash`）。
+其余 83 次也都报了推理 token，推理占输出的 5.2% 到 91.8%（中位 33.4%），从未到 100%；黑兽 的健康楼层正文以卡片要求的 `<konatan_planning~>` 开头。**这些楼层里一个字也没有留下**：`extra` 只有
+`time_to_first_token` 与 `reasoning_duration`，整个数据目录里没有一行 `extra.reasoning`，缓存追踪只存请求体。
+**推断：** 模型把规划和正文都写进了 `reasoning_content`，一个 `content` token 也没送；提供方的计费是独立于 Iris 解析的一条路径，
+它说全部输出都是推理，所以不是 Iris 把正文错分成了推理（适配器 `translate.ts` 只按 `delta.reasoning_content` / `delta.content` 分块，
+Iris 没有任何基于 `<think>` 文本的推理解析）。请求末尾的用户消息里有卡片预设写的 `<think>\nThought budget exceeded.\n</think>` 和
+「思考完毕时输出</think>」的指令；DeepSeek 的思考模式不认文本 `</think>`，这是它有时一直「想」到底的合理解释，但推理原文没有留下，无法核对。
+
+**Iris 现在。**
+1. `exportMessages`（`@iris/persistence`）把**选中候选**的推理写进行的 `extra.reasoning`，没有 `reasoning_type` 时补 `'model'`。
+   只写变化：导入的行，选中读法的推理没变就不动，未改动的文件仍逐字节导出。选中的候选没有推理、而带过来的 `extra` 里还有别的读法的推理时，
+   把它去掉（行上的 `extra` 描述的是正在显示的那个读法，留着会在下次读回时安到错的读法上）。复制 `extra`，不改日志里冻结的那份。
+2. `importChat` 把选中读法的 `extra.reasoning`、其他读法的 `swipe_info[i].extra.reasoning` 作为 `reasoning` 块放回候选（在正文块之前），
+   任何非空字符串原样保留。于是日志重建（它经由导出再导入）也带着推理，ST 导入的对话第一次显示出它文件里的推理。
+3. 提示词不变：`historyFromSession` 和 `serializeMessages` 都只取 `text` 块，推理不回送给模型（上游 `add_to_prompts` 默认关）。
+
+**留下的差异。** Iris 写的行不带 `swipe_info`，所以只有选中读法的推理进文件；未选中读法的推理留在日志里，重新打开对话后，
+翻到 Iris 生成的旧读法看不到推理。这和生成计时（`./timing.ts`）是同一个取舍。
+
+**测试。** `packages/iris-persistence/tests/reasoning.test.ts` 四条：全是推理、正文为空的回复（黑兽 第 33 楼的形状，内容已脱敏）导出后
+`mes` 为空、`extra.reasoning` 是推理、`reasoning_type` 是 `'model'`，读回后推理还在；推理加正文的回复往返不变，没有推理的回复不长出 `extra`；
+ST 文件两个读法各带推理，分别从 `extra` 和 `swipe_info` 读到，未改动的文件逐字节导出；选中读法换成没有推理的那个以后，行上不留另一个读法的推理。
+`packages/iris-app-service/tests/reasoning-persist.test.ts` 一条：经真实 `translate` 的 SSE（只有 `reasoning_content`，`reasoning_tokens === completion_tokens`）生成一楼，
+关掉服务、在同一目录上新建服务重新打开，楼层的 `reasoning` 还在、`text` 为空。牙齿：`exportMessages` 不调 `writeReasoning` → 两处的往返断言都红。
+
+**何时重开：**(a) 要让未选中读法的推理也经得起重开：给 Iris 写的行加 `swipe_info`（上游的形状），或者像 `iris_usage` 一样用一个位置数组。
+(b) 做推理编辑（上游的 `/reasoning-set`、推理块上的编辑按钮）时，`reasoning_type` 要按上游写成 `'edited'` / `'manual'`。

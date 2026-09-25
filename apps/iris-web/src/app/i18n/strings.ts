@@ -447,6 +447,8 @@ export const en = {
   /** Reasoning disclosure. */
   thinking: 'Thinking',
   reasoningWords: 'Reasoning · {n} words',
+  reasoningOnly: 'The model sent this whole reply as reasoning, with no body text.',
+  reasoningUseAsReply: 'Use as reply text',
 
   /** Message interface slots. */
   renderThisOne: 'Render this one',
@@ -2442,6 +2444,8 @@ export const zh: Record<StringKey, string> = {
   /** 思维链折叠。 */
   thinking: '思考中',
   reasoningWords: '推理 · {n} 词',
+  reasoningOnly: '模型把整条回复都放进了推理，正文为空。',
+  reasoningUseAsReply: '用作正文',
 
   /** 消息界面槽位。 */
   renderThisOne: '渲染这一个',

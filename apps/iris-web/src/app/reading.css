@@ -452,6 +452,17 @@
   transform: rotate(90deg);
 }
 
+/* The reply is empty and the trace is all there is: say so, offer the edit. */
+.iris-reason__orphan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 9px;
+  font-size: 13.5px;
+  color: var(--iris-ink-tertiary);
+}
+
 .iris-reason__body {
   margin-top: 9px;
   padding-left: 14px;
