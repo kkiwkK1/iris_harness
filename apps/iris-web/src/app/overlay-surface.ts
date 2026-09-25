@@ -49,3 +49,30 @@ export function overlayViewport(
   if (surface === null || surface === undefined) return window_
   return { width: surface.clientWidth, height: surface.clientHeight }
 }
+
+/**
+ * What the reader's 「收起卡片界面」 does to the surface element itself.
+ *
+ * **Hidden from outside only when the frame holds nothing but the card.** That
+ * is the original escape hatch, and it stays the whole mechanism for a card
+ * with no sandbox plugins: the shell hides the surface with `visibility`, which
+ * needs nothing from the frame and cannot be defeated by a card that broke its
+ * own document.
+ *
+ * With sandbox plugins in the conversation the surface stays **visible**: the
+ * plugins live in the same frame as the card (`docs/SANDBOX-PLUGINS.md` §5.1)
+ * and their panel is an element in it (§5.5), so hiding the frame from outside
+ * hid them too — the defect this function exists to close. The frame is told
+ * separately (`card:collapse`), hides the card's surfaces itself and narrows
+ * its clip to the panel container (`sandbox/card-collapse.ts`), so the shell is
+ * as reachable as before everywhere outside the plugins' box.
+ * @param collapsed - whether the reader has collapsed the card's interface.
+ * @param hasSandboxPlugins - whether this conversation mounts any sandbox plugin.
+ * @returns the surface element's `visibility`.
+ */
+export function collapsedSurfaceVisibility(
+  collapsed: boolean,
+  hasSandboxPlugins: boolean,
+): 'visible' | 'hidden' {
+  return collapsed && !hasSandboxPlugins ? 'hidden' : 'visible'
+}

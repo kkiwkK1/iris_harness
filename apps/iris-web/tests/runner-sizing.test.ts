@@ -291,3 +291,31 @@ test('the listeners live on the injected document, not the global', () => {
   scope.card.dispose()
   assert.equal(scope.listeners(), 0, 'disposal left a listener on a dead frame')
 })
+
+/*
+ * The collapse door (`setCardCollapsed`), here because this is the harness that
+ * can deliver `ready` and read what was posted. Not about sizing: about a frame
+ * that is rebuilt under the reader's collapse keeping it.
+ */
+test('a collapse asked before ready is sent on ready, and again after a rebuild', () => {
+  const scope = harness({ sizedByHost: true })
+  const token = tokenOf(scope.card.element.srcdoc)
+  const collapses = (): unknown[] =>
+    scope.posted().filter(message => message['type'] === 'card:collapse').map(message => message['collapsed'])
+
+  scope.card.setCardCollapsed(true)
+  // A frame still loading has no listener; posting now would land nowhere.
+  assert.deepEqual(collapses(), [])
+  scope.fromFrame({ iris: token, type: 'ready' })
+  assert.deepEqual(collapses(), [true])
+
+  // A network-grant rebuild is a fresh document: its `ready` re-sends.
+  scope.card.applyNetworkGrant(true)
+  scope.fromFrame({ iris: token, type: 'ready' })
+  assert.deepEqual(collapses(), [true, true])
+
+  // Restored: sent once, and a later `ready` has nothing to re-send.
+  scope.card.setCardCollapsed(false)
+  scope.fromFrame({ iris: token, type: 'ready' })
+  assert.deepEqual(collapses(), [true, true, false])
+})

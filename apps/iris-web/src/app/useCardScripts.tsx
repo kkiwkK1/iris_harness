@@ -44,7 +44,7 @@ import type { SandboxAssets } from '../sandbox/asset-manifest.ts'
 import { sandboxAssets } from './sandbox-assets.ts'
 import { runCard } from '../sandbox/runner.ts'
 import type { RunningCard } from '../sandbox/runner.ts'
-import { overlayViewport } from './overlay-surface.ts'
+import { collapsedSurfaceVisibility, overlayViewport } from './overlay-surface.ts'
 import { STARTED_EVENTS, settledEmissions } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
@@ -145,6 +145,16 @@ export function CardScriptFrames(): ReactElement {
    * arrives shown, and a collapse never silently outlives the frame it hid.
    */
   const [collapsed, setCollapsed] = useState(false)
+
+  /*
+   * And the frame hears it too, always — whether or not the surface is hidden
+   * from outside (`collapsedSurfaceVisibility`). A plugin confirmed while the
+   * card is collapsed makes the surface visible again, and by then the frame
+   * has to be hiding the card's own surfaces already.
+   */
+  useEffect(() => {
+    liveRun.current?.setCardCollapsed(collapsed)
+  }, [collapsed])
 
   /*
    * Load the card's script list here, not only in the settings panel.
@@ -1145,7 +1155,11 @@ export function CardScriptFrames(): ReactElement {
    * re-enable hit-testing the frame element switched off.
    *
    * **Collapse is `visibility`, never `hidden`.** The reader's escape hatch
-   * below toggles this element's visibility. `display:none` is observable from
+   * below toggles this element's visibility — for a card alone. When the
+   * conversation has sandbox plugins they share this frame, so the element
+   * stays visible and the frame hides the card's surfaces inside it instead
+   * (`collapsedSurfaceVisibility`, `sandbox/card-collapse.ts`), by the same
+   * `visibility` rule and for the same reason. `display:none` is observable from
    * inside a frame — a card measuring itself gets zeros, and the published
    * viewport stops describing anything real. `visibility:hidden` keeps the
    * box laid out and the numbers true: the card neither knows nor cares, its
@@ -1180,8 +1194,10 @@ export function CardScriptFrames(): ReactElement {
           // The container never catches anything; each frame's clip decides.
           pointerEvents: 'none',
           // The reader's collapse toggle: hidden to the eye and to the pointer,
-          // while every measurement inside the frame stays real.
-          visibility: collapsed ? 'hidden' : 'visible',
+          // while every measurement inside the frame stays real — unless the
+          // frame also holds sandbox plugins, which this would hide with the
+          // card; then the frame hides the card itself and keeps them.
+          visibility: collapsedSurfaceVisibility(collapsed, hasSandboxPlugins),
         }}
       />
       {/*

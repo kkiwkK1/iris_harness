@@ -203,6 +203,14 @@ export interface RunningCardScripts {
    */
   unmountPlugin: (pluginId: string) => void
   /**
+   * The reader's 「收起卡片界面」, handed to every frame so the card's own
+   * surfaces are hidden inside it and the sandbox plugins' panel is not
+   * (`card-collapse.ts`). Remembered, so a frame built after the call — the set
+   * boots asynchronously — starts collapsed too.
+   * @param collapsed - whether the card's interface is collapsed.
+   */
+  setCardCollapsed: (collapsed: boolean) => void
+  /**
    * Re-navigate every frame of this card under a changed network grant.
    *
    * The panel's switch used to take effect on the next chat open, which meant
@@ -242,6 +250,8 @@ export function startCardScripts(
   const timers: { unref?: () => void }[] = []
   const states = new Map<string, ScriptRunState>()
   let disposed = false
+  /** The reader's collapse, for a frame that is built after it was asked. */
+  let cardCollapsed = false
 
   const publish = (): void => {
     if (disposed) return
@@ -431,6 +441,7 @@ export function startCardScripts(
           },
         })
         cards.push(card)
+        if (cardCollapsed) card.setCardCollapsed(true)
         env.attach(card)
         /*
          * Verify the outcome, not the call.
@@ -512,6 +523,12 @@ export function startCardScripts(
       if (disposed) return
       mountedPlugins.delete(pluginId)
       for (const card of cards) card.unmountPlugin(pluginId)
+    },
+
+    setCardCollapsed: collapsed => {
+      if (disposed) return
+      cardCollapsed = collapsed
+      for (const card of cards) card.setCardCollapsed(collapsed)
     },
 
     dispose: () => {

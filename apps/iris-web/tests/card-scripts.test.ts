@@ -79,6 +79,7 @@ function harness(overrides: Partial<CardScriptsEnv> = {}) {
         mountPlugin: (pluginId, version) => mountedPlugins.push(`${pluginId}@${version}`),
         unmountPlugin: pluginId => unmountedPlugins.push(pluginId),
         setPluginPanelVisible: () => undefined,
+        setCardCollapsed: () => undefined,
         dispose: () => disposed.push('card-frame'),
         applyNetworkGrant: () => undefined,
       }
@@ -344,6 +345,7 @@ test('a frame that did report ready is never called silent', async () => {
         mountPlugin: () => undefined,
         unmountPlugin: () => undefined,
         setPluginPanelVisible: () => undefined,
+        setCardCollapsed: () => undefined,
         dispose: () => undefined,
         applyNetworkGrant: () => undefined,
       }
@@ -542,6 +544,7 @@ test('a report that belongs to the frame rather than a script still arrives', as
         mountPlugin: () => undefined,
         unmountPlugin: () => undefined,
         setPluginPanelVisible: () => undefined,
+        setCardCollapsed: () => undefined,
         dispose: () => undefined,
         applyNetworkGrant: () => undefined,
       }
@@ -568,6 +571,7 @@ test('an outcome naming a script this card does not have is still dropped', asyn
         mountPlugin: () => undefined,
         unmountPlugin: () => undefined,
         setPluginPanelVisible: () => undefined,
+        setCardCollapsed: () => undefined,
         dispose: () => undefined,
         applyNetworkGrant: () => undefined,
       }
@@ -812,4 +816,36 @@ test('a mount into a live frame reports that it landed', async () => {
 
   assert.equal(running.mountPlugin('1-a', 1, ''), true)
   assert.deepEqual(bench.mountedPlugins, ['1-a@1'])
+})
+
+test('a collapse asked before the frame exists reaches it when it is built', async () => {
+  /*
+   * The set boots asynchronously (resolve, context, bodies, then `start`), and
+   * the reader can press 「收起卡片界面」 in that window. Without the remembered
+   * value the frame would come up uncollapsed while the control said collapsed.
+   */
+  const seen: boolean[] = []
+  const bench = harness({
+    start: () => ({
+      element: { id: 'card-frame', isConnected: true } as never,
+      emit: () => undefined,
+      refreshContext: () => undefined,
+      resize: () => undefined,
+      mountPlugin: () => undefined,
+      unmountPlugin: () => undefined,
+      setPluginPanelVisible: () => undefined,
+      setCardCollapsed: collapsed => {
+        seen.push(collapsed)
+      },
+      dispose: () => undefined,
+      applyNetworkGrant: () => undefined,
+    }),
+  })
+  const running = startCardScripts(bench.env, 'chat-1', 'card-1')
+  running.setCardCollapsed(true)
+  await settle()
+  assert.deepEqual(seen, [true], 'the frame built after the collapse was not told')
+
+  running.setCardCollapsed(false)
+  assert.deepEqual(seen, [true, false])
 })

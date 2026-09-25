@@ -57,6 +57,7 @@ import type { Measured, Visibility } from './overlay-regions.ts'
 import { MEMBERS_GLOBAL, MEMBERS_MARKER, PLUGIN_ADMITTED_GLOBAL, type MemberTable } from './members-contract.ts'
 import { collectPluginMembers } from './plugin-members.ts'
 import { installSandboxPluginTree } from './plugin-entry.ts'
+import { applyCardCollapse, CARD_COLLAPSED_ATTRIBUTE, collapsedRoots } from './card-collapse.ts'
 import { EXPECTED_GLOBALS, PRESET_ERROR, PRESET_MARKER } from './preset-globals.ts'
 import { reportLibraryState } from './library-state.ts'
 import { describeOverlayAttempt } from './overlay-report.ts'
@@ -380,10 +381,10 @@ function reportRegions(
      * rather than the result — and `#tavern_helper`, which the frame itself
      * builds for the script list, is ours rather than the card's.
      */
-    const roots = [...body.children].filter(
+    const roots = collapsedRoots(document, [...body.children].filter(
       child => child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE'
         && child.id !== 'tavern_helper',
-    )
+    ))
     const seen: Visibility[] = []
     const clip = members.clipPathFor(members.collectRegions(roots, measure, seen))
     /*
@@ -535,7 +536,9 @@ function reportRegions(
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['style', 'class', 'hidden'],
+    // The collapse attribute too: toggling it changes which roots the clip is
+    // measured from (`collapsedRoots`) without touching any node's style.
+    attributeFilter: ['style', 'class', 'hidden', CARD_COLLAPSED_ATTRIBUTE],
   })
   try {
     const sizes = new ResizeObserver(schedule)
@@ -2396,6 +2399,16 @@ try {
     // shell used when it rewrote a card's own interface markup, which is the
     // point: a panel's HTML string takes that path and no other.
     origin: shellOrigin(),
+  })
+  /*
+   * The reader's 「收起卡片界面」, when this frame also holds sandbox plugins:
+   * the shell cannot hide the card without hiding them (they share this frame),
+   * so it asks, and the card's own surfaces are hidden here while the plugin
+   * panel container stays (`card-collapse.ts`). The clip follows on the next
+   * measure, which the attribute write schedules.
+   */
+  listeners.push(message => {
+    if (message?.type === 'card:collapse') applyCardCollapse(document, message.collapsed)
   })
 
   /*
