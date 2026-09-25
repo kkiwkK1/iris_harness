@@ -875,6 +875,72 @@ export interface TemplateOptions {
   deadlineMs?: number
 }
 
+/**
+ * What one `#stream` request is for, beside the request itself.
+ *
+ * The fields answer four different questions and no generation here answers
+ * them the same way: `entry` is "whose templates and whose turn record",
+ * `trace` is "which request body to keep for comparison", `side` is "whose
+ * bill", `route` is "which provider, already decided". The five callers:
+ *
+ * | caller | entry | trace | side | route |
+ * | --- | --- | --- | --- | --- |
+ * | a turn (the driver) | yes | yes | — | — |
+ * | `script.generateRaw` | — | yes | yes | — |
+ * | `script.generate` | — | yes | yes | — |
+ * | compaction summary | — | yes | yes | — |
+ * | `sandboxPlugin.define` | — | yes | yes | yes |
+ */
+interface StreamCall {
+  /** The conversation, when this generation is its turn. */
+  entry?: ChatEntry
+  /**
+   * The conversation and the kind to file a cache trace under.
+   *
+   * Separate from `entry` on purpose. The host's own compaction summary passes
+   * a `trace` and a `side` and **no `entry`** — its prompt is the host's, so
+   * nothing of the card author's may evaluate in it and the turn's calibration
+   * must not move, but its body is very much something a reader compares (a
+   * summary sits at the front of the next request's history and breaks the
+   * prefix there) and it is very much billed.
+   */
+  trace?: { chatId: string, kind: string, caller?: string, turn?: number }
+  /**
+   * The conversation to **bill** a generation that is not a turn, with the
+   * asker to file it under.
+   *
+   * Not `entry`, because passing `entry` would turn on four other things such a
+   * generation must not do: evaluate the card's own templates over a prompt the
+   * card wrote, move the turn's recorded `actualTokens` and the calibration,
+   * file a fingerprint against whatever turn is pending, and emit a per-turn
+   * report line. The bill is the one thing that *is* shared, and it lands on
+   * the header rather than on any turn (`./side-usage.ts`). `source` is stated
+   * by the caller rather than defaulted: a default would silently file the
+   * host's own requests as a card's, which is the reading the split exists to
+   * make possible.
+   */
+  side?: { entry: ChatEntry, caller: string, source: SideSource }
+  /**
+   * The route this request goes out on, when the caller already knows it.
+   *
+   * The sandbox-plugin authoring request is the one generation whose provider
+   * is not the conversation's: it rides a profile the player chose for exactly
+   * this, and the design says so in as many words ("路由不经 `#resolveRoute` 的四级兜底",
+   * `docs/SANDBOX-PLUGINS.md` §11.1). Passing the route rather than letting the
+   * ladder run is what makes the "no fall back" ruling hold: rung 4 answers a
+   * dangling name with the host's own route, which for this request would spend
+   * the player's money on a model they did not choose — the exact outcome the
+   * ruling exists to refuse. The caller installs the adapter itself and refuses
+   * by name when it cannot.
+   *
+   * Everything *after* the route is unchanged, which is why this stays one
+   * funnel rather than becoming a second: the estimate, the residual-macro
+   * reports, the fingerprint, the usage fold-back and the side bill are all the
+   * same code for all five callers.
+   */
+  route?: string
+}
+
 /** What one compaction did: the floors it folded and the token counts either side. */
 type CompactionOutcome = { floors: number, spanTokens: number, summaryTokens: number }
 
@@ -6182,7 +6248,7 @@ export class IrisAppService {
     const names = entry.names
 
     return new TurnDriver({
-      stream: options => this.#stream(options, entry, { chatId: entry.chatId, kind: traceKind }),
+      stream: options => this.#stream(options, { entry, trace: { chatId: entry.chatId, kind: traceKind } }),
       provider: settings.provider,
       model: settings.model,
       // The generation type travels with the driver so the assembly it drives
@@ -6692,13 +6758,13 @@ export class IrisAppService {
       // and the gap in sequence numbers unexplained. It carries no layout —
       // nothing here was assembled — so its spans are unattributed, and the
       // trace says so rather than guessing.
-    },
-    undefined,
-    { chatId: entry.chatId, kind: 'side', caller: 'script.generateRaw', turn: -1 },
-    // Billed to this conversation all the same — see `./side-usage.ts`. The
-    // caller is the RPC method name because that is the finest attribution
-    // the contract carries: `script.generateRaw` sends no script id.
-    { entry, caller: 'script.generateRaw', source: 'script' })) {
+    }, {
+      trace: { chatId: entry.chatId, kind: 'side', caller: 'script.generateRaw', turn: -1 },
+      // Billed to this conversation all the same — see `./side-usage.ts`. The
+      // caller is the RPC method name because that is the finest attribution
+      // the contract carries: `script.generateRaw` sends no script id.
+      side: { entry, caller: 'script.generateRaw', source: 'script' },
+    })) {
       assembler.push(chunk)
     }
 
@@ -6831,13 +6897,13 @@ export class IrisAppService {
           role: slot.message.role,
         })),
       },
-    },
-    undefined,
-    { chatId: entry.chatId, kind: 'side', caller: 'script.generate', turn: -1 },
-    // The bill, on the conversation this was assembled from. This is the path
-    // that re-sends the whole prefix, so it is also the expensive one of the
-    // two — which is what makes separating the callers worth storing.
-    { entry, caller: 'script.generate', source: 'script' })) {
+    }, {
+      trace: { chatId: entry.chatId, kind: 'side', caller: 'script.generate', turn: -1 },
+      // The bill, on the conversation this was assembled from. This is the path
+      // that re-sends the whole prefix, so it is also the expensive one of the
+      // two — which is what makes separating the callers worth storing.
+      side: { entry, caller: 'script.generate', source: 'script' },
+    })) {
       assembler.push(chunk)
     }
 
@@ -6930,17 +6996,18 @@ export class IrisAppService {
       maxTokens: SUMMARY_MAX_TOKENS,
       // The chat's claim: Stop during a compaction stops the summary.
       ...signal === undefined ? {} : { signal },
-    },
-    // No `entry` — see this method's doc.
-    undefined,
-    // `turn: -1`, like a card's: this request is billed and it is not a turn,
-    // and folding it onto whichever turn happened to be pending would file the
-    // host's own summary against the user's reply. The automatic trigger runs
-    // *before* the turn it protects, so "whichever turn was pending" is a real
-    // turn here rather than a theoretical one.
-    { chatId: entry.chatId, kind: 'compaction', caller: 'host.compaction', turn: -1 },
-    // The bill, on the conversation whose history was folded.
-    { entry, caller: 'host.compaction', source: 'compaction' })
+    }, {
+      // No `entry` — see this method's doc.
+      //
+      // `turn: -1`, like a card's: this request is billed and it is not a turn,
+      // and folding it onto whichever turn happened to be pending would file the
+      // host's own summary against the user's reply. The automatic trigger runs
+      // *before* the turn it protects, so "whichever turn was pending" is a real
+      // turn here rather than a theoretical one.
+      trace: { chatId: entry.chatId, kind: 'compaction', caller: 'host.compaction', turn: -1 },
+      // The bill, on the conversation whose history was folded.
+      side: { entry, caller: 'host.compaction', source: 'compaction' },
+    })
     try {
       for await (const chunk of stream) assembler.push(chunk)
     } catch (error: unknown) {
@@ -7184,36 +7251,6 @@ export class IrisAppService {
     entry.rebuild(messages, position => position)
   }
 
-  /**
-   * Stream one call, folding the provider's own token count back into the estimate.
-   *
-   * Every response reports what the prompt actually cost — the ground truth for
-   * the number just estimated, free of charge. Feeding it back is the only way
-   * a character-class estimator converges, because the residual is vocabulary
-   * dependent and no static table fixes it.
-   * @param options - the composed request.
-   * @param entry - the conversation, when this generation belongs to one.
-   * @param trace - the conversation and the kind to file a cache trace under.
-   *   Separate from `entry` on purpose, because the three parameters answer
-   *   three different questions and no generation here answers them the same
-   *   way: `entry` is "whose templates and whose turn record", `trace` is "which
-   *   request body to keep for comparison", `side` is "whose bill". The host's
-   *   own compaction summary passes a `trace` and a `side` and **no `entry`**
-   *   — its prompt is the host's, so nothing of the card author's may evaluate
-   *   in it and the turn's calibration must not move, but its body is very much
-   *   something a reader compares (a summary sits at the front of the next
-   *   request's history and breaks the prefix there) and it is very much billed.
-   * @param side - the conversation to **bill** a generation that is not a turn,
-   *   with the asker to file it under. A third parameter and not `entry`,
-   *   because passing `entry` would turn on four other things such a generation
-   *   must not do: evaluate the card's own templates over a prompt the card
-   *   wrote, move the turn's recorded `actualTokens`, file a fingerprint against
-   *   whatever turn is pending, and emit a per-turn report line. The bill is the
-   *   one thing that *is* shared, and it lands on the header rather than on any
-   *   turn (`./side-usage.ts`). `source` is stated by the caller rather than
-   *   defaulted: a default would silently file the host's own requests as a
-   *   card's, which is the reading the split exists to make possible.
-   */
   // ------------------------------------------------------------------
   // The ST-compat pilot's bridge call sites. Three rules run through all of
   // them: an absent `stCompat` option or an unarmed bridge is a synchronous
@@ -7402,31 +7439,24 @@ export class IrisAppService {
     })
   }
 
+  /**
+   * Stream one call, folding the provider's own token count back into the estimate.
+   *
+   * Every response reports what the prompt actually cost — the ground truth for
+   * the number just estimated, free of charge. Feeding it back is the only way
+   * a character-class estimator converges, because the residual is vocabulary
+   * dependent and no static table fixes it.
+   * @param options - the composed request.
+   * @param call - what this request is *for*: whose turn, which trace, whose
+   *   bill, which route. Named fields rather than four optional positionals,
+   *   because a caller that means "no entry, but a trace and a bill" used to
+   *   say so with a bare `undefined` in the second slot (see {@link StreamCall}).
+   */
   async *#stream(
     options: GenerateOptions,
-    entry?: ChatEntry,
-    trace?: { chatId: string, kind: string, caller?: string, turn?: number },
-    side?: { entry: ChatEntry, caller: string, source: SideSource },
-    /**
-     * The route this request goes out on, when the caller already knows it.
-     *
-     * The **fifth** caller — the sandbox-plugin authoring request — is the one
-     * generation whose provider is not the conversation's: it rides a profile
-     * the player chose for exactly this, and the design says so in as many words
-     * ("路由不经 `#resolveRoute` 的四级兜底", `docs/SANDBOX-PLUGINS.md` §11.1).
-     * Passing the route rather than letting the ladder run is what makes the "no
-     * fall back" ruling hold: rung 4 answers a dangling name with the host's own
-     * route, which for this request would spend the player's money on a model
-     * they did not choose — the exact outcome the ruling exists to refuse. The
-     * caller installs the adapter itself and refuses by name when it cannot.
-     *
-     * Everything *after* the route is unchanged, which is why this stays one
-     * funnel rather than becoming a second: the estimate, the residual-macro
-     * reports, the fingerprint, the usage fold-back and the side bill are all
-     * the same code for all five.
-     */
-    routed?: string,
+    call: StreamCall = {},
   ): AsyncIterable<StreamChunk> {
+    const { entry, trace, side, route: routed } = call
     // **The route is settled before anything else runs**, and here rather than
     // at each of the four callers: a turn, `script.generateRaw`,
     // `script.generate` and the compaction summarizer all compose
@@ -7439,7 +7469,7 @@ export class IrisAppService {
     // one the settings asked for.
     //
     // A caller that already knows its route says so and the ladder does not
-    // run: see the `routed` parameter. It is the one case where falling back
+    // run: see `StreamCall.route`. It is the one case where falling back
     // would be worse than refusing.
     const route = routed
       ?? await this.#resolveRoute(options.provider, entry?.chatId ?? side?.entry.chatId ?? trace?.chatId)
@@ -8079,14 +8109,15 @@ export class IrisAppService {
         tools: [sandboxPluginTool()],
         ...signal === undefined ? {} : { signal },
       },
-      // No `entry`: this prompt is the host's, so none of the card author's
-      // templates may evaluate in it and the turn's calibration must not move.
-      undefined,
-      { chatId, kind: 'plugin', caller: 'sandboxPlugin.define', turn: -1 },
-      // Billed to this conversation, under the third side source (§11.3).
-      { entry, caller: 'sandboxPlugin.define', source: 'plugin' },
-      // The route is already decided; the four-rung ladder must not substitute.
-      route,
+      {
+        // No `entry`: this prompt is the host's, so none of the card author's
+        // templates may evaluate in it and the turn's calibration must not move.
+        trace: { chatId, kind: 'plugin', caller: 'sandboxPlugin.define', turn: -1 },
+        // Billed to this conversation, under the third side source (§11.3).
+        side: { entry, caller: 'sandboxPlugin.define', source: 'plugin' },
+        // The route is already decided; the four-rung ladder must not substitute.
+        route,
+      },
     )) {
       assembler.push(chunk)
     }
