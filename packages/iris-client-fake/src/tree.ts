@@ -65,3 +65,78 @@ export function fakeChatTree(chats: readonly FakeChat[], chatId: string): ChatTr
     current: { chatId, floor: Math.max(0, (asked?.messages.length ?? 0) - 1) },
   }
 }
+
+/** One child moved by a delete: its new parent and fork, or neither for a new root. */
+export interface FakeRelink {
+  chatId: string
+  parentChatId?: string
+  branchAt?: { floor: number, swiped: boolean }
+}
+
+/**
+ * `chat.delete`'s plan, the host's rules over the fake's recorded forks.
+ *
+ * A child moved up a level forks from its new parent at the lower of its own
+ * fork and the fork it passes through; at that floor it is another reading
+ * when whichever of the two cuts is lower (or either, when they are the same
+ * floor) took another reading.
+ * @param chats - every fake conversation.
+ * @param chatId - the conversation being deleted; must exist.
+ * @param mode - `'reattach'` (children move up) or `'delete'` (the subtree goes).
+ * @returns what is deleted and what moves.
+ */
+export function fakeDeletePlan(
+  chats: readonly FakeChat[],
+  chatId: string,
+  mode: 'reattach' | 'delete',
+): { deleted: string[], relinks: FakeRelink[], promoted?: string, successor?: string } {
+  const byId = new Map(chats.map(chat => [chat.chatId, chat]))
+  const kidsOf = (id: string): FakeChat[] => chats
+    .filter(kid => kid.parentChatId === id && kid.chatId !== id)
+    .sort((a, b) => (a.branchAt?.floor ?? 0) - (b.branchAt?.floor ?? 0) || a.updatedAt - b.updatedAt)
+  const victim = byId.get(chatId)
+  const parent = victim?.parentChatId !== undefined && byId.has(victim.parentChatId) ? victim.parentChatId : undefined
+  const successor = parent === undefined ? {} : { successor: parent }
+
+  if (mode === 'delete') {
+    const deleted: string[] = []
+    const queue = [chatId]
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+      if (deleted.includes(next)) continue
+      deleted.push(next)
+      queue.push(...kidsOf(next).map(kid => kid.chatId))
+    }
+    return { deleted, relinks: [], ...successor }
+  }
+
+  const through = (own: FakeChat['branchAt'], via: FakeChat['branchAt']): FakeChat['branchAt'] => {
+    if (own === undefined || via === undefined) return own ?? via
+    if (own.floor === via.floor) return { floor: own.floor, swiped: own.swiped || via.swiped }
+    return own.floor < via.floor ? own : via
+  }
+  const kids = kidsOf(chatId)
+  if (parent !== undefined) {
+    return {
+      deleted: [chatId],
+      relinks: kids.map(kid => {
+        const at = through(kid.branchAt, victim?.branchAt)
+        return { chatId: kid.chatId, parentChatId: parent, ...at === undefined ? {} : { branchAt: at } }
+      }),
+      ...successor,
+    }
+  }
+  const [first, ...rest] = kids
+  if (first === undefined) return { deleted: [chatId], relinks: [] }
+  return {
+    deleted: [chatId],
+    relinks: [
+      { chatId: first.chatId },
+      ...rest.map(kid => {
+        const at = through(kid.branchAt, first.branchAt)
+        return { chatId: kid.chatId, parentChatId: first.chatId, ...at === undefined ? {} : { branchAt: at } }
+      }),
+    ],
+    promoted: first.chatId,
+    successor: first.chatId,
+  }
+}

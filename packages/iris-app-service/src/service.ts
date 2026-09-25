@@ -143,7 +143,7 @@ import { CONTINUE_POSTFIX_SEPARATORS, type SettingsStore } from './settings.ts'
 import { trimToEndSentence } from './reply-trim.ts'
 import { textOf } from './views.ts'
 import { arbitrateMessageVariables, type VariableProposal } from './variable-arbitration.ts'
-import { buildChatTree, lineageOf, treeInputOf } from './chat-tree.ts'
+import { buildChatTree, lineageOf, planBranchDelete, treeInputOf } from './chat-tree.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
@@ -2368,46 +2368,71 @@ export class IrisAppService {
         return { view, ...turn === undefined ? {} : { generating: { turn } } }
       },
 
-      'chat.delete': async ({ chatId }) => {
-        chats.cached(chatId)?.abort()
-        await chats.delete(chatId)
-        await settings.forget(chatId)
+      'chat.delete': async ({ chatId: asked, subBranches }) => {
         /*
-         * And its place on the shelf, for the reason the star list is forgotten
-         * when a card is deleted: chat ids are minted against the files that
-         * exist, so this id can be handed to the next conversation of the same
-         * name — and a position left behind would seat a stranger exactly where
-         * the deleted one used to be.
+         * Its branches first (`chat-tree.ts` `planBranchDelete`): by default
+         * they move up to its parent with their fork points recomputed, and a
+         * deleted root hands the trunk to its first child — so no branch is
+         * left naming a parent that is gone. Planned from the family's files
+         * before anything is written; a chat the list cannot summarise is
+         * planned as itself alone, and `chats.delete` answers for whether it
+         * exists.
          */
-        await this.#options.chatOrder?.forget(chatId)
-        /*
-         * And what this conversation grew.
-         *
-         * **The hard requirement of `docs/SANDBOX-PLUGINS.md` §10.3**, and the
-         * same argument as the two lines above it with the consequence one
-         * degree worse: a leftover settings layer changes a temperature, a
-         * leftover shelf position moves a row, and a leftover sandbox-plugin
-         * file makes the next conversation of this name **open with a
-         * stranger's code already authorised and mount it**.
-         */
-        await this.#options.sandboxPlugins?.forget(chatId)
-        // And what those plugins kept in the card's script-variable store, under
-        // owner ids that name this conversation (`sp:<chatId>:…`), so the next
-        // conversation of this id cannot inherit them either.
-        await forgetChatPluginState(this.#options.scriptVariables, chatId)
-        /*
-         * And its cache traces: whole request bodies of a conversation the user
-         * removed, which the next conversation of this id would otherwise be
-         * compared against (owner ruling 5, 2026-09-25).
-         *
-         * **Backups are kept, and that is the same ruling.** A snapshot is the
-         * way back from exactly this action, so `backups/<character>/<chat>/`
-         * outlives the delete; `tests/entity-lifecycle.test.ts` holds the
-         * retention with its reason beside every store that is forgotten.
-         */
-        await this.#options.cacheTrace?.forgetChat(chatId)
+        const rows = await chats.list()
+        const family = lineageOf(rows, asked)
+        const inputs = await Promise.all(
+          rows.filter(row => family.has(row.chatId)).map(async row => treeInputOf(row, await chats.fileOf(row.chatId))),
+        )
+        const plan = planBranchDelete(inputs, asked, subBranches ?? 'reattach') ?? { deleted: [asked], relinks: [] }
+        // Re-attached before the delete: a failure here leaves the family as
+        // it was, and a failure after it leaves only a childless conversation.
+        for (const relink of plan.relinks) await chats.relink(relink.chatId, relink)
+        for (const chatId of plan.deleted) {
+          chats.cached(chatId)?.abort()
+          await chats.delete(chatId)
+          await settings.forget(chatId)
+          /*
+           * And its place on the shelf, for the reason the star list is forgotten
+           * when a card is deleted: chat ids are minted against the files that
+           * exist, so this id can be handed to the next conversation of the same
+           * name — and a position left behind would seat a stranger exactly where
+           * the deleted one used to be.
+           */
+          await this.#options.chatOrder?.forget(chatId)
+          /*
+           * And what this conversation grew.
+           *
+           * **The hard requirement of `docs/SANDBOX-PLUGINS.md` §10.3**, and the
+           * same argument as the two lines above it with the consequence one
+           * degree worse: a leftover settings layer changes a temperature, a
+           * leftover shelf position moves a row, and a leftover sandbox-plugin
+           * file makes the next conversation of this name **open with a
+           * stranger's code already authorised and mount it**.
+           */
+          await this.#options.sandboxPlugins?.forget(chatId)
+          // And what those plugins kept in the card's script-variable store, under
+          // owner ids that name this conversation (`sp:<chatId>:…`), so the next
+          // conversation of this id cannot inherit them either.
+          await forgetChatPluginState(this.#options.scriptVariables, chatId)
+          /*
+           * And its cache traces: whole request bodies of a conversation the user
+           * removed, which the next conversation of this id would otherwise be
+           * compared against (owner ruling 5, 2026-09-25).
+           *
+           * **Backups are kept, and that is the same ruling.** A snapshot is the
+           * way back from exactly this action, so `backups/<character>/<chat>/`
+           * outlives the delete; `tests/entity-lifecycle.test.ts` holds the
+           * retention with its reason beside every store that is forgotten.
+           */
+          await this.#options.cacheTrace?.forgetChat(chatId)
+        }
         await this.#announceChats()
-        return {}
+        return {
+          deleted: plan.deleted,
+          reattached: plan.relinks.map(relink => relink.chatId),
+          ...plan.promoted === undefined ? {} : { promoted: plan.promoted },
+          ...plan.successor === undefined ? {} : { successor: plan.successor },
+        }
       },
 
       'chat.answerCleanup': async ({ chatId, answer }) => {

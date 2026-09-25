@@ -416,7 +416,20 @@ export const requestSchemas = {
     /** How long the page had heard no stream frame, for the note. */
     silentMs: z.number().int().nonnegative().max(86_400_000).optional(),
   }),
-  'chat.delete': z.object({ chatId: z.string().min(1) }),
+  /**
+   * Delete one conversation.
+   *
+   * `subBranches` decides what happens to the conversations branched from it
+   * (an Iris upgrade; upstream deletes the one file and leaves its branches
+   * naming a parent that is gone). `'reattach'`, the default, deletes only this
+   * one: its children move up to its parent with their fork points recomputed,
+   * and deleting a root promotes its first child to be the new root.
+   * `'delete'` removes it and every descendant. Backups are kept either way.
+   */
+  'chat.delete': z.object({
+    chatId: z.string().min(1),
+    subBranches: z.enum(['reattach', 'delete']).optional(),
+  }),
   'chat.rename': z.object({ chatId: z.string().min(1), title: z.string().max(200) }),
   /**
    * Put the conversation list in the order the reader arranged.
@@ -2740,7 +2753,14 @@ export interface RpcResponseMap {
    * be told "settled" by a view that predates the turn it is asking about.
    */
   'chat.resync': { view: ChatView, generating?: { turn: number } }
-  'chat.delete': Record<string, never>
+  /**
+   * What the delete changed. `deleted` is every conversation removed, the one
+   * asked about first; `reattached` the children that moved up a level;
+   * `promoted` the child that became the root when a root was deleted;
+   * `successor` where a reader of a deleted conversation should go — its
+   * parent, else the promoted root, absent when there is neither.
+   */
+  'chat.delete': { deleted: string[], reattached: string[], promoted?: string, successor?: string }
   'chat.rename': { chats: ChatSummary[] }
   /**
    * The list as it now reads, so the caller renders the host's answer rather

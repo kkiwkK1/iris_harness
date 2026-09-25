@@ -179,7 +179,7 @@ test('a known method with no handler is unsupported too', async (t) => {
 
 test('a non-JSON content type is refused, which is what blocks a cross-site POST', async (t) => {
   const host = await startHost(t)
-  host.rpc.register('chat.delete', () => ({}))
+  host.rpc.register('chat.delete', () => ({ deleted: [], reattached: [] }))
 
   // `text/plain` is a CORS simple request: a hostile page can send it with no
   // preflight. Requiring `application/json` is what makes that impossible.
@@ -320,7 +320,7 @@ test('a POST whose Host is a rebinding name is refused before any handler', asyn
    */
   const host = await startHost(t)
   let reached = false
-  host.rpc.register('chat.delete', () => { reached = true; return {} })
+  host.rpc.register('chat.delete', () => { reached = true; return { deleted: [], reattached: [] } })
 
   const refused = await postAs(host, `127.0.0.1.nip.io:${String(host.port)}`, {
     id: 'evil-1', method: 'chat.delete', params: { chatId: 'c1' },

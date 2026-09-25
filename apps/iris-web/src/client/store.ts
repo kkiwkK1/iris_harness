@@ -972,7 +972,12 @@ export interface IrisActions extends BranchTreeActions {
   openChat(chatId: string): Promise<void>
   closeChat(): void
   createChat(characterId: string): Promise<void>
-  deleteChat(chatId: string): Promise<void>
+  /**
+   * Delete a conversation. Its sub-branches re-attach to its parent unless
+   * `subBranches` is `'delete'`; a reader who was on it goes to its parent
+   * (or the child promoted in a root's place).
+   */
+  deleteChat(chatId: string, options?: { subBranches?: 'reattach' | 'delete' }): Promise<void>
   renameChat(chatId: string, title: string): Promise<void>
   /**
    * Put the conversation list in the order the reader dragged it into.
@@ -2189,13 +2194,23 @@ export function createIrisStore(
         })
       },
 
-      async deleteChat(chatId: string): Promise<void> {
+      async deleteChat(chatId: string, options: { subBranches?: 'reattach' | 'delete' } = {}): Promise<void> {
         await guard(async () => {
-          await client.call('chat.delete', { chatId })
-          if (get().chatId !== chatId) return
-          const next = get().chats.find(row => row.chatId !== chatId)
+          const answer = await client.call('chat.delete', {
+            chatId,
+            ...options.subBranches === undefined ? {} : { subBranches: options.subBranches },
+          })
+          const gone = new Set(answer.deleted)
+          const open = get().chatId
+          if (open === undefined || !gone.has(open)) return
+          // The reader was on a conversation that is gone: go to where it came
+          // from — its parent, or the child promoted in a root's place — and
+          // only failing that to whatever is at the top of the list.
+          const next = answer.successor !== undefined && !gone.has(answer.successor)
+            ? answer.successor
+            : get().chats.find(row => !gone.has(row.chatId))?.chatId
           if (next === undefined) get().closeChat()
-          else await get().openChat(next.chatId)
+          else await get().openChat(next)
         })
       },
 

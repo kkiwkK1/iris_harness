@@ -48,7 +48,7 @@ import {
 } from './connections.ts'
 import { mergeOverrides, mergeSettings } from './settings.ts'
 import { FakeSystemPlugins } from './plugins.ts'
-import { fakeChatTree } from './tree.ts'
+import { fakeChatTree, fakeDeletePlan } from './tree.ts'
 import {
   DEFAULT_SETTINGS,
   FAKE_GLOBAL_REGEX,
@@ -540,15 +540,32 @@ class InMemoryClient implements FakeClient {
       }
 
       case 'chat.delete': {
-        const { chatId } = params as RpcRequest<'chat.delete'>
+        const { chatId, subBranches } = params as RpcRequest<'chat.delete'>
         this.#require(chatId)
-        this.#abort(chatId)
-        this.#chats = this.#chats.filter(row => row.chatId !== chatId)
+        // The host's plan (`chat-tree.ts` `planBranchDelete`), over the fake's
+        // own recorded forks: children re-attach by default, a root hands the
+        // trunk to its first child, `'delete'` takes the subtree.
+        const plan = fakeDeletePlan(this.#chats, chatId, subBranches ?? 'reattach')
+        for (const relink of plan.relinks) {
+          const chat = this.#chats.find(row => row.chatId === relink.chatId)
+          if (chat === undefined) continue
+          delete chat.parentChatId
+          delete chat.branchAt
+          if (relink.parentChatId !== undefined) chat.parentChatId = relink.parentChatId
+          if (relink.branchAt !== undefined) chat.branchAt = relink.branchAt
+        }
+        for (const gone of plan.deleted) this.#abort(gone)
+        this.#chats = this.#chats.filter(row => !plan.deleted.includes(row.chatId))
         // And its place on the shelf: the host forgets it too, because a freed
         // chat id is handed to the next conversation of that name.
-        this.#chatOrder = this.#chatOrder.filter(id => id !== chatId)
+        this.#chatOrder = this.#chatOrder.filter(id => !plan.deleted.includes(id))
         this.#emit({ type: 'chats.updated', chats: this.#summaries() })
-        return {}
+        return {
+          deleted: plan.deleted,
+          reattached: plan.relinks.map(relink => relink.chatId),
+          ...plan.promoted === undefined ? {} : { promoted: plan.promoted },
+          ...plan.successor === undefined ? {} : { successor: plan.successor },
+        }
       }
 
       case 'chat.rename': {
