@@ -203,6 +203,69 @@ export function lineageOf(rows: readonly Pick<ChatSummary, 'chatId' | 'parentCha
 }
 
 /**
+ * Each chat's effective parent: present in the inputs, and not closing a
+ * cycle. Decided once for every chat, so the root walk, the child lists and a
+ * delete's re-parenting cannot disagree about an edge.
+ * @param inputs - the conversations.
+ * @returns parent chat id by child chat id, for the edges that are accepted.
+ */
+function effectiveParents(inputs: readonly TreeChatInput[]): Map<string, string> {
+  const byId = new Set(inputs.map(input => input.chatId))
+  const parentOf = new Map<string, string>()
+  /** Whether the accepted edges lead from `from` up to `target`. Acyclic by construction, so it ends. */
+  const reaches = (from: string, target: string): boolean => {
+    for (let cursor: string | undefined = from; cursor !== undefined; cursor = parentOf.get(cursor)) {
+      if (cursor === target) return true
+    }
+    return false
+  }
+  for (const input of inputs) {
+    const parent = input.parentChatId
+    if (parent === undefined || parent === input.chatId || !byId.has(parent)) continue
+    // An edge that would close a loop is refused; the chat stays a root.
+    if (!reaches(parent, input.chatId)) parentOf.set(input.chatId, parent)
+  }
+  return parentOf
+}
+
+/** Walk accepted edges up from a chat to its root. */
+function rootOf(parentOf: ReadonlyMap<string, string>, chatId: string): string {
+  let root = chatId
+  const walked = new Set<string>([root])
+  for (let up = parentOf.get(root); up !== undefined && !walked.has(up); up = parentOf.get(up)) {
+    walked.add(up)
+    root = up
+  }
+  return root
+}
+
+/** The accepted edges turned round: child inputs by parent chat id. */
+function childrenOf(parentOf: ReadonlyMap<string, string>, byId: ReadonlyMap<string, TreeChatInput>): Map<string, TreeChatInput[]> {
+  const children = new Map<string, TreeChatInput[]>()
+  for (const [child, parent] of parentOf) {
+    const input = byId.get(child)
+    if (input === undefined) continue
+    const list = children.get(parent) ?? []
+    list.push(input)
+    children.set(parent, list)
+  }
+  return children
+}
+
+/**
+ * A parent's children in lane order, each with its fork.
+ *
+ * By where they leave, then by age, so lanes read left to right in the order
+ * the reader made them. Shared by the tree and by a root's delete, so "the
+ * first child" means the same conversation in the map and in the host.
+ */
+function orderedChildren(parent: TreeChatInput, kids: readonly TreeChatInput[]): { kid: TreeChatInput, fork: ChatTreeFork }[] {
+  return kids
+    .map(kid => ({ kid, fork: forkOf(parent, kid) }))
+    .sort((a, b) => a.fork.floor - b.fork.floor || a.kid.updatedAt - b.kid.updatedAt || a.kid.chatId.localeCompare(b.kid.chatId))
+}
+
+/**
  * Build the lineage graph a conversation belongs to.
  *
  * The root is found by walking parents up from the asked-about chat; a parent
@@ -219,41 +282,9 @@ export function buildChatTree(inputs: readonly TreeChatInput[], chatId: string):
   const asked = byId.get(chatId)
   if (asked === undefined) return undefined
 
-  /**
-   * Each chat's effective parent: present in the inputs, and not closing a
-   * cycle. Decided once for every chat, so the root walk and the child lists
-   * cannot disagree about an edge.
-   */
-  const parentOf = new Map<string, string>()
-  /** Whether the accepted edges lead from `from` up to `target`. Acyclic by construction, so it ends. */
-  const reaches = (from: string, target: string): boolean => {
-    for (let cursor: string | undefined = from; cursor !== undefined; cursor = parentOf.get(cursor)) {
-      if (cursor === target) return true
-    }
-    return false
-  }
-  for (const input of inputs) {
-    const parent = input.parentChatId
-    if (parent === undefined || parent === input.chatId || !byId.has(parent)) continue
-    // An edge that would close a loop is refused; the chat stays a root.
-    if (!reaches(parent, input.chatId)) parentOf.set(input.chatId, parent)
-  }
-
-  let root = asked.chatId
-  const walked = new Set<string>([root])
-  for (let up = parentOf.get(root); up !== undefined && !walked.has(up); up = parentOf.get(up)) {
-    walked.add(up)
-    root = up
-  }
-
-  const children = new Map<string, TreeChatInput[]>()
-  for (const [child, parent] of parentOf) {
-    const input = byId.get(child)
-    if (input === undefined) continue
-    const list = children.get(parent) ?? []
-    list.push(input)
-    children.set(parent, list)
-  }
+  const parentOf = effectiveParents(inputs)
+  const root = rootOf(parentOf, asked.chatId)
+  const children = childrenOf(parentOf, byId)
 
   const chats: ChatTreeNode[] = []
   const placed = new Set<string>()
@@ -275,12 +306,9 @@ export function buildChatTree(inputs: readonly TreeChatInput[], chatId: string):
       ...fork === undefined ? {} : { fork },
       ...input.floors === undefined ? { unreadable: true as const } : {},
     })
-    const kids = (children.get(input.chatId) ?? [])
-      .map(kid => ({ kid, fork: forkOf(input, kid) }))
-      // By where they leave, then by age, so lanes read left to right in the
-      // order the reader made them.
-      .sort((a, b) => a.fork.floor - b.fork.floor || a.kid.updatedAt - b.kid.updatedAt || a.kid.chatId.localeCompare(b.kid.chatId))
-    for (const { kid, fork: kidFork } of kids) visit(kid, depth + 1, kidFork)
+    for (const { kid, fork: kidFork } of orderedChildren(input, children.get(input.chatId) ?? [])) {
+      visit(kid, depth + 1, kidFork)
+    }
   }
   const top = byId.get(root)
   if (top !== undefined) visit(top, 0, undefined)
@@ -289,5 +317,113 @@ export function buildChatTree(inputs: readonly TreeChatInput[], chatId: string):
     rootChatId: root,
     chats,
     current: { chatId: asked.chatId, floor: Math.max(0, (asked.floors?.length ?? 0) - 1) },
+  }
+}
+
+/** What a delete does to the conversations it does not remove. */
+export interface BranchRelink {
+  chatId: string
+  /** The new parent; absent when this conversation becomes the root. */
+  parent?: { chatId: string, title: string }
+  /** The new fork point in the new parent's floors; absent with `parent`. */
+  branchAt?: BranchAt
+}
+
+/** Everything one `chat.delete` changes, decided before anything is written. */
+export interface BranchDeletePlan {
+  /** The conversation asked about first, then (for `'delete'`) its descendants, parents before children. */
+  deleted: string[]
+  /** The children that are re-attached, in lane order; the promoted root first when there is one. */
+  relinks: BranchRelink[]
+  /** The child that became the root, when the root was deleted and it had children. */
+  promoted?: string
+  /** Where a reader of a deleted conversation goes: its parent, else the promoted root. */
+  successor?: string
+}
+
+/**
+ * Plan the deletion of one conversation of a lineage.
+ *
+ * `'reattach'` deletes only `chatId`. Its children move up a level:
+ *
+ * - **Under its parent.** A child cut from the deleted branch at floor N holds
+ *   the branch's own copy of floors 0..N, and the branch held its parent's
+ *   floors up to where it forked (floor M). So relative to the grandparent the
+ *   child forks at `min(N, M)` — N when it was cut above the branch's own fork,
+ *   M otherwise — and the new `branchAt` carries the grandparent's line id at
+ *   that floor, the same id the child's copy of that line carries.
+ * - **Deleting the root** promotes its first child in lane order — the branch
+ *   that leaves the conversation earliest, which is the leftmost lane next to
+ *   the trunk and so the one the reader already sees beside it. It keeps its
+ *   floors and becomes a root; every other child forks from it at
+ *   `min(its own fork, the promoted child's fork)`, by the same argument.
+ *   Refusing instead would make a root undeletable while it has branches,
+ *   and the sidebar's 「删除对话」 on a conversation someone once branched is
+ *   exactly that case.
+ *
+ * `'delete'` removes `chatId` and every descendant; nothing is re-attached.
+ *
+ * Pure, over already-read files, so every shape is testable without a disk.
+ * @param inputs - the lineage's conversations (`lineageOf`'s members).
+ * @param chatId - the conversation to delete.
+ * @param mode - what happens to its sub-branches.
+ * @returns the plan, or undefined when `chatId` is not among the inputs.
+ */
+export function planBranchDelete(
+  inputs: readonly TreeChatInput[],
+  chatId: string,
+  mode: 'reattach' | 'delete',
+): BranchDeletePlan | undefined {
+  const byId = new Map(inputs.map(input => [input.chatId, input]))
+  const victim = byId.get(chatId)
+  if (victim === undefined) return undefined
+  const parentOf = effectiveParents(inputs)
+  const children = childrenOf(parentOf, byId)
+  const parentId = parentOf.get(chatId)
+  const parent = parentId === undefined ? undefined : byId.get(parentId)
+  const kids = orderedChildren(victim, children.get(chatId) ?? [])
+
+  if (mode === 'delete') {
+    const deleted: string[] = []
+    const queue = [victim]
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+      if (deleted.includes(next.chatId)) continue
+      deleted.push(next.chatId)
+      queue.push(...orderedChildren(next, children.get(next.chatId) ?? []).map(entry => entry.kid))
+    }
+    return { deleted, relinks: [], ...parentId === undefined ? {} : { successor: parentId } }
+  }
+
+  /** Re-point one child at `target`, whose own fork from the victim is `through`. */
+  const under = (target: TreeChatInput, through: ChatTreeFork, own: ChatTreeFork, kid: TreeChatInput): BranchRelink => {
+    const floor = Math.min(own.floor, through.floor)
+    const lineId = target.floors?.[floor]?.lineId
+    return {
+      chatId: kid.chatId,
+      parent: { chatId: target.chatId, title: target.title },
+      branchAt: { floor, ...lineId === undefined ? {} : { lineId } },
+    }
+  }
+
+  if (parent !== undefined) {
+    // The victim's fork from its own parent bounds every child's.
+    const through = forkOf(parent, victim)
+    return {
+      deleted: [chatId],
+      relinks: kids.map(({ kid, fork }) => under(parent, through, fork, kid)),
+      successor: parent.chatId,
+    }
+  }
+
+  const [first, ...rest] = kids
+  if (first === undefined) return { deleted: [chatId], relinks: [] }
+  return {
+    deleted: [chatId],
+    relinks: [
+      { chatId: first.kid.chatId },
+      ...rest.map(({ kid, fork }) => under(first.kid, first.fork, fork, kid)),
+    ],
+    promoted: first.kid.chatId,
+    successor: first.kid.chatId,
   }
 }

@@ -9,6 +9,12 @@
  * floor, with no preview step (owner ruling 2026-09-25). Swipes are a count on
  * the dot and never a lane, because a reading has no continuation.
  *
+ * Each lane wears its own colour (the root is the neutral trunk) and is drawn
+ * as thick as the conversation is active; hovering a lane says what the width
+ * means. A lane's name carries a 「⋯」 menu to rename it in place or delete
+ * it, with a confirm dialog that says where its sub-branches go (owner
+ * request 2026-09-26).
+ *
  * What is drawn is decided in `tree-map.ts`. This file only renders it, in the
  * margin under the variables (`StatePanel`) and in the narrow-window overlay
  * (`TreeMapOverlay`).
@@ -17,10 +23,10 @@
  */
 
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
-import { layoutTree, type TreeLane, type TreeNodeCell, type TreeRow } from './tree-map.ts'
+import { deleteSummary, layoutTree, TRUNK, type TreeLane, type TreeNodeCell, type TreeRow } from './tree-map.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import './tree-map.css'
 
@@ -64,6 +70,9 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
   const focus = useIris(state => state.treeFocus)
   const actions = useIrisActions()
   useLanguage()
+  // One lane name edits at a time, and one delete asks at a time.
+  const [renaming, setRenaming] = useState<string | undefined>(undefined)
+  const [deleting, setDeleting] = useState<string | undefined>(undefined)
 
   if (chatId === undefined) return null
   if (tree === undefined || !tree.chats.some(node => node.chatId === chatId)) {
@@ -110,7 +119,7 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
       <div className="iris-tree__graph" style={{ height }}>
         <svg className="iris-tree__svg" width={graphWidth} height={height} aria-hidden="true" focusable="false">
           {layout.lanes.map(lane => (
-            <LaneLines key={lane.chatId} lane={lane} x={x} centre={centre} rowOf={rowOf} />
+            <LaneLines key={lane.chatId} lane={lane} x={x} centre={centre} rowOf={rowOf} tip={laneTip(lane)} />
           ))}
           {layout.rows.map((row, index) => row.kind !== 'floor' ? null : row.nodes.map(cell => {
             const lane = byLane.get(cell.lane)
@@ -119,6 +128,7 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
               <g
                 key={`${cell.chatId}:${String(cell.floor)}`}
                 className="iris-tree__dot"
+                data-iris-hue={hueAttr(lane?.hue)}
                 data-current={lane?.current === true ? '' : undefined}
                 data-path={onPath ? '' : undefined}
                 data-focus={cell.focus ? '' : undefined}
@@ -191,19 +201,21 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
                 )}
                 {heads.map(cell => {
                   const owner = byLane.get(cell.lane)
+                  if (owner === undefined) return null
                   return (
-                    <button
+                    <LaneHead
                       key={cell.chatId}
-                      type="button"
-                      className="iris-tree__label iris-tree__label--head"
-                      data-current={owner?.current === true ? '' : undefined}
-                      aria-label={t('treeNodeAria', { title: owner?.title ?? '', floor: cell.floor })}
-                      title={owner?.unreadable === true ? t('treeUnreadable') : owner?.title}
-                      onClick={() => go(cell.chatId, cell.floor)}
-                    >
-                      <span className="iris-tree__title">{owner?.title}</span>
-                      {owner?.unreadable === true ? <span className="iris-tree__badge">!</span> : null}
-                    </button>
+                      lane={owner}
+                      floor={cell.floor}
+                      editing={renaming === cell.chatId}
+                      onGo={() => go(cell.chatId, cell.floor)}
+                      onRename={() => setRenaming(cell.chatId)}
+                      onRenamed={title => {
+                        setRenaming(undefined)
+                        if (title !== '' && title !== owner.title) void actions.renameChat(cell.chatId, title)
+                      }}
+                      onDelete={() => setDeleting(cell.chatId)}
+                    />
                   )
                 })}
               </li>
@@ -215,6 +227,17 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
         <p className="iris-aside__empty iris-tree__note">{t('treeDetached')}</p>
       )}
       {solo ? <p className="iris-aside__empty iris-tree__note">{t('treeSolo')}</p> : null}
+      {deleting === undefined ? null : (
+        <BranchDeleteDialog
+          chatId={deleting}
+          viewing={chatId}
+          onClose={() => setDeleting(undefined)}
+          onConfirm={subBranches => {
+            setDeleting(undefined)
+            void actions.deleteChat(deleting, { subBranches })
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -222,27 +245,39 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
 /**
  * One lane's strokes: its own run, its connector from the parent, and the
  * accent overlay for the part the reader's conversation runs through.
+ *
+ * The lane is drawn in its own colour (`data-iris-hue`, the same slot the
+ * sidebar's row marker wears) and as thick as it is active
+ * (`lane.activity.width`). The accent overlay is drawn a little wider than
+ * the lane under it, so the reader's path covers the lane's colour rather
+ * than sitting beside it. A wide transparent stroke on top carries the
+ * tooltip that says what the width means.
  */
 function LaneLines({
   lane,
   x,
   centre,
   rowOf,
+  tip,
 }: {
   lane: TreeLane
   x: (lane: number) => number
   centre: (index: number) => number
   rowOf: (floor: number) => number
+  tip: string
 }): ReactElement {
   const top = centre(rowOf(lane.start))
   const bottom = centre(rowOf(lane.end))
   const lx = x(lane.lane)
+  const width = lane.activity.width
+  const pathWidth = Math.max(width + 0.6, 2.4)
   const parts: ReactElement[] = []
+  let d: string | undefined
   if (lane.parentLane !== undefined && lane.from !== undefined) {
     const px = x(lane.parentLane)
     const py = centre(rowOf(lane.from))
     // Out of the parent sideways, then down into the lane: the git-graph elbow.
-    const d = py === top
+    d = py === top
       ? `M ${String(px)} ${String(py)} L ${String(lx)} ${String(top)}`
       : `M ${String(px)} ${String(py)} C ${String(px)} ${String((py + top) / 2)}, ${String(lx)} ${String((py + top) / 2)}, ${String(lx)} ${String(top)}`
     parts.push(
@@ -250,18 +285,274 @@ function LaneLines({
         key="fork"
         className="iris-tree__edge"
         data-path={lane.pathEnd !== undefined ? '' : undefined}
+        style={{ strokeWidth: lane.pathEnd !== undefined ? pathWidth : width }}
         d={d}
       />,
     )
   }
   if (bottom > top) {
-    parts.push(<line key="run" className="iris-tree__run" x1={lx} y1={top} x2={lx} y2={bottom} />)
+    parts.push(<line key="run" className="iris-tree__run" style={{ strokeWidth: width }} x1={lx} y1={top} x2={lx} y2={bottom} />)
   }
   if (lane.pathEnd !== undefined) {
     const end = centre(rowOf(Math.min(lane.pathEnd, lane.end)))
-    if (end > top) parts.push(<line key="path" className="iris-tree__run iris-tree__run--path" x1={lx} y1={top} x2={lx} y2={end} />)
+    if (end > top) {
+      parts.push(
+        <line key="path" className="iris-tree__run iris-tree__run--path" style={{ strokeWidth: pathWidth }} x1={lx} y1={top} x2={lx} y2={end} />,
+      )
+    }
   }
-  return <g data-current={lane.current ? '' : undefined}>{parts}</g>
+  // The hover target: the connector and the run, widened and invisible.
+  const hit = `${d === undefined ? '' : `${d} `}M ${String(lx)} ${String(top)} L ${String(lx)} ${String(Math.max(bottom, top + 0.01))}`
+  parts.push(
+    <path key="hit" className="iris-tree__hit" d={hit}>
+      <title>{tip}</title>
+    </path>,
+  )
+  return (
+    <g
+      className="iris-tree__lane"
+      data-iris-hue={hueAttr(lane.hue)}
+      data-current={lane.current ? '' : undefined}
+      data-weight={String(width)}
+    >
+      {parts}
+    </g>
+  )
+}
+
+/** The `data-iris-hue` value for a palette slot: `trunk` for a root. */
+function hueAttr(hue: number | undefined): string | undefined {
+  if (hue === undefined) return undefined
+  return hue === TRUNK ? 'trunk' : String(hue)
+}
+
+/** How long before the family's newest activity, in the tooltip's words. */
+function ageText(days: number): string {
+  if (days < 1 / 24) return t('treeAgeNone')
+  if (days < 1) return t('treeAgeHours', { n: Math.round(days * 24) })
+  return t('treeAgeDays', { n: days < 10 ? Math.round(days * 10) / 10 : Math.round(days) })
+}
+
+/** The lane tooltip: what its line weight is made of. */
+function laneTip(lane: TreeLane): string {
+  return t('treeActivity', {
+    title: lane.title,
+    width: lane.activity.width,
+    pct: Math.round(lane.activity.score * 100),
+    own: lane.activity.own,
+    age: ageText(lane.activity.ageDays),
+  })
+}
+
+/**
+ * A lane's name at its newest floor, with the two ways to manage it: a
+ * 「⋯」 menu (rename, delete), and F2 or a double-click to rename in place.
+ *
+ * Renaming replaces the name with a field. Enter or leaving the field keeps
+ * the new name, Escape keeps the old one; an empty name is not sent. The
+ * title then updates everywhere at once, because the sidebar, the map and the
+ * masthead all read the list `chat.rename` answers with.
+ */
+function LaneHead({
+  lane,
+  floor,
+  editing,
+  onGo,
+  onRename,
+  onRenamed,
+  onDelete,
+}: {
+  lane: TreeLane
+  floor: number
+  editing: boolean
+  onGo: () => void
+  onRename: () => void
+  onRenamed: (title: string) => void
+  onDelete: () => void
+}): ReactElement {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [draft, setDraft] = useState(lane.title)
+  const field = useRef<HTMLInputElement | null>(null)
+  const done = useRef(false)
+  useEffect(() => {
+    if (!editing) return
+    done.current = false
+    setDraft(lane.title)
+    field.current?.focus()
+    field.current?.select()
+  }, [editing, lane.title])
+
+  if (editing) {
+    const finish = (keep: boolean): void => {
+      if (done.current) return
+      done.current = true
+      onRenamed(keep ? draft.trim() : lane.title)
+    }
+    return (
+      <span className="iris-tree__head iris-tree__head--editing" data-iris-hue={hueAttr(lane.hue)}>
+        <input
+          ref={field}
+          className="iris-text iris-tree__rename"
+          type="text"
+          value={draft}
+          maxLength={200}
+          data-control="tree-rename"
+          aria-label={t('treeRenameAria', { title: lane.title })}
+          onChange={event => setDraft(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              finish(true)
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              finish(false)
+            }
+          }}
+          onBlur={() => finish(true)}
+        />
+      </span>
+    )
+  }
+
+  return (
+    <span className="iris-tree__head" data-iris-hue={hueAttr(lane.hue)} data-menu={menuOpen ? '' : undefined}>
+      <button
+        type="button"
+        className="iris-tree__label iris-tree__label--head"
+        data-current={lane.current ? '' : undefined}
+        aria-label={t('treeNodeAria', { title: lane.title, floor })}
+        title={lane.unreadable ? t('treeUnreadable') : lane.title}
+        onClick={onGo}
+        onDoubleClick={event => {
+          event.preventDefault()
+          onRename()
+        }}
+        onKeyDown={event => {
+          if (event.key === 'F2') {
+            event.preventDefault()
+            onRename()
+          }
+        }}
+      >
+        <span className="iris-tree__swatch" aria-hidden="true" />
+        <span className="iris-tree__title">{lane.title}</span>
+        {lane.unreadable ? <span className="iris-tree__badge">!</span> : null}
+      </button>
+      <Menu
+        open={menuOpen}
+        portal
+        align="end"
+        compact
+        anchor={
+          <button
+            type="button"
+            className="iris-tree__more"
+            data-control="tree-lane-actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label={t('treeActionsFor', { title: lane.title })}
+            onClick={() => setMenuOpen(!menuOpen)}
+          >
+            ⋯
+          </button>
+        }
+        items={[
+          { id: 'rename', label: t('treeRename') },
+          { id: 'delete', label: lane.parentLane === undefined ? t('deleteConversation') : t('treeDelete'), danger: true },
+        ]}
+        onSelect={id => {
+          setMenuOpen(false)
+          if (id === 'rename') onRename()
+          else if (id === 'delete') onDelete()
+        }}
+        onClose={() => setMenuOpen(false)}
+      />
+    </span>
+  )
+}
+
+/**
+ * The confirm dialog for deleting one conversation of the lineage.
+ *
+ * It names the conversation and its floor count and says what happens to its
+ * sub-branches: by default they re-attach to its parent (or, for a root, the
+ * first of them becomes the root), and a checkbox takes them along instead.
+ * It says where the reader goes when the conversation being read is among
+ * the ones deleted. Backups are kept either way (owner ruling 5).
+ */
+function BranchDeleteDialog({
+  chatId,
+  viewing,
+  onClose,
+  onConfirm,
+}: {
+  chatId: string
+  viewing: string
+  onClose: () => void
+  onConfirm: (subBranches: 'reattach' | 'delete') => void
+}): ReactElement | null {
+  const tree = useIris(state => state.tree)
+  const [cascade, setCascade] = useState(false)
+  useLanguage()
+  const summary = deleteSummary(tree, chatId)
+  if (summary === undefined) return null
+
+  // Whether the reader is inside what goes, and where they will land.
+  const byId = new Map((tree?.chats ?? []).map(node => [node.chatId, node]))
+  const inSubtree = (id: string): boolean => {
+    const seen = new Set<string>()
+    for (let at: string | undefined = id; at !== undefined && !seen.has(at); at = byId.get(at)?.parentChatId) {
+      if (at === chatId) return true
+      seen.add(at)
+    }
+    return false
+  }
+  const readerGoes = viewing === chatId || (cascade && inSubtree(viewing))
+  const next = summary.parent ?? (cascade ? undefined : summary.promoted)
+  const total = cascade ? summary.descendants + 1 : 1
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={t('treeDeleteTitle', { title: summary.title })}
+      closeLabel={t('close')}
+      className="iris-tree-delete"
+    >
+      <div className="iris-tree-delete__body">
+        <p>{t('treeDeleteFloors', { title: summary.title, floors: summary.floors })}</p>
+        {summary.children === 0 || cascade ? null : summary.parent !== undefined ? (
+          <p>{t('treeDeleteReattach', { n: summary.children, parent: summary.parent.title })}</p>
+        ) : summary.promoted !== undefined ? (
+          <p>{t('treeDeletePromote', { child: summary.promoted.title })}</p>
+        ) : null}
+        {summary.descendants === 0 ? null : (
+          <label className="iris-tree-delete__cascade">
+            <input
+              type="checkbox"
+              checked={cascade}
+              data-control="tree-delete-cascade"
+              onChange={event => setCascade(event.target.checked)}
+            />
+            <span>{t('treeDeleteCascade', { n: summary.descendants, total: summary.descendants + 1 })}</span>
+          </label>
+        )}
+        {readerGoes && next !== undefined ? <p>{t('treeDeleteViewing', { next: next.title })}</p> : null}
+      </div>
+      <div className="iris-tree-delete__actions">
+        <Button variant="ghost" size="sm" onClick={onClose}>{t('cancel')}</Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="iris-tree-delete__go"
+          data-control="tree-delete-confirm"
+          onClick={() => onConfirm(cascade ? 'delete' : 'reattach')}
+        >
+          {total > 1 ? t('treeDeleteConfirmMany', { n: total }) : t('treeDeleteConfirm')}
+        </Button>
+      </div>
+    </Modal>
+  )
 }
 
 /**

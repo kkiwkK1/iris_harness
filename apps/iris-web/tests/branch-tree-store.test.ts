@@ -84,3 +84,63 @@ test('the lineage is read for the open chat, and an answer for a chat already le
   assert.equal(store.getState().tree, tree, 'the stale answer did not replace the tree')
   dispose()
 })
+
+test('deleting a middle branch re-attaches its child; deleting the one being read goes to its parent', async () => {
+  const { store, methods, dispose } = wired()
+  await store.getState().openChat('chat-lamplighter')
+  await store.getState().branchChat('chat-lamplighter', 0)
+  const a = store.getState().chatId ?? ''
+  await store.getState().branchChat(a, 0)
+  const b = store.getState().chatId ?? ''
+  assert.equal(store.getState().chats.find(row => row.chatId === b)?.parentChatId, a)
+  // A newer conversation at the top of the list, so "go to the parent" and
+  // "go to whatever is first" land in different places.
+  await store.getState().branchChat('chat-lamplighter', 0)
+  const newest = store.getState().chatId ?? ''
+  assert.equal(store.getState().chats[0]?.chatId, newest)
+  await store.getState().openChat(b)
+
+  // Not the one on screen: the reader stays; b now hangs off the root.
+  await store.getState().deleteChat(a)
+  assert.equal(store.getState().chatId, b)
+  await store.getState().loadTree(b)
+  const tree = store.getState().tree as ChatTreeView
+  assert.deepEqual(
+    tree.chats.map(node => [node.chatId, node.parentChatId ?? null]).sort(),
+    [['chat-lamplighter', null], [b, 'chat-lamplighter'], [newest, 'chat-lamplighter']].sort(),
+  )
+
+  // The one on screen: to its parent, not to whatever tops the list.
+  await store.getState().deleteChat(b)
+  assert.equal(store.getState().chatId, 'chat-lamplighter')
+  assert.equal(store.getState().view?.chatId, 'chat-lamplighter')
+  assert.ok(methods.includes('chat.delete'))
+  dispose()
+})
+
+test("'delete' takes the subtree, and a reader inside it lands on the deleted branch's parent", async () => {
+  const { store, dispose } = wired()
+  await store.getState().openChat('chat-lamplighter')
+  await store.getState().branchChat('chat-lamplighter', 0)
+  const a = store.getState().chatId ?? ''
+  await store.getState().branchChat(a, 0)
+  const b = store.getState().chatId ?? ''
+  await store.getState().deleteChat(a, { subBranches: 'delete' })
+  const ids = store.getState().chats.map(row => row.chatId)
+  assert.ok(!ids.includes(a) && !ids.includes(b), 'both gone')
+  assert.equal(store.getState().chatId, 'chat-lamplighter', 'the reader was on b, inside what went')
+  dispose()
+})
+
+test('a rename reaches the list, the open view and the tree', async () => {
+  const { store, dispose } = wired()
+  await store.getState().openChat('chat-lamplighter')
+  await store.getState().branchChat('chat-lamplighter', 0)
+  const a = store.getState().chatId ?? ''
+  await store.getState().renameChat(a, '灯塔之后')
+  assert.equal(store.getState().chats.find(row => row.chatId === a)?.title, '灯塔之后')
+  assert.equal(store.getState().view?.title, '灯塔之后')
+  await store.getState().loadTree(a)
+  assert.equal(store.getState().tree?.chats.find(node => node.chatId === a)?.title, '灯塔之后')
+  dispose()
+})

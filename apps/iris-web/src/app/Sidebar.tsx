@@ -48,6 +48,7 @@ import { useLanguage, t } from './i18n/use-language.ts'
 import { chatMeta, since, toBase64 } from './format.ts'
 import { matchesLibraryQuery } from './library-search.ts'
 import { dropIndex, makeWay, moveItem } from './reorder.ts'
+import { laneHues, TRUNK } from './tree-map.ts'
 import { loadChatSort, saveChatSort, type ChatSort } from './sidebar-state.ts'
 import { CARD_FILE_ACCEPT } from './card-files.ts'
 import type { Language } from './i18n/strings.ts'
@@ -222,6 +223,9 @@ export function Sidebar({
   /** Chats grouped under the parent they were branched from, in list order. */
   const childrenOf = (parentChatId: string): ChatSummary[] =>
     chats.filter(row => row.parentChatId === parentChatId)
+  // Each branch's lane colour, the one the tree map draws it in: computed from
+  // the same ids and parent links, so the two views agree without asking.
+  const hues = laneHues(chats)
   const roots = chats.filter(row =>
     row.parentChatId === undefined || !chats.some(other => other.chatId === row.parentChatId))
   /*
@@ -510,6 +514,7 @@ export function Sidebar({
         current={row.chatId === chatId}
         depth={depth}
         branched={depth > 0}
+        hue={hues.get(row.chatId)}
         // Only a root row is dragged. A branch renders under the conversation
         // it left, so its position is derived rather than chosen — a handle on
         // it would offer a move the list would immediately undo.
@@ -955,6 +960,7 @@ function ChatRow({
   current,
   depth = 0,
   branched = false,
+  hue,
   drag,
   onOpen,
   menu,
@@ -966,6 +972,8 @@ function ChatRow({
   depth?: number
   /** Whether the row is a branch, which is marked as such for a reader. */
   branched?: boolean
+  /** The branch's lane colour on the tree map (`laneHues`), worn by its 「↳」 marker. */
+  hue?: number | undefined
   /**
    * Reordering, when this row is one a reader may move.
    *
@@ -1049,7 +1057,15 @@ function ChatRow({
           {drag === undefined ? null : <GripIcon />}
         </span>
         <span className="iris-row__title">
-          {branched ? <span className="iris-row__branch" aria-hidden="true">↳ </span> : null}
+          {branched ? (
+            <span
+              className="iris-row__branch"
+              data-iris-hue={hue === undefined || hue === TRUNK ? undefined : String(hue)}
+              aria-hidden="true"
+            >
+              ↳{' '}
+            </span>
+          ) : null}
           {title}
         </span>
         <span className="iris-row__meta iris-meta">{meta}</span>

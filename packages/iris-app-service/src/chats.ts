@@ -36,7 +36,7 @@ import type { ScopeBackend, Variables } from '@iris/variables'
 
 import { atomicWriteFile } from './atomic.ts'
 import { BackupStore } from './backups.ts'
-import { ChatEntry, createSession, readMeta } from './entry.ts'
+import { ChatEntry, createSession, readMeta, type BranchAt } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
 import { lineFlagsOf } from './line-flags.ts'
@@ -1097,6 +1097,44 @@ export class ChatStore {
   }
 
   /**
+   * Move a conversation to another parent, or make it a root.
+   *
+   * Only the header changes: `iris.parentChatId` and `iris.branchAt`, and
+   * upstream's `chat_metadata.main_chat` beside them, so the file still names
+   * its parent when it is exported to SillyTavern. **`updatedAt` is left
+   * alone** — a delete elsewhere in the family is not activity in this
+   * conversation, and stamping it would reorder the sidebar and thicken the
+   * branch's line on the tree map.
+   *
+   * A conversation that is open is changed in its live entry and saved, so a
+   * later save cannot write the old lineage back. One that is not is changed
+   * on disk by rewriting the header line alone; every floor line stays byte
+   * for byte what it was.
+   * @param chatId - the conversation to move.
+   * @param lineage - the new parent and fork, or `{}` for a root.
+   * @throws {AppError} `not-found` when no such chat is stored.
+   */
+  async relink(chatId: string, lineage: { parent?: { chatId: string, title: string }, branchAt?: BranchAt }): Promise<void> {
+    const live = this.#entries.get(chatId) ?? await this.#opening.get(chatId)?.catch(() => undefined)
+    if (live !== undefined) {
+      applyLineage(live.header, chatId, lineage)
+      await this.save(live)
+      return
+    }
+    const path = fileFor(this.#dir, chatId, '.jsonl')
+    let text: string
+    try {
+      text = await readFile(path, 'utf8')
+    } catch {
+      throw notFound(`no chat "${chatId}"`)
+    }
+    const cut = text.indexOf('\n')
+    const header = JSON.parse(cut < 0 ? text : text.slice(0, cut)) as SillyTavernChatHeader
+    applyLineage(header, chatId, lineage)
+    await atomicWriteFile(path, JSON.stringify(header) + (cut < 0 ? '' : text.slice(cut)))
+  }
+
+  /**
    * Read one chat's header without materializing its log.
    * @param chatId - the conversation.
    * @param onReport - told when the file is there and its header will not
@@ -1227,6 +1265,34 @@ export function seedGreeting(
 export function mainChatOf(header: SillyTavernChatHeader): string | undefined {
   const value = header.chat_metadata['main_chat']
   return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/**
+ * Write a new lineage into a chat header, in place.
+ * @param header - the header to change.
+ * @param chatId - the conversation's id, written into an `iris` block that
+ *   an imported file may not have had.
+ * @param lineage - the new parent and fork; neither for a root.
+ */
+function applyLineage(
+  header: SillyTavernChatHeader,
+  chatId: string,
+  lineage: { parent?: { chatId: string, title: string }, branchAt?: BranchAt },
+): void {
+  const { parentChatId: _parent, branchAt: _branchAt, ...kept } = readMeta(header)
+  header['iris'] = {
+    ...kept,
+    chatId,
+    ...lineage.parent === undefined ? {} : { parentChatId: lineage.parent.chatId },
+    ...lineage.parent === undefined || lineage.branchAt === undefined ? {} : { branchAt: lineage.branchAt },
+  }
+  const metadata = typeof header.chat_metadata === 'object' && header.chat_metadata !== null ? header.chat_metadata : {}
+  // Upstream's own field follows, as `chat.branch` writes it (the parent's
+  // title); a root has none, so a stale name cannot be resolved later onto a
+  // stranger that happens to share the deleted parent's title.
+  if (lineage.parent === undefined) delete metadata['main_chat']
+  else metadata['main_chat'] = lineage.parent.title
+  header.chat_metadata = metadata
 }
 
 /**

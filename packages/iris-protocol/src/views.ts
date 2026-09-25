@@ -555,8 +555,9 @@ export interface ChatTreeNode {
   /** The conversation this one branched from, when it is in the tree. */
   parentChatId?: string
   /**
-   * The parent this conversation names but that is not there any more — deleted,
-   * or never imported. Such a conversation is the root of its own tree.
+   * The parent this conversation names but that is not there any more — its
+   * file removed outside `chat.delete` (which re-attaches a deleted chat's
+   * branches), or never imported. Such a conversation is the root of its own tree.
    */
   detachedFrom?: string
   /** 0 for the root. */
