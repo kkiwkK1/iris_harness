@@ -1240,6 +1240,30 @@ control binds no key: a card's own ESC (V1.5.4's page declares it exits its
 fullscreen) and Iris's escape must not fight over the keyboard, so the
 guaranteed exit is a click.
 
+**Scoped to the card, not to the frame (2026-09-26).** Sandbox plugins
+(`docs/SANDBOX-PLUGINS.md` §5.1, §5.5) live in this same card-script frame, and
+their panel container is a `body` child of it — so hiding the surface from
+outside hid the reader's own plugins along with the card, which the control's
+name («收起卡片界面», collapse the *card's* interface) does not say. Now the
+surface is hidden from outside only when the conversation mounts no sandbox
+plugin (`collapsedSurfaceVisibility`, `app/overlay-surface.ts`) — the original
+mechanism, which needs nothing from the frame. With plugins, the surface stays
+visible and the frame is told (`card:collapse`): it hides every `body` child
+except `[data-iris-plugin-panels]` by the same `visibility` rule, for the same
+reason, and measures its clip from the panel container alone
+(`sandbox/card-collapse.ts`), so outside the plugins' box nothing paints and
+nothing catches a click. Plugin sheets are `<style>` in `head` and keep
+applying; the copies fanned out to message frames were never under the
+collapse. The limit: a card's own `visibility: visible !important` that
+out-specifies the rule, or is inline, can re-show part of the card, and only
+inside the panel container's box, because the clip still removes the rest.
+The dependency, stated: with plugins, the visual hide needs the frame's
+bootstrap to be answering messages; without plugins it needs nothing.
+Tests: `tests/card-collapse.test.ts` (real DOM, the product's own panel and
+style sinks), the re-send on `ready` in `tests/runner-sizing.test.ts`, the
+late-built frame in `tests/card-scripts.test.ts`; acceptance
+`qa/card-collapse-plugin-acceptance.mjs`.
+
 **What it costs.** A card designed against the whole window now lays out
 against the reading column, which is narrower — a full-screen forum gets a
 column, and a card that positions floating chrome near the window's edges

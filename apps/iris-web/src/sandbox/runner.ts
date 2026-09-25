@@ -440,6 +440,18 @@ export interface RunningCard {
    * @param visible - whether it is shown.
    */
   setPluginPanelVisible: (visible: boolean) => void
+  /**
+   * Collapse or restore the card's own interface **inside** the frame, leaving
+   * the sandbox plugins' panel container shown (`card-collapse.ts`).
+   *
+   * Remembered and re-sent on every `ready`, because a frame rebuilt under a
+   * changed network grant is a fresh document with no attribute on it, and a
+   * reader who collapsed the card should not see it pop back on a reload they
+   * did not ask for. Before the first `ready` the value is only remembered: a
+   * message posted to a frame still loading lands nowhere.
+   * @param collapsed - whether the card's interface is collapsed.
+   */
+  setCardCollapsed: (collapsed: boolean) => void
   /** Remove the frame and every listener it needed. Idempotent. */
   dispose: () => void
 }
@@ -592,6 +604,8 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
    * silently, which is the failure mode this whole file is written against.
    */
   let ready = false
+  /** The reader's collapse, for `setCardCollapsed` to re-send on each `ready`. */
+  let cardCollapsed = false
   /** So one protocol fault is one report, not one per message. */
   let reportedUnreadable = false
 
@@ -720,6 +734,8 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
       case 'ready': {
         ready = true
         host.onReady?.()
+        // Only a collapse is re-sent: a fresh document is already uncollapsed.
+        if (cardCollapsed) post({ iris: token, type: 'card:collapse', collapsed: true })
         // The order that matters. Context, then viewport, then the card.
         // The floor rides with the snapshot: both are "which message is this"
         // facts, and a message frame needs its own before any card code runs.
@@ -1061,6 +1077,11 @@ export function runCard(host: RunnerHost, document: Document): RunningCard {
     setPluginPanelVisible: visible => {
       if (disposed) return
       post({ iris: token, type: 'plugin:panel', visible })
+    },
+    setCardCollapsed: collapsed => {
+      if (disposed) return
+      cardCollapsed = collapsed
+      if (ready) post({ iris: token, type: 'card:collapse', collapsed })
     },
     applyNetworkGrant: granted => {
       if (disposed) return

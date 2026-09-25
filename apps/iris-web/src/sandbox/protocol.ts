@@ -142,6 +142,12 @@ export type ToFrame =
   | { iris: string, type: 'plugin:unmount', pluginId: string }
   /** Show or hide the frame's plugin panel container. */
   | { iris: string, type: 'plugin:panel', visible: boolean }
+  /**
+   * The reader's 「收起卡片界面」, for a frame that also holds sandbox plugins:
+   * hide the card's own surfaces and keep the plugin panel container
+   * (`card-collapse.ts`). Sent only to the card-script frame.
+   */
+  | { iris: string, type: 'card:collapse', collapsed: boolean }
 
 /** Frame → host. */
 export type FromFrame =
@@ -550,6 +556,12 @@ export function parseToFrame(token: string, data: unknown): ToFrame | undefined 
       // panel could not be argued out of.
       return typeof message['visible'] === 'boolean'
         ? { iris: token, type: 'plugin:panel', visible: message['visible'] }
+        : undefined
+    case 'card:collapse':
+      // Checked as a boolean for the same reason as `plugin:panel`: a
+      // `collapsed: 'no'` read as truthy would hide a card nobody asked to hide.
+      return typeof message['collapsed'] === 'boolean'
+        ? { iris: token, type: 'card:collapse', collapsed: message['collapsed'] }
         : undefined
     default:
       return undefined
