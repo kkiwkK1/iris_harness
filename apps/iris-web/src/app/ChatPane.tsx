@@ -31,6 +31,11 @@ import { groupByTurn, lastReplyId, swipeTarget, withStream } from './project.ts'
 import { DEFAULT_WINDOW, grow, readingWindow } from './reading-window.ts'
 import { stepReading } from './rail.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+import { useTreeSync } from './TreeMap.tsx'
+import { branchesAt } from './tree-map.ts'
+
+/** How long a floor jumped to is held in place while the rows above it settle. */
+const FLOOR_HOLD_MS = 2500
 
 /**
  * Render the conversation pane.
@@ -50,7 +55,13 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
   const stream = useIris(state => state.stream)
   const chatId = useIris(state => state.chatId)
   const booting = useIris(state => state.booting)
+  const tree = useIris(state => state.tree)
+  const floorJump = useIris(state => state.floorJump)
   const actions = useIrisActions()
+  // The margin's map and the floor badges both read the lineage; it is kept
+  // fresh from here because this pane is mounted whenever a chat is open,
+  // whether or not the margin has room to show the map.
+  useTreeSync()
   // Subscribed so a language switch re-renders the pane's own words.
   useLanguage()
 
@@ -152,6 +163,90 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
     const key = pendingNavigation.current
     if (key !== null && landOnAnchor(key)) pendingNavigation.current = null
   }, [messages, landOnAnchor])
+
+  /*
+   * A jump from the tree map or a floor badge: bring one floor into view.
+   *
+   * The floor may be outside the mounted window, so the window is widened
+   * first and the landing waits for the rows to exist — the same two-step the
+   * turn navigator uses, addressed by floor rather than by turn. The row gets a
+   * short wash so the eye finds it.
+   */
+  const pendingFloor = useRef<{ floor: number, seq: number } | null>(null)
+  /**
+   * The floor a jump landed on, held in place for a short while.
+   *
+   * Measured in the acceptance run: a branch cut at floor 1 of a card
+   * conversation landed, and then the greeting's interface frame above it grew
+   * by ~2200px as it loaded, carrying the floor off screen. So for a moment
+   * after landing, a layout change above re-lands — until the reader scrolls,
+   * clicks or types in the pane, which is theirs to move again.
+   */
+  const heldFloor = useRef<{ floor: number, until: number } | null>(null)
+  const placeFloor = useCallback((floor: number): HTMLElement | undefined => {
+    const node = scroller.current
+    const row = node?.querySelector<HTMLElement>(`[data-floor="${String(floor)}"]`)
+    if (node === null || node === undefined || row === null || row === undefined) return undefined
+    node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - 24
+    pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 64
+    return row
+  }, [])
+  const landOnFloor = useCallback((floor: number): boolean => {
+    const row = placeFloor(floor)
+    if (row === undefined) return false
+    row.setAttribute('data-iris-jumped', '')
+    setTimeout(() => row.removeAttribute('data-iris-jumped'), 1700)
+    heldFloor.current = { floor, until: Date.now() + FLOOR_HOLD_MS }
+    syncActiveAnchor()
+    return true
+  }, [placeFloor, syncActiveAnchor])
+
+  useEffect(() => {
+    const node = scroller.current
+    const column = node?.querySelector('.iris-column')
+    if (node === null || node === undefined || column === null || column === undefined) return
+    const hold = (): void => {
+      const held = heldFloor.current
+      if (held === null) return
+      if (Date.now() > held.until) {
+        heldFloor.current = null
+        return
+      }
+      placeFloor(held.floor)
+    }
+    const release = (): void => { heldFloor.current = null }
+    const resize = new ResizeObserver(hold)
+    resize.observe(column)
+    const inputs = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const
+    for (const kind of inputs) node.addEventListener(kind, release, { passive: true })
+    return () => {
+      resize.disconnect()
+      for (const kind of inputs) node.removeEventListener(kind, release)
+    }
+  }, [chatId, view !== undefined, placeFloor])
+
+  useEffect(() => {
+    if (floorJump === undefined || floorJump.chatId !== chatId || view === undefined) return
+    const index = all.findIndex(message => message.id === floorJump.floor)
+    if (index < 0) {
+      actions.settleFloorJump(floorJump.seq)
+      return
+    }
+    pinned.current = false
+    if (landOnFloor(floorJump.floor)) {
+      actions.settleFloorJump(floorJump.seq)
+      return
+    }
+    pendingFloor.current = { floor: floorJump.floor, seq: floorJump.seq }
+    setShown(current => Math.max(current, all.length - index))
+  }, [floorJump, chatId, view, all, actions, landOnFloor])
+
+  useLayoutEffect(() => {
+    const pending = pendingFloor.current
+    if (pending === null || !landOnFloor(pending.floor)) return
+    pendingFloor.current = null
+    actions.settleFloorJump(pending.seq)
+  }, [messages, landOnFloor, actions])
 
   // Card frames can resize after mounting, without a message or scroll event.
   useEffect(() => {
@@ -276,9 +371,15 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
       onDelete: id => void actions.deleteMessage(id),
       onNotify: text => actions.notify('info', text),
       onExplain: turn => setExplaining({ turn }),
+      onBranch: (id, swipeId) => {
+        if (chatId !== undefined) void actions.branchChat(chatId, id, swipeId)
+      },
+      onOpenBranch: (target, floor) => void actions.jumpToFloor(target, floor),
     }),
-    [actions],
+    [actions, chatId],
   )
+  /** The lineage, when it is this conversation's: the badges read it. */
+  const lineage = chatId !== undefined && tree?.chats.some(node => node.chatId === chatId) === true ? tree : undefined
 
   if (chatId === undefined || view === undefined) {
     return (
@@ -406,6 +507,8 @@ export function ChatPane({ onOpenSettings }: { onOpenSettings: () => void }): Re
                     message={message}
                     canRegenerate={message.id === retryId && !generating}
                     handlers={handlers}
+                    branches={message.streaming === true ? undefined : branchesAt(lineage, chatId, message.id)}
+                    canBranch={!generating}
                   />
                 ))}
               </section>

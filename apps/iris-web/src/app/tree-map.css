@@ -1,0 +1,341 @@
+/*
+ * The branch tree map: under the variables in the margin, and in the
+ * narrow-window overlay. Global `iris-*` names and theme tokens only, to match
+ * the margin it sits in — hairlines, the tertiary ink for words, the accent
+ * for "you are here".
+ */
+
+/* ——— the margin's lower half ——— */
+
+/*
+ * The margin splits vertically: variables on top (the existing scroller), the
+ * map below with its own scroller. The split is a height on the lower half,
+ * set by the divider and remembered per device (`TreeMap` in StatePanel).
+ */
+.iris-aside__tree {
+  flex: 0 0 auto;
+  height: var(--iris-tree-height, 42%);
+  min-height: 96px;
+  max-height: calc(100% - 140px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-aside__treebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 20px 8px 18px;
+}
+
+.iris-aside__treecount {
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-aside__treebody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 24px 12px;
+  box-sizing: border-box;
+}
+
+/*
+ * The divider: a 7px hit area on a hairline. Dragging it moves the split;
+ * the keyboard moves it too (arrow keys), since it is a separator control.
+ */
+.iris-aside__divider {
+  flex: none;
+  height: 7px;
+  margin: -4px 0 -3px;
+  cursor: row-resize;
+  position: relative;
+  z-index: 1;
+  background: none;
+  border: 0;
+  padding: 0;
+  touch-action: none;
+}
+
+.iris-aside__divider::after {
+  content: '';
+  position: absolute;
+  left: 18px;
+  right: 20px;
+  top: 3px;
+  height: var(--iris-hairline);
+  background: transparent;
+  transition: background var(--iris-fast) var(--iris-ease);
+}
+
+.iris-aside__divider:hover::after,
+.iris-aside__divider:focus-visible::after,
+.iris-aside__divider[data-dragging]::after {
+  background: var(--iris-accent-soft);
+}
+
+/* ——— the graph ——— */
+
+.iris-tree {
+  min-width: 0;
+}
+
+.iris-tree__graph {
+  position: relative;
+}
+
+.iris-tree__svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+}
+
+.iris-tree__run,
+.iris-tree__edge {
+  fill: none;
+  stroke: var(--iris-rule-strong);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+}
+
+[data-current] > .iris-tree__run {
+  stroke: var(--iris-accent-soft);
+}
+
+.iris-tree__run--path,
+.iris-tree__edge[data-path] {
+  stroke: var(--iris-accent);
+  stroke-width: 1.8;
+}
+
+.iris-tree__dot {
+  cursor: pointer;
+}
+
+.iris-tree__dot circle {
+  fill: var(--iris-bg-page);
+  stroke: var(--iris-ink-tertiary);
+  stroke-width: 1.2;
+  transition: fill var(--iris-fast) var(--iris-ease);
+}
+
+.iris-tree__dot[data-path] circle {
+  stroke: var(--iris-accent);
+}
+
+.iris-tree__dot:hover circle {
+  fill: var(--iris-accent-wash);
+}
+
+.iris-tree__dot[data-focus] circle {
+  fill: var(--iris-accent);
+  stroke: var(--iris-accent);
+}
+
+.iris-tree__dot[data-focus] .iris-tree__halo {
+  fill: none;
+  stroke: var(--iris-accent-soft);
+  stroke-width: 1;
+}
+
+/* ——— the labels ——— */
+
+.iris-tree__rows {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+}
+
+.iris-tree__row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.iris-tree__label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--iris-ink-tertiary);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+}
+
+.iris-tree__label:hover {
+  color: var(--iris-ink-secondary);
+  background: var(--iris-accent-wash);
+}
+
+.iris-tree__label:focus-visible {
+  outline: var(--iris-hairline) solid var(--iris-accent);
+  outline-offset: 1px;
+}
+
+.iris-tree__row[data-focus] .iris-tree__label {
+  color: var(--iris-ink);
+}
+
+.iris-tree__label--floor {
+  flex: none;
+}
+
+/* A conversation's name at its newest floor: shrinks and clips before the floor number does. */
+.iris-tree__label--head {
+  flex: 0 1 auto;
+  padding-left: 2px;
+}
+
+.iris-tree__label--head[data-current] .iris-tree__title {
+  color: var(--iris-ink-secondary);
+  font-weight: 600;
+}
+
+.iris-tree__label--gap {
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-tree__floor {
+  flex: none;
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-tree__row[data-focus] .iris-tree__floor {
+  color: var(--iris-accent-strong);
+}
+
+/* Never uppercased or letter-spaced: most titles here are Chinese. */
+.iris-tree__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iris-tree__badge {
+  flex: none;
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-tree__badge--fork {
+  color: var(--iris-accent-strong);
+}
+
+.iris-tree__note,
+.iris-tree__empty {
+  padding: 6px 6px 0;
+}
+
+/* ——— the narrow-window overlay ——— */
+
+.iris-tree-dialog {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(78vh, 720px);
+  overflow-y: auto;
+}
+
+/* The masthead control that opens it: only when the margin is not showing. */
+.iris-tree-toggle {
+  display: none;
+}
+
+@media (max-width: 1439.98px) {
+  .iris-tree-toggle {
+    display: inline-flex;
+  }
+}
+
+@media (min-width: 1440px) {
+  /* The margin exists at this width but can be folded or yield to the drawer:
+     the control comes back exactly when the map is not on screen. */
+  .iris-shell:has(.iris-aside[data-iris-aside='shut']) .iris-tree-toggle {
+    display: inline-flex;
+  }
+}
+
+/* ——— the floor badge and the branch controls in a message row ——— */
+
+.iris-msg__forks {
+  margin-top: 6px;
+  padding: 1px 4px;
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  line-height: 1.3;
+  color: var(--iris-accent-strong);
+  background: var(--iris-accent-wash);
+  border: 0;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-msg__forks:hover {
+  background: var(--iris-accent-soft);
+}
+
+.iris-rail__branch {
+  margin-top: 6px;
+  padding: 1px 3px;
+  font: inherit;
+  font-size: var(--iris-meta-size);
+  line-height: 1.2;
+  color: var(--iris-ink-faint);
+  background: none;
+  border: 0;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.iris-rail__branch:hover {
+  color: var(--iris-accent-strong);
+  background: var(--iris-accent-wash);
+}
+
+/* A floor just jumped to from the map: a brief wash, then nothing. */
+.iris-msg[data-iris-jumped] {
+  animation: iris-jumped 1.6s var(--iris-ease);
+}
+
+@keyframes iris-jumped {
+  0% { background: var(--iris-accent-wash); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iris-msg[data-iris-jumped] {
+    animation: none;
+  }
+
+  .iris-tree__dot circle,
+  .iris-aside__divider::after {
+    transition: none;
+  }
+}

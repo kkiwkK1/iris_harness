@@ -22,6 +22,7 @@ import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { isFailure } from '../sandbox/script-run-state.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+import { TreeMapOverlay } from './TreeMap.tsx'
 
 /**
  * Render the masthead.
@@ -46,6 +47,7 @@ export function Masthead({
   const transport = useIris(state => state.transport)
   const origin = useIris(state => state.dataOrigin)
   const runStates = useIris(state => state.runStates)
+  const [treeOpen, setTreeOpen] = useState(false)
   // Subscribed so a language switch re-renders every word the head shows.
   useLanguage()
 
@@ -95,6 +97,24 @@ export function Masthead({
         <ChatTitle />
         <span className="iris-masthead__spacer" />
         {/*
+          The branch map for a window whose margin has yielded (below 1440px,
+          or folded): the same map, as an overlay. CSS decides when it shows
+          (`tree-map.css`), so it appears exactly when the margin's copy does
+          not.
+        */}
+        {view === undefined ? null : (
+          <button
+            type="button"
+            className="iris-act iris-tree-toggle"
+            data-control="tree-map"
+            title={t('treeOpenTitle')}
+            aria-haspopup="dialog"
+            onClick={() => setTreeOpen(true)}
+          >
+            ⑂ {t('treeOpen')}
+          </button>
+        )}
+        {/*
          * `data-control` for the same reason the sidebar tabs carry `data-tab`:
          * this button's only identity was its translated label, so every
          * acceptance script reaching for "Settings" stopped matching the day the
@@ -140,6 +160,7 @@ export function Masthead({
           {' '}{t('seededNoticeSource')} <code>{origin}</code>.
         </p>
       ) : null}
+      <TreeMapOverlay open={treeOpen && view !== undefined} onClose={() => setTreeOpen(false)} />
       {view === undefined ? null : (
         /*
          * 第 N 回 · 模型 · N 个脚本在运行 — the artboards' meta line, plus the

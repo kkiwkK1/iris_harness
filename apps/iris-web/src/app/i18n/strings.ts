@@ -483,6 +483,32 @@ export const en = {
   stateRemovedHead: 'Removed this round',
   stateItems: '{n} items',
   stateSelfHealed: 'self-healed',
+
+  /** The branch tree map, under the variables in the margin, and its narrow-window overlay. */
+  treeHead: 'Branches',
+  treeAria: 'Branch map of this conversation',
+  treeLoading: 'Reading the branches…',
+  /* Shown while the lineage has only the one conversation. */
+  treeSolo: 'No branches yet. “Branch” on any floor starts one; it appears here as its own lane.',
+  treeGap: '{n} floors',
+  treeGapTitle: 'Floors {from}–{to}: nothing branches here. Click to go to floor {from}.',
+  treeNodeAria: '{title}, floor {floor}',
+  treeSwipes: '{n} readings',
+  treeForks: '{n} branches leave here',
+  treeYouAreHere: 'You are here',
+  treeDetached: 'The conversation this came from is no longer here',
+  treeUnreadable: 'This conversation’s file could not be read',
+  /* The masthead control that opens the map when the margin has no room. */
+  treeOpen: 'Branches',
+  treeOpenTitle: 'Show this conversation’s branch map',
+  /** Branching from a floor, in the message row. */
+  branchHere: 'Branch',
+  /* Beside the reading rail: the reading on screen becomes a conversation of its own. */
+  swipeToBranch: 'Turn into branch',
+  /* The ⑂N badge on a floor branches leave from, and the list it opens. */
+  forkBadgeAria: '{n} other branches go on from this floor',
+  forkParent: '{title} (where this came from)',
+  forkSibling: '{title} (sibling)',
   reconnected: 'Reconnected to the Iris host.',
   noticeRepeatAria: 'repeated {n} times',
 
@@ -2409,6 +2435,25 @@ export const zh: Record<StringKey, string> = {
   stateRemovedHead: '本轮移除',
   stateItems: '{n} 项',
   stateSelfHealed: '已自愈',
+  treeHead: '分支',
+  treeAria: '这段对话的分支树图',
+  treeLoading: '正在读取分支…',
+  treeSolo: '还没有分支。在任意一楼点「分支」就能开出一条，它会在这里占一列。',
+  treeGap: '{n} 层',
+  treeGapTitle: '第 {from}–{to} 层：这里没有分叉。点一下跳到第 {from} 层。',
+  treeNodeAria: '{title}，第 {floor} 层',
+  treeSwipes: '{n} 个读法',
+  treeForks: '{n} 条分支从这里分出',
+  treeYouAreHere: '你在这里',
+  treeDetached: '它来自的那段对话已经不在了',
+  treeUnreadable: '这段对话的文件读不出来',
+  treeOpen: '分支',
+  treeOpenTitle: '查看这段对话的分支树图',
+  branchHere: '分支',
+  swipeToBranch: '转成分支',
+  forkBadgeAria: '还有 {n} 条分支从这一楼走下去',
+  forkParent: '{title}（来处）',
+  forkSibling: '{title}（同级）',
   reconnected: '已重新连接到 Iris 宿主。',
   noticeRepeatAria: '重复 {n} 次',
 
