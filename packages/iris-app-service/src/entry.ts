@@ -499,7 +499,22 @@ export class ChatEntry {
    * both change what the newest floor is).
    */
   #macroChat: MacroMessage[] | undefined
+  /**
+   * The chat's one exclusive slot: held by a {@link claim} (pre-turn or manual
+   * compaction) and by a generation from {@link begin} to {@link finish}.
+   */
   #abort: AbortController | undefined
+  /** Whether {@link #abort} is a claim no generation has adopted yet. */
+  #claimed = false
+  /**
+   * Card- and host-initiated requests that are not the turn, in flight.
+   *
+   * `script.generate`, `script.generateRaw` and `sandboxPlugin.define` each
+   * register one for the length of their request, so {@link abort} — Stop, and
+   * a delete or restore — reaches them as well as the turn (owner ruling 4,
+   * 2026-09-25; host DEVIATIONS records it as an upgrade).
+   */
+  readonly #sideCalls = new Set<AbortController>()
   /** Row identities, one per chat-file line, plus one spare for a streaming row. */
   #keys: string[] = []
   #nextKey = 0
@@ -860,7 +875,10 @@ export class ChatEntry {
     }
   }
 
-  /** Whether a turn is in flight. */
+  /**
+   * Whether the chat is claimed: a turn in flight, or a compaction holding the
+   * slot before one (or on its own, for a manual `/compact`).
+   */
   get generating(): boolean {
     return this.#abort !== undefined
   }
@@ -994,12 +1012,19 @@ export class ChatEntry {
   /**
    * Claim the chat for one generation.
    * @param turn - the turn about to be generated.
+   * @param claimed - the signal of the caller's own {@link claim}, to adopt.
    * @returns the signal to hand the driver.
-   * @throws {AppError} `busy` when a turn is already in flight.
+   * @throws {AppError} `busy` when a turn is already in flight, or the chat
+   *   is claimed by someone else.
    */
-  begin(turn: number): AbortSignal {
-    if (this.#abort !== undefined) throw busy('that chat is already generating')
-    this.#abort = new AbortController()
+  begin(turn: number, claimed?: AbortSignal): AbortSignal {
+    // Adopting the caller's own claim is the one way in while the slot is
+    // held: the pre-turn compaction ran under it, and a Stop pressed then has
+    // already aborted this very controller, so the turn starts stopped.
+    const adopting = claimed !== undefined && this.#claimed && this.#abort?.signal === claimed
+    if (this.#abort !== undefined && !adopting) throw busy('that chat is already generating')
+    this.#abort ??= new AbortController()
+    this.#claimed = false
     // The streaming row becomes the newest floor for macros too, exactly as the
     // growing message is the newest line upstream.
     this.#macroChat = undefined
@@ -1010,6 +1035,7 @@ export class ChatEntry {
   /** Release the chat after a generation ends, however it ended. */
   finish(): void {
     this.#abort = undefined
+    this.#claimed = false
     // The settled candidates (or their absence after an abort) change the newest
     // floor's swipe pair; the next expansion must re-walk the log.
     this.#macroChat = undefined
@@ -1021,9 +1047,55 @@ export class ChatEntry {
    * @returns whether there was one.
    */
   abort(): boolean {
-    if (this.#abort === undefined) return false
+    let stopped = false
+    for (const call of this.#sideCalls) {
+      call.abort()
+      stopped = true
+    }
+    this.#sideCalls.clear()
+    if (this.#abort === undefined) return stopped
     this.#abort.abort()
     return true
+  }
+
+  /**
+   * Take the chat's exclusive slot before a turn exists.
+   *
+   * Split from {@link begin} so a pre-turn compaction (a full model call) runs
+   * with the chat already claimed — a second send, `/compact` or any `#idle`
+   * arm is refused `busy`, and Stop reaches the summary through the returned
+   * signal — while `pending` stays unset, so the compaction's own save still
+   * never sees a streaming row. `begin(turn, signal)` adopts the claim; a
+   * claim that no generation adopts must be released.
+   * @returns the claim's signal, and its release.
+   * @throws {AppError} `busy` when the chat is already claimed.
+   */
+  claim(): { signal: AbortSignal, release: () => void } {
+    if (this.#abort !== undefined) throw busy('that chat is already generating')
+    const controller = new AbortController()
+    this.#abort = controller
+    this.#claimed = true
+    return {
+      signal: controller.signal,
+      // A no-op once `begin` has adopted it: the generation's `finish` owns the
+      // slot from then on.
+      release: () => {
+        if (this.#claimed && this.#abort === controller) {
+          this.#abort = undefined
+          this.#claimed = false
+        }
+      },
+    }
+  }
+
+  /**
+   * Register one side request for as long as it runs.
+   * @returns the signal to hand the request, and the call to make when it ends.
+   */
+  sideCall(): { signal: AbortSignal, done: () => void } {
+    const controller = new AbortController()
+    this.#sideCalls.add(controller)
+    return { signal: controller.signal, done: () => { this.#sideCalls.delete(controller) } }
   }
 
   /**

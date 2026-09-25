@@ -875,6 +875,14 @@ export interface TemplateOptions {
   deadlineMs?: number
 }
 
+/** What one compaction did: the floors it folded and the token counts either side. */
+type CompactionOutcome = { floors: number, spanTokens: number, summaryTokens: number }
+
+/** A stop the caller asked for (Stop, a delete, a restore), as fetch and `throwIfAborted` raise it. */
+function isAbortError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'AbortError'
+}
+
 /** The application half of Iris. */
 export class IrisAppService {
   // `scripts` stays optional through the defaulting: it is the one option with
@@ -2401,11 +2409,22 @@ export class IrisAppService {
 
       'chat.compact': async ({ chatId }) => {
         const entry = await this.#idle(chatId, 'compacted')
+        // **Under the chat's claim**, not merely after an idle check: the
+        // summary is a full model call, and between the check and the write a
+        // send could begin and an edit could land on floors the span was
+        // counted from. Claimed, both are refused `busy`, and Stop reaches the
+        // summary through the claim's signal.
+        const claim = entry.claim()
         // Retention zero, which is the harness's manual case: everything but
         // the newest floor. A manual `/compact` is a reader saying "this is too
         // long now", and honouring the automatic tail budget would answer a
         // question they did not ask.
-        const compacted = await this.#compact(entry, 0)
+        let compacted: CompactionOutcome | null
+        try {
+          compacted = await this.#compact(entry, 0, claim.signal)
+        } finally {
+          claim.release()
+        }
         // Announced rather than only returned: a compaction changes what every
         // open view of this conversation says about its capacity, and the
         // caller is not necessarily the only one looking.
@@ -2414,7 +2433,9 @@ export class IrisAppService {
 
       'chat.abort': ({ chatId }) => {
         // Deliberately tolerant of an unknown chat: stopping something that is
-        // not running is the outcome the caller asked for either way.
+        // not running is the outcome the caller asked for either way. Reaches
+        // the turn, a compaction holding the chat's claim, and every side call
+        // in flight (`ChatEntry.abort`; owner ruling 4, host DEVIATIONS).
         chats.cached(chatId)?.abort()
         return Promise.resolve({})
       },
@@ -2777,9 +2798,8 @@ export class IrisAppService {
         // with. Read through the same helper `script.list` answers with, so the
         // two can never describe different sets.
         const scriptNames = (await listAllScripts(characterId)).map(script => script.name)
-        const { pending, plugins } = await this.#defineSandboxPlugin(
-          store, entry, characterId, sentence, replaces, scriptNames,
-        )
+        const { pending, plugins } = await this.#asSideCall(entry, 'sandboxPlugin.define',
+          signal => this.#defineSandboxPlugin(store, entry, characterId, sentence, replaces, scriptNames, signal))
         return {
           pending: sandboxPluginViewOf(pending),
           plugins: plugins.map(sandboxPluginViewOf),
@@ -4446,13 +4466,17 @@ export class IrisAppService {
       'script.generate': async ({ chatId, userInput, systemPrompt, maxHistory }) => {
         const entry = await chats.open(chatId)
         return {
-          text: await this.#sideGenerate(entry, userInput, systemPrompt, maxHistory),
+          text: await this.#asSideCall(entry, 'script.generate',
+            signal => this.#sideGenerate(entry, userInput, systemPrompt, maxHistory, signal)),
         }
       },
 
       'script.generateRaw': async ({ chatId, prompt, systemPrompt }) => {
         const entry = await chats.open(chatId)
-        return { text: await this.#generateRaw(entry, prompt, systemPrompt) }
+        return {
+          text: await this.#asSideCall(entry, 'script.generateRaw',
+            signal => this.#generateRaw(entry, prompt, systemPrompt, signal)),
+        }
       },
 
       /**
@@ -5167,6 +5191,38 @@ export class IrisAppService {
   }
 
   /**
+   * Run one side request under the chat's side-call registry.
+   *
+   * **Stop reaches it** (owner ruling 4, 2026-09-25): `chat.abort`, and a
+   * delete or restore, call `ChatEntry.abort`, which aborts every registered
+   * side call as well as the turn. Upstream's Stop button does not reach a
+   * card's `generate`/`generateRaw` — TH has its own `stopGenerationById` for
+   * that — so this is a recorded upgrade (host DEVIATIONS). What the provider
+   * reported before the stop is still billed: `#stream`'s `finally` files the
+   * side usage whatever ended the stream.
+   *
+   * A stopped call is refused by name rather than answered with the partial
+   * text. A card that parses its reply would otherwise read half a reply as a
+   * whole one.
+   * @param entry - the conversation the request is billed to.
+   * @param caller - the RPC method, for the refusal.
+   * @param run - the request, handed the call's signal.
+   * @returns what the request returned.
+   * @throws {AppError} `provider-error` when the call was stopped.
+   */
+  async #asSideCall<T>(entry: ChatEntry, caller: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const call = entry.sideCall()
+    try {
+      return await run(call.signal)
+    } catch (error: unknown) {
+      if (!call.signal.aborted || !isAbortError(error)) throw error
+      throw new AppError('provider-error', `${caller} was stopped before it finished (Stop, or the conversation was deleted or restored)`)
+    } finally {
+      call.done()
+    }
+  }
+
+  /**
    * What one conversation's next request may spend.
    *
    * The same resolution the assembler runs — {@link resolveWindow}: the
@@ -5402,9 +5458,23 @@ export class IrisAppService {
     // summarization call on its way to being refused, and before
     // `entry.begin(turn)` so the compaction's own save is not competing with a
     // generation the entry already believes is running.
-    await this.#autoCompact(entry)
+    //
+    // **But under the chat's claim**, taken here: claiming and opening the
+    // streaming row are two acts (`ChatEntry.claim` / `begin`). Unclaimed, the
+    // summary call was a window in which a second send passed validation and
+    // ran a summary of its own, `/compact` and every `#idle` arm passed, and
+    // Stop found nothing to stop. The claim closes it; `begin` adopts it, so a
+    // Stop pressed during the summary leaves the turn starting already
+    // stopped, and `#stream` sends nothing on an aborted signal.
+    const claim = entry.claim()
+    try {
+      await this.#autoCompact(entry, claim.signal)
+    } catch (error: unknown) {
+      claim.release()
+      throw error
+    }
 
-    const signal = entry.begin(turn)
+    const signal = entry.begin(turn, claim.signal)
     // A continue's buffer opens on the text being continued, because the deltas
     // that follow are only the new words: painting them over the row without
     // the seed would collapse the floor to its tail while streaming. The
@@ -6563,7 +6633,7 @@ export class IrisAppService {
    * @returns the finished text.
    * @throws {AppError} `provider-error` when the stream ends in failure.
    */
-  async #generateRaw(entry: ChatEntry, prompt: string, systemPrompt?: string): Promise<string> {
+  async #generateRaw(entry: ChatEntry, prompt: string, systemPrompt?: string, signal?: AbortSignal): Promise<string> {
     const settings = this.#options.settings.get(entry.chatId)
     const sampling = samplingOf(settings)
     const assembler = new BlockAssembler()
@@ -6576,6 +6646,7 @@ export class IrisAppService {
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...sampling === undefined ? {} : { sampling },
+      ...signal === undefined ? {} : { signal },
       // No `entry`, for the reasons this method's doc gives, but a trace target
       // all the same: this request goes to the same provider on the same route
       // and its prefix competes for the same cache, so a chat whose card fires
@@ -6635,6 +6706,7 @@ export class IrisAppService {
     userInput: string,
     systemPrompt?: string,
     maxHistory?: number,
+    signal?: AbortSignal,
   ): Promise<string> {
     const settings = this.#options.settings.get(entry.chatId)
     const count = (text: string): number => this.#counter.count(text)
@@ -6706,6 +6778,7 @@ export class IrisAppService {
       ...settings.temperature === undefined ? {} : { temperature: settings.temperature },
       ...settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens },
       ...sampling === undefined ? {} : { sampling },
+      ...signal === undefined ? {} : { signal },
       // The layout the driver would have attached, built here because this path
       // assembles its own request rather than going through the driver. A card
       // that passed its own `systemPrompt` replaced the assembled string, so the
@@ -6787,6 +6860,7 @@ export class IrisAppService {
     entry: ChatEntry,
     span: readonly HistoryEntry[],
     contributions: readonly Contribution[],
+    signal?: AbortSignal,
   ): Promise<string> {
     const settings = this.#options.settings.get(entry.chatId)
     // The system slot only. Assembled against an empty conversation because
@@ -6800,7 +6874,7 @@ export class IrisAppService {
     }).system
 
     const assembler = new BlockAssembler()
-    for await (const chunk of this.#stream({
+    const stream = this.#stream({
       provider: settings.provider,
       model: settings.model,
       ...system === '' ? {} : { system },
@@ -6817,6 +6891,8 @@ export class IrisAppService {
         }),
       ],
       maxTokens: SUMMARY_MAX_TOKENS,
+      // The chat's claim: Stop during a compaction stops the summary.
+      ...signal === undefined ? {} : { signal },
     },
     // No `entry` — see this method's doc.
     undefined,
@@ -6827,8 +6903,12 @@ export class IrisAppService {
     // turn here rather than a theoretical one.
     { chatId: entry.chatId, kind: 'compaction', caller: 'host.compaction', turn: -1 },
     // The bill, on the conversation whose history was folded.
-    { entry, caller: 'host.compaction', source: 'compaction' })) {
-      assembler.push(chunk)
+    { entry, caller: 'host.compaction', source: 'compaction' })
+    try {
+      for await (const chunk of stream) assembler.push(chunk)
+    } catch (error: unknown) {
+      if (!isAbortError(error)) throw error
+      throw new AppError('provider-error', 'the summary was stopped before it finished; nothing was compacted')
     }
 
     const finish = assembler.finish
@@ -6866,7 +6946,8 @@ export class IrisAppService {
   async #compact(
     entry: ChatEntry,
     retainTokens: number,
-  ): Promise<{ floors: number, spanTokens: number, summaryTokens: number } | null> {
+    signal?: AbortSignal,
+  ): Promise<CompactionOutcome | null> {
     const count = (text: string): number => this.#counter.count(text)
     const previous = readCompaction(entry.header)
     const effective = this.#history(entry, entry.session)
@@ -6876,7 +6957,7 @@ export class IrisAppService {
     const span = effective.slice(0, keepFrom)
     const spanTokens = historyTokens(span, count)
     const contributions = await this.#contributions(entry, entry.session, count, false)
-    const summary = await this.#summarize(entry, span, contributions)
+    const summary = await this.#summarize(entry, span, contributions, signal)
     if (summary === '') {
       throw new AppError('provider-error', 'the summarization produced no text to keep')
     }
@@ -6926,7 +7007,7 @@ export class IrisAppService {
    * to refuse the turn.
    * @param entry - the conversation about to generate.
    */
-  async #autoCompact(entry: ChatEntry): Promise<void> {
+  async #autoCompact(entry: ChatEntry, signal?: AbortSignal): Promise<void> {
     const budget = this.#chatBudget(entry.chatId)
     const spec = compactionSpec(budget.context - budget.reserve)
     if (spec === null) return
@@ -6934,7 +7015,7 @@ export class IrisAppService {
     const recorded = latest < 0 ? undefined : entry.itemizations.get(latest)
     if (recorded === undefined || recorded.tokens < spec.thresholdTokens) return
     try {
-      const outcome = await this.#compact(entry, spec.retainTokens)
+      const outcome = await this.#compact(entry, spec.retainTokens, signal)
       if (outcome === null) return
       this.#report(
         `compaction folded ${String(outcome.floors)} floor(s) into a summary `
@@ -6947,8 +7028,9 @@ export class IrisAppService {
       // Reported beside the successes rather than dropped. Copying the
       // harness's "log and continue the turn" is behaviour parity; a failure
       // that says nothing is indistinguishable from a threshold that is never
-      // reached, and those two send a reader to opposite places.
-      this.#report(error, { kind: 'prompt', grade: 'fault', chatId: entry.chatId })
+      // reached, and those two send a reader to opposite places. A Stop
+      // pressed during the summary is the user's own decision: a note.
+      this.#report(error, { kind: 'prompt', grade: signal?.aborted === true ? 'note' : 'fault', chatId: entry.chatId })
     }
   }
 
@@ -7463,6 +7545,11 @@ export class IrisAppService {
     let reasoningClosed = false
     let lastChunkAt: number | undefined
     try {
+      // **Nothing goes out on a signal that is already stopped.** A Stop that
+      // landed while the turn's pre-turn compaction held the claim, or before a
+      // side call reached here, is honoured without spending a request; it
+      // surfaces as the same `AbortError` a stop mid-stream does.
+      request.signal?.throwIfAborted()
       for await (const chunk of this.#options.stream(request)) {
         lastChunkAt = Date.now()
         if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
@@ -7841,6 +7928,7 @@ export class IrisAppService {
     sentence: string,
     replaces: string | undefined,
     scriptNames: readonly string[],
+    signal?: AbortSignal,
   ): Promise<{ pending: SandboxPluginRecord, plugins: SandboxPluginRecord[] }> {
     const chatId = entry.chatId
     const where = { chatId, characterId }
@@ -7945,6 +8033,7 @@ export class IrisAppService {
          * flag and a hand-maintained list of endpoint names would be a guess.
          */
         tools: [sandboxPluginTool()],
+        ...signal === undefined ? {} : { signal },
       },
       // No `entry`: this prompt is the host's, so none of the card author's
       // templates may evaluate in it and the turn's calibration must not move.
