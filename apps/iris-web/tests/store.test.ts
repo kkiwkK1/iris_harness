@@ -13,6 +13,7 @@ import {
   type Notice,
 } from '../src/client/store.ts'
 import type { ChatView, IrisClient, IrisEvent } from '@iris/protocol'
+import type { FrameBinding } from '../src/client/card-gateway.ts'
 import { createFakeClient } from '@iris/client-fake'
 
 import { consentState, interfacesMayBuild } from '../src/sandbox/consent.ts'
@@ -68,6 +69,21 @@ function openedStore(): {
   const { store, dispose } = createIrisStore(stub.client, TEST_SOURCE)
   store.setState({ chatId: 'c1', view: { chatId: 'c1', title: 'A scene', messages: [] } })
   return { store, push: stub.push, setConnected: stub.setConnected, dispose }
+}
+
+/**
+ * A frame's binding, as a frame host would capture it when building the run.
+ * @param overrides - the fields a test varies.
+ * @returns the binding.
+ */
+function bound(overrides: {
+  kind?: FrameBinding['kind']
+  chatId?: string
+  characterId?: string
+  runId?: string | undefined
+} = {}): FrameBinding {
+  const { runId, ...rest } = overrides
+  return { kind: 'script', chatId: 'c1', characterId: 'aria', ...rest, ...runId === undefined ? {} : { runId } }
 }
 
 /** Stated rather than defaulted, so a test never silently claims a transport. */
@@ -426,7 +442,7 @@ test('a card action not on the allowlist is refused by the shell, by name', () =
 
   return store
     .getState()
-    .runCardAction('deleteAllChats', {})
+    .runCardAction('deleteAllChats', {}, bound())
     .then(
       () => assert.fail('an unlisted action should not reach the wire'),
       (error: unknown) => {
@@ -463,7 +479,7 @@ test('an allowed card action reaches its wire method with the chat attached', as
   const { store, dispose } = createIrisStore(client, TEST_SOURCE)
   store.setState({ chatId: 'c1' })
 
-  await store.getState().runCardAction('saveMetadata', { metadata: { a: 1 } })
+  await store.getState().runCardAction('saveMetadata', { metadata: { a: 1 } }, bound())
 
   assert.deepEqual(seen, [{ method: 'script.saveMetadata', params: { chatId: 'c1', metadata: { a: 1 } } }])
   dispose()
@@ -1239,12 +1255,14 @@ test('an injection carries the run it belongs to, and only that call does', asyn
    * card action that leaves something behind for a run to own.
    */
   const scope = recordingStore()
-  actionsOf(scope.store).beginCardRun()
+  const minted = actionsOf(scope.store).beginCardRun()
   const runId = scope.store.getState().cardRun?.runId
   assert.equal(runId, 'c1:1', 'the readable form is ${chatId}:${generation}')
+  assert.equal(minted, runId, 'beginCardRun hands the frame host the id it minted')
+  const binding = bound({ runId: minted })
 
-  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
-  await actionsOf(scope.store).runCardAction('saveChat', {})
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' }, binding)
+  await actionsOf(scope.store).runCardAction('saveChat', {}, binding)
 
   const injection = scope.calls.find(it => it.method === 'script.setExtensionPrompt')
   assert.equal((injection?.params as Record<string, unknown>)['runId'], runId)
@@ -1261,9 +1279,8 @@ test('ending a run reports it once, with the id the injection carried', async ()
    * reports a second sweep of nothing.
    */
   const scope = recordingStore()
-  actionsOf(scope.store).beginCardRun()
-  const runId = scope.store.getState().cardRun?.runId
-  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
+  const runId = actionsOf(scope.store).beginCardRun()
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' }, bound({ runId }))
 
   await actionsOf(scope.store).endCardRun()
   await actionsOf(scope.store).endCardRun()
@@ -1359,21 +1376,189 @@ test('a run ends against its own chat, not the one now open', async () => {
   scope.dispose()
 })
 
-test('an injection uses the run’s id even after the open chat has moved on', async () => {
+test('an injection uses the run’s id the frame was bound to, not the store’s at call time', async () => {
   /*
-   * The same hazard on the other side of the pair. `runCardAction` sends
-   * `chatId` from current state — correct, because a card's call is about the
-   * chat it is running in — but the **run id** must stay the one minted when
-   * the run began, or an injection would be filed under a run that never
-   * existed and nothing would ever clear it.
+   * The run id is the **binding's** — minted when the frame's run began and
+   * handed to the frame host — not whatever `cardRun` holds when the call
+   * lands. Read at call time, an injection could be filed under a run that
+   * never owned the frame.
+   *
+   * Restated from "even after the open chat has moved on": that version sent
+   * the call into the chat that had just opened, which is the defect the
+   * binding exists to remove. A frame whose chat has moved on is now refused;
+   * see the test below.
    */
   const scope = recordingStore()
-  actionsOf(scope.store).beginCardRun()
-  scope.store.setState({ chatId: 'c2' })
-  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' })
+  const runId = actionsOf(scope.store).beginCardRun()
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' }, bound({ runId }))
 
   const injection = scope.calls.find(it => it.method === 'script.setExtensionPrompt')
   assert.equal((injection?.params as Record<string, unknown>)['runId'], 'c1:1')
+  scope.dispose()
+})
+
+test('an old frame’s call after openChat(B) never reaches the host with chat B', async () => {
+  /*
+   * **The switch window.** The store moves to the next chat in `openChat`; the
+   * frame that was built for the previous one is disposed later, in a React
+   * cleanup. A call it posts in between used to read `get().chatId` and land
+   * in the chat that had just opened — a setVariables written into the wrong
+   * conversation, a setExtensionPrompt stamped with chat A's run in chat B.
+   *
+   * Now the call carries the frame's binding, and a binding whose chat is no
+   * longer open is refused by name: not sent to B, and not quietly sent to A
+   * either, where no frame is left alive to own what it wrote.
+   */
+  const scope = recordingStore()
+  const runId = actionsOf(scope.store).beginCardRun()
+  const old = bound({ runId })
+  await actionsOf(scope.store).openChat('c2')
+  const before = scope.calls.length
+
+  const attempts: [string, Record<string, unknown>][] = [
+    ['setVariables', { variables: { hp: 1 }, type: 'chat' }],
+    ['setExtensionPrompt', { key: 'k', value: 'v' }],
+    ['generate', { chatId: 'c1', user_input: 'hi' }],
+    ['composerDraft', { text: 'typed into the wrong chat' }],
+  ]
+  for (const [method, params] of attempts) {
+    await actionsOf(scope.store).runCardAction(method, params, old).then(
+      () => assert.fail(`${method} from the old frame went through`),
+      (error: unknown) => {
+        assert.match(String(error), new RegExp(`${method} was refused`))
+        assert.match(String(error), /built for chat c1, and chat c2 is open now/)
+      },
+    )
+  }
+  await actionsOf(scope.store).runSlash('/echo hi', undefined, old).then(
+    () => assert.fail('the old frame’s slash reached the wire'),
+    (error: unknown) => assert.match(String(error), /triggerSlash was refused/),
+  )
+
+  assert.deepEqual(scope.calls.slice(before), [], 'a stale frame’s call was sent')
+  // Refused on the record as well as to the card.
+  assert.match(scope.store.getState().notice?.text ?? '', /was refused/)
+  scope.dispose()
+})
+
+test('a frame-supplied chatId is refused, not overwritten and not obeyed', async () => {
+  /*
+   * The frame is the untrusted side. Its params used to be spread **after** the
+   * shell's chat, so a frame naming another conversation's id wrote there. A
+   * bare reorder would silently overwrite it instead — which turns a stale
+   * frame's `generate` into a write to whichever chat is open. Refusing names
+   * what happened.
+   */
+  const scope = recordingStore()
+  const before = scope.calls.length
+  await actionsOf(scope.store).runCardAction('setVariables', {
+    variables: { hp: 1 },
+    type: 'chat',
+    chatId: 'someone-elses-chat',
+  }, bound()).then(
+    () => assert.fail('a frame-supplied chatId was forwarded'),
+    (error: unknown) => {
+      assert.match(String(error), /setVariables was refused: the frame sent chatId "someone-elses-chat"/)
+      assert.match(String(error), /belongs to chatId "c1"/)
+    },
+  )
+  assert.deepEqual(scope.calls.slice(before), [])
+  scope.dispose()
+})
+
+test('a frame-supplied runId is refused, so a frame cannot adopt another run’s injections', async () => {
+  const scope = recordingStore()
+  const runId = actionsOf(scope.store).beginCardRun()
+  const before = scope.calls.length
+  await actionsOf(scope.store).runCardAction(
+    'setExtensionPrompt',
+    { key: 'k', value: 'v', runId: 'c9:99' },
+    bound({ runId }),
+  ).then(
+    () => assert.fail('a frame-supplied runId was forwarded'),
+    (error: unknown) => assert.match(String(error), /the frame sent runId "c9:99", but it belongs to runId "c1:1"/),
+  )
+  // An interface frame has no run of its own: naming its chat's live run is
+  // the value the shell would stamp anyway, and any other run is refused.
+  await actionsOf(scope.store).runCardAction(
+    'setExtensionPrompt',
+    { key: 'k', value: 'v', runId: 'c1:1' },
+    bound({ kind: 'interface' }),
+  )
+  await actionsOf(scope.store).runCardAction(
+    'setExtensionPrompt',
+    { key: 'k', value: 'v', runId: 'c0:7' },
+    bound({ kind: 'interface' }),
+  ).then(
+    () => assert.fail('an interface frame naming another run was forwarded'),
+    (error: unknown) => assert.match(String(error), /the frame sent runId "c0:7"/),
+  )
+  const sent = scope.calls.slice(before).filter(it => it.method === 'script.setExtensionPrompt')
+  assert.equal(sent.length, 1, 'only the matching call went out')
+  assert.equal((sent[0]?.params as Record<string, unknown>)['runId'], 'c1:1')
+  scope.dispose()
+})
+
+test('an interface frame’s injection belongs to its own chat’s script run, never another chat’s', async () => {
+  /*
+   * Interface frames are built per message and carry no run; their injection
+   * has always been owned by the chat's script run, so `runEnded` clears it.
+   * That is kept — but only for a run of the **same** chat.
+   */
+  const scope = recordingStore()
+  actionsOf(scope.store).beginCardRun()
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' }, bound({ kind: 'interface' }))
+  const injection = scope.calls.find(it => it.method === 'script.setExtensionPrompt')
+  assert.equal((injection?.params as Record<string, unknown>)['runId'], 'c1:1')
+  scope.dispose()
+})
+
+test('a script frame whose run has ended is refused, even in the same chat', async () => {
+  const scope = recordingStore()
+  const runId = actionsOf(scope.store).beginCardRun()
+  const old = bound({ runId })
+  await actionsOf(scope.store).endCardRun()
+  actionsOf(scope.store).beginCardRun()
+  const before = scope.calls.length
+  await actionsOf(scope.store).runCardAction('setExtensionPrompt', { key: 'k', value: 'v' }, old).then(
+    () => assert.fail('an ended run’s frame injected'),
+    (error: unknown) => assert.match(String(error), /belongs to run c1:1, which has ended/),
+  )
+  assert.deepEqual(scope.calls.slice(before), [])
+  scope.dispose()
+})
+
+test('generate from a frame whose snapshot chat is the bound chat still works', async () => {
+  /*
+   * The one legitimate frame-supplied chatId: TH `generate`/`generateRaw` send
+   * their snapshot's chat. That is the bound chat, so it matches and the call
+   * goes out — to that chat, with the binding's value stamped last.
+   */
+  const scope = recordingStore()
+  const runId = actionsOf(scope.store).beginCardRun()
+  await actionsOf(scope.store).runCardAction('generate', { chatId: 'c1', user_input: 'hi' }, bound({ runId }))
+  await actionsOf(scope.store).runCardAction('generateRaw', { chatId: 'c1', ordered_prompts: [] }, bound({ kind: 'interface' }))
+  const generate = scope.calls.find(it => it.method === 'script.generate')
+  assert.deepEqual(generate?.params, { chatId: 'c1', user_input: 'hi' })
+  const raw = scope.calls.find(it => it.method === 'script.generateRaw')
+  assert.equal((raw?.params as Record<string, unknown>)['chatId'], 'c1')
+  scope.dispose()
+})
+
+test('a frame’s settings and console lines are filed under the frame’s own card and chat', async () => {
+  /*
+   * Read at call time, a settings post landing after a switch wrote card A's
+   * whole partition over card B's, and a console line was filed under B's chat.
+   */
+  const scope = recordingStore()
+  scope.store.setState({ chatId: 'c2', view: { chatId: 'c2', title: 'B', messages: [], characterId: 'bea' } })
+  const old = bound({ chatId: 'c1', characterId: 'aria' })
+  await actionsOf(scope.store).saveCardExtensionSettings({ seen: true }, old)
+  await actionsOf(scope.store).reportCardConsole('log', 'log: hi', 0, undefined, old)
+  const settings = scope.calls.find(it => it.method === 'script.setExtensionSettings')
+  assert.deepEqual(settings?.params, { characterId: 'aria', settings: { seen: true } })
+  const report = scope.calls.find(it => it.method === 'script.report')
+  assert.equal((report?.params as Record<string, unknown>)['chatId'], 'c1')
   scope.dispose()
 })
 test('nothing is reported as dropped until something actually is', () => {
@@ -1732,7 +1917,7 @@ test('a script switched off in the panel reaches the card page’s own copy', as
 })
 
 // —— family④: lorebook / worldbook ——
-test('a character rebind is addressed to the open card, whatever the frame sent', async () => {
+test('a character rebind is addressed to the frame’s own card, and a frame naming another is refused', async () => {
   /*
    * `worldbook.setCharBooks` takes a `characterId`, and the frame is the
    * untrusted side: a card that supplied one could rewrite the bindings of a
@@ -1742,9 +1927,12 @@ test('a character rebind is addressed to the open card, whatever the frame sent'
    * the same division `runId` above is filled in under.
    *
    * The frame's own value is sent here **on purpose**: the assertion is not that
-   * a well-behaved frame is passed through, it is that a misbehaving one is
-   * overridden. That depends on the spread order, which is a one-character edit
-   * away from being wrong and has nothing else watching it.
+   * a well-behaved frame is passed through, it is that a misbehaving one does
+   * not get its way. It used to be *overridden* by spread order; it is now
+   * **refused by name** (`client/card-gateway.ts`), because silently replacing
+   * a frame's value and sending the call anyway is how a stale frame's write
+   * reaches a conversation nobody asked it to touch. The well-behaved call
+   * below still carries the frame's own card, stamped last from the binding.
    */
   const scope = recordingStore()
   scope.store.setState({
@@ -1754,8 +1942,13 @@ test('a character rebind is addressed to the open card, whatever the frame sent'
   await actionsOf(scope.store).runCardAction('rebindCharWorldbooks', {
     names: ['Extra'],
     characterId: 'someone-else',
-  })
+  }, bound()).then(
+    () => assert.fail('a frame-supplied characterId was forwarded'),
+    (error: unknown) => assert.match(String(error), /the frame sent characterId "someone-else", but it belongs to characterId "aria"/),
+  )
+  assert.equal(scope.calls.some(it => it.method === 'worldbook.setCharBooks'), false)
 
+  await actionsOf(scope.store).runCardAction('rebindCharWorldbooks', { names: ['Extra'] }, bound())
   const call = scope.calls.find(it => it.method === 'worldbook.setCharBooks')
   assert.deepEqual(call?.params, { chatId: 'c1', names: ['Extra'], characterId: 'aria' })
   scope.dispose()

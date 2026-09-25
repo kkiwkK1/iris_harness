@@ -64,6 +64,7 @@ import { asRpcError, describeError, isHostError } from './errors.ts'
 export type UserScriptDraft = RpcRequest<'scriptLibrary.save'>['script']
 import { inFlight, requestKey } from './in-flight.ts'
 import { isShellAction, wireMethodFor } from '../sandbox/card-api.ts'
+import { shapeCardCall, staleBindingReason, type FrameBinding, type LiveScope } from './card-gateway.ts'
 import { draftThroughComposer, sendThroughComposer } from '../app/composer-bus.ts'
 import { loadAutoOpenChat } from '../theme/theme.ts'
 import { consentState, type ConsentState } from '../sandbox/consent.ts'
@@ -1043,8 +1044,13 @@ export interface IrisActions {
    * permission prompt becomes something people dismiss without reading.
    */
   answerScriptsAllowed(allowed: boolean): Promise<void>
-  /** Record a frame-level report for this card, once. */
-  beginCardRun(): void
+  /**
+   * Start a new card run: date the reports from here and mint the run's id.
+   * @returns the minted run id, so the frame host can bind the frame it is
+   *   about to build to exactly this run (`FrameBinding.runId`); undefined when
+   *   no chat is open.
+   */
+  beginCardRun(): string | undefined
   /**
    * Tell the host the open card run is over, so its injections go.
    *
@@ -1108,8 +1114,17 @@ export interface IrisActions {
    * @param message - the bounded summary the frame produced.
    * @param at - the frame's clock, in epoch milliseconds.
    * @param scriptId - the last `run` message's id, when the frame knew one.
+   * @param binding - the frame that printed it. The line is filed under the
+   *   frame's own chat, not the open one: a line printed in the switch window
+   *   belongs to the conversation whose card printed it.
    */
-  reportCardConsole(level: 'log' | 'info' | 'warn' | 'error', message: string, at: number, scriptId: string | undefined): Promise<void>
+  reportCardConsole(
+    level: 'log' | 'info' | 'warn' | 'error',
+    message: string,
+    at: number,
+    scriptId: string | undefined,
+    binding: FrameBinding,
+  ): Promise<void>
   /**
    * File a sandbox plugin's named failure with the host.
    *
@@ -1123,8 +1138,10 @@ export interface IrisActions {
    * @param message - the sentence, already carrying the plugin id and the state.
    * @param grade - `fault` for a mount that failed, `note` for a plugin that is
    *   up and merely untidy.
+   * @param binding - the frame the plugin runs in, whose chat the row is filed
+   *   under; absent for a shell-side verdict, which names the open chat.
    */
-  reportSandboxPlugin(message: string, grade: 'fault' | 'note'): Promise<void>
+  reportSandboxPlugin(message: string, grade: 'fault' | 'note', binding?: FrameBinding): Promise<void>
   /** Replace what the running scripts are reported to be doing. */
   setRunStates(states: readonly ScriptRunState[]): void
   /**
@@ -1257,8 +1274,11 @@ export interface IrisActions {
    * install-detection shape `extensionSettings.someKey = …` included — reads
    * back the same way it does upstream, rather than evaporating with the
    * snapshot.
+   * @param binding - the frame that reported it. The partition is written under
+   *   the frame's own card, never the open chat's: read at call time, a post
+   *   landing after a switch wrote card A's partition over card B's.
    */
-  saveCardExtensionSettings(settings: Record<string, unknown>): Promise<void>
+  saveCardExtensionSettings(settings: Record<string, unknown>, binding: FrameBinding): Promise<void>
   /**
    * One script's body, or undefined when the host will not give one.
    *
@@ -1320,8 +1340,13 @@ export interface IrisActions {
    * The string is passed through untouched. Splitting it needs upstream's escape
    * rule, which lives host-side; a second copy in the browser would agree in
    * every test and disagree the first time a user types a `|`.
+   * @param command - the slash line.
+   * @param pluginRevision - the plugin revision fence, when a frame sent one.
+   * @param binding - the frame that sent it. Absent only for the reader's own
+   *   composer, which means the open chat; a frame's slash runs in the frame's
+   *   chat and is refused once that chat is no longer open.
    */
-  runSlash(command: string, pluginRevision?: number): Promise<string>
+  runSlash(command: string, pluginRevision?: number, binding?: FrameBinding): Promise<string>
   /**
    * Perform one card action.
    *
@@ -1329,8 +1354,15 @@ export interface IrisActions {
    * facade from the same list, but that is convenience — a card reaching the
    * shell with a name that is not on it is refused regardless of what the frame
    * thought it was offering.
+   *
+   * Addressed by the frame's **binding**, never by live state: the chat, card
+   * and run come from what the frame was built for, are spread last, and a frame
+   * param naming a different one is refused by name (`client/card-gateway.ts`).
+   * @param method - the card-facing name.
+   * @param params - the frame's params, untrusted.
+   * @param binding - the frame that sent it, captured when its host built it.
    */
-  runCardAction(method: string, params: unknown): Promise<unknown>
+  runCardAction(method: string, params: unknown, binding: FrameBinding): Promise<unknown>
   loadConnections(): Promise<void>
   /**
    * Choose — or clear — which saved provider and model write sandbox plugins.
@@ -2878,7 +2910,7 @@ export function createIrisStore(
         })
       },
 
-      beginCardRun(): void {
+      beginCardRun(): string | undefined {
         // Monotonic rather than reset per card: two runs must never share a
         // number, and a card's reports are cleared on switch anyway. A counter
         // that restarted could make a stale entry look current again.
@@ -2890,21 +2922,23 @@ export function createIrisStore(
          * second place deciding when a run begins is a second answer to which
          * run an injection belongs to.
          */
-        set({
-          cardRunGeneration: generation,
-          cardRun: chatId === undefined
-            ? undefined
-            : { runId: `${chatId}:${String(generation)}`, chatId },
-        })
+        const cardRun = chatId === undefined
+          ? undefined
+          : { runId: `${chatId}:${String(generation)}`, chatId }
+        set({ cardRunGeneration: generation, cardRun })
+        return cardRun?.runId
       },
 
-      async reportCardConsole(level, message, at, scriptId): Promise<void> {
-        const chatId = get().chatId
-        // A console line outside a conversation has nowhere to be attributed —
-        // the host refuses a report naming a chat that does not exist, and the
-        // frame's card only runs inside one. Silently dropped rather than filed
-        // under the wrong chat, and the frame never waits on this anyway.
-        if (chatId === undefined) return
+      async reportCardConsole(level, message, at, scriptId, binding): Promise<void> {
+        /*
+         * The frame's own chat, not the open one. A line printed in the switch
+         * window — after the store moved to the next chat, before the React
+         * cleanup disposed this frame — belongs to the conversation whose card
+         * printed it; read at call time it was filed under the next one. The
+         * bound chat exists (the frame was built for it), so the host's refusal
+         * of an unknown chat does not arise.
+         */
+        const chatId = binding.chatId
         try {
           await client.call('script.report', {
             chatId,
@@ -2931,8 +2965,9 @@ export function createIrisStore(
         }
       },
 
-      async reportSandboxPlugin(message, grade): Promise<void> {
-        const chatId = get().chatId
+      async reportSandboxPlugin(message, grade, binding): Promise<void> {
+        // The frame's chat when a frame reported it, for the console line's reason.
+        const chatId = binding?.chatId ?? get().chatId
         // Same rule as the console line above: a report naming a chat that does
         // not exist is refused by the host, and a plugin only ever runs inside
         // one. Dropped rather than filed under the wrong conversation.
@@ -3295,12 +3330,15 @@ export function createIrisStore(
         }
       },
 
-      async saveCardExtensionSettings(settings: Record<string, unknown>): Promise<void> {
-        // The partition belongs to the card of the open chat. A report arriving
-        // with no chat open has no owner to write under, so it is dropped the
-        // way a frame event is dropped after disposal: late, not lost.
-        const characterId = get().view?.characterId
-        if (characterId === undefined) return
+      async saveCardExtensionSettings(settings: Record<string, unknown>, binding: FrameBinding): Promise<void> {
+        /*
+         * The partition belongs to the card the frame was built for — not to
+         * the card of whichever chat is open when the post lands. Read at call
+         * time, a post in the switch window wrote card A's whole partition over
+         * card B's. Not refused when the chat has moved on: the write names its
+         * own card's partition, which is exactly the owner it should reach.
+         */
+        const characterId = binding.characterId
         // `guard`, not throw: the sender is a frame's fire-and-forget report
         // (and upstream's own save is an unawaited debounced call), so a
         // rejection would surface nowhere — a notice is the only channel that
@@ -3924,8 +3962,19 @@ export function createIrisStore(
         })
       },
 
-      async runSlash(command: string, pluginRevision?: number): Promise<string> {
-        const chatId = get().chatId
+      async runSlash(command: string, pluginRevision?: number, binding?: FrameBinding): Promise<string> {
+        if (binding !== undefined) {
+          const live: LiveScope = { openChatId: get().chatId, currentRun: get().cardRun }
+          const stale = staleBindingReason('triggerSlash', binding, live)
+          if (stale !== undefined) {
+            set(raise('error', translate(getLanguage(), 'cardCallFailed', {
+              method: 'triggerSlash',
+              detail: stale,
+            })))
+            throw new Error(stale)
+          }
+        }
+        const chatId = binding?.chatId ?? get().chatId
         if (chatId === undefined) throw new Error('no chat is open')
         // Deliberately not wrapped in `guard`: the caller is a card waiting on a
         // promise, and it needs the rejection. The failure still goes on the
@@ -3948,9 +3997,27 @@ export function createIrisStore(
         }
       },
 
-      async runCardAction(method: string, params: unknown): Promise<unknown> {
-        const chatId = get().chatId
-        if (chatId === undefined) throw new Error('no chat is open')
+      async runCardAction(method: string, params: unknown, binding: FrameBinding): Promise<unknown> {
+        /*
+         * The live state is read **once, here**, and only to check the binding
+         * against it — never to address the call. What a call is about is the
+         * frame's binding; what the open chat decides is only whether that frame
+         * is still the one in front of the reader.
+         */
+        const live: LiveScope = { openChatId: get().chatId, currentRun: get().cardRun }
+        /*
+         * A named refusal, on both channels: the rejection for the card that is
+         * awaiting it, and the notice so it is on the record — the same pair a
+         * host refusal gets below.
+         */
+        const refuse = (reason: string): never => {
+          set(raise('error', translate(getLanguage(), 'cardCallFailed', { method, detail: reason })))
+          throw new Error(reason)
+        }
+        // Before the shell's own actions too: a stale frame typing into the next
+        // chat's composer is the same wrong-conversation write as any other.
+        const stale = staleBindingReason(method, binding, live)
+        if (stale !== undefined) return refuse(stale)
 
         /*
          * The shell's own actions, answered before the host lookup.
@@ -4017,45 +4084,34 @@ export function createIrisStore(
         // that only travels as a rejection never reaches the user. Reported
         // **and** rethrown: the notice puts the failure on the record, the
         // rethrow keeps the card's contract intact.
-        const params_ = (typeof params === 'object' && params !== null ? params : {}) as Record<string, unknown>
         /*
-         * An injection carries the run it belongs to.
+         * The shell-owned fields — `chatId`, `runId`, `characterId` — are the
+         * binding's, spread **after** the frame's params, and a frame param
+         * naming a different one is refused rather than overwritten
+         * (`client/card-gateway.ts`).
          *
-         * Added here rather than in the frame: a card has no idea what a run is,
-         * and a frame could not be trusted with the id anyway — it is what
-         * decides whose injections the host will later delete. Only
-         * `setExtensionPrompt` takes it, because it is the only call that leaves
-         * something behind for a run to own.
+         * An injection carries the run it belongs to: a card has no idea what a
+         * run is, and a frame could not be trusted with the id anyway — it is
+         * what decides whose injections the host will later delete. A character
+         * rebind (—— family④: lorebook / worldbook ——, `worldbook.setCharBooks`)
+         * names the character the frame was built for, because the two members
+         * reaching it accept only `'current'` and this is the layer that knows
+         * which character that is.
+         *
+         * This used to be `{ chatId, ...scoped, ...params_, ...owned }` with
+         * `chatId` and `runId` read from live state at call time: a frame's own
+         * `chatId` or `runId` overrode the shell's, and a call landing after a
+         * chat switch went to the chat that had just opened. A bare reorder would
+         * have fixed the first and made the second worse — `generate` sends its
+         * snapshot's chat, which was the only thing keeping it in its own chat.
          */
-        const runId = get().cardRun?.runId
-        const scoped = wire === 'script.setExtensionPrompt' && runId !== undefined
-          ? { runId }
-          : {}
-        /*
-         * —— family④: lorebook / worldbook ——
-         * A character rebind names the character **here**, not in the card.
-         *
-         * `worldbook.setCharBooks` takes a `characterId`, and the frame is the
-         * untrusted side: a card that supplied one could rewrite another
-         * character's bindings, which is a write outside the card the user
-         * opened. The two members that reach this arm
-         * (`rebindCharWorldbooks`, `setCurrentCharLorebooks`) accept only
-         * `'current'`, and this is the layer that knows which character that
-         * is — the same reason `runId` is filled in above rather than sent.
-         *
-         * Spread **before** the card's params for `runId` and after nothing:
-         * the id is put in front of `params_` deliberately, so a frame sending
-         * its own `characterId` cannot override it — the last spread wins, and
-         * that has to be this one.
-         */
-        const openCharacter = get().view?.characterId
-        const owned = wire === 'worldbook.setCharBooks' && openCharacter !== undefined
-          ? { characterId: openCharacter }
-          : {}
+        const shaped = shapeCardCall(method, wire, params, binding, live)
+        if (!shaped.ok) return refuse(shaped.reason)
+        const wireParams = shaped.params
         // The method is typed now; only the params still need the cast, because
         // their shape depends on which method this turned out to be.
         try {
-          return await client.call(wire, { chatId, ...scoped, ...params_, ...owned } as never)
+          return await client.call(wire, wireParams as never)
         } catch (error: unknown) {
           set(raise('error', translate(getLanguage(), 'cardCallFailed', {
             method,

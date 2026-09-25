@@ -25,6 +25,7 @@ import type { ReactElement } from 'react'
 
 import { useIris, useIrisActions, useIrisStore } from '../client/provider.tsx'
 import { actionsOf, tapHostEvents } from '../client/store.ts'
+import type { FrameBinding } from '../client/card-gateway.ts'
 import { startCardScripts, type RunningCardScripts } from '../sandbox/card-scripts.ts'
 import { pluginsFor, recordStatus, registerPluginControl } from '../dev/plugin-bench.ts'
 import { cardPopupBridge } from './card-popups.ts'
@@ -229,7 +230,24 @@ export function CardScriptFrames(): ReactElement {
      * rather than current. Without a mark at this point, a re-run of the same
      * card left the previous attempt's reports sitting in the present tense.
      */
-    actionsOf(store).beginCardRun()
+    const runId = actionsOf(store).beginCardRun()
+
+    /*
+     * **Who this frame is**, fixed now and handed to every call it makes.
+     *
+     * The chat, the card and the run this effect is building for — not
+     * whatever the store holds when a call lands. Frames are torn down in this
+     * effect's cleanup, which React runs after the store has already moved to
+     * the next chat, so a call posted in that window used to be addressed to
+     * the chat that had just opened. The same shape `endCardRun` was fixed for
+     * (`cardRun` carries its chat) and `onPluginStyle` below already followed.
+     */
+    const binding: FrameBinding = {
+      kind: 'script',
+      chatId,
+      characterId,
+      ...runId === undefined ? {} : { runId },
+    }
 
     /** This build's artifacts, resolved by `bootstrap` before `start` needs them. */
     let resolvedAssets: SandboxAssets | undefined
@@ -393,8 +411,8 @@ export function CardScriptFrames(): ReactElement {
                */
               sizedByHost: true,
               fetch: async (url, revision) => actionsOf(store).fetchScriptDependency(url, revision),
-              onCall: async (method, params) => actionsOf(store).runCardAction(method, params),
-              onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision),
+              onCall: async (method, params) => actionsOf(store).runCardAction(method, params, binding),
+              onSlash: async (command, revision) => actionsOf(store).runSlash(command, revision, binding),
               /*
                * The dialog bridge. The sandbox never carries `allow-modals`, so
                * the browser's own answer to all three dialogs is silence —
@@ -436,7 +454,7 @@ export function CardScriptFrames(): ReactElement {
                * this is the one road to that same answer.
                */
               onSettings: settings => {
-                void actionsOf(store).saveCardExtensionSettings(settings)
+                void actionsOf(store).saveCardExtensionSettings(settings, binding)
               },
               // Reported, not swallowed: a blocked subresource is the policy
               // doing its job, and the card author needs the host and directive
@@ -525,7 +543,7 @@ export function CardScriptFrames(): ReactElement {
                * a console call must not wait on a round trip.
                */
               onConsole: (level, message, at, scriptId) => {
-                void actionsOf(store).reportCardConsole(level, message, at, scriptId)
+                void actionsOf(store).reportCardConsole(level, message, at, scriptId, binding)
               },
               /*
                * Readiness belongs to the frame, so it is reported for every
@@ -579,7 +597,7 @@ export function CardScriptFrames(): ReactElement {
                  * put the host between a plugin's failure and the panel that
                  * has to show it.
                  */
-                void actionsOf(store).reportSandboxPlugin(text, fault ? 'fault' : 'note')
+                void actionsOf(store).reportSandboxPlugin(text, fault ? 'fault' : 'note', binding)
               },
               /*
                * The fan-out into this conversation's message frames.
@@ -621,7 +639,7 @@ export function CardScriptFrames(): ReactElement {
                   + ` characters, over the ${outcome.limit} this conversation's message frames accept`
                   + " — the sheet is applied in the card's own frame and is not folded into them"
                 actionsOf(store).addCardReport(text)
-                void actionsOf(store).reportSandboxPlugin(text, 'note')
+                void actionsOf(store).reportSandboxPlugin(text, 'note', binding)
               },
               onPluginStyleCleared: pluginId => {
                 if (chatId === undefined) return
@@ -1021,7 +1039,7 @@ export function CardScriptFrames(): ReactElement {
           at: Date.now(),
         })
         actionsOf(store).addCardReport(text, { grade: 'fault' })
-        void actionsOf(store).reportSandboxPlugin(text, 'fault')
+        void actionsOf(store).reportSandboxPlugin(text, 'fault', binding)
       }
       mountedFromStore = wanted
     }

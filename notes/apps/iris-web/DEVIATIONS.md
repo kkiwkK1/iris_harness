@@ -9231,3 +9231,49 @@ note 的出现次数就是剩下的真实断网次数——如果它仍常见，
 （`#viewOf` 变重），要换成指数退避。(d) 断档期间页面丢掉了中间的 delta、重连后还在生成：现在缓冲会
 缺一段，直到落定时整条换成宿主的文本；若主人觉得这段缺口扎眼，答复里可以带上宿主的 `pending.text`，
 但要先解决它与在途 delta 的先后问题（为什么这次没做，见 store.ts 的注释）。
+
+## 125. A card call is addressed by the frame that made it, and a frame naming another chat, card or run is refused
+
+**Kind:** deliberate improvement (trust boundary; review wave 1, findings `card-call-binding`,
+`frame-params-override-shell-owned`, `card-gateway-trust-shaping`, `authority-stamped-last`,
+`card-call-identity-bound-at-call-time`). Number to be renumbered by the coordinator on landing.
+
+**Upstream.** A card runs in the page's own realm. `getContext()` answers for whatever chat is
+open at the moment of the call, and a TavernHelper call made while a chat switch is under way
+targets the chat that is open when it runs. There is no frame and no binding, so the question
+"which chat is this call about" has one answer: the current one.
+
+**Iris before.** `runCardAction` built the wire params as `{ chatId, ...scoped, ...params_, ...owned }`,
+with `chatId` read from `get().chatId` and `runId` from `get().cardRun` **when the frame's message
+was handled**. Two defects of one shape: (1) the frame's params came after the shell's, so a frame
+that sent its own `chatId` or `runId` addressed another conversation or adopted another run's
+injections; (2) frames are disposed in a React cleanup that runs after `openChat` has moved
+`chatId`, so a call posted in that window landed in the chat that had just opened.
+`saveCardExtensionSettings` took the card from `get().view`, so a post in the same window wrote
+card A's whole partition over card B's; `reportCardConsole` filed card A's line under chat B.
+
+**Iris now.** Each frame host captures a `FrameBinding { kind, chatId, characterId, runId? }` when
+it builds the run (script frames carry the run `beginCardRun` minted for them; interface frames
+carry none, and their injection is owned by the same chat's live script run, as before). Every
+frame-originated call takes the binding (`client/card-gateway.ts`):
+
+- a call whose binding's chat is no longer open is **refused by name**, not redirected to its own
+  chat: a write into a conversation the reader has left, with no frame alive to own it, is what the
+  refusal exists to make visible; a script frame whose run has ended is refused likewise;
+- a frame param `chatId`, `characterId` or `runId` that differs from the binding is **refused by
+  name**, not overwritten (a bare reorder would have silently moved a stale frame's `generate`,
+  which sends its snapshot's chat, into whichever chat was open);
+- the shell-owned fields are spread **last**, from the binding.
+
+Settings and console lines are filed under the binding's card and chat and are not refused: they
+name their own owner. `generate`/`generateRaw` keep working in their own chat, because their
+snapshot chat is the bound chat.
+
+**Cost.** A call that upstream would have sent into the newly opened chat during a switch now
+rejects with `… was refused: the script frame that sent it was built for chat A, and chat B is open
+now …`, and raises the card-call notice. Upstream-shaped cards never pass `chatId`, `characterId` or
+`runId` of another scope, so no compatible card loses a call it was entitled to.
+
+**What would overturn it.** A corpus card that legitimately addresses a chat or card other than its
+own through a card method. `storage.*` takes `characterId` for attribution only; the frame sends its
+snapshot's, which equals the binding.
