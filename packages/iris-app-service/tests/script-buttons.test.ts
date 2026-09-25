@@ -11,6 +11,7 @@ import { effectiveButtons, ScriptButtonStore } from '../src/script-buttons.ts'
 import { ScriptPolicyStore } from '../src/scripts.ts'
 import { IrisAppService, type Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { createTestService } from './support/service.ts'
 import { tempDir } from './support/temp-dir.ts'
 
 /**
@@ -93,7 +94,7 @@ test('a replace overrides the declaration, whole-table', async (t) => {
   const fixed = await fixture(t)
 
   await fixed.handlers['script.replaceScriptButtons']({
-    characterId: 'aria', scriptId: 'panel',
+    chatId: fixed.chatId, scriptId: 'panel',
     buttons: [{ name: '只剩这个', visible: true }],
   })
 
@@ -108,7 +109,7 @@ test('a hidden button survives the round trip — visible is data, not a filter'
   const fixed = await fixture(t)
 
   await fixed.handlers['script.replaceScriptButtons']({
-    characterId: 'aria', scriptId: 'panel',
+    chatId: fixed.chatId, characterId: 'aria', scriptId: 'panel',
     buttons: [{ name: 'a', visible: false }, { name: 'b', visible: true }],
   })
 
@@ -120,7 +121,7 @@ test('a hidden button survives the round trip — visible is data, not a filter'
 test('the override outlives the process, because the card file is untouched', async (t) => {
   const fixed = await fixture(t)
   await fixed.handlers['script.replaceScriptButtons']({
-    characterId: 'aria', scriptId: 'panel', buttons: [{ name: 'kept', visible: true }],
+    chatId: fixed.chatId, characterId: 'aria', scriptId: 'panel', buttons: [{ name: 'kept', visible: true }],
   })
 
   // A second store over the same file, which is what a restart looks like.
@@ -145,7 +146,7 @@ test('a script the card does not declare is refused', async (t) => {
   // snapshot only carries declared ids — while looking like it succeeded.
   await assert.rejects(
     () => fixed.handlers['script.replaceScriptButtons']({
-      characterId: 'aria', scriptId: 'not-declared', buttons: [],
+      chatId: fixed.chatId, characterId: 'aria', scriptId: 'not-declared', buttons: [],
     }),
     /declares no script/u,
   )
@@ -156,7 +157,7 @@ test('with no store the write is refused, not silently dropped', async (t) => {
 
   await assert.rejects(
     () => fixed.handlers['script.replaceScriptButtons']({
-      characterId: 'aria', scriptId: 'panel', buttons: [],
+      chatId: fixed.chatId, characterId: 'aria', scriptId: 'panel', buttons: [],
     }),
     (error: unknown) => (error as { code?: string }).code === 'unsupported',
   )
@@ -199,7 +200,7 @@ test('the bar and the snapshot never disagree — both read the same merge', asy
   assert.deepEqual(before.scripts[0]?.buttons, BUTTONS, 'the list starts from the declaration')
 
   await fixed.handlers['script.replaceScriptButtons']({
-    characterId: 'aria', scriptId: 'panel',
+    chatId: fixed.chatId, characterId: 'aria', scriptId: 'panel',
     buttons: [{ name: 'after', visible: true }],
   })
 
@@ -211,4 +212,48 @@ test('the bar and the snapshot never disagree — both read the same merge', asy
   const after = await fixed.handlers['script.list']({ characterId: 'aria' })
   assert.deepEqual(after.scripts[0]?.buttons, [{ name: 'after', visible: true }])
   assert.deepEqual(await seen(fixed), after.scripts[0]?.buttons)
+})
+
+/**
+ * Two characters that both declare `panel`, so an id aimed at the other one
+ * would pass the "declares this script" check: the only thing standing between
+ * a frame and the other card's table is the host deriving the character from
+ * the chat.
+ */
+async function twoCards(t: TestContext): Promise<{ handlers: Handlers, chatId: string, buttons: ScriptButtonStore }> {
+  let buttons: ScriptButtonStore | undefined
+  const { handlers } = await createTestService(t, async ({ dir }) => {
+    await mkdir(join(dir, 'characters'), { recursive: true })
+    await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+    await writeFile(join(dir, 'characters', 'other.json'), CARD.replace('"Aria"', '"Other"'), 'utf8')
+    buttons = new ScriptButtonStore(join(dir, 'script-buttons.json'))
+    return { scriptButtons: buttons }
+  }, 'iris-btn-scope-')
+  const created = await handlers['chat.create']({ characterId: 'aria' })
+  assert.ok(buttons !== undefined)
+  return { handlers, chatId: created.view.chatId, buttons }
+}
+
+test('a replace addressed by chat writes the chat’s own character', async (t) => {
+  const fixed = await twoCards(t)
+  await fixed.handlers['script.replaceScriptButtons']({
+    chatId: fixed.chatId, scriptId: 'panel', buttons: [{ name: 'mine', visible: true }],
+  })
+  assert.deepEqual(await fixed.buttons.get('aria', 'panel'), [{ name: 'mine', visible: true }])
+  assert.equal(await fixed.buttons.get('other', 'panel'), undefined)
+})
+
+test('a replace naming another character than the chat’s is refused, and that character is untouched', async (t) => {
+  // Finding frame-params-override-shell-owned (c): the id used to be taken as
+  // sent, so a frame in Aria's chat could rewrite Other's buttons.
+  const fixed = await twoCards(t)
+  await assert.rejects(
+    () => fixed.handlers['script.replaceScriptButtons']({
+      chatId: fixed.chatId, characterId: 'other', scriptId: 'panel', buttons: [{ name: 'forged', visible: true }],
+    }),
+    (error: unknown) => (error as { code?: string }).code === 'invalid-request'
+      && /chat ".+" is played with "aria"/u.test((error as Error).message),
+  )
+  assert.equal(await fixed.buttons.get('other', 'panel'), undefined, 'the other card’s table was written')
+  assert.equal(await fixed.buttons.get('aria', 'panel'), undefined, 'the refusal was redirected, not refused')
 })

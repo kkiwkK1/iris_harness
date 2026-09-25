@@ -1643,9 +1643,19 @@ export const requestSchemas = {
    * `_replaceScriptButtons`, deduplicating by name and appending), and
    * `updateScriptButtonsWith` takes a function, which cannot cross this
    * boundary. Both stay in the façade, composed from this.
+   *
+   * **Addressed by chat, like the identity family.** The host derives the
+   * character from `chatId` and writes that character's table. `characterId`
+   * used to be the address, taken from the frame as sent, so a frame could
+   * write another character's buttons with nothing to cross-check it against.
+   * It is still accepted, and only when it names the chat's own character: a
+   * different id is refused, not redirected. The shell has always sent
+   * `chatId` here (it fills it on every card call); `z.object` stripped it until
+   * this schema named it.
    */
   'script.replaceScriptButtons': z.object({
-    characterId: z.string().min(1),
+    chatId: z.string().min(1),
+    characterId: z.string().min(1).optional(),
     scriptId: z.string().min(1),
     buttons: z.array(z.object({
       name: z.string().min(1).max(200),

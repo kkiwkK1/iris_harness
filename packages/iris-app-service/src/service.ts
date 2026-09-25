@@ -2658,7 +2658,7 @@ export class IrisAppService {
         return { text: result.text }
       },
 
-      'script.replaceScriptButtons': async ({ characterId, scriptId, buttons }) => {
+      'script.replaceScriptButtons': async ({ chatId, characterId: named, scriptId, buttons }) => {
         // Refused rather than answered when there is nowhere to keep it. A
         // script told its rearrangement succeeded, on a host that dropped it,
         // would rebuild the panel from a table that never changed and have
@@ -2668,6 +2668,23 @@ export class IrisAppService {
           throw new AppError(
             'unsupported',
             'script.replaceScriptButtons needs a button store, which this host is running without',
+          )
+        }
+
+        // The character is the chat's, derived here, never the frame's word for
+        // it: the frame is untrusted, and an id taken as sent let it write any
+        // character's table. A `characterId` that agrees is accepted, so an
+        // older frame keeps working; one that disagrees is refused by name
+        // rather than quietly redirected, since the caller meant another card.
+        const entry = await chats.open(chatId)
+        const characterId = entry.meta.characterId
+        if (characterId === undefined) {
+          throw notFound('this conversation is not played with a character, so it has no script buttons')
+        }
+        if (named !== undefined && named !== characterId) {
+          throw invalid(
+            `script.replaceScriptButtons named character "${named}", but chat "${chatId}" is played with`
+              + ` "${characterId}"; a card writes only its own chat's buttons`,
           )
         }
 
