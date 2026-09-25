@@ -27,8 +27,9 @@ import type { StreamFn } from '@iris/turn'
 import { BackupStore } from '../src/backups.ts'
 import { ChatStore } from '../src/chats.ts'
 import { CharacterLibrary } from '../src/library.ts'
-import { IrisAppService, type Handlers } from '../src/service.ts'
+import type { Handlers } from '../src/service.ts'
 import { SettingsStore } from '../src/settings.ts'
+import { createTestService } from './support/service.ts'
 import { tempDir } from './support/temp-dir.ts'
 
 const CARD = JSON.stringify({
@@ -60,7 +61,7 @@ interface Profile {
   dir: string
   library: CharacterLibrary
   /** A host over the profile; a second call is what a restart looks like. */
-  host: (gated: boolean) => Host
+  host: (gated: boolean) => Promise<Host>
 }
 
 async function profile(t: TestContext): Promise<Profile> {
@@ -71,7 +72,7 @@ async function profile(t: TestContext): Promise<Profile> {
   return {
     dir,
     library,
-    host: (gated) => {
+    host: async (gated) => {
       const chats = new ChatStore(join(dir, 'chats'), library)
       const backups = new BackupStore(join(dir, 'chats'), { keep: 50 })
       const events: IrisEvent[] = []
@@ -98,12 +99,14 @@ async function profile(t: TestContext): Promise<Profile> {
         yield { type: 'block-end', index: 0, block: { type: 'text', text: 'partial reply' } }
         yield { type: 'finish', reason: { kind: 'stop' } }
       }
-      const handlers = new IrisAppService({
+      // Every store over the profile's directory, not the builder's own: a
+      // second host over the same files is what a restart looks like.
+      const { handlers } = await createTestService(t, {
         stream, library, chats, backups,
         settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
         broadcast: (event: IrisEvent) => { events.push(event) },
         userName: 'U',
-      }).handlers()
+      }, 'iris-ownership-host-')
       const ended = (chatId: string): boolean => events.some(event =>
         (event.type === 'stream.end' || event.type === 'stream.error') && event.chatId === chatId)
       return {
@@ -122,7 +125,7 @@ async function profile(t: TestContext): Promise<Profile> {
 
 test('a chat deleted while its turn streams stays deleted after the turn settles', async (t) => {
   const p = await profile(t)
-  const host = p.host(true)
+  const host = await p.host(true)
   const { view } = await host.handlers['chat.create']({ characterId: 'aria' })
   const file = join(p.dir, 'chats', `${view.chatId}.jsonl`)
 
@@ -141,7 +144,7 @@ test('a chat deleted while its turn streams stays deleted after the turn settles
 
 test('a restore while a turn streams keeps the restored text after the turn settles', async (t) => {
   const p = await profile(t)
-  const host = p.host(true)
+  const host = await p.host(true)
   const { view } = await host.handlers['chat.create']({ characterId: 'aria' })
   const file = join(p.dir, 'chats', `${view.chatId}.jsonl`)
   const snapshot = await host.backups.snapshot(view.chatId, 'cleanup', 'aria')
@@ -163,7 +166,7 @@ test('a restore while a turn streams keeps the restored text after the turn sett
 
 test('concurrent opens of a cold chat share one entry', async (t) => {
   const p = await profile(t)
-  const { view } = await p.host(false).handlers['chat.create']({ characterId: 'aria' })
+  const { view } = await (await p.host(false)).handlers['chat.create']({ characterId: 'aria' })
   // A fresh store over the same directory: nothing is cached, as after a restart.
   const cold = new ChatStore(join(p.dir, 'chats'), p.library)
   const [a, b] = await Promise.all([cold.open(view.chatId), cold.open(view.chatId)])
@@ -173,8 +176,8 @@ test('concurrent opens of a cold chat share one entry', async (t) => {
 
 test('two concurrent sends to a cold chat: one streams, the other is refused busy', async (t) => {
   const p = await profile(t)
-  const { view } = await p.host(false).handlers['chat.create']({ characterId: 'aria' })
-  const host = p.host(true)
+  const { view } = await (await p.host(false)).handlers['chat.create']({ characterId: 'aria' })
+  const host = await p.host(true)
 
   const answers = await Promise.allSettled([
     host.handlers['chat.send']({ chatId: view.chatId, text: 'X1' }),

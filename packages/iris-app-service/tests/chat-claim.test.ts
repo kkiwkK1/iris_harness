@@ -27,12 +27,10 @@ import type { StreamFn } from '@iris/turn'
 
 import type { ChatStore } from '../src/chats.ts'
 import { DEFAULT_THRESHOLD_RATIO, readCompaction } from '../src/compaction.ts'
-import { CharacterLibrary } from '../src/library.ts'
-import { IrisAppService, type Handlers } from '../src/service.ts'
-import { SettingsStore } from '../src/settings.ts'
+import type { Handlers } from '../src/service.ts'
 import { readSideUsage } from '../src/side-usage.ts'
 import { materialisingChatStore } from './support/materialising-store.ts'
-import { tempDir } from './support/temp-dir.ts'
+import { createTestService } from './support/service.ts'
 
 const CARD = JSON.stringify({
   spec: 'chara_card_v2',
@@ -76,12 +74,6 @@ function kindOf(options: GenerateOptions): Kind {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await tempDir(t, 'iris-chat-claim-')
-  await mkdir(join(dir, 'characters'), { recursive: true })
-  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
-  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = materialisingChatStore(dir, library)
-  const settings = new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' })
   const events: IrisEvent[] = []
   const seen: Kind[] = []
   const gated = new Set<Kind>()
@@ -118,11 +110,17 @@ async function fixture(t: TestContext): Promise<Fixture> {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 
-  const handlers = new IrisAppService({
-    stream, library, chats, settings,
-    broadcast: (event: IrisEvent) => { events.push(event) },
-    userName: 'Traveller',
-  }).handlers()
+  const { handlers, options } = await createTestService(t, async ({ dir, library }) => {
+    await mkdir(join(dir, 'characters'), { recursive: true })
+    await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+    return {
+      stream,
+      chats: materialisingChatStore(dir, library),
+      broadcast: (event: IrisEvent) => { events.push(event) },
+      userName: 'Traveller',
+    }
+  }, 'iris-chat-claim-')
+  const chats = options.chats
   const isTerminal = (event: IrisEvent, chatId: string): boolean =>
     (event.type === 'stream.end' || event.type === 'stream.error') && event.chatId === chatId
   const terminals = (chatId: string): number => events.filter(event => isTerminal(event, chatId)).length

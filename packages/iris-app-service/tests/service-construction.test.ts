@@ -48,7 +48,8 @@ const CONSTRUCTS = ['new', 'IrisAppService('].join(' ')
  * builder. 73 files, plus four that landed on main between this list being
  * written and the list itself landing, each written before the rule existed:
  * `calibration-feed` and `chat-ownership` (#168), `chat-claim` (#172) and
- * `entity-lifecycle` (#175). 77 files.
+ * `entity-lifecycle` (#175). 77 files. Those four moved to the builder in
+ * the same change that took them off this list, which leaves 73.
  */
 const allowed = new Set([
   'apps/iris/tests/live-generation-kinds.test.ts',
@@ -58,13 +59,10 @@ const allowed = new Set([
   'packages/iris-app-service/tests/bridge.test.ts',
   'packages/iris-app-service/tests/cache-friendly-assembly.test.ts',
   'packages/iris-app-service/tests/cache-trace.test.ts',
-  'packages/iris-app-service/tests/calibration-feed.test.ts',
   'packages/iris-app-service/tests/card-storage.test.ts',
   'packages/iris-app-service/tests/character-ops.test.ts',
-  'packages/iris-app-service/tests/chat-claim.test.ts',
   'packages/iris-app-service/tests/chat-integrity.test.ts',
   'packages/iris-app-service/tests/chat-order.test.ts',
-  'packages/iris-app-service/tests/chat-ownership.test.ts',
   'packages/iris-app-service/tests/chat-resync.test.ts',
   'packages/iris-app-service/tests/chat-search.test.ts',
   'packages/iris-app-service/tests/chat-transfer.test.ts',
@@ -75,7 +73,6 @@ const allowed = new Set([
   'packages/iris-app-service/tests/connections.test.ts',
   'packages/iris-app-service/tests/depth-bucket-entries.test.ts',
   'packages/iris-app-service/tests/diagnostics.test.ts',
-  'packages/iris-app-service/tests/entity-lifecycle.test.ts',
   'packages/iris-app-service/tests/eval-template.test.ts',
   'packages/iris-app-service/tests/extension-settings-shapes.test.ts',
   'packages/iris-app-service/tests/floor-anchor.test.ts',
@@ -134,7 +131,7 @@ const allowed = new Set([
  * The seeded size. Lower it in the commit that removes a line. Raising it
  * means adding hand assembly back, which is what this file exists to stop.
  */
-const SEEDED = 77
+const SEEDED = 73
 
 /** Every source file under a test tree, as repo-relative POSIX paths. */
 function testSources(): string[] {

@@ -36,12 +36,9 @@ import type { StreamFn } from '@iris/turn'
 
 import { BackupStore } from '../src/backups.ts'
 import { CacheTraceStore } from '../src/cache-trace.ts'
-import { ChatStore } from '../src/chats.ts'
-import { CharacterLibrary } from '../src/library.ts'
 import { WorldbookBindingStore } from '../src/materialise.ts'
-import { IrisAppService, type Handlers } from '../src/service.ts'
-import { SettingsStore } from '../src/settings.ts'
-import { tempDir } from './support/temp-dir.ts'
+import type { Handlers } from '../src/service.ts'
+import { createTestService } from './support/service.ts'
 
 type Fate =
   /** The delete handler calls this store's forget (or delete) for the id. */
@@ -174,14 +171,6 @@ interface Fixture {
 }
 
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dir = await tempDir(t, 'iris-lifecycle-')
-  await mkdir(join(dir, 'characters'), { recursive: true })
-  await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
-  const library = new CharacterLibrary(join(dir, 'characters'), '/iris/avatar')
-  const chats = new ChatStore(join(dir, 'chats'), library)
-  const traces = new CacheTraceStore(join(dir, 'cache-trace'), { keep: 8 })
-  const bindings = new WorldbookBindingStore(join(dir, 'worldbook-bindings.json'))
-  const backups = new BackupStore(join(dir, 'chats'))
   let ends = 0
   const stream: StreamFn = async function* (_options: GenerateOptions): AsyncIterable<StreamChunk> {
     yield { type: 'block-start', index: 0, blockType: 'text' }
@@ -189,14 +178,26 @@ async function fixture(t: TestContext): Promise<Fixture> {
     yield { type: 'block-end', index: 0, block: { type: 'text', text: 'Noted.' } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
-  const handlers = new IrisAppService({
-    stream, library, chats, backups,
-    cacheTrace: traces,
-    worldbookBindings: bindings,
-    settings: new SettingsStore(join(dir, 'settings.json'), { provider: 'test', model: 'test-model' }),
-    broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
-    userName: 'Traveller',
-  }).handlers()
+  let stores: { traces: CacheTraceStore, bindings: WorldbookBindingStore, backups: BackupStore } | undefined
+  const { handlers, dir } = await createTestService(t, async ({ dir }) => {
+    await mkdir(join(dir, 'characters'), { recursive: true })
+    await writeFile(join(dir, 'characters', 'aria.json'), CARD, 'utf8')
+    stores = {
+      traces: new CacheTraceStore(join(dir, 'cache-trace'), { keep: 8 }),
+      bindings: new WorldbookBindingStore(join(dir, 'worldbook-bindings.json')),
+      backups: new BackupStore(join(dir, 'chats')),
+    }
+    return {
+      stream,
+      backups: stores.backups,
+      cacheTrace: stores.traces,
+      worldbookBindings: stores.bindings,
+      broadcast: (event: IrisEvent) => { if (event.type === 'stream.end') ends += 1 },
+      userName: 'Traveller',
+    }
+  }, 'iris-lifecycle-')
+  assert.ok(stores !== undefined)
+  const { traces, bindings, backups } = stores
   return {
     handlers, traces, bindings, backups, dir,
     played: async () => {
