@@ -39,6 +39,7 @@ import { BackupStore } from './backups.ts'
 import { ChatEntry, createSession, readMeta } from './entry.ts'
 import { invalid, notFound } from './errors.ts'
 import type { CharacterLibrary } from './library.ts'
+import { lineFlagsOf } from './line-flags.ts'
 import { fileFor, isSafeId, toId, uniqueId } from './paths.ts'
 import {
   readChatUsage, summariseUsage, type ChatUsage, type UsageSummaryOptions,
@@ -1341,8 +1342,10 @@ export function searchChatText(
       continue
     }
     // Upstream's own search skips system floors; so does this. A hidden
-    // narrator line is storage, not something a reader is looking for.
-    if (floor.is_system === true) continue
+    // line is storage, not something a reader is looking for. Read through
+    // `lineFlagsOf`, the reading the prompt and `'latest'` use, so the three
+    // cannot disagree about which lines are hidden.
+    if (lineFlagsOf(floor as unknown as Record<string, unknown>).hidden) continue
     const mes = typeof floor.mes === 'string' ? floor.mes : ''
     const at = caseSensitive ? mes.indexOf(needle) : mes.toLowerCase().indexOf(needle)
     if (at < 0) continue

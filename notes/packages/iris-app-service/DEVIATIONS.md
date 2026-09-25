@@ -9858,3 +9858,56 @@ request went out after Stop」。
 
 **何时重开：**(a) 上游开始给行 id：改用它的键，或者两个都写。(b) 家族里单个文件大到 `chat.tree` 的解析时间可感：按 mtime 缓存
 `projectFloors` 的结果。(c) 需要给导入行也补 id（例如跨分支编辑同步）：那就得接受导入后第一次保存不再逐字节相同，并在这里写明。
+
+## 104. 隐藏行不进提示词，旁白行以 system 进提示词（对齐上游，原先是偏离）
+
+**Kind:** 对齐修正（parity fix）。这一节记的是一处**被撤销**的偏离：以前 Iris 把这两种行都当普通助手楼层发给模型，现在和上游一致。
+编号待协调者重排。
+
+**上游。** 两个行属性会改变模型收到的内容：
+- `is_system: true`（`/hide` 写的，`chats.js:157`；卡片 `createChatMessages` 里 `is_hidden: true` 的行，
+  JS-Slash-Runner `chat_message.ts:361-365`）。`Generate` 在建对话前先滤掉它：
+  `coreChat = chat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)))`（`script.js:4437`）。
+  显示侧的正则既不给它跑（`if (!isSystem)`，`script.js:1785`），也不把它算进深度（`usableMessages`，`:1804-1806`）。
+- `extra.type === 'narrator'`（`/sys` 写的；卡片 `role: 'system'` 的行一律带）。`openai.js:580-582` 把它改成 `role: 'system'`
+  发出去，注释是「100% legal way to send a message as system」。它和 `is_system` 互不相干：卡片的「可见系统指令」就是一条**不隐藏**的旁白行，要发给模型。
+
+**Iris 以前。** 日志只建模 `is_user`/`mes`/`swipes`/`swipe_id`，这两个属性原样躺在 `iris/st-meta` 里。`historyFromSession`
+只有两个角色（非 user 一律 assistant），从不看它们。结果：隐藏行照样发给模型；旁白行被当成角色说的话发出去。
+读这个属性的三处（`'latest'` 的 `lineSystemFlags`、聊天搜索、此前不存在的提示词）各读各的。
+
+**Iris 现在。**
+1. `src/line-flags.ts` 的 `lineFlagsOf` 是唯一的判读：`hidden = is_system === true`，`narrator = extra.type === 'narrator'`。
+   `'latest'`（经 `lineSystemFlags`）、聊天搜索（直接读磁盘行）、提示词投影、显示正则四处都走它。
+2. `historyFromSession` 新增两个按楼号问的选项：`roleOf`（旁白楼层答 `'system'`）和 `omit`（隐藏楼层答 true）。
+   `@iris/turn` 读不了 `iris/st-meta`，所以由 `#rawHistory` 用 `floorFlags(session)` 喂进去。
+   `floorFlags` 按**消息对象本身**（派生消息就是日志事件里那个冻结对象）对到行，不按位置：派生和行遍历是两套规则
+   （派生会跳过内容为空的助手消息），差一位就会把别的楼层藏掉。测试另外断言在普通聊天上派生下标与 `chatLines` 下标逐位一致。
+3. 旁白楼层不带说话人名字（上游旁白行也不带）。正则仍按 AI_OUTPUT 跑（上游提示词侧对 `!is_user` 一律 AI_OUTPUT）。
+4. 楼层 id `history.N` 改成**日志里的楼号**，不再是投影里的位置：隐藏一楼不会让后面每一楼的 id 都变，缓存追踪逐项比对仍然对得上。
+   没有隐藏行的聊天，id 与以前完全相同。
+5. **楼层 0 的钉住（`pinFirst`）：旁白楼层 0 仍然钉住**；隐藏的楼层 0 不发、也不另找一楼顶替。钉住是 Iris 自己的预算规则（上游没有），
+   理由是开场白定下了对话；语料里仅有的两条旁白行（缄默之秋2.5 MVU 的两份聊天，都在楼层 0）正是一张人物卡式的开场，
+   它定下对话的分量不比问候语少。
+6. 显示侧：隐藏行不跑显示正则，也不计入深度，最后一条隐藏时，它前面那一条是深度 0。行本身照样显示，和上游一样。
+7. **ST 扩展平面的 `chat` 数组不变**：`#stCompatFloors` 以 `'all'` 调用，保留全部楼层与日志角色。它模拟的是上游的 `chat`，
+   里面本来就有隐藏行；若改用模型投影，隐藏一楼会让之后每个 `message_id` 错位。
+
+**线上角色。** 提示词装配层里旁白楼层是 `system`（`layout.messages[i].role` 与条目化看到的就是它），但发到提供方时，
+`toMessage` 仍按既有规则把所有对话中段的 system 消息（深度注入也一样）作为 user 内容发出。所以模型现在听到的是「非角色的声音」，
+还不是上游那样的 `role: 'system'`。那条规则是另一个决定，这里没有动它；见重开条件 (b)。
+
+**测量。** 语料：酒馆聊天里 `"type":"narrator"` 4 处 / 2 个文件（每个文件的楼层 0 都有一条，`swipes` 里各重复一次），`"is_system":true` 0 处；
+Iris 数据目录（74 个 jsonl）两者都是 0。`tests/hidden-and-narrator-rows.test.ts` 四条：下标对齐；导入的隐藏行不发、两种旁白行以 system 发、
+楼号跳过 3 不重排；卡片 `role:'system', is_hidden:false` 的行照样发（system），`is_hidden:true` 的不发；显示正则的深度 0 落在隐藏行之前那一条，
+隐藏行不改写。`@iris/turn` 的 `driver.test.ts` 新增一条钉住 `roleOf`/`omit`/钉住/丢尾顺序。
+牙齿：`omit` 恒 false → 第二、三条红；`roleOf` 恒 undefined → 第二、三条红；显示侧不滤隐藏行 → 第四条红。
+
+**代价与已知后果。** 压缩记录 `count` 数的是 `#rawHistory` 的条目，现在不含隐藏行。压缩之后再隐藏或取消隐藏一楼，
+已有摘要覆盖的真实楼层会差一楼。Iris 没有隐藏/取消隐藏的操作，两个语料里都没有隐藏行，所以只记下，不处理。
+
+**何时重开：**
+- (a) 做 M2 工具调用时，要决定导入的 `is_system` 且带 `extra.tool_invocations` 的行（上游在支持工具时放行）怎么处理：显示、隐藏，或映射进 Iris 自己的工具记录。今天所有语料里都是 0 条。
+- (b) 若要让旁白楼层在线上也是 `role: 'system'`：改 `toMessage`，而且要一起决定深度注入是否也这样发。这是跨提供方的决定（Anthropic 没有对话中段的 system）。
+- (c) 显示侧旁白行上游用 `SLASH_COMMAND` 位置跑正则（`script.js:1792-1793`），Iris 仍按 AI_OUTPUT；需要时在 `views.ts` 把 `narrator` 接到位置上。
+- (d) ST 扩展平面的 `chat` 数组里，隐藏行的 `is_system` 仍是 false，旁白行没有 `extra`；有扩展依赖它时，从 `floorFlags` 补上。

@@ -18,6 +18,7 @@ import type { ChatBudget, ChatCompaction, ChatView, MessageView, TurnGeneration,
 import type { MacroSubstitute, RegexScript } from '@iris/regex'
 
 import type { PromptFingerprint } from './fingerprint.ts'
+import { lineFlagsBySeq } from './line-flags.ts'
 import { depthFromEnd, runScripts } from './regex.ts'
 import { timingBySeq } from './timing.ts'
 import { conversationUsage, usageBySeq } from './usage.ts'
@@ -151,6 +152,11 @@ export function projectMessages(
   const timings = timingBySeq(session)
   const keyAt = (index: number): string => options.keys[index] ?? `m-orphan-${String(index)}`
   const views: MessageView[] = []
+  // Parallel to `views`: whether each row is an `is_system` (hidden) line. Read
+  // by the display scripts below and nowhere else — a hidden row is still
+  // shown, as upstream shows it.
+  const flags = lineFlagsBySeq(session)
+  const hidden: boolean[] = []
   const seenTurns = new Set<number>()
   let turn = 0
 
@@ -169,6 +175,7 @@ export function projectMessages(
         text: textOf(event.data as Message),
         turn,
       })
+      hidden.push(flags.get(event.seq)?.hidden === true)
       continue
     }
 
@@ -206,6 +213,7 @@ export function projectMessages(
       ...usage === undefined ? {} : { usage },
       ...generation === undefined ? {} : { generation },
     })
+    hidden.push(flags.get(event.seq)?.hidden === true)
   }
 
   if (pending !== undefined && !seenTurns.has(pending.turn)) {
@@ -225,6 +233,7 @@ export function projectMessages(
       turn: pending.turn,
       streaming: true,
     })
+    hidden.push(false)
   } else if (pending !== undefined) {
     // A regenerate streams over a turn that already has candidates: mark the
     // existing line rather than appending a second one.
@@ -248,15 +257,28 @@ export function projectMessages(
 
   // Display scripts run here, in the host, so every page shows the same text
   // and the regex engine exists once. Depth counts back from the end of the
-  // conversation, which is what a script's minDepth/maxDepth is measured in.
-  return views.map((view, index) => ({
-    ...view,
-    text: runScripts(view.text, view.role, scripts, {
-      isMarkdown: true,
-      depth: depthFromEnd(index, views.length),
-      substitute: options.substitute,
-    }),
-  }))
+  // conversation, which is what a script's minDepth/maxDepth is measured in —
+  // and upstream measures it over the rows that are not `is_system`
+  // (`usableMessages`, `public/script.js:1804-1806`), so a hidden row is not
+  // counted: hiding the newest floor makes the one before it depth 0, exactly
+  // as the prompt side's filter does. A hidden row gets no display script at
+  // all, which is upstream's `if (!isSystem)` around the same block
+  // (`:1785`); it has no depth to be given.
+  const shown = hidden.filter(flag => !flag).length
+  let position = 0
+  return views.map((view, index) => {
+    if (hidden[index] === true) return view
+    const depth = depthFromEnd(position, shown)
+    position += 1
+    return {
+      ...view,
+      text: runScripts(view.text, view.role, scripts, {
+        isMarkdown: true,
+        depth,
+        substitute: options.substitute,
+      }),
+    }
+  })
 }
 
 /**

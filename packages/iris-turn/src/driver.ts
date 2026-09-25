@@ -553,6 +553,10 @@ function toMessage(message: PipelineMessage) {
   }
   // System-placed depth injections ride as user-role content: the system slot
   // is already spoken for, and providers vary on mid-conversation system turns.
+  // A narrator floor (`historyFromSession`'s `roleOf`) is one of these too: it
+  // leaves the character's voice for the system one in the assembled prompt,
+  // and on the wire it rides the way every other mid-conversation system
+  // message does. Upstream sends both as `role: 'system'`.
   return createUserMessage({ content: [{ type: 'text', text: message.text }], source: { kind: 'user' } })
 }
 
@@ -663,8 +667,10 @@ export function slotsOf(messages: readonly PipelineMessage[]): AssembledSlot[] {
  * Three of upstream's guards have no object here, so they are absent rather
  * than dropped: it skips empty system messages (`:3836`, and `injectAtDepth`
  * already refuses a contribution whose text is blank), it skips messages
- * carrying a `name` (`:3841`, and no system-placed message in this pipeline
- * has one — `name` reaches only history entries, which are user or assistant),
+ * carrying a `name` (`:3841`, and no system-role message in this pipeline
+ * has one — `name` reaches only user and assistant history entries, and the
+ * one system-role history entry, a narrator floor, is given none by
+ * `historyFromSession`, as upstream's narrator line has none),
  * and it exempts three identifiers (`newMainChat`/`newChat`/`groupNudge`,
  * `:3828`) that Iris does not mint.
  *

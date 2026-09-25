@@ -91,7 +91,7 @@ import { forbiddenSegmentIn, type Variables } from '@iris/variables'
 import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
 import { promptTokensOf } from '@iris/protocol'
-import { chatLines, lineSystemFlags, lineTurns } from './entry.ts'
+import { chatLines, floorFlags, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, clearanceNote, QuotaExceeded, removalNote } from './card-storage.ts'
 import { DiagnosticBuffer, isReportKind, type ReportContext } from './diagnostics.ts'
@@ -7179,8 +7179,10 @@ export class IrisAppService {
     projection: HistoryProjection = {},
     /** Filled with the regex rules that rewrote the floors, first-seen order. */
     rules?: Set<string>,
+    /** Which floors, under which roles — see {@link #rawHistory}. */
+    lines: 'model' | 'all' = 'model',
   ): HistoryEntry[] {
-    return applyCompaction(this.#rawHistory(entry, session, projection, rules), readCompaction(entry.header))
+    return applyCompaction(this.#rawHistory(entry, session, projection, rules, lines), readCompaction(entry.header))
   }
 
   /**
@@ -7209,12 +7211,28 @@ export class IrisAppService {
     projection: HistoryProjection = {},
     /** Filled with the regex rules that rewrote the floors, first-seen order. */
     rules?: Set<string>,
+    /**
+     * `'model'` applies upstream's two row attributes, as the prompt must;
+     * `'all'` keeps every floor under the log's own role, for the one reader
+     * that is not the model (`#stCompatFloors`, upstream's `chat` array).
+     */
+    lines: 'model' | 'all' = 'model',
   ): HistoryEntry[] {
     const names = entry.names
+    // Read from `session`, not `entry.session`: this is asked of the log being
+    // projected, and the flags have to be that log's.
+    const flags = lines === 'model' ? floorFlags(session) : undefined
     const entries = historyFromSession(session, {
       characterName: names.character,
       userName: names.user,
       ...projection,
+      ...flags === undefined ? {} : {
+        // Upstream's `coreChat` filter (`script.js:4437`) and its narrator
+        // rule (`openai.js:580-582`); `./line-flags.ts` says what each is.
+        // Filtered before the depths below are counted, as upstream's are.
+        omit: (floor: number) => flags[floor]?.hidden === true,
+        roleOf: (floor: number) => flags[floor]?.narrator === true ? 'system' as const : undefined,
+      },
     })
     const scripts = entry.scripts
     if (scripts.length === 0) return entries
@@ -7295,7 +7313,14 @@ export class IrisAppService {
 
   /** The chat's floors as the upstream `chat` array reads. */
   #stCompatFloors(entry: ChatEntry, reply?: { turn: number, text: string }): StCompatFloor[] {
-    const floors: StCompatFloor[] = this.#history(entry, entry.session).map((message, index) => ({
+    // Every floor, under the log's own role: this is upstream's `chat` array,
+    // which carries hidden rows, and not the conversation the model is sent.
+    // Asking for the model's projection here would drop a hidden floor and
+    // shift every `message_id` after it, and would stamp a narrator floor
+    // `is_system` by way of its prompt role — the two things upstream's
+    // `chat` keeps apart. (`is_system` is still `false` on a hidden floor
+    // here, as it was before the prompt learned to hide one.)
+    const floors: StCompatFloor[] = this.#history(entry, entry.session, {}, undefined, 'all').map((message, index) => ({
       mes: message.text,
       name: message.name ?? (message.role === 'user' ? entry.names.user : entry.names.character),
       is_user: message.role === 'user',
