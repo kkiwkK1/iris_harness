@@ -113,6 +113,7 @@ import {
   type SandboxPluginParse,
 } from './sandbox-plugins/parse.ts'
 import { authoringPrompt, readAuthoringDocument, sandboxPluginTool } from './sandbox-plugins/authoring.ts'
+import { copyBranchPluginState, forgetChatPluginState, forgetPluginState } from './sandbox-plugins/owner-state.ts'
 import { fingerprintLine, fingerprintRequest } from './fingerprint.ts'
 import { PersonaStore, type ActivePersona } from './persona.ts'
 import { fetchAllowedRemote, nodeFetch, type FetchLike } from './remote-fetch.ts'
@@ -2389,6 +2390,10 @@ export class IrisAppService {
          * stranger's code already authorised and mount it**.
          */
         await this.#options.sandboxPlugins?.forget(chatId)
+        // And what those plugins kept in the card's script-variable store, under
+        // owner ids that name this conversation (`sp:<chatId>:…`), so the next
+        // conversation of this id cannot inherit them either.
+        await forgetChatPluginState(this.#options.scriptVariables, chatId)
         /*
          * And its cache traces: whole request bodies of a conversation the user
          * removed, which the next conversation of this id would otherwise be
@@ -2879,6 +2884,13 @@ export class IrisAppService {
         const grew = this.#options.sandboxPlugins
         if (grew !== undefined) {
           await grew.branch(chatId, child.chatId, child.meta.characterId ?? '')
+          // Their script-scope state goes with them, as a copy under the
+          // branch's own owner ids: the rows came with their authorisations,
+          // and a plugin arriving on the branch without its state would read
+          // as a plugin that had been reset.
+          const copied = (await grew.read(child.chatId)).map(record => record.id)
+          await copyBranchPluginState(
+            this.#options.scriptVariables, child.meta.characterId ?? '', chatId, child.chatId, copied)
         }
         const view = this.#viewOf(child)
         this.#options.broadcast({ type: 'chat.updated', chatId, view: this.#viewOf(await chats.open(chatId)) })
@@ -3005,6 +3017,15 @@ export class IrisAppService {
               return []
           }
         }))
+        /*
+         * A row that went takes its per-card state with it: 「removal leaves
+         * nothing」 (§3.1) has to hold for the script-variable store too, and
+         * the plugin's owner id names this conversation, so no other
+         * conversation's plugin of the same id is touched.
+         */
+        const kept = new Set(plugins.map(record => record.id))
+        await forgetPluginState(
+          this.#options.scriptVariables, chatId, before.map(record => record.id).filter(id => !kept.has(id)))
         return { plugins: plugins.map(sandboxPluginViewOf), mounts: mountsOf(plugins) }
       },
 

@@ -284,4 +284,55 @@ export class ScriptVariableStore {
     this.#flush()
     await this.settled()
   }
+
+  /**
+   * Drop the tables of the owners a predicate picks, in every card's partition.
+   *
+   * For sandbox-plugin owners (`sp:<chatId>:<pluginId>`, see `@iris/protocol`'s
+   * `sandboxPluginOwnerId`). Their tables belong to one conversation, not to the
+   * card, so removing the plugin or deleting the chat has to take them away,
+   * while the card's own scripts keep theirs. This walks every partition rather
+   * than taking a character id: a chat delete knows its chat id, and the prefix
+   * alone names everything that chat owned.
+   * @param which - true for a script id whose table should go.
+   * @returns how many tables were dropped.
+   */
+  async forgetScripts(which: (scriptId: string) => boolean): Promise<number> {
+    await this.#load()
+    let dropped = 0
+    for (const tables of Object.values(this.#partitions)) {
+      for (const scriptId of Object.keys(tables)) {
+        if (!which(scriptId)) continue
+        delete tables[scriptId]
+        dropped += 1
+      }
+    }
+    if (dropped === 0) return 0
+    this.#flush()
+    await this.settled()
+    return dropped
+  }
+
+  /**
+   * Copy one owner's table to another owner, within one card's partition.
+   *
+   * For a branch: a sandbox plugin copied onto the branch keeps its state there
+   * under the branch's own owner id, as a copy, so the two roads diverge
+   * independently. It follows the branch rule that copies the plugin together
+   * with its authorisations (`docs/SANDBOX-PLUGINS.md` §10.3).
+   * @param characterId - whose partition.
+   * @param from - the source owner.
+   * @param to - the destination owner; overwritten.
+   * @returns whether there was anything to copy.
+   */
+  async copyScript(characterId: string, from: string, to: string): Promise<boolean> {
+    await this.#load()
+    const tables = this.#partitions[characterId]
+    const source = tables?.[from]
+    if (tables === undefined || source === undefined) return false
+    tables[to] = structuredClone(source)
+    this.#flush()
+    await this.settled()
+    return true
+  }
 }
