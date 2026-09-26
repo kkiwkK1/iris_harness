@@ -10,6 +10,9 @@
  *   `service.ts`'s `#sideGenerate` / `#generateRaw`), `source: 'script'`;
  * - the **host's own** compaction summary (`service.ts`'s `#summarize`, reached
  *   from `/compact` and from the automatic trigger), `source: 'compaction'`.
+ * - the request that writes a sandbox plugin, `source: 'plugin'`, and the one
+ *   that summarizes a branch segment of the tree map (`#summarizeSegment`),
+ *   `source: 'segmentSummary'` — both on the reader's explicit request.
  *
  * Neither appends anything to the log, produces a reply, or belongs to a swipe
  * of any floor. Both are billed exactly like a turn.
@@ -106,8 +109,13 @@ export const SIDE_USAGE_FIELD = 'iris_side_usage'
  * profile the player chose for exactly this and nothing else, so a usage panel
  * that could not separate the two would be reporting the cost of writing plugins
  * as the cost of running cards.
+ *
+ * `'segmentSummary'` is the request that summarizes one **branch segment** of
+ * the tree map (`chat.summarizeSegment`, caller `chat.summarizeSegment`). The
+ * host asks, on the reader's explicit press and never on a hover, so it is
+ * neither a card's spend nor Iris's own compaction policy.
  */
-export const SIDE_SOURCES = ['script', 'compaction', 'plugin'] as const
+export const SIDE_SOURCES = ['script', 'compaction', 'plugin', 'segmentSummary'] as const
 
 /** One of {@link SIDE_SOURCES}. */
 export type SideSource = typeof SIDE_SOURCES[number]

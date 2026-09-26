@@ -25,6 +25,7 @@ import { versionRoute } from './version.ts'
 import { BackupStore, DEFAULT_BACKUP_KEEP } from './backups.ts'
 import { CacheTraceStore, DEFAULT_CACHE_TRACE_KEEP } from './cache-trace.ts'
 import { SandboxPluginStore } from './sandbox-plugins/store.ts'
+import { SegmentSummaryStore } from './segment-summaries.ts'
 import { ChatStore } from './chats.ts'
 import { CharacterLibrary } from './library.ts'
 import { DEFAULT_PRESET } from './prompt.ts'
@@ -171,6 +172,7 @@ export {
   type HostLockRecord,
 } from './host-lock.ts'
 export { applyChatOrder, ChatOrderStore } from './chat-order.ts'
+export { SegmentSummaryStore } from './segment-summaries.ts'
 export { CharacterLibrary, type CardFileRef } from './library.ts'
 export {
   DEFAULT_PROFILE,
@@ -787,6 +789,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
    * and not only in the log.
    */
   const sandboxPlugins = new SandboxPluginStore(paths.sandboxPlugins, { onProblem: reportStoreProblem })
+  // The tree map's segment summaries: model output the reader paid for, so a
+  // file that could not be read is reported on the page like the table above.
+  const segmentSummaries = new SegmentSummaryStore(paths.segmentSummaries, reportStoreProblem)
 
   // Its own file, not a section of `settings.json`: sampling is a preference and
   // this is a permission record. Keeping them apart means a settings reset
@@ -1202,6 +1207,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     backups,
     cacheTrace,
     sandboxPlugins,
+    segmentSummaries,
     preset: storedPreset ?? await loadPreset(config.presetPath),
     ...storedPresetName === undefined ? {} : { presetName: storedPresetName },
     presets,

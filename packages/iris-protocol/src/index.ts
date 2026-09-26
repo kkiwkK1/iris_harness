@@ -122,6 +122,7 @@ export type {
   ChatSummary,
   ChatTreeFork,
   ChatTreeNode,
+  ChatSegment,
   ChatTreeView,
   ChatView,
   CardWorldbookView,
@@ -169,6 +170,7 @@ export type {
   ScriptSource,
   ScriptView,
   SecondaryLogic,
+  SegmentSummaryView,
   UsageBucket,
   UsageBuckets,
   UsageChat,
@@ -195,6 +197,16 @@ export type {
 export { CACHE_STALE_MS, HISTORY_ITEM_PREFIX, MAX_CONTEXT_WINDOW, providerExcuse } from './views.ts'
 
 export { promptTokensOf, type PromptUsage } from './usage.ts'
+
+/*
+ * Where a lineage's branch segments begin and end.
+ *
+ * In the contract because both halves draw the same line: the tree map hovers
+ * a segment the browser worked out, and the host keys, hashes and summarizes a
+ * segment it worked out, so two implementations of the boundary rule would be
+ * two answers to "which floors is this summary about".
+ */
+export { ownerOfFloor, segmentAt, segmentsOf } from './segments.ts'
 
 export {
   PROVIDER_PRESETS,

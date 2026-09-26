@@ -73,7 +73,7 @@ import {
   SummaryNotSmallerError,
   writeCompaction,
 } from './compaction.ts'
-import { COMPACTION_INSTRUCTION } from './compaction-prompt.ts'
+import { COMPACTION_INSTRUCTION, SEGMENT_SUMMARY_INSTRUCTION, segmentLeadIn } from './compaction-prompt.ts'
 import { classifyVolatility, emptyVolatility, markCachePhase } from './cache-friendly.ts'
 import type { ChatEntry, ScriptInjection } from './entry.ts'
 import { writeTimedEffects, writeVolatility } from './entry.ts'
@@ -92,6 +92,8 @@ import { forbiddenSegmentIn, type Variables } from '@iris/variables'
 import { toCardCharacter } from './context.ts'
 import type { ScriptChatMessage } from '@iris/protocol'
 import { promptTokensOf } from '@iris/protocol'
+import { ownerOfFloor, segmentAt, segmentsOf, type ChatTreeView, type SegmentSummaryView } from '@iris/protocol'
+import type { SillyTavernChat, SillyTavernMessage } from '@iris/persistence'
 import { chatLines, floorFlags, lineSystemFlags, lineTurns } from './entry.ts'
 import { attributeResidualMacros, buildPrompt, DEFAULT_PRESET, residualMacros } from './prompt.ts'
 import { CardStorageStore, clearanceNote, QuotaExceeded, removalNote } from './card-storage.ts'
@@ -144,6 +146,7 @@ import { trimToEndSentence } from './reply-trim.ts'
 import { textOf } from './views.ts'
 import { arbitrateMessageVariables, type VariableProposal } from './variable-arbitration.ts'
 import { buildChatTree, lineageOf, planBranchDelete, treeInputOf } from './chat-tree.ts'
+import { matchSegmentSummary, segmentIdentity, type SegmentSummaryStore, type StoredSegmentSummary } from './segment-summaries.ts'
 
 /** Provenance stamped on a partial reply the user stopped. */
 const INTERRUPTED_SOURCE = { provider: 'iris', model: 'interrupted' } as const
@@ -863,6 +866,15 @@ export interface AppServiceOptions {
    * "this host does not do that" rather than "this conversation has none".
    */
   sandboxPlugins?: SandboxPluginStore
+  /**
+   * The tree map's branch-segment summaries (`segment-summaries.ts`).
+   *
+   * Optional, and absent is a refusal of `chat.summarizeSegment` by name —
+   * a host with nowhere to keep a summary must not spend a request on one —
+   * while `chat.segmentSummaries` answers an empty list, which is true: this
+   * host holds none.
+   */
+  segmentSummaries?: SegmentSummaryStore
   /** Reports a failure the service survived. */
   onError?: (error: Error) => void
   /**
@@ -896,7 +908,7 @@ export interface TemplateOptions {
  * The fields answer four different questions and no generation here answers
  * them the same way: `entry` is "whose templates and whose turn record",
  * `trace` is "which request body to keep for comparison", `side` is "whose
- * bill", `route` is "which provider, already decided". The five callers:
+ * bill", `route` is "which provider, already decided". The six callers:
  *
  * | caller | entry | trace | side | route |
  * | --- | --- | --- | --- | --- |
@@ -905,6 +917,7 @@ export interface TemplateOptions {
  * | `script.generate` | — | yes | yes | — |
  * | compaction summary | — | yes | yes | — |
  * | `sandboxPlugin.define` | — | yes | yes | yes |
+ * | `chat.summarizeSegment` | — | — | yes | — |
  */
 interface StreamCall {
   /** The conversation, when this generation is its turn. */
@@ -951,9 +964,30 @@ interface StreamCall {
    * Everything *after* the route is unchanged, which is why this stays one
    * funnel rather than becoming a second: the estimate, the residual-macro
    * reports, the fingerprint, the usage fold-back and the side bill are all the
-   * same code for all five callers.
+   * same code for all six callers.
    */
   route?: string
+}
+
+/**
+ * The ceiling on one segment summary's reply. A two-to-four-sentence answer
+ * needs a few hundred tokens; the rest is room for a reasoning model's
+ * thinking, which is billed inside the same cap.
+ */
+const SEGMENT_SUMMARY_MAX_TOKENS = 2048
+
+/**
+ * A summary's first sentence, for the one-line note a later segment is sent
+ * after: cut at the first sentence end in either script, and bounded so a
+ * summary with no full stop cannot send itself whole.
+ * @param text - a stored summary.
+ * @returns at most 160 characters of it.
+ */
+function firstSentence(text: string): string {
+  const flat = text.replace(/\s+/gu, ' ').trim()
+  const end = flat.search(/[。！？]|[.!?](?=\s|$)/u)
+  const cut = end < 0 ? flat : flat.slice(0, end + 1)
+  return cut.length <= 160 ? cut : `${cut.slice(0, 159)}…`
 }
 
 /** What one compaction did: the floors it folded and the token counts either side. */
@@ -970,7 +1004,7 @@ export class IrisAppService {
   // no safe default value, only a safe absent behaviour — an empty script list
   // and no grants. Inventing a store here would put a policy file somewhere the
   // caller did not choose.
-  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'sandboxPlugins' | 'hostConnection' | 'stCompat' | 'variableWriterTimeoutMs' | 'doctor'>>
+  readonly #options: Required<Omit<AppServiceOptions, 'onError' | 'plugins' | 'pluginInstaller' | 'scripts' | 'scriptLibrary' | 'extensionSettings' | 'scriptButtons' | 'cardStorage' | 'worldbooks' | 'connections' | 'templates' | 'scriptVariables' | 'pruneVariables' | 'diagnostics' | 'presets' | 'presetName' | 'sillyTavernDir' | 'installConnection' | 'personas' | 'favorites' | 'chatOrder' | 'worldbookBindings' | 'backups' | 'cacheTrace' | 'sandboxPlugins' | 'segmentSummaries' | 'hostConnection' | 'stCompat' | 'variableWriterTimeoutMs' | 'doctor'>>
     & {
       doctor?: () => Promise<HostDoctorFacts>
       onError: (error: Error) => void
@@ -1000,6 +1034,7 @@ export class IrisAppService {
       backups?: BackupStore
       cacheTrace?: CacheTraceStore
       sandboxPlugins?: SandboxPluginStore
+      segmentSummaries?: SegmentSummaryStore
     }
   readonly #counter: CalibratingCounter = createCalibratingCounter()
   /** Upstream stamps an incrementing `_trace_id` into the variable cache; one per batch. */
@@ -1176,6 +1211,7 @@ export class IrisAppService {
       ...options.backups === undefined ? {} : { backups: options.backups },
       ...options.cacheTrace === undefined ? {} : { cacheTrace: options.cacheTrace },
       ...options.sandboxPlugins === undefined ? {} : { sandboxPlugins: options.sandboxPlugins },
+      ...options.segmentSummaries === undefined ? {} : { segmentSummaries: options.segmentSummaries },
       ...options.doctor === undefined ? {} : { doctor: options.doctor },
     }
     // The manager's live state starts on whatever the caller assembled: a
@@ -2435,6 +2471,10 @@ export class IrisAppService {
            * retention with its reason beside every store that is forgotten.
            */
           await this.#options.cacheTrace?.forgetChat(chatId)
+          // And the summaries of the segments it owned, for the same ruling: a
+          // positional key (`@<chatId>#<floor>`) would otherwise line up with
+          // the next conversation of this id. Backups are kept.
+          await this.#options.segmentSummaries?.forget(chatId)
         }
         await this.#announceChats()
         return {
@@ -2933,17 +2973,93 @@ export class IrisAppService {
         return { view, chats: await this.#chatList() }
       },
 
-      'chat.tree': async ({ chatId }) => {
-        // Read-only, and read from the files: the list says who is family, and
-        // only the family's files are opened (`chat-tree.ts`).
-        const rows = await chats.list()
-        const family = lineageOf(rows, chatId)
-        const inputs = await Promise.all(
-          rows.filter(row => family.has(row.chatId)).map(async row => treeInputOf(row, await chats.fileOf(row.chatId))),
-        )
-        const tree = buildChatTree(inputs, chatId)
-        if (tree === undefined) throw notFound(`no chat "${chatId}"`)
-        return { tree }
+      // Read-only, and read from the files (`#family`).
+      'chat.tree': async ({ chatId }) => ({ tree: (await this.#family(chatId)).tree }),
+
+      'chat.segmentSummaries': async ({ chatId }) => {
+        const family = await this.#family(chatId)
+        const store = this.#options.segmentSummaries
+        // No store, no summaries — which is true of this host, not a refusal:
+        // the map draws "not summarized yet" and the button that would spend
+        // a request is what refuses.
+        if (store === undefined) return { summaries: [] }
+        return { summaries: await this.#segmentViews(family, store) }
+      },
+
+      'chat.summarizeSegment': async ({ chatId, fromFloor, toFloor, lane }) => {
+        const store = this.#options.segmentSummaries
+        if (store === undefined) {
+          throw new AppError('unsupported', 'this host keeps no segment summaries, so none was requested')
+        }
+        const family = await this.#family(chatId)
+        const { tree, files } = family
+        const owner = lane ?? ownerOfFloor(tree, chatId, fromFloor)
+        const segments = segmentsOf(tree)
+        const segment = segments.find(one => one.chatId === owner && one.from === fromFloor && one.to === toFloor)
+        if (owner === undefined || segment === undefined) {
+          throw invalid(`floors ${String(fromFloor)}–${String(toFloor)} are not one branch segment of this conversation's tree`)
+        }
+        const lines = files.get(owner)?.messages
+        if (lines === undefined) throw notFound(`the conversation "${owner}" could not be read`)
+        const identity = segmentIdentity(owner, lines, fromFloor, toFloor)
+
+        // One line of what came before, for a segment that is not the root's
+        // first: the preceding segment's own summary when the reader already
+        // has one, else a plain note that earlier floors are not shown.
+        let before: string | undefined
+        if (fromFloor > 0) {
+          const upOwner = ownerOfFloor(tree, owner, fromFloor - 1)
+          const up = upOwner === undefined ? undefined : segmentAt(segments, upOwner, fromFloor - 1)
+          const upLines = up === undefined ? undefined : files.get(up.chatId)?.messages
+          if (up !== undefined && upLines !== undefined) {
+            const records = (await Promise.all(tree.chats.map(node => store.list(node.chatId)))).flat()
+            const found = matchSegmentSummary(records, segmentIdentity(up.chatId, upLines, up.from, up.to))
+            before = found === undefined ? undefined : firstSentence(found.record.summary)
+          }
+        }
+        const lead = fromFloor > 0 ? segmentLeadIn(fromFloor, before) : undefined
+
+        // Billed to, and stoppable from, the conversation that asked; and
+        // stoppable from the one that owns the floors too, so deleting it
+        // mid-request does not write a summary for a conversation that is gone.
+        const asking = await chats.open(chatId)
+        const owning = owner === chatId ? undefined : await chats.open(owner)
+        const summary = await this.#asSideCall(asking, 'chat.summarizeSegment', async signal => {
+          const ownerCall = owning?.sideCall()
+          try {
+            const both = ownerCall === undefined ? signal : AbortSignal.any([signal, ownerCall.signal])
+            return await this.#summarizeSegment(asking, lines.slice(fromFloor, toFloor + 1), lead, both)
+          } catch (error: unknown) {
+            if (ownerCall?.signal.aborted === true && isAbortError(error)) {
+              throw new AppError('provider-error',
+                'chat.summarizeSegment was stopped before it finished (the conversation that owns the segment was stopped or deleted)')
+            }
+            throw error
+          } finally {
+            ownerCall?.done()
+          }
+        })
+        const model = this.#options.settings.get(chatId).model
+        const record: StoredSegmentSummary = {
+          ...identity,
+          from: fromFloor,
+          to: toFloor,
+          summary,
+          at: Date.now(),
+          ...model === '' ? {} : { model },
+        }
+        await store.put(owner, record)
+        return {
+          summary: {
+            chatId: owner,
+            from: fromFloor,
+            to: toFloor,
+            summary,
+            at: record.at,
+            ...record.model === undefined ? {} : { model: record.model },
+            stale: false,
+          },
+        }
       },
 
       'chat.import': async ({ filename, content, characterId }) => {
@@ -7146,6 +7262,140 @@ export class IrisAppService {
   }
 
   /**
+   * A conversation's whole lineage: the graph `chat.tree` answers, and the
+   * family's files it was read from.
+   *
+   * Read-only, and read from the files: the list says who is family, and only
+   * the family's files are opened (`chat-tree.ts`). The segment-summary arms
+   * take the files as well, because a segment's identity is hashed from the
+   * same lines the graph was cut from — two reads could disagree.
+   * @param chatId - a conversation of the lineage.
+   * @returns the graph and each member's file (undefined where unreadable).
+   * @throws {AppError} `not-found` when the chat is not in the list.
+   */
+  async #family(chatId: string): Promise<{ tree: ChatTreeView, files: Map<string, SillyTavernChat | undefined> }> {
+    const chats = this.#options.chats
+    const rows = await chats.list()
+    const family = lineageOf(rows, chatId)
+    const files = new Map<string, SillyTavernChat | undefined>()
+    const inputs = await Promise.all(rows.filter(row => family.has(row.chatId)).map(async row => {
+      const file = await chats.fileOf(row.chatId)
+      files.set(row.chatId, file)
+      return treeInputOf(row, file)
+    }))
+    const tree = buildChatTree(inputs, chatId)
+    if (tree === undefined) throw notFound(`no chat "${chatId}"`)
+    return { tree, files }
+  }
+
+  /**
+   * Every current segment of a lineage that has a stored summary, fresh or stale.
+   *
+   * The records of **every** member are read and matched together, so a
+   * segment's summary is found whichever conversation of the family asks and
+   * whichever member's file it was written to (`segment-summaries.ts` names the
+   * match policy).
+   * @param family - `#family`'s answer.
+   * @param store - the summary store.
+   * @returns one view per summarized segment, in `segmentsOf` order.
+   */
+  async #segmentViews(
+    family: { tree: ChatTreeView, files: ReadonlyMap<string, SillyTavernChat | undefined> },
+    store: SegmentSummaryStore,
+  ): Promise<SegmentSummaryView[]> {
+    const records = (await Promise.all(family.tree.chats.map(node => store.list(node.chatId)))).flat()
+    const views: SegmentSummaryView[] = []
+    for (const segment of segmentsOf(family.tree)) {
+      const lines = family.files.get(segment.chatId)?.messages
+      if (lines === undefined) continue
+      const found = matchSegmentSummary(records, segmentIdentity(segment.chatId, lines, segment.from, segment.to))
+      if (found === undefined) continue
+      views.push({
+        ...segment,
+        summary: found.record.summary,
+        at: found.record.at,
+        ...found.record.model === undefined ? {} : { model: found.record.model },
+        stale: found.stale,
+      })
+    }
+    return views
+  }
+
+  /**
+   * Ask the model for a two-to-four-sentence summary of one branch segment.
+   *
+   * **The compaction summarizer's shape and bookkeeping, not its prefix.** The
+   * floors go out as messages and the directive as the final user message
+   * (`SEGMENT_SUMMARY_INSTRUCTION`), on the conversation's own route. No
+   * `entry` is passed to {@link #stream}, so no card template evaluates in this
+   * host-written prompt and the calibration and the turn's `actualTokens` do
+   * not move; a `side` is, so it is billed on the header under
+   * `source: 'segmentSummary'` and shows on the usage page. Unlike compaction
+   * the conversation's system prompt is **not** sent: only the segment's floors
+   * are (owner request), so there is no request prefix to share with a turn.
+   *
+   * **No `trace`**, which is where it departs from compaction on purpose: a
+   * trace explains why a later turn's prefix changed, and a segment summary
+   * changes no later request — while 「总结所有分支段」 sends one per segment
+   * and would rotate every turn's trace out of the eight kept per chat.
+   *
+   * Hidden floors (`is_system`) are skipped, as a turn skips them; each floor
+   * is sent with its speaker's name so a summary can say who did what.
+   * @param entry - the conversation that asked, whose route and bill it is.
+   * @param lines - the segment's floors, oldest first.
+   * @param lead - one line of what came before, for a segment that is not the root's first.
+   * @param signal - Stop, a delete, or the owner's.
+   * @returns the summary text.
+   * @throws {AppError} `invalid-request` when the segment has no text, `provider-error` when the stream fails, is cut off or is stopped.
+   */
+  async #summarizeSegment(
+    entry: ChatEntry,
+    lines: readonly SillyTavernMessage[],
+    lead: string | undefined,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const settings = this.#options.settings.get(entry.chatId)
+    const floors = lines.flatMap(line => {
+      if (line.is_system === true) return []
+      const text = typeof line.mes === 'string' ? line.mes.trim() : ''
+      if (text === '') return []
+      const said = typeof line.name === 'string' && line.name !== '' ? `${line.name}: ${text}` : text
+      return [line.is_user
+        ? createUserMessage({ content: [{ type: 'text', text: said }], source: { kind: 'user' } })
+        : createAssistantMessage({ content: [{ type: 'text', text: said }], source: { provider: 'iris', model: 'history' } })]
+    })
+    if (floors.length === 0) throw invalid('this segment has no shown text to summarize')
+
+    const assembler = new BlockAssembler()
+    const stream = this.#stream({
+      provider: settings.provider,
+      model: settings.model,
+      messages: [
+        ...lead === undefined ? [] : [createUserMessage({ content: [{ type: 'text', text: lead }], source: { kind: 'user' } })],
+        ...floors,
+        createUserMessage({ content: [{ type: 'text', text: SEGMENT_SUMMARY_INSTRUCTION }], source: { kind: 'user' } }),
+      ],
+      maxTokens: SEGMENT_SUMMARY_MAX_TOKENS,
+      signal,
+    }, {
+      // No `entry` and no `trace` — see this method's doc.
+      side: { entry, caller: 'chat.summarizeSegment', source: 'segmentSummary' },
+    })
+    for await (const chunk of stream) assembler.push(chunk)
+
+    const finish = assembler.finish
+    if (finish.kind === 'error' || finish.kind === 'aborted') {
+      throw new AppError('provider-error', finish.failure?.message ?? 'the provider ended the segment summary with an error')
+    }
+    if (finish.kind === 'max-tokens') {
+      throw new AppError('provider-error', `the segment summary was cut off at the ${String(SEGMENT_SUMMARY_MAX_TOKENS)}-token cap`)
+    }
+    const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('').trim()
+    if (text === '') throw new AppError('provider-error', 'the model answered the segment summary with no text')
+    return text
+  }
+
+  /**
    * Fold this conversation's older history into one summary, and record it.
    *
    * The transaction, in the harness's order: choose the span from the
@@ -7597,8 +7847,8 @@ export class IrisAppService {
   ): AsyncIterable<StreamChunk> {
     const { entry, trace, side, route: routed } = call
     // **The route is settled before anything else runs**, and here rather than
-    // at each of the four callers: a turn, `script.generateRaw`,
-    // `script.generate` and the compaction summarizer all compose
+    // at each caller: a turn, `script.generateRaw`, `script.generate`, the
+    // compaction summarizer and the segment summarizer all compose
     // `provider: settings.provider` from their own read of the settings, and a
     // check written per caller is a check three callers have and the fourth
     // one added next year does not. `#resolveRoute` installs what it can and

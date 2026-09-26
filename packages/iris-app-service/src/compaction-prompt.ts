@@ -42,6 +42,12 @@ export const SUMMARY_OPEN_TAG = '<compacted-summary>'
 /** Closes it. */
 export const SUMMARY_CLOSE_TAG = '</compacted-summary>'
 
+/** Shared by both directives below: the summary speaks the conversation's language. */
+const LANGUAGE_RULE = '- Write in the language the conversation is in.'
+
+/** Shared by both directives below: a summary reports, it does not narrate. */
+const NO_INVENTION_RULE = '- Do NOT continue the story, do NOT write in character, and do NOT invent anything that was not in the text above.'
+
 /**
  * The summarization directive, delivered as the final user message.
  *
@@ -79,10 +85,10 @@ export const COMPACTION_INSTRUCTION: string = [
   '- [precisely where the conversation stands at this checkpoint, and whose turn it is]',
   '',
   'Rules:',
-  '- Write in the language the conversation is in.',
+  LANGUAGE_RULE,
   '- Preserve names, numbers, quoted lines, stated facts and any structured block the scene has been maintaining, exactly as written.',
   "- Capture the user's own instructions and corrections faithfully, especially ones that change how the story is told.",
-  '- Do NOT continue the story, do NOT write in character, and do NOT invent anything that was not in the text above.',
+  NO_INVENTION_RULE,
   '- Do NOT mention this summarization request or that the context was compacted.',
   '- Output only the checkpoint text.',
   `- If the conversation already contains a ${SUMMARY_OPEN_TAG} block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.`,
@@ -94,3 +100,39 @@ export const COMPACTION_INSTRUCTION: string = [
  */
 export const CHECKPOINT_PREAMBLE
   = 'This is an automatically generated checkpoint condensing an earlier span of this conversation to free up context. Treat what it records as established background and build on it without restating it. Continue directly from the messages that follow, without acknowledging this checkpoint.'
+
+/**
+ * The directive that summarizes one **branch segment** of the tree map
+ * (`chat.summarizeSegment`), delivered as the final user message after the
+ * segment's own floors.
+ *
+ * The compaction directive's style, cut down to what a hover card holds: the
+ * same final-user-message shape, the same language and no-invention rules
+ * (shared as constants, so the two cannot drift apart), and prose of two to four
+ * sentences instead of a sectioned checkpoint. A segment that is not the root's
+ * arrives with one line of what came before (`segmentLeadIn`), and the rule
+ * below keeps the model from summarizing that line instead of the segment.
+ */
+export const SEGMENT_SUMMARY_INSTRUCTION: string = [
+  'You are now acting as a summarizer for one stretch of this conversation. Summarize the messages ABOVE in 2 to 4 sentences of plain prose: what happens, who is involved, and where it leaves things.',
+  '',
+  'Rules:',
+  LANGUAGE_RULE,
+  '- Keep names, numbers and stated facts exactly as written.',
+  NO_INVENTION_RULE,
+  '- If the first message is a note of what came before, do not summarize the note; summarize only what follows it.',
+  '- Do NOT mention this summarization request.',
+  '- Output only the summary, with no heading, list or preamble.',
+].join('\n')
+
+/**
+ * The one line a non-root segment is sent after: what came before it.
+ * @param floor - the segment's first floor.
+ * @param before - the preceding segment's summary, first sentence, when one exists.
+ * @returns the note.
+ */
+export function segmentLeadIn(floor: number, before: string | undefined): string {
+  return before === undefined || before === ''
+    ? `(Note: this excerpt begins at message ${String(floor)} of a longer conversation; the earlier messages are not shown.)`
+    : `(Note: this excerpt begins at message ${String(floor)} of a longer conversation. Before it: ${before})`
+}

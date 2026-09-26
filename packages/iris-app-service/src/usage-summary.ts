@@ -164,14 +164,14 @@ export function addUsage(into: UsageTotals, record: DatedUsage): void {
   foldBuckets(into, record.usage)
   if (record.undated) into.undatedTurns += 1
   const source = record.usage.source
-  if (source !== 'script' && source !== 'compaction' && source !== 'plugin') return
+  if (source !== 'script' && source !== 'compaction' && source !== 'plugin' && source !== 'segmentSummary') return
   // Keyed by the source rather than branched per share. The field name and the
   // source spelling are the same word by construction, so a further side source
   // folds by widening the guard above rather than by someone remembering to
   // copy an arm — and a forgotten arm here does not fail, it reports a share of
   // zero, which reads as "this profile does not do that" on every page.
   // `'plugin'` was the first to arrive after that was written, and widening the
-  // guard by one word is all it took.
+  // guard by one word is all it took; `'segmentSummary'` was the second.
   const share = into[source] ?? emptyBuckets()
   into[source] = share
   foldBuckets(share, record.usage)

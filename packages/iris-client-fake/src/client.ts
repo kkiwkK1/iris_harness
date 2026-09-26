@@ -14,7 +14,10 @@
 import {
   parseRequest,
   registerRequestSchema,
+  segmentsOf,
+  ownerOfFloor,
   toEntryDigest,
+  type SegmentSummaryView,
   type AnyRpcMethod,
   type CharacterSummary,
   type ChatSearchHit,
@@ -211,6 +214,11 @@ class InMemoryClient implements FakeClient {
    * for the other.
    */
   readonly #networkGrants = new Set<string>()
+  /**
+   * Segment summaries this fake has "written", by `<owner>:<from>-<to>`.
+   * Canned text, never stale: the fake has no content hashing to be stale by.
+   */
+  readonly #segmentSummaries = new Map<string, SegmentSummaryView>()
 
   /**
    * Whether the user has answered the run-scripts question, per card.
@@ -1302,6 +1310,37 @@ class InMemoryClient implements FakeClient {
         const { chatId } = params as RpcRequest<'chat.tree'>
         this.#require(chatId)
         return { tree: fakeChatTree(this.#chats, chatId) }
+      }
+
+      case 'chat.segmentSummaries': {
+        const { chatId } = params as RpcRequest<'chat.segmentSummaries'>
+        this.#require(chatId)
+        const segments = segmentsOf(fakeChatTree(this.#chats, chatId))
+        const summaries = segments.flatMap(segment => {
+          const found = this.#segmentSummaries.get(`${segment.chatId}:${String(segment.from)}-${String(segment.to)}`)
+          return found === undefined ? [] : [found]
+        })
+        return { summaries }
+      }
+
+      case 'chat.summarizeSegment': {
+        const { chatId, fromFloor, toFloor, lane } = params as RpcRequest<'chat.summarizeSegment'>
+        this.#require(chatId)
+        const tree = fakeChatTree(this.#chats, chatId)
+        const owner = lane ?? ownerOfFloor(tree, chatId, fromFloor)
+        const segment = segmentsOf(tree).find(one => one.chatId === owner && one.from === fromFloor && one.to === toFloor)
+        if (owner === undefined || segment === undefined) {
+          throw new FakeRpcError('invalid-request', `floors ${String(fromFloor)}–${String(toFloor)} are not one branch segment`)
+        }
+        const summary: SegmentSummaryView = {
+          ...segment,
+          summary: `A canned summary of floors ${String(fromFloor)}–${String(toFloor)}.`,
+          at: Date.now(),
+          model: 'fake-model',
+          stale: false,
+        }
+        this.#segmentSummaries.set(`${owner}:${String(fromFloor)}-${String(toFloor)}`, summary)
+        return { summary }
       }
 
       case 'script.context':

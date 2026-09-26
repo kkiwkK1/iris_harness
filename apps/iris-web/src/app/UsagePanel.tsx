@@ -49,6 +49,7 @@ import {
   hitRate,
   linePath,
   pluginTokens,
+  segmentSummaryTokens,
   seriesDomKey,
   seriesKey,
   rangeParams,
@@ -435,7 +436,7 @@ function Cards({ totals }: { totals: UsageTotals }): ReactElement {
       <div className="iris-usage__hero">
         <span className="iris-usage__total">{formatExactTokens(totalTokens(totals))}</span>
         <span className="iris-label">{t('usageCardTotal')}</span>
-        {totals.script === undefined && totals.compaction === undefined && totals.plugin === undefined ? null : (
+        {totals.script === undefined && totals.compaction === undefined && totals.plugin === undefined && totals.segmentSummary === undefined ? null : (
           <span className="iris-usage__hero-note">
             {totals.script === undefined ? null : (
               <span title={t('usageScriptBasis')}>
@@ -458,6 +459,14 @@ function Cards({ totals }: { totals: UsageTotals }): ReactElement {
                 {t('usagePluginShare', {
                   n: totals.plugin.turns,
                   tokens: formatExactTokens(pluginTokens(totals)),
+                })}
+              </span>
+            )}
+            {totals.segmentSummary === undefined ? null : (
+              <span title={t('usageSegmentBasis')}>
+                {t('usageSegmentShare', {
+                  n: totals.segmentSummary.turns,
+                  tokens: formatExactTokens(segmentSummaryTokens(totals)),
                 })}
               </span>
             )}
@@ -945,6 +954,16 @@ function ChatRows({
                           {t('usagePluginCell', {
                             n: chat.plugin.turns,
                             tokens: formatTokens(pluginTokens(chat)),
+                          })}
+                        </span>
+                      )}
+                  {chat.segmentSummary === undefined
+                    ? null
+                    : (
+                        <span>
+                          {t('usageSegmentCell', {
+                            n: chat.segmentSummary.turns,
+                            tokens: formatTokens(segmentSummaryTokens(chat)),
                           })}
                         </span>
                       )}

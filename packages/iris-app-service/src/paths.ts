@@ -276,6 +276,12 @@ export interface ProfilePaths {
    * it is per conversation and has to be dropped when one is deleted.
    */
   sandboxPlugins: string
+  /**
+   * The tree map's branch-segment summaries, one file per conversation that
+   * owns segments (`segment-summaries.ts`). Beside the chat files and never in
+   * them, and per conversation so a delete drops exactly its own.
+   */
+  segmentSummaries: string
 }
 
 /**
@@ -319,6 +325,7 @@ export function profilePaths(dataDir: string, profile: string = DEFAULT_PROFILE)
     chatOrder: join(root, 'chat-order.json'),
     cacheTrace: join(root, 'cache-trace'),
     sandboxPlugins: join(root, 'sandbox-plugins'),
+    segmentSummaries: join(root, 'segment-summaries'),
     /** Third-party ST extensions, laid out by the installer (staging/ claims/ installed/). */
     extensions: join(root, 'st-extensions'),
     /**

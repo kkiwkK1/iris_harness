@@ -322,6 +322,10 @@ const PROBES: { [M in RpcMethod]: RpcRequest<M> } = {
   // Refused with not-found: the probe host has no chats, and the refusal
   // proves the read-only handler is registered and ran.
   'chat.tree': { chatId: 'no-such-chat' },
+  // Both refused with not-found by the same lineage read `chat.tree` makes,
+  // before any provider is reached — so the write arm's probe spends nothing.
+  'chat.segmentSummaries': { chatId: 'no-such-chat' },
+  'chat.summarizeSegment': { chatId: 'no-such-chat', fromFloor: 0, toFloor: 0 },
   // The import probe names a card that is not in the library: reachability is
   // the property, and the not-found answer proves the handler ran.
   'chat.import': { filename: 'probe.jsonl', content: 'e30=', characterId: 'no-such-card' },
