@@ -153,6 +153,17 @@ export function pluginTokens(totals: UsageTotals): number {
 }
 
 /**
+ * What **summarizing branch segments** spent, of the figure beside it
+ * (`chat.summarizeSegment`). The fourth of the family, with the same
+ * `0`-where-absent rule and no chart metric, for {@link pluginTokens}'s reason.
+ * @param totals - a cell, a conversation subtotal, or the whole range.
+ * @returns the segment-summary share of the total, in tokens.
+ */
+export function segmentSummaryTokens(totals: UsageTotals): number {
+  return totals.segmentSummary === undefined ? 0 : totalTokens(totals.segmentSummary)
+}
+
+/**
  * One metric's value.
  *
  * `cacheRead` reads `0` where the bucket is absent, and that is a display

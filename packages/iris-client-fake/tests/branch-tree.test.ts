@@ -48,3 +48,24 @@ test('chat.tree draws the lineage from any member, with recorded forks', async (
   assert.deepEqual(tree.current, { chatId: b.chatId, floor: 0 })
   client.dispose()
 })
+
+test('segment summaries on the fake: a canned summary for one segment, found from the family, refused off a boundary', async () => {
+  const client = testClient()
+  const chatId = 'chat-lamplighter'
+  const root = (await client.call('chat.open', { chatId })).view
+  assert.ok(root.messages.length >= 2, 'premise: the seeded chat has floors to cut')
+  const branch = (await client.call('chat.branch', { chatId, id: 0 })).view
+  assert.deepEqual((await client.call('chat.segmentSummaries', { chatId })).summaries, [])
+
+  const { summary } = await client.call('chat.summarizeSegment', { chatId: branch.chatId, fromFloor: 0, toFloor: 0 })
+  assert.deepEqual([summary.chatId, summary.from, summary.to, summary.stale], [chatId, 0, 0, false])
+  assert.match(summary.summary, /canned summary of floors 0–0/u)
+  const seen = (await client.call('chat.segmentSummaries', { chatId })).summaries
+  assert.deepEqual(seen, [summary], 'the root does not see the summary its branch asked for')
+
+  await assert.rejects(
+    () => client.call('chat.summarizeSegment', { chatId, fromFloor: 0, toFloor: root.messages.length - 1 }),
+    /not one branch segment/u,
+  )
+  client.dispose()
+})

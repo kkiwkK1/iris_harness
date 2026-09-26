@@ -542,6 +542,30 @@ export const en = {
   treeAgeNone: 'under an hour',
   treeAgeHours: '{n} h',
   treeAgeDays: '{n} days',
+  /*
+   * The tree map's branch-segment summaries: a hover card per segment (a run
+   * of floors between fork points) and the header's 「Summarize all」. Every
+   * summary is a billed model request, so the words say so where one is asked.
+   */
+  segHead: 'Floors {from}–{to} · {n} floors',
+  segNone: 'Not summarized yet.',
+  segSummarize: 'Summarize this segment',
+  segResummarize: 'Summarize again',
+  segStale: 'These floors changed after the summary was written.',
+  segAt: 'Written {time}',
+  segAtModel: 'Written {time} by {model}',
+  segBusy: 'Summarizing…',
+  segCost: 'One model request, billed to this conversation.',
+  segAria: 'Summary of floors {from}–{to}',
+  segAll: 'Summarize all',
+  segAllTip: 'Summarize every branch segment that has no current summary',
+  segAllNone: 'Every segment already has a current summary.',
+  segAllTitle: 'Summarize all branch segments?',
+  segAllBody: '{n} segments will be summarized: one model request each, one at a time, billed to this conversation. You can stop at any point.',
+  segAllBodyStale: 'Of these, {m} have a summary that is out of date.',
+  segAllGo: 'Summarize {n} segments',
+  segAllRunning: 'Stop ({done}/{total})',
+  segAllStopAria: 'Stop summarizing segments: {done} of {total} done',
   reconnected: 'Reconnected to the Iris host.',
   noticeRepeatAria: 'repeated {n} times',
 
@@ -1679,6 +1703,14 @@ export const en = {
    * Same blank-never-zero rule, and the same reason `tok` is spelled out.
    */
   usagePluginCell: '{n} plugin · {tokens} tok',
+  /**
+   * The share summarizing the tree map's branch segments asked for
+   * (`chat.summarizeSegment`): one request per 「Summarize this segment」, or
+   * one per segment for 「Summarize all segments」. Same blank-never-zero rule.
+   */
+  usageSegmentShare: 'of which {n} segment-summary requests · {tokens} tok',
+  usageSegmentBasis: 'Requests Iris made to summarize branch segments on the tree map, only when you pressed “Summarize this segment” or “Summarize all segments”. They go out on the conversation’s own connection, are billed like a turn, produce no reply, and are counted inside every figure on this page.',
+  usageSegmentCell: '{n} segment · {tokens} tok',
   /** Nothing to draw, because this figure was never billed — not a chart of zeros. */
   usageChartEmpty: 'Nothing was billed to this figure in this range.',
   /**
@@ -2522,6 +2554,25 @@ export const zh: Record<StringKey, string> = {
   treeAgeNone: '不到 1 小时',
   treeAgeHours: '{n} 小时',
   treeAgeDays: '{n} 天',
+  segHead: '第 {from}–{to} 层 · 共 {n} 层',
+  segNone: '这一段还没有总结。',
+  segSummarize: '总结这一段',
+  segResummarize: '重新总结',
+  segStale: '这段内容在总结之后改动过。',
+  segAt: '生成于 {time}',
+  segAtModel: '由 {model} 生成于 {time}',
+  segBusy: '正在总结…',
+  segCost: '会发出一次模型请求，计入这个对话的用量。',
+  segAria: '第 {from}–{to} 层的总结',
+  segAll: '总结所有分支段',
+  segAllTip: '为每个还没有最新总结的分支段写总结',
+  segAllNone: '所有分支段都已有最新总结。',
+  segAllTitle: '总结所有分支段？',
+  segAllBody: '将总结 {n} 段：每段一次模型请求，逐段进行，计入这个对话的用量。随时可以停止。',
+  segAllBodyStale: '其中 {m} 段的总结已过时。',
+  segAllGo: '总结 {n} 段',
+  segAllRunning: '停止（{done}/{total}）',
+  segAllStopAria: '停止总结分支段：已完成 {done}/{total}',
   reconnected: '已重新连接到 Iris 宿主。',
   noticeRepeatAria: '重复 {n} 次',
 
@@ -3434,6 +3485,9 @@ export const zh: Record<StringKey, string> = {
   usagePluginShare: '其中写插件请求 {n} 次 · {tokens} tok',
   usagePluginBasis: '每次你用「创造」时，Iris 为这段对话写功能发出的请求。它们走的是「写插件用」那一行选的连接，不是这个对话自己的；和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
   usagePluginCell: '写插件 {n} 次 · {tokens} tok',
+  usageSegmentShare: '其中分支段总结 {n} 次 · {tokens} tok',
+  usageSegmentBasis: '只在你按下「总结这一段」或「总结所有分支段」时，Iris 为树状图的分支段写总结发出的请求。它们走这个对话自己的连接，和一次回合一样计费，但不产生任何回复，本页每个数字都已把它们算在内。',
+  usageSegmentCell: '分支段总结 {n} 次 · {tokens} tok',
   usageChartEmpty: '这段时间这个指标没有产生计费。',
   contextPill: '上下文 {used}/{total} · {percent}%',
   contextPillCapacity: '上下文 {total}',

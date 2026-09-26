@@ -238,8 +238,14 @@ export interface TurnUsage {
    * through a connection profile chosen for exactly this and nothing else. Its
    * own member for the same reason `'compaction'` is not folded into
    * `'script'` — the reader who wants less of it changes a habit, not a card.
+   *
+   * A `'segmentSummary'` record is **the request that summarized one branch
+   * segment** of the tree map (`chat.summarizeSegment`), made only when the
+   * reader pressed 「总结这一段」 or 「总结所有分支段」. Its own member for the
+   * reason `'plugin'` is: nothing in the card asked for it, and the reader who
+   * wants less of it presses the button less.
    */
-  source?: 'turn' | 'script' | 'compaction' | 'plugin'
+  source?: 'turn' | 'script' | 'compaction' | 'plugin' | 'segmentSummary'
 }
 
 /**
@@ -583,6 +589,42 @@ export interface ChatTreeView {
   chats: ChatTreeNode[]
   /** The conversation that was asked about, and its newest floor. */
   current: { chatId: string, floor: number }
+}
+
+/**
+ * One **branch segment**: a run of floors between fork points, on the lane that
+ * draws it (`segmentsOf` in `@iris/protocol`'s `segments.ts`).
+ *
+ * `chatId` is the conversation whose *own* floors these are — the root for the
+ * common prefix every branch shares, a branch for what it wrote after its fork.
+ * `from` and `to` are floor numbers in that conversation, both inclusive.
+ */
+export interface ChatSegment {
+  chatId: string
+  from: number
+  to: number
+}
+
+/**
+ * A segment's model-written summary, as `chat.segmentSummaries` answers it.
+ *
+ * Kept in an Iris sidecar (`segment-summaries/<chatId>.json`), never in the
+ * SillyTavern chat file, and keyed by the segment's content identity rather
+ * than by its floor numbers: the durable line ids of its first and last floor
+ * plus a hash of every floor's role and shown text.
+ */
+export interface SegmentSummaryView extends ChatSegment {
+  summary: string
+  /** When it was generated, epoch milliseconds. */
+  at: number
+  /** The model that wrote it, when known. */
+  model?: string
+  /**
+   * The segment's floors are no longer the ones summarized — a floor was
+   * edited, a different swipe is shown, or the run grew or shrank since — so
+   * the summary is shown with a 「重新总结」 rather than as current.
+   */
+  stale: boolean
 }
 
 /**
@@ -3121,6 +3163,15 @@ export interface UsageTotals extends UsageBuckets {
    * rather than a zero that reads as "this cost nothing".
    */
   plugin?: UsageBuckets
+  /**
+   * The share of everything above that **summarizing branch segments** asked
+   * for — `TurnUsage.source` of `'segmentSummary'` (`chat.summarizeSegment`).
+   *
+   * Same standing and absence rule as {@link plugin}: one request per press of
+   * 「总结这一段」, or one per segment for 「总结所有分支段」, and absent on a
+   * profile that never pressed either.
+   */
+  segmentSummary?: UsageBuckets
 }
 
 /**

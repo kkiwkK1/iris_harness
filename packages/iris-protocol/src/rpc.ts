@@ -19,7 +19,7 @@ import type { RuntimeRequestSchema } from './rpc-registry.ts'
 import { lookupRequestSchema } from './rpc-registry.ts'
 import { MAX_CONTEXT_WINDOW } from './views.ts'
 
-import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatTreeView, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDoctorFacts, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
+import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatTreeView, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDoctorFacts, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, SegmentSummaryView, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
 import type { SystemPluginInstallPreview, SystemPluginSnapshot } from './system-plugins.ts'
 import type { SandboxPluginView } from './sandbox-plugins.ts'
 // —— family①: identity & messages ——
@@ -884,6 +884,35 @@ export const requestSchemas = {
    * `chat.search`, so an unsaved card replay batch is not in it.
    */
   'chat.tree': z.object({ chatId: z.string().min(1) }),
+
+  /**
+   * The model-written summaries of a lineage's branch segments.
+   *
+   * Read-only: the segments are cut from the same graph `chat.tree` answers
+   * (`segmentsOf`), each is matched against the Iris sidecar by its content
+   * identity, and a summary whose floors have changed since comes back with
+   * `stale: true`. Nothing is generated here — summaries cost money and are
+   * made only by `chat.summarizeSegment`, on request.
+   */
+  'chat.segmentSummaries': z.object({ chatId: z.string().min(1) }),
+
+  /**
+   * Summarize one branch segment with the model, and keep the summary.
+   *
+   * A side request on the conversation's own route, billed to `chatId` as
+   * side usage (`source: 'segmentSummary'`), never a turn; Stop and a delete
+   * of `chatId` (or of the segment's own conversation) abort it. `fromFloor`
+   * and `toFloor` must be exactly one segment's bounds. `lane` names the
+   * conversation that owns it when that is not the one in `chatId`'s own
+   * history — a sibling's segment hovered on the map; absent, the owner is
+   * the conversation on `chatId`'s way to the root that draws `fromFloor`.
+   */
+  'chat.summarizeSegment': z.object({
+    chatId: z.string().min(1),
+    fromFloor: z.number().int().min(0),
+    toFloor: z.number().int().min(0),
+    lane: z.string().min(1).optional(),
+  }),
 
   /**
    * Copy a SillyTavern chat file into this profile.
@@ -2840,6 +2869,10 @@ export interface RpcResponseMap {
   'chat.branch': { view: ChatView, chats: ChatSummary[] }
   /** The lineage graph: root ancestor, every descendant, fork points, floor and swipe counts. */
   'chat.tree': { tree: ChatTreeView }
+  /** One entry per current segment that has a stored summary, fresh or stale. */
+  'chat.segmentSummaries': { summaries: SegmentSummaryView[] }
+  /** The summary just written. */
+  'chat.summarizeSegment': { summary: SegmentSummaryView }
   /** The conversation as stored, summary-shaped — the sidebar's own currency. */
   'chat.import': { chat: ChatSummary }
   /**

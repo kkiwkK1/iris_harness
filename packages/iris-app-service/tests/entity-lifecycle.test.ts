@@ -83,6 +83,17 @@ const LIFECYCLE: Record<string, { character: Fate, chat: Fate, call?: { characte
   worldbookBindings: { character: 'forget', chat: 'unkeyed', call: { character: /worldbookBindings\?\.forget\(characterId\)/u } },
   chatOrder: { character: 'unkeyed', chat: 'forget', call: { chat: /chatOrder\?\.forget\(chatId\)/u } },
   sandboxPlugins: { character: 'unkeyed', chat: 'forget', call: { chat: /sandboxPlugins\?\.forget\(chatId\)/u } },
+  /*
+   * One file per conversation that owns branch segments. Kept with the card's
+   * conversations, which outlive it; dropped with the conversation, because a
+   * positional key (`@<chatId>#<floor>`) would line up with the next chat of
+   * that id.
+   */
+  segmentSummaries: {
+    character: { retained: 'a card’s conversations outlive it, and these summaries are about those conversations' },
+    chat: 'forget',
+    call: { chat: /segmentSummaries\?\.forget\(chatId\)/u },
+  },
   cacheTrace: {
     character: 'forget',
     chat: 'forget',

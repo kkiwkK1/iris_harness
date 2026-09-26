@@ -15,6 +15,11 @@
  * it, with a confirm dialog that says where its sub-branches go (owner
  * request 2026-09-26).
  *
+ * Each branch segment — a run of floors between fork points — carries a
+ * hover card with its model-written summary (`SegmentSummary.tsx`), and the
+ * header a 「总结所有分支段」; summaries are made only on request, never on
+ * hover (2026-09-26).
+ *
  * What is drawn is decided in `tree-map.ts`. This file only renders it, in the
  * margin under the variables (`StatePanel`) and in the narrow-window overlay
  * (`TreeMapOverlay`).
@@ -24,10 +29,21 @@
 
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { Button, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { segmentsOf } from '@iris/protocol'
 
 import { useIris, useIrisActions } from '../client/provider.tsx'
 import { deleteSummary, layoutTree, TRUNK, type TreeLane, type TreeNodeCell, type TreeRow } from './tree-map.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
+import { gapSegments, segmentHits, segmentOfFloor } from './segment-summary.ts'
+import {
+  focusedByKeyboard,
+  SegmentCard,
+  SegmentHits,
+  SummarizeAllButton,
+  useFamilySummaries,
+  useSegmentHover,
+  useSegmentSummarySync,
+} from './SegmentSummary.tsx'
 import './tree-map.css'
 
 /** Row heights, in CSS pixels: a floor gets room for a dot and its label, a folded run a little less. */
@@ -73,6 +89,10 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
   // One lane name edits at a time, and one delete asks at a time.
   const [renaming, setRenaming] = useState<string | undefined>(undefined)
   const [deleting, setDeleting] = useState<string | undefined>(undefined)
+  // The segment-summary layer: its store sync, the one open card, the summaries.
+  useSegmentSummarySync()
+  const hover = useSegmentHover()
+  const summaries = useFamilySummaries(tree)
 
   if (chatId === undefined) return null
   if (tree === undefined || !tree.chats.some(node => node.chatId === chatId)) {
@@ -114,6 +134,21 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
 
   const solo = tree.chats.length === 1
 
+  // Branch segments, cut by the same rule the host summarizes by.
+  const segments = segmentsOf(tree)
+  const titles = new Map(layout.lanes.map(lane => [lane.chatId, lane.title]))
+  const rowHeight = (index: number): number => (layout.rows[index]?.kind === 'floor' ? FLOOR_ROW : GAP_ROW)
+  /** The card, drawn inside the row it hangs under so Tab walks from the trigger into it. */
+  const card = (index: number): ReactElement | null => (hover.open?.row !== index ? null : (
+    <SegmentCard hover={hover} chatId={chatId} top={(tops[index] ?? 0) + rowHeight(index)} titles={titles} summaries={summaries} />
+  ))
+  /** A floor label or lane name focused by the keyboard opens its segment's card. */
+  const focusFloor = (element: Element, target: string, floor: number, index: number): void => {
+    if (!focusedByKeyboard(element)) return
+    const segment = segmentOfFloor(tree, segments, target, floor)
+    if (segment !== undefined) hover.show({ segments: [segment], row: index })
+  }
+
   return (
     <div className="iris-tree" role="group" aria-label={t('treeAria')}>
       <div className="iris-tree__graph" style={{ height }}>
@@ -121,6 +156,7 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
           {layout.lanes.map(lane => (
             <LaneLines key={lane.chatId} lane={lane} x={x} centre={centre} rowOf={rowOf} tip={laneTip(lane)} />
           ))}
+          <SegmentHits hits={segmentHits(layout, segments)} x={x} centre={centre} hover={hover} />
           {layout.rows.map((row, index) => row.kind !== 'floor' ? null : row.nodes.map(cell => {
             const lane = byLane.get(cell.lane)
             const onPath = lane?.pathEnd !== undefined && cell.floor <= lane.pathEnd
@@ -148,18 +184,30 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
                 const drawn = byLane.get(entry.lane)
                 return drawn?.pathEnd !== undefined && row.from <= drawn.pathEnd
               }) ?? row.lanes[0]
+              // The folded run's own card: the segment of every lane it is
+              // drawn on, and where a click goes — the words its tooltip had.
+              const openGap = (): void => hover.show({
+                segments: gapSegments(row, segments),
+                row: index,
+                hint: t('treeGapTitle', { from: row.from, to: row.to }),
+              })
               return (
                 <li key={`gap-${String(row.from)}`} className="iris-tree__row iris-tree__row--gap" style={{ height: GAP_ROW }}>
                   {lane === undefined ? null : (
                     <button
                       type="button"
                       className="iris-tree__label iris-tree__label--gap"
-                      title={t('treeGapTitle', { from: row.from, to: row.to })}
+                      aria-describedby={hover.open?.row === index ? hover.id : undefined}
                       onClick={() => go(lane.chatId, row.from)}
+                      onPointerEnter={openGap}
+                      onPointerLeave={hover.leave}
+                      onFocus={openGap}
+                      onBlur={hover.leave}
                     >
                       ⋯ {t('treeGap', { n: row.count })}
                     </button>
                   )}
+                  {card(index)}
                 </li>
               )
             }
@@ -175,6 +223,18 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
                 className="iris-tree__row"
                 data-focus={focused ? '' : undefined}
                 style={{ height: FLOOR_ROW }}
+                onFocus={event => {
+                  // Delegated, so the floor label and every lane name on the
+                  // row open their segment's card without a prop each.
+                  const target = event.target as Element
+                  const head = target.closest('.iris-tree__head')
+                  const heads = [...event.currentTarget.querySelectorAll('.iris-tree__head')]
+                  const cell = head === null ? main : row.nodes.filter(one => one.head)[heads.indexOf(head)]
+                  if (cell !== undefined && target.classList.contains('iris-tree__label')) {
+                    focusFloor(target, cell.chatId, cell.floor, index)
+                  }
+                }}
+                onBlur={hover.leave}
               >
                 {/*
                   Two kinds of target on one row, each saying where it goes:
@@ -218,6 +278,7 @@ export function TreeMap({ onPicked }: { onPicked?: () => void }): ReactElement |
                     />
                   )
                 })}
+                {card(index)}
               </li>
             )
           })}
@@ -565,6 +626,7 @@ export function TreeMapOverlay({ open, onClose }: { open: boolean, onClose: () =
   useLanguage()
   return (
     <Modal open={open} onClose={onClose} title={t('treeHead')} closeLabel={t('close')} className="iris-tree-dialog">
+      <div className="iris-tree-dialog__tools"><SummarizeAllButton /></div>
       <TreeMap onPicked={onClose} />
     </Modal>
   )
@@ -663,7 +725,10 @@ export function AsideTreeSection(): ReactElement {
       >
         <div className="iris-aside__treebar">
           <span className="iris-label iris-aside__head">{t('treeHead')}</span>
-          {count === undefined || count < 2 ? null : <span className="iris-aside__treecount">{count}</span>}
+          <span className="iris-aside__treetools">
+            <SummarizeAllButton />
+            {count === undefined || count < 2 ? null : <span className="iris-aside__treecount">{count}</span>}
+          </span>
         </div>
         <div className="iris-aside__treebody">
           <TreeMap />

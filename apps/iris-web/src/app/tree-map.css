@@ -428,6 +428,216 @@
   background: var(--iris-danger-wash);
 }
 
+/* ——— branch-segment summaries ——— */
+
+/*
+ * A segment's hover target along its lane (`SegmentHits`): invisible, a little
+ * narrower than the lane's own tooltip target so the lane's edge still says
+ * what its width means, and washed in the accent while hovered so the reader
+ * sees which floors the card is about.
+ */
+.iris-tree__seg-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 8;
+  stroke-linecap: round;
+  pointer-events: stroke;
+  transition: stroke var(--iris-fast) var(--iris-ease);
+}
+
+.iris-tree__seg-hit:hover {
+  stroke: var(--iris-accent-wash);
+}
+
+.iris-aside__treetools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 「总结所有分支段」: a quiet text control, like the lane's 「⋯」. */
+.iris-seg-all {
+  padding: 1px 6px;
+  font: inherit;
+  font-size: var(--iris-meta-size);
+  line-height: 1.3;
+  color: var(--iris-ink-tertiary);
+  background: none;
+  border: var(--iris-hairline) solid var(--iris-rule-faint);
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.iris-seg-all:hover:not(:disabled) {
+  color: var(--iris-accent-strong);
+  background: var(--iris-accent-wash);
+}
+
+.iris-seg-all:focus-visible {
+  outline: var(--iris-hairline) solid var(--iris-accent);
+  outline-offset: 1px;
+}
+
+.iris-seg-all:disabled {
+  color: var(--iris-ink-faint);
+  cursor: default;
+}
+
+.iris-seg-all[data-running] {
+  color: var(--iris-accent-strong);
+  border-color: var(--iris-accent-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-tree-dialog__tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+/*
+ * The hover card, hung under the row it belongs to. Positioned against the
+ * rows list (`.iris-tree__rows` is the positioned box), across the graph
+ * column too, so the margin's narrow width still gives it room to read.
+ */
+.iris-seg-card {
+  position: absolute;
+  left: 4px;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--iris-ink-secondary);
+  background: var(--iris-bg-raised);
+  border: var(--iris-hairline) solid var(--iris-rule);
+  border-radius: var(--iris-radius-lg);
+  box-shadow: var(--iris-shadow);
+  pointer-events: auto;
+}
+
+.iris-seg-card__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.iris-seg-card__item + .iris-seg-card__item {
+  padding-top: 8px;
+  border-top: var(--iris-hairline) solid var(--iris-rule-faint);
+}
+
+.iris-seg-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.iris-seg-card__lane {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--iris-ink);
+  font-weight: 600;
+}
+
+.iris-seg-card__range {
+  font-family: var(--iris-font-mono);
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.iris-seg-card p {
+  margin: 0;
+}
+
+.iris-seg-card__text {
+  color: var(--iris-ink);
+  overflow-wrap: anywhere;
+}
+
+.iris-seg-card__none,
+.iris-seg-card__meta,
+.iris-seg-card__busy,
+.iris-seg-card__hint {
+  font-size: var(--iris-meta-size);
+  color: var(--iris-ink-faint);
+}
+
+.iris-seg-card__item[data-stale] .iris-seg-card__text {
+  color: var(--iris-ink-tertiary);
+}
+
+.iris-seg-card__stale {
+  font-size: var(--iris-meta-size);
+  color: var(--iris-warn);
+}
+
+.iris-seg-card__error {
+  font-size: var(--iris-meta-size);
+  color: var(--iris-danger);
+  overflow-wrap: anywhere;
+}
+
+.iris-seg-card__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.iris-seg-card__go {
+  padding: 2px 8px;
+  font: inherit;
+  font-size: var(--iris-meta-size);
+  line-height: 1.4;
+  color: var(--iris-accent-strong);
+  background: var(--iris-accent-wash);
+  border: 0;
+  border-radius: var(--iris-radius);
+  cursor: pointer;
+}
+
+.iris-seg-card__go:hover {
+  background: var(--iris-accent-soft);
+}
+
+.iris-seg-card__go:focus-visible {
+  outline: var(--iris-hairline) solid var(--iris-accent);
+  outline-offset: 1px;
+}
+
+.iris-seg-confirm {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.iris-seg-confirm__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--iris-ink-secondary);
+}
+
+.iris-seg-confirm__body p {
+  margin: 0;
+}
+
+.iris-seg-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
 /* ——— the narrow-window overlay ——— */
 
 .iris-tree-dialog {
@@ -510,6 +720,7 @@
   }
 
   .iris-tree__dot circle,
+  .iris-tree__seg-hit,
   .iris-aside__divider::after {
     transition: none;
   }

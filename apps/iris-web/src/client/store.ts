@@ -54,6 +54,7 @@ import type {
 
 import { asRpcError, describeError, isHostError } from './errors.ts'
 import { branchTreeActions, branchTreeState, type BranchTreeActions, type BranchTreeState } from './branch-tree.ts'
+import { segmentSummaryActions, segmentSummaryState, type SegmentSummaryActions, type SegmentSummaryState } from './segment-summaries.ts'
 
 /**
  * What a library save carries: the editable half of a stored script.
@@ -541,7 +542,7 @@ export interface CardReportOptions {
   grant?: RefusalGrant
 }
 
-export interface IrisState extends BranchTreeState {
+export interface IrisState extends BranchTreeState, SegmentSummaryState {
   connected: boolean
   /** The host-authored system-plugin catalog and runtime state. */
   systemPlugins: SystemPluginSnapshot | undefined
@@ -1059,7 +1060,7 @@ export interface IrisState extends BranchTreeState {
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
-export interface IrisActions extends BranchTreeActions {
+export interface IrisActions extends BranchTreeActions, SegmentSummaryActions {
   boot(): Promise<void>
   /** Replace the plugin projection from an explicit host read. */
   refreshSystemPlugins(): Promise<SystemPluginOperationResult>
@@ -2134,6 +2135,9 @@ export function createIrisStore(
       // jump, with the actions that drive them.
       ...branchTreeState(),
       ...branchTreeActions({ client, get, set, guard }),
+      // The tree map's segment summaries (`segment-summaries.ts`).
+      ...segmentSummaryState(),
+      ...segmentSummaryActions({ client, get, set }),
       systemPlugins: undefined,
       systemPluginSession: 0,
       chats: [],
