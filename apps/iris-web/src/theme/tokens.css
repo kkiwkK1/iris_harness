@@ -285,10 +285,33 @@
    * ceiling of 400. That is the constraint these three numbers have to keep,
    * and it is why the rail's own fade-in overlaps the width rather than waiting
    * for it: `--iris-fold-width` of delay plus `--iris-fold-fade` lands at 340.
+   *
+   * **Superseded in part, 2026-09-26 (web §135):** the bar no longer travels.
+   * The panel slides over `--iris-flank-slide` below and the track changes at
+   * once; the wordmark and the aperture keep these timings.
    */
   --iris-fold-fade: 120ms;
   --iris-fold-word: 160ms;
   --iris-fold-width: 220ms;
+
+  /*
+   * A flank's slide: the sidebar's panel from the left, the variable margin's
+   * from the right (owner ruling 2026-09-26, web §135).
+   *
+   * **Transform only.** A flank's track changes width at once, never over time,
+   * and the column is anchored to the viewport rather than to the tracks, so
+   * the one thing that moves is a panel that is already its final width. The
+   * earlier fold animated the bar's `width` over `--iris-fold-width`, which
+   * re-laid out the reading area — and every card frame in it — on each frame
+   * of those 220ms; the bar no longer travels, so that token now times only
+   * the wordmark's delay and the aperture's blades, which are paint.
+   *
+   * 200ms and a decelerating curve: the panel arrives fast and settles, which
+   * is what a thing entering from off-screen reads as. `FLANK_SLIDE_MS` in
+   * `state-panel.ts` copies the duration for the margin's unmount delay.
+   */
+  --iris-flank-slide: 200ms;
+  --iris-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* ------------------------------------------------------------- scrollbar */
 
@@ -331,7 +354,16 @@
    * (`.iris-cleanup`, panels.css) is above both, because it destroys data.
    *
    *   scrim 19 < sidebar 20 < drop 25 < overlay 40 < overlay toggle 45
-   *            < card popup 48 < drawer 50 < cleanup 60
+   *            < flank 47 < card popup 48 < drawer 50 < cleanup 60
+   *
+   * The **flank** rung (2026-09-26, web §135) is the sidebar and the variable
+   * margin above 880px. Below the width where they dock, an open flank is a
+   * panel over the reading area, and that area includes a card's overlay
+   * surface — so by this ladder's own rule (shell over content) the flank is
+   * above the surface and its toggle. Under a card's popup, because the popup's
+   * scrim is what says "this card is blocked on you", and a sidebar lit above
+   * that scrim would be a second thing asking for the reader's hand. The ≤880
+   * sliding sidebar keeps `--iris-sidebar-z`; that interval is unchanged.
    *
    * A **card's own popup** (`.iris-popup`, panels.css) is the one rung the rule
    * above does not settle on its own, so it is argued rather than placed: it
@@ -354,6 +386,7 @@
   --iris-sidebar-z: 20;
   --iris-drop-z: 25;
   --iris-overlay-z: 40;
+  --iris-flank-z: 47;
   --iris-card-popup-z: 48;
   --iris-drawer-z: 50;
   --iris-cleanup-z: 60;

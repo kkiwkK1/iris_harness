@@ -23,7 +23,11 @@
 
   position: absolute;
   top: calc(var(--turn-rail-band) / 2);
-  left: 8px;
+  /* In the navigable column's own 32px lane, measured from the column's start
+     rather than the scroller's: the scroller's left edge moves when the sidebar
+     docks, and the rail belongs to the column (web §135). `.slot` spans the
+     scroller's content box, the same box the column's anchor is written for. */
+  left: calc(var(--iris-column-left, 0px) + 8px);
   width: 32px;
   height: min(
     var(--turn-natural-height),

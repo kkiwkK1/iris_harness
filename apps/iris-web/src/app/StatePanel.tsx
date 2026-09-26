@@ -76,8 +76,10 @@ import './variable-compare.css'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { translate, type Language } from './i18n/strings.ts'
 import {
+  ASIDE_OVERLAY_QUERY,
   ASIDE_YIELD_QUERY,
   asideShowing,
+  FLANK_SLIDE_MS,
   branchPaths,
   changeSentence,
   changedPaths,
@@ -721,6 +723,41 @@ function probeTight(): boolean {
 }
 
 /**
+ * Whether an open margin is, right now, a panel over the page rather than a
+ * docked column (`ASIDE_OVERLAY_QUERY`). Read at the moment of a keypress, not
+ * subscribed: Escape is the only thing that asks.
+ * @returns the media query's answer, or `false` where there is no `matchMedia`.
+ */
+function overlayNow(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia(ASIDE_OVERLAY_QUERY).matches
+}
+
+/**
+ * The margin's chevron, drawn once for both forms. It points the way the panel
+ * will move; the strip's copy is mirrored in CSS (`panels.css`).
+ * @returns the icon.
+ */
+function AsideChevron(): ReactElement {
+  return (
+    <svg
+      className="iris-aside__chevron"
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M4 2.5 7.5 6 4 9.5" />
+    </svg>
+  )
+}
+
+/**
  * Render the state margin.
  * @param props.drawerOpen - whether the settings drawer is showing. The margin
  *   yields its column to the drawer on a window that cannot pay for both
@@ -768,6 +805,54 @@ export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElemen
   const showing = asideShowing(asideOpen, drawerOpen, tight)
   /** The reader asked for the column and the window took it: say so on hover. */
   const yielding = asideOpen && !showing
+  /*
+   * The tree stays mounted for one slide after the margin shuts (web §135).
+   *
+   * Collapsed, the margin renders no tree — that is the whole point of
+   * collapsing it (see the comment at the render below). But the panel now
+   * leaves by sliding out at its full 400px, and a panel emptied the moment
+   * the slide starts would slide away blank. So the tree is dropped when the
+   * slide has finished, not when it begins; on the way in there is nothing to
+   * wait for, because `showing` itself mounts it.
+   */
+  const [leaving, setLeaving] = useState(false)
+  const wasShowing = useRef(showing)
+  useEffect(() => {
+    if (wasShowing.current === showing) return
+    wasShowing.current = showing
+    if (showing) {
+      setLeaving(false)
+      return
+    }
+    setLeaving(true)
+    const timer = setTimeout(() => setLeaving(false), FLANK_SLIDE_MS)
+    return () => clearTimeout(timer)
+  }, [showing])
+  const rendered = showing || leaving
+  /*
+   * Focus follows the control across the two forms. The strip and the panel's
+   * bar are two buttons now, and the one a reader pressed is hidden by its own
+   * press — so without this, opening the margin as a panel over the page left
+   * focus behind on an invisible strip, and closing it dropped focus to the
+   * document. Only a reader's own toggle moves focus: a yield to the drawer is
+   * the window's doing, and stealing focus for it would pull the reader out of
+   * the drawer they just opened.
+   */
+  const strip = useRef<HTMLButtonElement>(null)
+  const bar = useRef<HTMLButtonElement>(null)
+  const pendingFocus = useRef<'strip' | 'bar' | undefined>(undefined)
+  useEffect(() => {
+    const target = pendingFocus.current
+    pendingFocus.current = undefined
+    if (target === 'bar' && showing) bar.current?.focus()
+    if (target === 'strip' && !showing) strip.current?.focus()
+  }, [showing])
+  const toggle = (): void => {
+    const next = !asideOpen
+    setAsideOpen(next)
+    saveAsideOpen(next)
+    pendingFocus.current = next ? 'bar' : 'strip'
+  }
 
   const diff = useVariableDiff(chatId, variables)
   const searching = query !== ''
@@ -829,14 +914,51 @@ export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElemen
       className="iris-aside"
       data-iris-aside={showing ? 'open' : 'shut'}
       aria-label={t('stateAria')}
+      onKeyDown={event => {
+        // A panel over the page closes on Escape, as a drawer does; a docked
+        // column is part of the layout and leaves Escape to whatever has focus.
+        if (event.key !== 'Escape' || !showing || !overlayNow()) return
+        // The search box's own Escape (clear the query) comes first, and so does
+        // the compare mode's (`TreeMap.tsx` listens on the document): while a
+        // comparison is up, Escape leaves the comparison and the panel stays.
+        // Returning before `stopPropagation` is what lets that listener hear it.
+        if (event.target instanceof HTMLInputElement || comparing) return
+        event.stopPropagation()
+        toggle()
+      }}
     >
+      {/*
+        The collapsed form: the 36px strip, a vertical 「变量」 under a chevron.
+        Its own button since web §135, not the bar restyled — the panel has to
+        keep its 400px layout while it slides out over the strip. Hidden (and
+        so out of the tab order) while the panel is open.
+      */}
+      <button
+        ref={strip}
+        type="button"
+        className="iris-aside__strip"
+        aria-expanded={showing}
+        title={yielding ? t('stateYielded') : t(asideOpen ? 'stateCollapse' : 'stateExpand')}
+        onClick={toggle}
+      >
+        <span className="iris-label iris-aside__head">{t('stateHead')}</span>
+        <AsideChevron />
+      </button>
+
+      {/*
+        The open form: a 400px panel, absolutely positioned against the track's
+        right edge (`panels.css`). Always mounted, so it can slide; what it holds
+        is mounted only while it is showing or still sliding away.
+      */}
+      <div className="iris-aside__panel">
       {/*
         The heading row is the collapse control, and it sits outside the
         scroller: a toggle that scrolls away with the tree is a toggle the
-        reader has to go and find. The whole row is the hit area, because 236px
+        reader has to go and find. The whole row is the hit area, because 400px
         of margin gives a 12px chevron plenty of company.
       */}
       <button
+        ref={bar}
         type="button"
         className="iris-aside__bar"
         aria-expanded={showing}
@@ -848,40 +970,23 @@ export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElemen
          * through a tooltip browsers do not reliably show on disabled elements.
          */
         title={yielding ? t('stateYielded') : t(asideOpen ? 'stateCollapse' : 'stateExpand')}
-        onClick={() => {
-          const next = !asideOpen
-          setAsideOpen(next)
-          saveAsideOpen(next)
-        }}
+        onClick={toggle}
       >
         <span className="iris-label iris-aside__head">{t('stateHead')}</span>
-        <svg
-          className="iris-aside__chevron"
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path d="M4 2.5 7.5 6 4 9.5" />
-        </svg>
+        <AsideChevron />
       </button>
 
       {/*
-        Collapsed, nothing below the strip renders. Not merely hidden: the tree
+        Collapsed, nothing below the bar renders. Not merely hidden: the tree
         is the expensive part of this panel — a real MVU card's `政局` branch
         alone is 34 rows — and a reader who folded the margin away should not go
         on paying to build it on every host event.
 
         `showing`, not the stored choice: while the margin is yielding to the
-        drawer the strip is all there is room for, and 236px of tree inside a
-        36px track is the sideways scroll this panel's own rules forbid.
+        drawer the strip is all there is room for. `rendered` adds the one slide
+        after it shuts, so the panel does not leave empty (see `leaving`).
       */}
-      {!showing ? null : comparing ? (
+      {!rendered ? null : comparing ? (
         <div className="iris-aside__inner">
           <VariableCompareView lang={lang} />
         </div>
@@ -1013,7 +1118,8 @@ export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElemen
         2026-09-25 — variables on top, tree map below). Same rule as the tree
         above it: not rendered at all while the margin is folded or yielding.
       */}
-      {!showing ? null : <AsideTreeSection />}
+      {!rendered ? null : <AsideTreeSection />}
+      </div>
     </aside>
   )
 }

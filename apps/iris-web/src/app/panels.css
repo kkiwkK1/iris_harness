@@ -121,31 +121,31 @@
    * bound and centres in the track, putting the field back under the prose.
    * The panel around it (gradient, branch) stays full-width; only the box the
    * reader types into narrows.
+   *
+   * **Placed by the column's own anchor** (web §135): the same
+   * `--iris-column-left` the prose uses, so the field and the prose share both
+   * edges on a window with room for the column, whatever the flanks are doing.
    */
   max-width: var(--iris-column-max);
-  margin: 0 auto;
+  margin: 0 0 0 var(--iris-column-left);
   display: flex;
   flex-direction: column;
   gap: var(--iris-space-3);
   box-sizing: border-box;
   padding: var(--iris-space-8) var(--iris-gutter) var(--iris-space-6);
   /*
-   * Reserve the same scrollbar lane the reading surface above reserves
-   * (`reading.css`, `scrollbar-gutter: stable` on `.iris-scroll`), so this box
-   * and the reading column have the same content edges: without it, the
-   * scroller's lane made the prose end half a scrollbar left of the field, and
-   * the two disagreed by that half for no reason a reader could see. Same
-   * property, so the parity is exact whatever the platform draws — a real lane
-   * here, nothing where scrollbars overlay. `overflow-y: auto` is what makes
-   * this a scroll container (the property has no effect on a non-scrolling
-   * box); it never scrolls in practice, and `min-height` hands back the
-   * automatic minimum a scroll container otherwise loses — without it a short
-   * window would be allowed to squash the composer into an internal scroller,
-   * which is a narrow-window regression the reading surface never had.
+   * No scrollbar-lane reservation any more, and that is the parity rather
+   * than a loss of it. Web §40 reserved the reading scroller's lane here
+   * because both boxes were centred in their own tracks, and the scroller's
+   * track was one lane narrower — so the lane was what put the two centres on
+   * one line. Now neither box is centred in a track: both start at the
+   * viewport-derived `--iris-column-left` and are the cap wide, and the lane
+   * lies to the column's right, outside it. A reservation here would make the
+   * field one lane narrower than the prose on exactly the windows the ruling is
+   * about. What remains of the lane is the narrow case, where the column fills
+   * its scroller and so ends one lane before the field does (web §135 says
+   * what that costs).
    */
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  min-height: max-content;
 }
 
 /*
@@ -1874,7 +1874,10 @@
 /* ------------------------------------------------------------- small screen */
 
 @media (max-width: 880px) {
+  /* The sidebar is out of the grid here (fixed, below), so there is no track
+     for the column's anchor to subtract either. */
   .iris-shell {
+    --iris-dock-left: 0px;
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1927,8 +1930,12 @@
     transition: none;
   }
 
+  /* The element slides here, not the panel inside it, so the panel is plain:
+     no shadow of its own (the element casts one) and no second border. */
   .iris-sidebar__full {
     width: 288px;
+    box-shadow: none;
+    border-right: 0;
   }
 
   .iris-sidebar--rail .iris-sidebar__rail,
@@ -2174,15 +2181,27 @@
  * 46px flanks stay symmetrical — a margin that started below the masthead would
  * have made the composer sit off-centre in its own panel.
  *
- * Hidden below 1440px, unchanged: a 120px column of key/value pairs would be
- * worse than the emptiness it replaced, and the collapse rail is a reader's
- * choice rather than a fallback for a window with no room.
+ * Hidden below 1440px, unchanged: the reason was a 120px column of key/value
+ * pairs, and the collapse rail is a reader's choice rather than a fallback for
+ * a window with no room.
+ *
+ * **Two boxes since web §135: the track and the panel.** `.iris-aside` is the
+ * grid item, and its width is the track — the 36px strip, or the panel's 400px
+ * where an open margin docks (from 1744px, the block below). The 400px panel
+ * is `__panel`, absolutely positioned against the track's right edge at its
+ * own width, so below the docking width it lies over the page with a shadow
+ * rather than pushing the reading column, and at every width it slides in and
+ * out on a transform without its tree reflowing. The track never animates:
+ * the column is anchored to the viewport and does not read this width at all.
+ *
+ * Positioned on the flank rung, so an overhanging panel paints over the
+ * reading area — a card's overlay surface included — as shell over content.
  *
  * **The 让位 rule is not here, and could not be.** Between 1440px and 1832px an
  * open drawer leaves the reading column under 640px (measured: 539px at 1440),
- * so the margin stands down to its rail — but collapsed, this panel does not
+ * so the margin stands down to its strip — but collapsed, this panel does not
  * render its tree *at all* (`StatePanel.tsx`: the 34-row branch is the expensive
- * part), so a CSS rule that only narrowed the track would squeeze a 236px tree
+ * part), so a CSS rule that only narrowed the track would squeeze a 400px tree
  * into 36px and produce the sideways scroll this margin forbids of itself. The
  * decision therefore lives in `state-panel.ts` (`asideShowing`,
  * `ASIDE_YIELD_QUERY`) and reaches this stylesheet as the same
@@ -2195,27 +2214,74 @@
 @media (min-width: 1440px) {
   .iris-aside {
     grid-column: 2;
-    display: flex;
-    flex-direction: column;
+    display: block;
+    position: relative;
+    z-index: var(--iris-flank-z);
     min-height: 0;
     min-width: 0;
-    width: var(--iris-aside);
+    width: var(--iris-aside-rail);
     box-sizing: border-box;
     border-left: var(--iris-hairline) solid var(--iris-rule-faint);
     background: var(--iris-bg-page);
   }
+}
 
-  /*
-   * Collapsed: a 36px strip with the word 「变量」 set vertically.
-   *
-   * `data-iris-aside` rather than a modifier class, and that is not a style
-   * preference: `tools/render-check.tsx` matches `class="iris-aside"` literally,
-   * so a second class on this element would break the render check in a way no
-   * type or test in this package would have caught first.
-   */
-  .iris-aside[data-iris-aside='shut'] {
-    width: var(--iris-aside-rail);
+/*
+ * Docked: from `FLANKS_DOCK_FROM` (`state-panel.ts`: 920 + 2 × (400 + a 12px
+ * scrollbar lane)) the side space holds the panel beside a viewport-centred
+ * column, so an open margin takes its width as a track and casts no shadow on
+ * a page it does not cover. The sidebar docks from the same width (shell.css).
+ *
+ * `data-iris-aside` rather than a modifier class, and that is not a style
+ * preference: `tools/render-check.tsx` matches `class="iris-aside"` literally,
+ * so a second class on this element would break the render check in a way no
+ * type or test in this package would have caught first.
+ */
+@media (min-width: 1744px) {
+  .iris-aside[data-iris-aside='open'] {
+    width: var(--iris-aside);
   }
+
+  .iris-aside .iris-aside__panel {
+    box-shadow: none;
+  }
+}
+
+/*
+ * The panel: the open margin, 400px, whatever the track is.
+ *
+ * `visibility` flips at once on the way in, so the bar inside can take focus
+ * the moment the strip hands it over (`StatePanel.tsx` moves it), and waits for
+ * the slide on the way out. While it is away it is translated its whole width
+ * past the window's right edge — `.iris-stage` clips that — rather than
+ * narrowed, so the tree that is still mounted during the slide never reflows.
+ */
+.iris-aside__panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--iris-aside);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--iris-bg-page);
+  border-left: var(--iris-hairline) solid var(--iris-rule-faint);
+  box-shadow: -8px 0 28px color-mix(in srgb, var(--iris-bg-mask) 20%, transparent);
+  transform: none;
+  visibility: visible;
+  transition:
+    transform var(--iris-flank-slide) var(--iris-ease-out),
+    visibility 0s linear;
+}
+
+.iris-aside[data-iris-aside='shut'] .iris-aside__panel {
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform var(--iris-flank-slide) var(--iris-ease-out),
+    visibility 0s linear var(--iris-flank-slide);
 }
 
 /*
@@ -2234,7 +2300,7 @@
 /*
  * The heading and the collapse chevron on one line, above the scroller.
  *
- * The whole row is the button — 236px of margin gives a 12px chevron plenty of
+ * The whole row is the button — 400px of margin gives a 12px chevron plenty of
  * company, and a hit area the width of the panel is what makes the collapse
  * findable at all.
  */
@@ -2254,23 +2320,46 @@
   transition: color var(--iris-fast) var(--iris-ease);
 }
 
-.iris-aside__bar:hover {
+/*
+ * Collapsed, the track is the strip: the chevron over a vertical label,
+ * centred in 36px. Its own button rather than the panel's bar restyled, since
+ * web §135 — the panel has to keep its 400px layout while it slides out over
+ * the strip, so the two forms can no longer be one element. `writing-mode`
+ * rather than a rotation, so the CJK glyphs stay upright and the Latin
+ * fallback still reads.
+ *
+ * Out of sight and out of the tab order while the panel is open; it comes back
+ * at once on close, under the panel that is still sliding away, so the focus
+ * the bar hands back has somewhere to land.
+ */
+.iris-aside__strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  padding: 22px 0 0;
+  box-sizing: border-box;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--iris-ink-tertiary);
+  transition: color var(--iris-fast) var(--iris-ease);
+}
+
+.iris-aside[data-iris-aside='open'] .iris-aside__strip {
+  visibility: hidden;
+}
+
+.iris-aside__bar:hover,
+.iris-aside__strip:hover {
   color: var(--iris-ink-secondary);
 }
 
-/*
- * Collapsed, the bar becomes the whole panel: the chevron over a vertical
- * label, centred in the 36px strip. `writing-mode` rather than a rotation, so
- * the CJK glyphs stay upright and the Latin fallback still reads.
- */
-.iris-aside[data-iris-aside='shut'] .iris-aside__bar {
-  flex-direction: column;
-  justify-content: flex-start;
-  gap: 10px;
-  padding: 22px 0 0;
-}
-
-.iris-aside[data-iris-aside='shut'] .iris-aside__head {
+.iris-aside__strip .iris-aside__head {
   writing-mode: vertical-rl;
   letter-spacing: 0.2em;
   /* Not uppercased in this form: `.iris-label`'s treatment suits "STATE" and
@@ -2284,12 +2373,14 @@
   transition: transform var(--iris-fast) var(--iris-ease);
 }
 
-.iris-aside[data-iris-aside='shut'] .iris-aside__chevron {
+.iris-aside__strip .iris-aside__chevron {
   transform: scaleX(-1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .iris-aside__chevron {
+  .iris-aside__chevron,
+  .iris-aside__panel,
+  .iris-aside[data-iris-aside='shut'] .iris-aside__panel {
     transition: none;
   }
 }
@@ -3549,11 +3640,18 @@
  * It is a real button, so keyboard focus and Enter/Space reach it the way a
  * pointer does; no key is bound, because the card's own ESC (its fullscreen
  * exit) and Iris's escape must not fight over the keyboard.
+ *
+ * `right` is measured to the **column's** right edge, not the stage's (web
+ * §135): the stage's edge moves when the variable margin docks, and a control
+ * that "hugs the reading column's corner" has to stay at that corner when the
+ * column does. The expression is the masthead's right inset with 14px in place
+ * of the gutter; `max()` keeps it 14px in from the stage on a window where the
+ * column fills it.
  */
 .iris-overlay-toggle {
   position: absolute;
   top: 10px;
-  right: 14px;
+  right: max(14px, calc(100% - var(--iris-column-left) - min(var(--iris-column-max), 100%) + 14px));
   z-index: calc(var(--iris-overlay-z, 40) + 5);
   padding: 4px 11px 5px;
   border: var(--iris-hairline) solid var(--iris-rule);

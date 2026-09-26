@@ -62,6 +62,14 @@ test('the ladder orders content under shell, and shell under the cleaning offer'
   assert.ok((z['--iris-overlay-z'] ?? 0) + 5 < (z['--iris-drawer-z'] ?? 0), 'the drawer does not clear the overlay toggle')
   step('--iris-overlay-z', '--iris-drawer-z')
   /*
+   * The flank rung (web §135): below the docking width an open sidebar or
+   * margin lies over the reading area, a card's overlay surface included, so
+   * it clears the surface and its toggle — shell over content — and stays under
+   * a card's popup scrim and the drawer.
+   */
+  assert.ok((z['--iris-overlay-z'] ?? 0) + 5 < (z['--iris-flank-z'] ?? 0), 'a flank over the page does not clear the overlay toggle')
+  step('--iris-flank-z', '--iris-card-popup-z')
+  /*
    * A card's own popup sits between the two halves of the rule, so both halves
    * are asserted. Over the overlay **and its toggle**, because a card's
    * fullscreen interface would otherwise cover the question that same card is
@@ -136,6 +144,8 @@ test('each named layer has exactly its consumer, and the overlay surface reads t
     ['.iris-sidebar', '--iris-sidebar-z', panels],
     ['.iris-cleanup', '--iris-cleanup-z', panels],
     ['.iris-scrim', '--iris-scrim-z', shell],
+    ['.iris-sidebar', '--iris-flank-z', shell],
+    ['.iris-aside', '--iris-flank-z', panels],
   ]
   for (const [selector, token, css] of pairs) {
     const block = new RegExp(`${selector.replace('.', '\\.')}\\s*\\{[^}]*z-index:\\s*var\\(${token}\\)`)

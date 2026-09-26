@@ -1654,6 +1654,9 @@ in from the composer's — the two centres coincide exactly. Measured after:
 0.00px at 1920×1080, 1366×768 and 800×700, with the lane reserved
 (`stable`) so a scrollbar's appearance moves neither centre.
 
+**Superseded in part by §135 (2026-09-26):** both boxes now start at one viewport
+anchor, so the composer no longer reserves the lane; §135 says what remains of it.
+
 **What it costs.** The composer is a scroll container; its lane is reserved
 even on the empty surface, and the field is inset by the gutter on narrow
 windows where it used to run full width — under the prose, which is the
@@ -4466,6 +4469,8 @@ aperture shut at its head, the same three destinations as icons, and the import
   and a `visibility: hidden` element cannot take focus — so a delayed visibility
   would have made that icon expand the panel and then silently do nothing for
   220ms. Nothing appears any earlier: the opacity is 0 and the bar clips it.
+- **Superseded in part by §135 (2026-09-26):** the bar no longer changes width over
+  time and the reading area no longer follows it; the panel slides on a transform.
 - The shell's first grid track became `auto` with the width on `.iris-sidebar`,
   so one transition animates both the panel and the reading area. `SIDEBAR_TRACK`
   (`state-panel.ts`) still reads 272 — the **expanded** width — because a media
@@ -9607,8 +9612,8 @@ memo），主线程 21 s 的流里忙了 19.4 s。页面这时收着帧却处理
   （修订号、TavernHelper、MVU、任一插件的包）都重建，别的都不。`MessageInterfaces` 的 `allowed` 也改为比较键而不是修订号。
   顺带的行为变化：清单晚于快照到达且带有正在运行的插件行时，界面帧也重建一次（脚本帧原本就这样，理由相同：先建的帧没有那些标签）。
 - **清单每个会话重读一次。** 新的浏览器侧字段 `systemPluginSession`（不上线），`usePluginAssetManifest(revision, session)` 按两者
-  重取；内容相同则保留原对象。这是「同修订号、换了客户端包」能被看见的唯一途径。`App.tsx` 的文案加载器那一处仍只按修订号取
-  （那个文件在另一项任务的范围里），影响仅限重启宿主后同修订号下插件文案的刷新。
+  重取；内容相同则保留原对象。这是「同修订号、换了客户端包」能被看见的唯一途径。`App.tsx` 的文案加载器那一处当时仍只按修订号取
+  （那个文件在另一项任务的范围里），影响仅限重启宿主后同修订号下插件文案的刷新。**2026-09-26 已补上**（§135 的变基里一并传入 `systemPluginSession`）。
 - **被拒请求合并、限速。** `notifyBlocked({ characterId, frameKind, host, directive, text })`：同一键在整个日志里只有一行（不论在哪个
   位置，更新后移到末尾），计数精确累加，保留 `firstAt` 与最新的 `at`，行文是最新一次的原话；到达的报告先在内存里计数，
   每 `BLOCKED_NOTICE_FLUSH_MS`（250 ms）最多写一次 store。通知栏照旧听到拒绝，只是最多晚 250 ms。卡报告（`addCardReport`）不变。
@@ -9730,3 +9735,92 @@ memo），主线程 21 s 的流里忙了 19.4 s。页面这时收着帧却处理
 **何时重开：**(a) 窄窗口（边栏让位或收起）时没有比较：浮层里的树图只跳不挑，「⑂N → 比较变量：」会打开模式但要等边栏回来才看得见；
 要在窄窗口比，给浮层一个自己的比较面板。(b) 数组按位置比对「插在前面」的列表很吵：要是 MVU 卡里常见按内容移动的列表，考虑按内容配对
 （最长公共子序列）再报位置。(c) 用户楼层读回合表是本宿主的残差（host §14）；等用户楼层有了自己的表，这里自然读到它，`turn` 那行说明就不再出现。
+
+## 135. 阅读列不随两翼移动：以视口居中，两翼能并排就并排、放不下就盖在页面上，开合只滑动不改宽
+
+**Kind:** Upgrade（主人 2026-09-26 的请求，附三张截图）。**取代**：「梅花」与 2026-09-21 列宽裁定里「列在两翼留下的轨道中居中」那半句
+（`4703285`、`c8a7ba2`、`d52b650` 三个提交）；§81「折叠：一个开关、两种样子」里「一次宽度过渡同时动画面板和阅读区」与 220 ms 的
+宽度时长；§40 输入框预留滚动条槽位的那一条（理由见下）。设置抽屉**不在**本条范围内，仍按「梅花」占一列、挤窄页面。编号待协调者重排。
+
+**上游怎么做。** SillyTavern 的 `#sheld` 固定宽、`margin: 0 auto` 居中于窗口；左右抽屉（角色列表、世界书等）是盖在页面上的
+浮层，开合不改变 `#sheld` 的位置与宽度。Iris 之前的做法与上游不同：两翼是网格轨道，列在剩下的轨道里居中。
+
+**之前（测量）。** 主人截图约 2000 px 宽：两翼都收起时 920 px 列的中心约在 x=1000，打开变量栏后约在 x=868。
+在本分支的 8805 验收宿主上跑同一把卡尺、换成 origin/main 5fa829d 的构建（`qa/stable-column-caliper.mjs`，`IRIS_QA_LABEL=baseline`）：
+
+| 宽度 | 状态 | 列 left / width | 最高的卡片帧 left / width | 页眉标题 left | 回合刻度条 left |
+| --- | --- | --- | --- | --- | --- |
+| 1920 | 都收起 | 499 / 920 | 577 / 764 | 90 | 52 |
+| 1920 | 变量栏开 | 317 / 920 | 395 / 764 | 90 | 52 |
+| 1920 | 都开 | 495 / 920 | 573 / 764 | 446 | 408 |
+| 1920 | 侧栏开 | 677 / 920 | 755 / 764 | 446 | 408 |
+| 1440 | 都收起 | 259 / 920 | 337 / 764 | 90 | 52 |
+| 1440 | 变量栏开 | 77 / 920 | 155 / 764 | 90 | 52 |
+| 1440 | 都开 | 400 / **630** | 478 / **474** | 446 | 408 |
+| 1440 | 侧栏开 | 437 / 920 | 515 / 764 | 446 | 408 |
+
+1920 下列在四种状态里左右跑了 360 px；1440 下「都开」把列压到 630、20 个卡片帧里有 9 个收到 19 次 `resize`、3 次根宽度变化——
+这就是主人说的「重卡每次开合都要重排、重量」。输入框比列偏右 5 px（半个滚动条槽，§40 的居中各自在轨道里算）。
+开合时起的动画里有 `width`（侧栏的 220 ms 宽度过渡）。
+
+**Iris 现在的做法。**
+
+- **列以视口居中。** `shell.css` 的 `--iris-column-left` 给出列的起点：`(100vw − 920) / 2` 减去侧栏轨道宽，上限夹在列所在盒子里
+  （`100% − 920`，只在设置抽屉占了轨道、放不下居中列时起作用），下限 0。**式子里没有右翼**：变量栏开合只移动滚动区的右边缘。
+  阅读列、输入框（`__inner`）、页眉的左右内距、「收起卡片界面」按钮、回合刻度条都读这一个锚点，所以一起不动。
+- **能并排就并排。** 从 `FLANKS_DOCK_FROM` = 920 + 2 × max(400, 400 + 12) = **1744 px** 起（12 是滚动条槽的上界，实测 Chromium 细滚动条 10 px），
+  打开的侧栏／变量栏占 400 px 轨道，不碰列。侧栏轨道宽是 `--iris-dock-left`，由 `.iris-shell[data-iris-nav]` 决定——网格和锚点读同一个属性。
+- **放不下就盖在页面上。** 1744 以下，打开的一翼是一块 400 px 面板盖在阅读区上（带阴影，不加遮罩：窗口在 1744 以下的人每次开侧栏
+  都要把正文压暗，代价太大），它的轨道始终是收起时的窄条（侧栏 44、变量栏 36），所以滚动区宽度不变，列不动也不变宽。
+  面板在新的 `--iris-flank-z` = 47：高于卡片浮层（40）和它的按钮（45）——壳在内容之上——低于卡片弹窗的遮罩（48）和设置抽屉（50）。
+  ≤ 880 的滑出侧栏不变。
+- **只滑动，不改宽。** 侧栏面板 `__full` 和变量栏面板 `__panel` 都固定 400 px，绝对定位在各自轨道上，开合是 200 ms ease-out 的
+  `transform`（`--iris-flank-slide`、`--iris-ease-out`），从各自那一侧进出；轨道宽度瞬间变化，没有任何 `width` 过渡。
+  变量栏收起时本来不渲染变量树（它是贵的那部分），现在多留一个滑动的时长（`FLANK_SLIDE_MS`）再卸载，所以面板不是空着滑走的，
+  滑动中内容也不重排。`prefers-reduced-motion: reduce` 下两块面板都没有过渡。
+- **焦点。** 按下去的那个按钮会被自己的动作藏起来（窄条随面板出现而隐藏，面板里的收起键随面板离开），所以焦点跟着走：打开时移进面板
+  （侧栏落在收起键上，除非已经在搜索框里；变量栏落在标题栏上），收起时回到打开它的那个按钮或窄条。面板盖在页面上时，Escape 收起它
+  （输入框自己的 Escape 优先；§134 的比较模式开着时，Escape 先退出比较——它在 document 上监听，两块面板的处理都在
+  `stopPropagation` 之前让路——再按一次才收起面板）。窗口造成的让位（抽屉打开时变量栏收成窄条）不动焦点。§134 的比较视图
+  就渲染在新的 `__panel` 里，占上半部分，和变量树同一个位置。
+- 首次访问的默认值（`RAIL_DEFAULT_BELOW` 900）没改：1744 以下默认仍是展开的侧栏，也就是一块盖在页面上的面板。
+
+**为什么 §40 的槽位预留被去掉了。** §40 让输入框预留滚动区的滚动条槽，是因为两者各自在轨道里居中、滚动区的轨道窄一个槽，槽位是让两条
+中线重合的办法。现在两者都从同一个视口锚点起、都是 920 宽，槽在列的右边、列外面；再预留就会让输入框在有空间的窗口上比正文窄一个槽。
+代价：窗口窄到列填满滚动区时（约 1024 px 以下，或设置抽屉占轨道挤窄时），正文在滚动条前结束，输入框多出一个槽宽（实测 10 px）。
+
+**之后（同一把卡尺，本分支构建）：**
+
+| 宽度 | 状态 | 轨道（侧栏/变量栏） | 列 left / width | 最高的卡片帧 left / width / height | 输入框 left / width | 标题 left | 「设置」right | 「收起卡片界面」right | 刻度条 left | 列里的帧 resize / 根宽度变化 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1920 | 都收起 | 44 / 36 | 500 / 920 | 578 / 764 / 676 | 500 / 920 | 546 | 1374 | 1406 | 508 | 0 / 0 |
+| 1920 | 变量栏开 | 44 / 400 | 500 / 920 | 578 / 764 / 676 | 500 / 920 | 546 | 1374 | 1406 | 508 | 0 / 0 |
+| 1920 | 都开 | 400 / 400 | 500 / 920 | 578 / 764 / 676 | 500 / 920 | 546 | 1374 | 1406 | 508 | 0 / 0 |
+| 1920 | 侧栏开 | 400 / 36 | 500 / 920 | 578 / 764 / 676 | 500 / 920 | 546 | 1374 | 1406 | 508 | 0 / 0 |
+| 1440 | 四种状态 | 44 / 36 | 260 / 920 | 338 / 764 / 676 | 260 / 920 | 306 | 1134 | 1166 | 268 | 0 / 0 |
+
+20 个卡片帧的矩形在每个宽度的四种状态里逐个相等；开合起的动画只有 `transform`、`opacity`、`r`、`clip-path`、`visibility`
+（和一个与此无关的 `iris-disclosure-reveal`），没有 `width`；冻结在滑动中途（45 ms）时列的矩形与静止时相同。
+
+**代价与边界。**
+
+- **卡片舞台上的帧仍跟舞台走。** 卡片的脚本／浮层帧挂在 `.iris-card-stage` 上（`inset: 0`，由 `useCardScripts.tsx` 负责），舞台是两翼之间
+  的盒子。1744 以上两翼并排时舞台宽度会变：黑兽 有一个这样的帧（宽度就是舞台宽，1920 下在 1120–1840 之间），四种状态里收到 5 次 `resize`；1440 下两翼不占轨道，它 0 次。它不在阅读列里，
+  不是本条要求的对象；要它也不动，得让浮层面盖住两翼或只盖列，那是浮层规则的改动，不在这次的文件范围内。
+- 1744 以下打开的面板会盖住列的一部分（1440 下侧栏面板盖住列左边 140 px，其中正文 62 px）。这是主人规则的直接结果：不推列，就只能盖住。
+- 「收起卡片界面」现在贴着列的右上角，而不是舞台的右边缘；1920 下按钮右缘 1406、正文右缘 1342，正文第一行写满时右端会被它压住一截（按钮本来就在浮层之上）。
+
+**测试。**
+
+| 测试 | 钉的是 | 红过（改坏什么） |
+| --- | --- | --- |
+| `apps/iris-web/tests/stable-column.test.ts`（从样式表里取出锚点和读它的每一处，按 1920 / 1440 的四种状态求值） | 列、输入框、页眉内距、「收起卡片界面」、刻度条在四种状态里是同一个值；列以视口居中、920 宽，并排时不碰两翼（含槽）；1744 由声明的宽度算出且两份样式表都用它；两翼没有 `width` 过渡，面板只过渡 `transform` 与 `visibility`，减少动效下不过渡 | 把锚点换回「在轨道里居中」（`(100% − 920) / 2`）→ 1920 与 1440 两条都红（「the column is not centred on the viewport」） |
+| `apps/iris-web/tests/breakpoints.test.ts` | 断点集合变成四个（880 / 1432 / 1440 / 1744），表头的区间表同步；每一翼在形态改变的每个边界都有规则 | — |
+| `apps/iris-web/tests/interface-styles.test.ts`、`notice-channels.test.ts` | 按新不变式重述：列与输入框都 `margin: 0 0 0 var(--iris-column-left)`；输入框不再预留槽，滚动区仍 `stable` | — |
+| `apps/iris-web/tests/state-panel.test.ts` | 400 从 `.iris-sidebar__full` 读；并排时侧栏轨道就是面板宽；网格第一轨读 `--iris-dock-left` | — |
+| `apps/iris-web/tests/layers.test.ts` | `--iris-flank-z` 高于浮层按钮、低于卡片弹窗；侧栏与变量栏读它 | — |
+| `qa/stable-column-caliper.mjs`（真浏览器，8805，拷贝的数据目录，黑兽） | 上面两张表；焦点进出与 Escape；减少动效 | 对 origin/main 的构建跑 → 26 项红（上表「之前」） |
+
+**何时重开：** (a) 主人希望 1744 以下默认收起侧栏（首次访问不再看到盖着正文的面板）：把 `RAIL_DEFAULT_BELOW` 改成 `FLANKS_DOCK_FROM`。
+(b) 卡片舞台上的浮层帧在并排时的重量变得可见：让浮层面只跟列或只跟视口。(c) 平台滚动条比 12 px 宽（经典滚动条 15–17 px）：
+1744 附近变量栏会碰到列的右缘，把 `SCROLLBAR_LANE` 按实测改大。
