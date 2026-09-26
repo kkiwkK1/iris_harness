@@ -13,7 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="#开始使用"><b>开始使用</b></a> &nbsp; / &nbsp;
+  <a href="#界面预览"><b>界面预览</b></a> &nbsp; / &nbsp;
+  <a href="#开始使用">开始使用</a> &nbsp; / &nbsp;
   <a href="docs/USER-GUIDE.md">使用手册</a> &nbsp; / &nbsp;
   <a href="docs/README.md">开发文档</a> &nbsp; / &nbsp;
   <a href="CONTRIBUTING.md">参与贡献</a>
@@ -47,6 +48,36 @@ Iris 支持 SillyTavern 的角色卡、世界书、Chat Completion 预设和聊�
     </td>
   </tr>
 </table>
+
+## 界面预览
+
+**阅读与卡片界面**：对话正文、人物卡展示、变量和分支并排呈现。
+
+<p align="center">
+  <a href="assets/screenshots/reading-mvu.png"><img src="assets/screenshots/reading-mvu.png" width="1200" alt="Iris 阅读界面：左侧对话列表、中间正文与卡片界面、右侧变量和分支"></a>
+</p>
+
+**角色库**：查看角色的对话、世界书和脚本。
+
+<p align="center">
+  <a href="assets/screenshots/character-library.png"><img src="assets/screenshots/character-library.png" width="1200" alt="Iris 角色库：角色卡详情及关联的对话、世界书和脚本"></a>
+</p>
+
+<table>
+  <tr>
+    <td align="center" valign="top"><strong>变量与分支</strong><br><a href="assets/screenshots/variables-and-branches.png"><img src="assets/screenshots/variables-and-branches.png" width="355" alt="变量树和对话分支侧栏"></a></td>
+    <td align="center" valign="top"><strong>设置</strong><br><a href="assets/screenshots/settings.png"><img src="assets/screenshots/settings.png" width="351" alt="Iris 设置面板"></a></td>
+  </tr>
+</table>
+
+<details>
+<summary>查看上下文构成</summary>
+
+<p align="center">
+  <a href="assets/screenshots/context-breakdown.png"><img src="assets/screenshots/context-breakdown.png" width="1200" alt="Iris 上下文构成分析面板"></a>
+</p>
+
+</details>
 
 角色、聊天和设置保存在本机。模型由你选择；使用远程服务时，对话会发送到所配置的端点。
 
