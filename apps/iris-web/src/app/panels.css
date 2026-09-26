@@ -2593,6 +2593,25 @@
   color: var(--iris-ink-tertiary);
 }
 
+/* The comparison's two modifiers (`StatePanel.tsx`'s `VariableCompareView`, web ledger §134). */
+
+/*
+ * A changed leaf's two readings, set where its value would be. A short pair
+ * (`30 → 35`) takes the amber the 改 badge wears, so the eye pairs them; a
+ * long one is stacked and keeps the note ink every long value has
+ * (`panels.css`, `.iris-var__row--stacked`), because a paragraph in amber is
+ * hard to read and the badge already says it changed.
+ */
+.iris-var__row:not(.iris-var__row--stacked) .iris-var__value--change {
+  color: var(--iris-warn);
+}
+
+/* The mark on a row only A holds: the removed tally's own faint minus. */
+.iris-var__delta--gone {
+  color: var(--iris-ink-faint);
+  background: var(--iris-bg-sunken);
+}
+
 /* ------------------------------------------------------- sandbox probe (dev) */
 
 .iris-probe__actions {

@@ -2104,6 +2104,88 @@ export class ChatEntry {
   }
 
   /**
+   * One floor's table **for a named reading**, and how it was found — the
+   * read behind `chat.variablesDiff`.
+   *
+   * {@link floorVariables} answers for the selected reading only, because that
+   * is what a card sees. A comparison has to be able to name any reading, so
+   * this reads the same per-candidate record (the newest `iris/variables` for
+   * that candidate, through the prune record) for whichever one is asked for,
+   * and says, rather than hides, when there is nothing to read:
+   *
+   * - a floor past the end is `no-floor`, a reading the floor does not have is
+   *   `no-swipe`, and a reading that never had a table written is `no-table`
+   *   — three different answers that `floorVariables` folds into one `{}`;
+   * - a **user line** reads the table the file carries on it
+   *   (`chat[i].variables[0]`, restored through `iris/st-meta`, with any row
+   *   trim applied as the export applies it), and failing that its turn's
+   *   table — the projection a card reading that floor is given (DEVIATIONS
+   *   14), labelled `turn` so the difference is visible.
+   * @param messageId - the chat-file line index.
+   * @param swipe - the reading; the selected one when omitted.
+   * @returns the table (absent when missing) and its provenance.
+   */
+  floorSnapshot(messageId: number, swipe?: number): {
+    table: Variables | undefined
+    swipe: number
+    swipes: number
+    role?: 'user' | 'assistant'
+    source: 'floor' | 'turn' | 'none'
+    missing?: 'no-floor' | 'no-swipe' | 'no-table'
+    pruned?: true
+  } {
+    const line = chatLines(this.session)[messageId]
+    if (line === undefined) return { table: undefined, swipe: swipe ?? 0, swipes: 0, source: 'none', missing: 'no-floor' }
+
+    if (line.isUser) {
+      if (swipe !== undefined && swipe !== 0) {
+        return { table: undefined, swipe, swipes: 1, role: 'user', source: 'none', missing: 'no-swipe' }
+      }
+      const tables = rowFields(this.session, line.seq)['variables']
+      const first = Array.isArray(tables) ? tables[0] : undefined
+      if (typeof first === 'object' && first !== null && !Array.isArray(first) && Object.keys(first).length > 0) {
+        const trims = prunedRowsOf(this.session)
+        const removed = trims.removed.get(messageId)
+        const table = applyRowPrune(first as Record<string, unknown>, removed, trims.marked.has(messageId)) as Variables
+        return {
+          table,
+          swipe: 0,
+          swipes: 1,
+          role: 'user',
+          source: 'floor',
+          ...removed !== undefined && removed.size > 0 ? { pruned: true as const } : {},
+        }
+      }
+      const turnTable = this.floorVariables(messageId)
+      if (Object.keys(turnTable).length > 0) return { table: turnTable, swipe: 0, swipes: 1, role: 'user', source: 'turn' }
+      return { table: undefined, swipe: 0, swipes: 1, role: 'user', source: 'none', missing: 'no-table' }
+    }
+
+    const candidates = listCandidates(this.session, line.turn)
+    const chosen = swipe === undefined ? selectedCandidate(this.session, line.turn) : candidates[swipe]
+    const index = chosen?.index ?? swipe ?? 0
+    if (chosen === undefined) {
+      return { table: undefined, swipe: index, swipes: candidates.length, role: 'assistant', source: 'none', missing: 'no-swipe' }
+    }
+    let latest: Variables | undefined
+    for (const event of this.session.events) {
+      if (event.type === 'iris/variables' && event.data.candidateSeq === chosen.seq) latest = event.data.variables as Variables
+    }
+    if (latest === undefined) {
+      return { table: undefined, swipe: index, swipes: candidates.length, role: 'assistant', source: 'none', missing: 'no-table' }
+    }
+    const removed = prunedKeysOf(this.session).get(chosen.seq)
+    return {
+      table: applyPruned(latest, removed) as Variables,
+      swipe: index,
+      swipes: candidates.length,
+      role: 'assistant',
+      source: 'floor',
+      ...removed !== undefined && removed.size > 0 ? { pruned: true as const } : {},
+    }
+  }
+
+  /**
    * The newest turn at or before `turn` whose table was never pruned.
    *
    * The starting point a replay is only as good as.

@@ -57,13 +57,22 @@
  * branch tree map below (`TreeMap.tsx`'s `AsideTreeSection`), with a divider
  * between them (owner placement ruling; web ledger §128).
  *
+ * **While the tree map's 「比较变量」 mode is on, the upper half is the
+ * comparison instead** (owner request 2026-09-26): the variable diff between
+ * the two floors picked on the map, drawn with this same tree and these same
+ * marks — B's table as the tree, 新 only in B, 改 with `A → B` in place, what
+ * only A holds listed underneath — under a header naming both sides, with a
+ * swap and a close. Closing (or Escape) brings the variables back.
+ *
  * @module iris-web/app/StatePanel
  */
 
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 
-import { useIris } from '../client/provider.tsx'
+import { useIris, useIrisActions } from '../client/provider.tsx'
+import type { ComparePick } from '../client/variable-compare.ts'
 import { AsideTreeSection } from './TreeMap.tsx'
+import './variable-compare.css'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { translate, type Language } from './i18n/strings.ts'
 import {
@@ -72,6 +81,7 @@ import {
   branchPaths,
   changeSentence,
   changedPaths,
+  compareMarks,
   describe,
   diffStats,
   EMPTY_DIFF,
@@ -243,6 +253,7 @@ function StateRows({
   changeHover,
   onToggle,
   lang,
+  changeInline = false,
 }: {
   entries: [string, unknown][]
   depth: number
@@ -259,6 +270,12 @@ function StateRows({
   changeHover: ReadonlyMap<string, string>
   onToggle: (path: string, open: boolean) => void
   lang: Language
+  /**
+   * Show a changed leaf's `before → after` in place of its value, rather than
+   * only on hover. The compare view's rows, where the two readings are the
+   * point; the round diff keeps the hover, because its "before" is a moment ago.
+   */
+  changeInline?: boolean
 }): ReactElement {
   /*
    * The `open` value each branch was last rendered with, per path.
@@ -329,14 +346,19 @@ function StateRows({
                   changeHover={changeHover}
                   onToggle={onToggle}
                   lang={lang}
+                  changeInline={changeInline}
                 />
               </div>
             </details>
           )
         }
 
-        const stacked = shown.kind === 'text' && shown.text.length > RANGED_RIGHT_LIMIT
+        const inline = changeInline && changed.has(here) ? changeHover.get(here) : undefined
+        const stacked = inline !== undefined
+          ? inline.length > RANGED_RIGHT_LIMIT
+          : shown.kind === 'text' && shown.text.length > RANGED_RIGHT_LIMIT
         const classes = ['iris-var__value']
+        if (inline !== undefined) classes.push('iris-var__value--change')
         if (shown.kind === 'absent') classes.push('iris-var__value--absent')
         if (shown.kind === 'text' && shown.faint) classes.push('iris-var__value--faint')
         if (shown.kind === 'text' && shown.numeric) classes.push('iris-var__value--numeric')
@@ -356,13 +378,311 @@ function StateRows({
               />
               {key}
             </dt>
-            <dd className={classes.join(' ')} title={shown.kind === 'text' ? shown.text : translate(lang, 'stateValueEmpty')} aria-label={shown.kind === 'absent' ? translate(lang, 'stateValueEmpty') : undefined}>
-              {shown.kind === 'absent' ? '—' : shown.text}
-            </dd>
+            {inline !== undefined ? (
+              <dd className={classes.join(' ')} title={inline}>{inline}</dd>
+            ) : (
+              <dd className={classes.join(' ')} title={shown.kind === 'text' ? shown.text : translate(lang, 'stateValueEmpty')} aria-label={shown.kind === 'absent' ? translate(lang, 'stateValueEmpty') : undefined}>
+                {shown.kind === 'absent' ? '—' : shown.text}
+              </dd>
+            )}
           </div>
         )
       })}
     </dl>
+  )
+}
+
+/** One side of the compare header: its letter, its conversation, and its floor as a field. */
+function CompareSide({
+  side,
+  pick,
+  title,
+  floors,
+  reading,
+  onFloor,
+}: {
+  side: 'a' | 'b'
+  pick: ComparePick | undefined
+  title: string | undefined
+  /** The conversation's floor count, for the field's bounds. */
+  floors: number | undefined
+  /** The reading compared, when the floor has several. */
+  reading: { swipe: number, swipes: number } | undefined
+  onFloor: (floor: number) => void
+}): ReactElement {
+  const name = side.toUpperCase()
+  const [draft, setDraft] = useState(pick === undefined ? '' : String(pick.floor))
+  useEffect(() => { setDraft(pick === undefined ? '' : String(pick.floor)) }, [pick])
+  const commit = (): void => {
+    const value = Number(draft)
+    if (pick === undefined || draft.trim() === '' || !Number.isInteger(value) || value < 0) {
+      setDraft(pick === undefined ? '' : String(pick.floor))
+      return
+    }
+    const top = floors === undefined ? value : Math.max(0, floors - 1)
+    onFloor(Math.min(value, top))
+  }
+  return (
+    <span className="iris-compare__side" data-side={side}>
+      <span className="iris-tree__pick" data-side={side}>{name}</span>
+      {pick === undefined ? (
+        <span className="iris-compare__title iris-compare__title--empty">—</span>
+      ) : (
+        <>
+          <span className="iris-compare__title" title={title}>{title ?? pick.chatId}</span>
+          <span className="iris-compare__floor">
+            #
+            <input
+              className="iris-compare__floorfield"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              {...floors === undefined ? {} : { max: Math.max(0, floors - 1) }}
+              value={draft}
+              data-control={`compare-floor-${side}`}
+              aria-label={t('compareFloorAria', { side: name })}
+              onChange={event => setDraft(event.target.value)}
+              onBlur={commit}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  commit()
+                } else if (event.key === 'Escape') {
+                  // The field answers Escape itself: it puts the floor back,
+                  // and the mode stays on.
+                  event.preventDefault()
+                  setDraft(String(pick.floor))
+                }
+              }}
+            />
+          </span>
+          {reading !== undefined && reading.swipes > 1 ? (
+            <span className="iris-compare__reading">{t('compareReading', { n: reading.swipe + 1 })}</span>
+          ) : null}
+        </>
+      )}
+    </span>
+  )
+}
+
+/**
+ * The comparison, in the margin's upper half while the compare mode is on.
+ *
+ * Rendering only: the diff is the host's (`chat.variablesDiff`), and how its
+ * paths become this tree's marks is `compareMarks` in `state-panel.ts`.
+ * @param props.lang - the interface language.
+ * @returns the header, the tools and the tree.
+ */
+function VariableCompareView({ lang }: { lang: Language }): ReactElement | null {
+  const compare = useIris(state => state.compare)
+  const tree = useIris(state => state.tree)
+  const chats = useIris(state => state.chats)
+  const actions = useIrisActions()
+  const [queryInput, setQueryInput] = useState('')
+  const [query, setQuery] = useState('')
+  // 「只看变化」 starts on here: the differences are what was asked for.
+  const [onlyChanges, setOnlyChanges] = useState(true)
+  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map())
+  const [forced, setForced] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(queryInput.trim().toLowerCase()), SEARCH_DEBOUNCE_MS)
+    return () => { clearTimeout(timer) }
+  }, [queryInput])
+
+  if (compare === undefined) return null
+  const node = (chatId: string | undefined): { title: string, floorCount: number } | undefined => {
+    if (chatId === undefined) return undefined
+    const drawn = tree?.chats.find(entry => entry.chatId === chatId)
+    if (drawn !== undefined) return drawn
+    const listed = chats.find(entry => entry.chatId === chatId)
+    return listed === undefined ? undefined : { title: listed.title, floorCount: listed.messageCount }
+  }
+  const { a, b, result, loading } = compare
+  const nodeA = node(a?.chatId)
+  const nodeB = node(b?.chatId)
+
+  const header = (
+    <div className="iris-compare__head">
+      <div className="iris-compare__sides">
+        <CompareSide
+          side="a"
+          pick={a}
+          title={nodeA?.title}
+          floors={nodeA?.floorCount}
+          reading={result?.a}
+          onFloor={floor => actions.setCompareFloor('a', floor)}
+        />
+        <span className="iris-compare__arrow" aria-hidden="true">↔</span>
+        <CompareSide
+          side="b"
+          pick={b}
+          title={nodeB?.title}
+          floors={nodeB?.floorCount}
+          reading={result?.b}
+          onFloor={floor => actions.setCompareFloor('b', floor)}
+        />
+      </div>
+      <div className="iris-compare__actions">
+        <button
+          type="button"
+          className="iris-var__tool iris-compare__action"
+          data-control="compare-swap"
+          disabled={a === undefined || b === undefined}
+          aria-label={t('compareSwap')}
+          title={t('compareSwap')}
+          onClick={() => actions.swapCompare()}
+        >
+          ⇅
+        </button>
+        <button
+          type="button"
+          className="iris-var__tool iris-compare__action"
+          data-control="compare-close"
+          aria-label={t('compareClose')}
+          title={t('compareClose')}
+          onClick={() => actions.setCompareMode(false)}
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  )
+
+  let body: ReactElement
+  if (a === undefined || b === undefined) {
+    body = <p className="iris-aside__empty" data-control="compare-hint">{t(a === undefined ? 'comparePickA' : 'comparePickB')}</p>
+  } else if (result === undefined) {
+    body = <p className="iris-aside__empty">{loading ? t('compareLoading') : t('comparePickB')}</p>
+  } else {
+    const marks = compareMarks(result.entries, result.tables ?? {}, lang)
+    const searching = query !== ''
+    const keep = new Set([...marks.added, ...marks.changed.keys()])
+    let shown: [string, unknown][] | undefined = marks.entries
+    if (onlyChanges) shown = keepChanged(shown, keep)
+    if (searching) shown = filterByName(shown ?? [], query)
+    const removed = searching
+      ? marks.removed.filter(row => row.label.toLowerCase().includes(query))
+      : marks.removed
+    // With 「只看变化」 on, or a search live, every branch drawn is a change or
+    // the way to one, so it opens; folds made then are forgotten, as a search's are.
+    const forcing = onlyChanges || searching
+    const why = (side: 'a' | 'b'): string | undefined => {
+      const missing = result[side].missing
+      if (missing === undefined) return undefined
+      const reason = missing === 'no-floor' ? 'compareMissingFloor' : missing === 'no-swipe' ? 'compareMissingSwipe' : 'compareMissingTable'
+      return t('compareMissing', { side: side.toUpperCase(), why: t(reason) })
+    }
+    const notes = [
+      why('a'),
+      why('b'),
+      ...(['a', 'b'] as const).map(side => result[side].source === 'turn' ? t('compareFromTurn', { side: side.toUpperCase() }) : undefined),
+      ...(['a', 'b'] as const).map(side => result[side].pruned === true ? t('comparePruned', { side: side.toUpperCase() }) : undefined),
+      marks.byIndex ? t('compareByIndex') : undefined,
+    ].filter((note): note is string => note !== undefined)
+
+    body = (
+      <>
+        <div className="iris-var__tools">
+          <input
+            type="search"
+            className="iris-search iris-var__search"
+            aria-label={t('stateSearchAria')}
+            placeholder={t('stateSearchPlaceholder')}
+            value={queryInput}
+            data-control="compare-filter"
+            onChange={event => setQueryInput(event.target.value)}
+          />
+          <div className="iris-var__toolrow">
+            <button
+              type="button"
+              className="iris-var__tool iris-var__tool--toggle"
+              aria-pressed={onlyChanges}
+              data-control="compare-only-changes"
+              title={t('stateOnlyChangesTitle')}
+              onClick={() => setOnlyChanges(value => !value)}
+            >
+              {t('stateOnlyChanges')}
+            </button>
+          </div>
+          <p
+            className="iris-var__diffmeta"
+            data-control="compare-summary"
+            aria-label={translate(lang, 'compareSummaryAria', {
+              added: result.summary.added,
+              changed: result.summary.changed,
+              removed: result.summary.removed,
+            })}
+          >
+            <span className="iris-var__diffadd">+{result.summary.added}</span>
+            {' '}
+            <span className="iris-var__diffchg">~{result.summary.changed}</span>
+            {' '}
+            <span className="iris-var__diffrem">−{result.summary.removed}</span>
+          </p>
+        </div>
+        {notes.length === 0 ? null : (
+          <ul className="iris-compare__notes">
+            {notes.map(note => <li key={note}>{note}</li>)}
+          </ul>
+        )}
+        {result.identical ? <p className="iris-aside__empty">{t('compareIdentical')}</p> : null}
+        {!result.identical && (shown === undefined || shown.length === 0) && removed.length === 0 ? (
+          <p className="iris-aside__empty">{t('compareNoChanges')}</p>
+        ) : null}
+        {shown === undefined || shown.length === 0 ? null : (
+          <StateRows
+            entries={shown}
+            depth={0}
+            path=""
+            opened={opened}
+            searchToggled={forced}
+            searching={forcing}
+            added={marks.added}
+            changed={new Set(marks.changed.keys())}
+            changeHover={marks.changed}
+            lang={lang}
+            changeInline
+            onToggle={(at, isOpen) => {
+              if (forcing) {
+                setForced(previous => {
+                  const next = new Set(previous)
+                  if (isOpen) next.delete(at)
+                  else next.add(at)
+                  return next
+                })
+                return
+              }
+              const next = new Map(opened)
+              next.set(at, isOpen)
+              setOpened(next)
+            }}
+          />
+        )}
+        {removed.length === 0 ? null : (
+          <section className="iris-var__removed" data-control="compare-removed">
+            <h3 className="iris-var__removedhead">{t('compareRemovedHead')}</h3>
+            <dl className="iris-var">
+              {removed.map(row => (
+                <div className="iris-var__row" key={row.path} title={previewValue(row.value, lang)}>
+                  <dt className="iris-var__key">
+                    <span className="iris-var__delta iris-var__delta--gone">−</span>
+                    {row.label}
+                  </dt>
+                  <dd className="iris-var__value iris-var__value--absent">{previewValue(row.value, lang)}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+      </>
+    )
+  }
+
+  return (
+    <section className="iris-compare" aria-label={t('compareAria')} data-control="variable-compare">
+      {header}
+      {body}
+    </section>
   )
 }
 
@@ -411,6 +731,7 @@ export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElemen
   const variables = useIris(state => state.view?.variables)
   const chatId = useIris(state => state.chatId)
   const open = useIris(state => state.chatId !== undefined)
+  const comparing = useIris(state => state.compare !== undefined)
   // Subscribed so a language switch re-renders the margin's words. Before the
   // early return: hook order must not depend on whether a chat is open.
   const { lang } = useLanguage()
@@ -560,7 +881,11 @@ export function StatePanel({ drawerOpen }: { drawerOpen: boolean }): ReactElemen
         drawer the strip is all there is room for, and 236px of tree inside a
         36px track is the sideways scroll this panel's own rules forbid.
       */}
-      {!showing ? null : (
+      {!showing ? null : comparing ? (
+        <div className="iris-aside__inner">
+          <VariableCompareView lang={lang} />
+        </div>
+      ) : (
       <div className="iris-aside__inner">
         {hasVariables && (
           <div className="iris-var__tools">

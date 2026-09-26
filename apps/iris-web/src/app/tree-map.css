@@ -385,6 +385,66 @@
   padding: 6px 6px 0;
 }
 
+/* ——— 比较变量: the compare mode ——— */
+
+/*
+ * The mode switch sits in the map's own heading row, sized to its words
+ * rather than stretched like the variable tools it borrows its look from.
+ */
+/* Two classes deep: `.iris-var__tool`'s `flex: 1` is declared later, in panels.css. */
+.iris-aside__treebar .iris-aside__treetool {
+  flex: none;
+  margin-left: auto;
+}
+
+/* In the mode a click picks rather than goes, so the map says it is a picker. */
+.iris-aside__treebody[data-comparing] .iris-tree__dot,
+.iris-aside__treebody[data-comparing] .iris-tree__label {
+  cursor: crosshair;
+}
+
+/*
+ * A and B: side A in the ink (the "before"), side B in the accent (the
+ * "after"), the pair the diff header names. A ring round the dot, and a
+ * letter chip before the floor number.
+ */
+.iris-tree__pickring {
+  fill: none;
+  stroke-width: 1.6;
+}
+
+.iris-tree__dot[data-compare='a'] .iris-tree__pickring {
+  stroke: var(--iris-ink-secondary);
+}
+
+.iris-tree__dot[data-compare='b'] .iris-tree__pickring {
+  stroke: var(--iris-accent);
+}
+
+.iris-tree__pick {
+  flex: none;
+  align-self: center;
+  min-width: 13px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  font-family: var(--iris-font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  border-radius: var(--iris-radius-pill);
+}
+
+.iris-tree__pick[data-side='a'] {
+  color: var(--iris-bg-page);
+  background: var(--iris-ink-secondary);
+}
+
+.iris-tree__pick[data-side='b'] {
+  color: var(--iris-bg-page);
+  background: var(--iris-accent);
+}
+
 /* ——— deleting a branch ——— */
 
 .iris-tree-delete {

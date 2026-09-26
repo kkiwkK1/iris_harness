@@ -54,6 +54,12 @@ export interface Candidate {
    * whose swipe 1 has none, and the seeded conversations put it in that state.
    */
   generation?: TurnGeneration
+  /**
+   * This reading's own variable table — the host's `chat[i].variables[swipe]`
+   * — for `chat.variablesDiff`. Absent means the reading has no table, which
+   * the diff reports as `no-table` rather than as an empty one.
+   */
+  variables?: Record<string, unknown>
 }
 
 /** A message in the fake log, with every candidate it ever produced. */

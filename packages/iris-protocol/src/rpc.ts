@@ -22,6 +22,7 @@ import { MAX_CONTEXT_WINDOW } from './views.ts'
 import type { BackupPreview, BackupSummary, CardBookDigest, CardWorldbookView, CharacterSummary, ChatSearchHit, ChatSummary, ChatTreeView, ChatView, ConnectionKeySource, ConnectionProfile, ConnectionTestError, DebugReport, GenerationSettings, HostDoctorFacts, HostDefaultConnection, ModelContextLength, PersonaView, PresetManagerView, PresetSummary, PromptDivergence, PromptItemization, RegexScriptView, ScopedRegexView, ScriptContext, SegmentSummaryView, ScriptView, TavernRegexView, UsageSummary, UserScript, UserScriptView, WorldbookEntry, WorldbookSettingsView, WorldbookSummary, ScriptChatMessage } from './views.ts'
 import type { SystemPluginInstallPreview, SystemPluginSnapshot } from './system-plugins.ts'
 import type { SandboxPluginView } from './sandbox-plugins.ts'
+import type { VariablesDiffView } from './variables-diff.ts'
 // —— family①: identity & messages ——
 import type { CardCharacter, ChatHistoryBriefRow } from './views.ts'
 
@@ -912,6 +913,33 @@ export const requestSchemas = {
     fromFloor: z.number().int().min(0),
     toFloor: z.number().int().min(0),
     lane: z.string().min(1).optional(),
+  }),
+
+  /**
+   * How the variables differ between two floors of a lineage, for the tree
+   * map's compare mode.
+   *
+   * Each side names a conversation and a floor in it, and optionally a
+   * reading; the selected reading is compared when `swipe` is omitted. The
+   * two sides may be floors of one conversation or of two. Read-only: each
+   * floor's table is read through the chat entry's own per-floor, per-swipe
+   * reader and nothing is written. A side with no table is answered, with a
+   * `missing` flag, rather than refused. `tables` asks for the two tables
+   * themselves as well, for a view that shows the unchanged rows around the
+   * changes; without it only the differences travel.
+   */
+  'chat.variablesDiff': z.object({
+    a: z.object({
+      chatId: z.string().min(1),
+      floor: z.number().int().min(0),
+      swipe: z.number().int().min(0).optional(),
+    }),
+    b: z.object({
+      chatId: z.string().min(1),
+      floor: z.number().int().min(0),
+      swipe: z.number().int().min(0).optional(),
+    }),
+    tables: z.boolean().optional(),
   }),
 
   /**
@@ -2873,6 +2901,8 @@ export interface RpcResponseMap {
   'chat.segmentSummaries': { summaries: SegmentSummaryView[] }
   /** The summary just written. */
   'chat.summarizeSegment': { summary: SegmentSummaryView }
+  /** Every difference from side A to side B, the counts, and how each side was resolved. */
+  'chat.variablesDiff': { diff: VariablesDiffView }
   /** The conversation as stored, summary-shaped — the sidebar's own currency. */
   'chat.import': { chat: ChatSummary }
   /**

@@ -29,6 +29,7 @@ import type { BackupSummary, CharacterSummary, ChatBudget, ChatSummary, ChatView
 import { MAX_CONTEXT_WINDOW, providerPreset, precheckSandboxPluginSyntax, SANDBOX_PLUGIN_QUOTAS } from '@iris/protocol'
 import type { SandboxPluginFailureState } from '@iris/protocol'
 import { SANDBOX_PLUGIN_FACADE_VERSION } from '@iris/protocol'
+import { diffTables, diffVariables, type VariablesDiffSide } from '@iris/protocol'
 import { toId, uniqueId } from './paths.ts'
 import { modelContextFromRow, modelContextFromTable, resolveWindow, type ResolvedWindow } from './model-context.ts'
 import type { RegexScript } from '@iris/regex'
@@ -3058,6 +3059,41 @@ export class IrisAppService {
             at: record.at,
             ...record.model === undefined ? {} : { model: record.model },
             stale: false,
+          },
+        }
+      },
+
+      'chat.variablesDiff': async ({ a, b, tables }) => {
+        // Read-only. Each side is read through the entry's own per-floor,
+        // per-swipe reader (`ChatEntry.floorSnapshot`), from the open log —
+        // so a table a card has just written and not yet saved is the one
+        // compared, which is the state the margin shows beside it. A chat that
+        // does not exist is refused (not-found); a floor, reading or table
+        // that does not exist is answered, with `missing` on that side.
+        const read = async (side: typeof a): Promise<{ table: unknown, side: VariablesDiffSide }> => {
+          const entry = await chats.open(side.chatId)
+          const found = entry.floorSnapshot(side.floor, side.swipe)
+          return {
+            table: found.table,
+            side: {
+              chatId: side.chatId,
+              floor: side.floor,
+              swipe: found.swipe,
+              swipes: found.swipes,
+              source: found.source,
+              ...found.role === undefined ? {} : { role: found.role },
+              ...found.missing === undefined ? {} : { missing: found.missing },
+              ...found.pruned === undefined ? {} : { pruned: found.pruned },
+            },
+          }
+        }
+        const [left, right] = await Promise.all([read(a), read(b)])
+        return {
+          diff: {
+            a: left.side,
+            b: right.side,
+            ...diffVariables(left.table, right.table),
+            ...tables === true ? { tables: diffTables(left.table, right.table) } : {},
           },
         }
       },
