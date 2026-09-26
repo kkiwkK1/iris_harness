@@ -23,7 +23,13 @@
  *   under React's `performWorkOnRoot` summed as "React work".
  * - **Frames.** Every `<iframe>` added to or removed from the document, every
  *   `createElement('iframe')`, and every `message` a frame posts to the shell,
- *   each attributed to the floor of the row it sits in.
+ *   each attributed to the floor of the row it sits in. Creations are also
+ *   timestamped, so a round reports how many frames were built in the five
+ *   seconds after a dropped socket reopened (the reconnect's own rebuilds).
+ * - **Notice log.** Commits that touched `.iris-notices` (a MutationObserver
+ *   callback each, so a minified build shows them too), per round and for
+ *   the session, beside the session's count of `blocked` reports — the row's
+ *   `×N` should equal that count.
  *
  * Modes (`MODE`):
  *
@@ -195,7 +201,7 @@ const INSTRUMENTS = `(() => {
   if (window.__qa !== undefined) return
   const qa = window.__qa = {
     commits: [], names: {}, origins: {}, frameKinds: {}, blockedLines: {}, iframesAdded: [], iframesRemoved: [], iframesCreated: 0,
-    frameMessages: {}, deltas: [], sockets: [], log: [], stalls: [], mute: false, block: false,
+    frameMessages: {}, deltas: [], sockets: [], log: [], stalls: [], mute: false, block: false, noticeLogCommits: 0, noticeLogCommitsAll: 0, blockedAll: 0, iframeCreatedAt: [],
     arm: undefined, streamingFloor: undefined,
   }
   /* ---- React commits ---- */
@@ -260,18 +266,27 @@ const INSTRUMENTS = `(() => {
   const floorOf = node => node?.closest?.('[data-floor]')?.getAttribute('data-floor') ?? 'none'
   const createElement = Document.prototype.createElement
   Document.prototype.createElement = function (tag, options) {
-    if (qa.recording && String(tag).toLowerCase() === 'iframe') qa.iframesCreated += 1
+    if (qa.recording && String(tag).toLowerCase() === 'iframe') { qa.iframesCreated += 1; qa.iframeCreatedAt.push(Date.now()) }
     return createElement.call(this, tag, options)
   }
   const iframesIn = node => node.nodeType !== 1 ? [] : node.tagName === 'IFRAME' ? [node] : [...node.querySelectorAll('iframe')]
   new MutationObserver(records => {
+    // One observer callback per commit that touched the notice log's DOM: the
+    // log's rows carry a time and a count, so a render that changed anything
+    // changes text here, and a minified build still shows it. The session
+    // total is counted whether or not a round is recording.
+    if (records.some(record => (record.target.nodeType === 1 ? record.target : record.target.parentElement)?.closest?.('.iris-notices') != null)) {
+      qa.noticeLogCommitsAll += 1
+      if (qa.recording) qa.noticeLogCommits += 1
+    }
     if (!qa.recording) return
     for (const record of records) {
       for (const node of record.addedNodes) for (const frame of iframesIn(node)) qa.iframesAdded.push(floorOf(frame))
       for (const node of record.removedNodes) for (const frame of iframesIn(node)) qa.iframesRemoved.push(floorOf(record.target))
     }
-  }).observe(document, { childList: true, subtree: true })
+  }).observe(document, { childList: true, subtree: true, characterData: true })
   window.addEventListener('message', event => {
+    if (event.source !== window && event.source !== null && event.data !== null && typeof event.data === 'object' && event.data.type === 'blocked') qa.blockedAll += 1
     if (!qa.recording || event.source === window || event.source === null) return
     let floor = 'unknown'
     for (const frame of document.querySelectorAll('iframe')) {
@@ -549,7 +564,7 @@ try {
     const marker = `【QA-END-${String(round)}-${String(Date.now() % 100000)}】`
     Object.assign(plan, { text: replyWith(marker, CHUNKS), chunks: CHUNKS, delayMs: DELAY_MS })
     for (const tab of tabs) {
-      await tab.evaluate(`Object.assign(window.__qa, { commits: [], names: {}, origins: {}, frameKinds: {}, blockedLines: {}, iframesAdded: [], iframesRemoved: [], iframesCreated: 0, frameMessages: {}, deltas: [], stalls: [], log: [], recording: true, streamingFloor: undefined })`)
+      await tab.evaluate(`Object.assign(window.__qa, { commits: [], names: {}, origins: {}, frameKinds: {}, blockedLines: {}, iframesAdded: [], iframesRemoved: [], iframesCreated: 0, frameMessages: {}, deltas: [], stalls: [], log: [], noticeLogCommits: 0, iframeCreatedAt: [], recording: true, streamingFloor: undefined })`)
     }
     if (DROP) await main.evaluate(`window.__qa.arm = { after: ${String(Math.floor(CHUNKS / 3))}, seen: 0 }`)
     const eventsBefore = hostEvents.length
@@ -580,7 +595,7 @@ try {
         return !state.caret && !state.stop && state.lastText.includes(marker)
       }, SETTLE_BOUND_MS, 200)
       const final = await tab.evaluate(PAGE_STATE)
-      const qa = await tab.evaluate(`(() => { const q = window.__qa; q.recording = false; return { commits: q.commits, names: q.names, origins: q.origins, frameKinds: q.frameKinds, blockedLines: q.blockedLines, iframesAdded: q.iframesAdded, iframesRemoved: q.iframesRemoved, iframesCreated: q.iframesCreated, frameMessages: q.frameMessages, deltas: q.deltas, stalls: q.stalls, log: q.log, streamingFloor: q.streamingFloor } })()`)
+      const qa = await tab.evaluate(`(() => { const q = window.__qa; q.recording = false; return { commits: q.commits, names: q.names, origins: q.origins, frameKinds: q.frameKinds, blockedLines: q.blockedLines, iframesAdded: q.iframesAdded, iframesRemoved: q.iframesRemoved, iframesCreated: q.iframesCreated, frameMessages: q.frameMessages, deltas: q.deltas, stalls: q.stalls, log: q.log, streamingFloor: q.streamingFloor, noticeLogCommits: q.noticeLogCommits, noticeLogCommitsAll: q.noticeLogCommitsAll, blockedAll: q.blockedAll, iframeCreatedAt: q.iframeCreatedAt, noticeNames: q.names.NoticeLog ?? null, noticeRows: [...document.querySelectorAll('.iris-notices__list > li')].slice(0, 6).map(li => (li.textContent ?? '').slice(0, 140)) } })()`)
       perTab.push({ tab: tab.index, settledIn, final, qa })
     }
     const { profile: cpu } = (await main.send('Profiler.stop')).result
@@ -629,6 +644,18 @@ try {
       origins: Object.entries(m.origins).sort((x, y) => y[1] - x[1]).slice(0, 12),
       frameKinds: Object.entries(m.frameKinds ?? {}).sort((x, y) => y[1] - x[1]).slice(0, 12),
       blockedDistinct: Object.keys(m.blockedLines ?? {}).length,
+      blockedReports: Object.values(m.blockedLines ?? {}).reduce((t, n) => t + n, 0),
+      noticeLogDomCommits: m.noticeLogCommits,
+      noticeLogDomCommitsSession: m.noticeLogCommitsAll,
+      blockedReportsSession: m.blockedAll,
+      // Frames built in the five seconds after the dropped socket reopened —
+      // the reconnect's own rebuilds, apart from the new floors a reply adds.
+      iframesCreatedAfterReconnect5s: (() => {
+        const open = m.log.find(row => row[0] === 'open' && m.log.some(other => other[0] === 'drop' && other[1] <= row[1]))
+        return open === undefined ? null : m.iframeCreatedAt.filter(at => at >= open[1] && at < open[1] + 5000).length
+      })(),
+      noticeLogRenders: m.noticeNames,
+      noticeRows: m.noticeRows,
       blockedSample: Object.entries(m.blockedLines ?? {}).sort((x, y) => y[1] - x[1]).slice(0, 4),
       topSelf: cpuSummary.topSelf,
       tabs: perTab.map(t => ({

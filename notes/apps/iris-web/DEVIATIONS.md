@@ -9188,7 +9188,7 @@ JS。页面那半从 `document` 的 module script 读（`doctor-page.ts` 的 `bo
    主人那一轮的宿主日志与此吻合：00:00:25 生成结束，没有任何套接字错误（`terminate()` 不发 `error`），
    00:01:18 / 00:01:19 两行 `run 黑兽-…:3/4 ended, but no injection…`——**这一对正是重连的签名**：
    `beginSystemPluginSession` 把 `systemPlugins` 清空、`refreshSystemPlugins` 再填回，卡脚本的 effect
-   依赖 `pluginRevision` 变了两次，于是连着拆掉两个 run。复现里 b 场景重连后宿主同样紧接着记下
+   依赖 `pluginRevision` 变了两次，于是连着拆掉两个 run。（这是当时的代码；2026-09-26 起重连不再清空快照，未变的快照不拆任何 run，见 §132。）复现里 b 场景重连后宿主同样紧接着记下
    `run …:1 ended` 与 `run …:2 ended`。
 2. **结束帧到了、落定路径在页面上抛错——不成立。** 每个场景都挂了 `Runtime.exceptionThrown` 与
    `console.error` 的收集，全部为空；对照场景 a 里页面每一次都落定了（宿主 `stream.end` 之后 1 ms 到
@@ -9564,5 +9564,67 @@ memo），主线程 21 s 的流里忙了 19.4 s。页面这时收着帧却处理
 | `apps/iris-web/tests/stray-fences.test.ts` | 源码断言按新形状重述（memo 后的同一个闸；控制器流式期间拿空文本；预算读落定 view 且修复同一文本） | — |
 
 **何时重开：**(a) 重连时 `beginSystemPluginSession` 重建每一楼的界面帧（上面第 4 条的放大回路）：若修后仍见重连后的引导风暴
-拖慢页面，让重建只在插件修订号真的变了时发生。(b) 同一张卡的拒绝在引导时按字体逐条上报（每帧 476 条）：`NoticeLog` 每条都
-重渲一次，若它变重，合并同帧同主机同指令的拒绝。(c) `pageStallMs` 在修后的现场仍常见：说明还有别的主线程大户，按 note 的时刻查。
+拖慢页面，让重建只在插件修订号真的变了时发生。（2026-09-26 修了，见 §132。）(b) 同一张卡的拒绝在引导时按字体逐条上报（每帧 476 条）：`NoticeLog` 每条都
+重渲一次，若它变重，合并同帧同主机同指令的拒绝。（2026-09-26 修了，见 §132。）(c) `pageStallMs` 在修后的现场仍常见：说明还有别的主线程大户，按 note 的时刻查。
+
+## 132. 重连不再重建帧；被拒请求的 notice 按「卡·帧种类·主机·指令」合并计数、限速写入
+
+**Kind:** Iris-only fix（§131「何时重开」的 (a) 与 (b)，#189 报告的两条遗留；卡 黑兽）。编号待协调者重排。
+
+**上游对照。** 无对应：SillyTavern 没有宿主重连这回事（页面就是宿主），也没有沙箱帧与 CSP 拒绝报告。这里只改 Iris 自己的
+帧生命周期与 notice 记录，不改卡能看到的任何东西。
+
+**测到的（`qa/stream-perf-acceptance.mjs`，`MODE=stall TABS=1 ROUNDS=3 DROP=1`，端口 8808，数据目录拷贝，假端点，黑兽 33 楼、
+页面上 21 个 iframe；每轮在处理到第 133 个 delta 时从页面侧断开事件套接字、立即重连）：**
+
+| | 修前（origin/main 5fa829d 的构建） | 修后（两次） |
+| --- | --- | --- |
+| 重连后 5 s 内新建的 iframe（每轮） | 28 / 32 / 33 | **0 / 0 / 0**，两次都是 |
+| 每轮新建的 iframe（含回复落定后新楼的帧） | 36 / 42 / 48 | 12 / 13 / 15 |
+| 帧发来的 CSP 拒绝，会话累计（三轮末） | 11 424 | 3 332 |
+| `NoticeLog` 的 DOM 提交，会话累计（三轮末） | 11 449（≈ 每条拒绝一次） | **18** |
+| 拒绝那一行上的计数 vs 帧实际发来的条数 | 每 10 s 窗口断成一行（×476…×2 856），总数不在任何一处 | 一行 `×3332`，**与帧发来的 3 332 条完全相等**，时间为首次–末次 |
+
+「DOM 提交」是 `.iris-notices` 子树上的 MutationObserver 回调数（每行带时间与计数，所以一次改了内容的渲染就是一次回调；
+压缩构建里也看得到）。修后的三次运行里有一次，空闲对照窗口（开流之前的 8 s）里 32 楼发来 476 条拒绝和 8 条引导消息，但窗口内
+**新建的 iframe 为 0**——是打开对话时建好的帧较晚完成引导，不是重建；另两次与修前一样干净（12 次提交、忙 11–13 ms）。
+
+**机制（两条）。**
+
+- **重连 → 重建。** `beginSystemPluginSession` 在重连时把 `systemPlugins` 清成 `undefined`，`refreshSystemPlugins` 再填回同一个
+  快照；脚本帧（`useCardScripts`）和每一楼的界面帧（`MessageInterfaces`）都以修订号为 run 的依赖，于是修订号 `N → undefined → N`
+  把每个 run 拆掉再建——每个新帧再引导一次、再发 476 条字体拒绝，正是 §131 第 4 条的放大回路。
+- **一条拒绝一次渲染。** `frameCallbacks.onBlocked` 每条都 `notify`：新的 `noticeLog` 数组、`NoticeLog` 与 `NoticeBar` 各渲染一次。
+  两个字体主机交替到达时「与上一行相同才合并」几乎合并不了；合并得了的也只在 10 s 窗口内，总数散在多行里。
+
+**修法。**
+
+- **重连保留快照，直到新会话自己的答复替换它。** 时钟照旧开新会话、忘掉修订号（重启的宿主可能从 1 重新数），但不清空
+  `systemPlugins`；新会话的第一份快照若与手里的**逐字段相同**，保留原对象、不通知任何订阅者。新会话的 `plugin.list` 失败时才清空
+  （这时手里没有属于这条连接的真相，回到原先「没有运行时、没有帧」的行为）。
+- **帧 run 以运行时本身为键。** 新模块 `app/plugin-frame-runtime.ts`：键是 `encodeSandboxPluginRuntime(runtime)`——也就是交给帧的那
+  个值。两个帧宿主都只依赖这一个字符串。原先的依赖（修订号 + 两个布尔 + 其中一处的清单对象身份）既太敏感（上面的抖动），又不够：
+  同一修订号下插件行（`rev` / `client`）变了——只有重启过的宿主会这样——`MessageInterfaces` 不会重建。现在凡是帧看得到的变化
+  （修订号、TavernHelper、MVU、任一插件的包）都重建，别的都不。`MessageInterfaces` 的 `allowed` 也改为比较键而不是修订号。
+  顺带的行为变化：清单晚于快照到达且带有正在运行的插件行时，界面帧也重建一次（脚本帧原本就这样，理由相同：先建的帧没有那些标签）。
+- **清单每个会话重读一次。** 新的浏览器侧字段 `systemPluginSession`（不上线），`usePluginAssetManifest(revision, session)` 按两者
+  重取；内容相同则保留原对象。这是「同修订号、换了客户端包」能被看见的唯一途径。`App.tsx` 的文案加载器那一处仍只按修订号取
+  （那个文件在另一项任务的范围里），影响仅限重启宿主后同修订号下插件文案的刷新。
+- **被拒请求合并、限速。** `notifyBlocked({ characterId, frameKind, host, directive, text })`：同一键在整个日志里只有一行（不论在哪个
+  位置，更新后移到末尾），计数精确累加，保留 `firstAt` 与最新的 `at`，行文是最新一次的原话；到达的报告先在内存里计数，
+  每 `BLOCKED_NOTICE_FLUSH_MS`（250 ms）最多写一次 store。通知栏照旧听到拒绝，只是最多晚 250 ms。卡报告（`addCardReport`）不变。
+  其他 notice 仍同步写入；通用的 10 s 合并也开始保留 `firstAt`。`NoticeLog` 对计数行显示「首次–末次」时间。
+
+**测试。**
+
+| 测试 | 钉的是 | 红过（改坏什么） |
+| --- | --- | --- |
+| `apps/iris-web/tests/reconnect-frame-runtime-mount.test.ts`（真 store、真 `usePluginFrameRuntime`，jsdom；列表答复在页面渲染完空档之后才放行） | 两次答复相同的重连：0 次拆、0 次建、键不变，但清单确实重读了；对照：同修订号换包 → 拆 1 建 1；换修订号 → 重建；重连后列表失败 → 运行时清空 | 重连时照旧清空 `systemPlugins` → 「an identical reconnect disposes no run」红；清单依赖去掉 `session` → 换包那条红；去掉失败时清空 → 最后一条红 |
+| `apps/iris-web/tests/blocked-notice.test.ts`（假时钟） | 3 000 条三种键交错：3 行、每行计数精确、总和 3 000、首末时间、store 写入 ≤ ⌈用时/250⌉+1；一个区间内的 500 条是一次写入且写入前日志不动，下一区间同一行继续累加到 507；纯函数 `foldBlockedNotices` 的原位更新、移到末尾、挤出计数 | `onBlocked` 改回 `notify` → 前两条红 |
+| `apps/iris-web/tests/notice-log-render-mount.test.ts`（真 `NoticeLog`，React `Profiler`） | 约 3 s 内 3 000 条拒绝：渲染 ≤ ⌈用时/250⌉+1（实测 9 次），日志计数总和 3 000，屏上 `×1500` | `onBlocked` 改回 `notify` → 日志只剩 50 行、每行 ×1，其余 2 950 条被挤出，红 |
+| `apps/iris-web/tests/system-plugins-store.test.ts`（未改，仍绿） | 重连后的列表即使修订号更低也被采用；同会话内列表抹不掉更新的事件；旧进程的变更答复进不了新会话 | — |
+| `apps/iris-web/tests/system-plugin-sandbox-lifecycle.test.ts`（未改，仍绿） | 重挂载后旧帧的请求仍带旧修订号（宿主据此拒绝）、处置后的旧 `ready` 无效 | — |
+
+**何时重开：**(a) 修后每轮仍新建 12–15 个 iframe：是回复落定后新楼的帧与阅读窗口移动，不是重连；若它们的引导拒绝风暴再成为
+负担，看字体拒绝本身（卡请求 `fontsapi.zeoseven.com`，网络授权未开）。(b) 「this frame sent a message the shell could not read」
+在修前修后每轮都出现一次（界面帧与外壳的协议有一处不一致），本条没有查。

@@ -21,6 +21,13 @@
  * itself as a number, which is the part that was worth keeping. The same
  * sentence after the window is a separate row, as before.
  *
+ * **Refused requests collapse by what they are, not by when.** A card's
+ * refused fonts arrive thousands of times a round, interleaved across hosts,
+ * so the neighbour-and-window rule above merged almost none of them and the
+ * log re-rendered once per report. Those rows are keyed on card, frame kind,
+ * host and directive (`notifyBlocked` in the store), counted exactly, dated
+ * from first to newest, and reach this list at most four times a second.
+ *
  * Transport errors — the one species the client survives on its own — show
  * whether they healed: resolved rows dim and name themselves, because a
  * standing red row for an outage that already ended teaches the reader to
@@ -83,7 +90,15 @@ export function NoticeLog(): ReactElement {
                 notice.resolved ? 'iris-notices__row--resolved' : '',
               ].filter(Boolean).join(' ')}
             >
-              <span className="iris-reports__at">{timeOf(notice.at)}</span>
+              {/*
+                A counted row spans its first and newest occurrence; both are
+                kept so "since when" survives the count.
+              */}
+              <span className="iris-reports__at">
+                {notice.firstAt !== undefined && timeOf(notice.firstAt) !== timeOf(notice.at)
+                  ? `${timeOf(notice.firstAt)}–${timeOf(notice.at)}`
+                  : timeOf(notice.at)}
+              </span>
               <span className="iris-reports__message">{notice.text}</span>
               {/*
                 The recurrence count, and the healed mark. Both are facts the

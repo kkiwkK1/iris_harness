@@ -40,8 +40,8 @@ import { layOutMessageBody } from './message-body.ts'
 import { describeInterface, type InterfaceState } from '../sandbox/message-frames.ts'
 import { useFloorGate } from './FrameBudget.tsx'
 import { runCard } from '../sandbox/runner.ts'
-import { sandboxPluginRuntime, type SandboxPluginRuntime } from '@iris/plugin-web-api'
-import { usePluginAssetManifest } from './use-plugin-manifest.ts'
+import type { SandboxPluginRuntime } from '@iris/plugin-web-api'
+import { usePluginFrameRuntime } from './plugin-frame-runtime.ts'
 import { frameCallbacks, interfaceConsoleGate } from './frame-callbacks.ts'
 import {
   pluginStyleRevision,
@@ -88,15 +88,10 @@ export function MessageInterfaces({
   const chatId = useIris(state => state.chatId)
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
-  const pluginSnapshot = useIris(state => state.systemPlugins)
-  const pluginManifest = usePluginAssetManifest(pluginSnapshot?.revision)
-  const pluginRuntime = sandboxPluginRuntime(
-    pluginSnapshot,
-    pluginManifest?.revision === pluginSnapshot?.revision ? pluginManifest : undefined,
-  )
-  const pluginRevision = pluginRuntime?.revision
-  const tavernHelperEnabled = pluginRuntime?.tavernHelper === true
-  const mvuEnabled = pluginRuntime?.mvu === true
+  // The runtime and its run key, shared with the script frame
+  // (`plugin-frame-runtime.ts`): unchanged across a reconnect that changed
+  // nothing, so no floor's frames are rebuilt for one.
+  const { runtime: pluginRuntime, key: pluginRuntimeKey } = usePluginFrameRuntime()
   const store = useIrisStore()
 
   /*
@@ -115,6 +110,8 @@ export function MessageInterfaces({
         networkGranted: boolean
         context: ScriptContext
         systemPlugins: SandboxPluginRuntime
+        /** The run key `systemPlugins` was read under; a frame builds only while it is current. */
+        runtimeKey: string
       }
     | undefined
   >(undefined)
@@ -129,6 +126,7 @@ export function MessageInterfaces({
     if (
       characterId === undefined
       || pluginRuntime === undefined
+      || pluginRuntimeKey === undefined
       || consent === 'declined'
       || consent === 'unknown'
     ) {
@@ -173,6 +171,7 @@ export function MessageInterfaces({
             networkGranted: grants.networkGranted,
             context: snapshot,
             systemPlugins: pluginRuntime,
+            runtimeKey: pluginRuntimeKey,
           })
         }
       } catch {
@@ -194,9 +193,9 @@ export function MessageInterfaces({
     consent,
     chatId,
     store,
-    pluginRevision,
-    tavernHelperEnabled,
-    mvuEnabled,
+    // By value, the whole runtime — see `plugin-frame-runtime.ts` for why the
+    // revision and two booleans were both too eager and not eager enough.
+    pluginRuntimeKey,
   ])
 
   /*
@@ -278,7 +277,7 @@ export function MessageInterfaces({
   const bodyText = leak.body ?? display
   const currentMvuEnabled =
     ready !== undefined
-    && ready.systemPlugins.revision === pluginRevision
+    && ready.runtimeKey === pluginRuntimeKey
     && ready.systemPlugins.mvu
 
   /*
@@ -308,7 +307,7 @@ export function MessageInterfaces({
     pluginCssGate,
     allowed:
       ready !== undefined
-      && ready.systemPlugins.revision === pluginRevision
+      && ready.runtimeKey === pluginRuntimeKey
       && chatId !== undefined,
     start: input => {
       const current = ready

@@ -184,6 +184,17 @@ export interface Notice {
    */
   count?: number
   /**
+   * When the first occurrence this entry counts arrived, when it counts more
+   * than one. `at` is the newest; the pair is the span a recurrence covered.
+   */
+  firstAt?: number
+  /**
+   * The coalescing identity of a refused-request row (`notifyBlocked`): the
+   * card, the frame kind, the refused host and the directive. Absent for
+   * every other notice.
+   */
+  blockKey?: string
+  /**
    * Which channel raised it, when the channel matters to how the notice is
    * read. Transport notices are the session's one self-healing species: the
    * event socket failing during a host restart is expected, and the log marks
@@ -272,6 +283,98 @@ export function repeatsLatestNotice(
  * quietly forgets is a list someone will read as complete.
  */
 export const NOTICE_LOG_LIMIT = 50
+
+/**
+ * How often refused-request notices reach the log, at most, in milliseconds.
+ *
+ * Set by the owner's stall run (web §124/§131): 黑兽's frames reported a refused
+ * font 2,900–4,800 times a round, and each report was its own `set` — a new
+ * `noticeLog` array, a `NoticeLog` render and a notice-bar render per report,
+ * on the main thread that was already too busy to answer the host's
+ * heartbeat. Reports arriving inside one interval are counted in memory and
+ * land as one update; 250 ms is four updates a second, below anything a
+ * reader could see as lag and far below the arrival rate that hurt.
+ */
+export const BLOCKED_NOTICE_FLUSH_MS = 250
+
+/** What `notifyBlocked` needs to coalesce one refused request. */
+export interface BlockedNoticeReport {
+  /** The card whose frame was refused. */
+  characterId: string
+  /** Which of its frames: the script frame, an interface frame, the probe. */
+  frameKind: string
+  /** The refused host (or `inline` / `eval` / `data`). */
+  host: string
+  /** The CSP directive that refused it. */
+  directive: string
+  /** The sentence the row shows — the newest occurrence's words. */
+  text: string
+}
+
+/**
+ * The coalescing identity of one refused request.
+ *
+ * Deliberately **not** the text: the sentence carries the request's path when
+ * the host alone cannot identify it, so a card fetching forty font files from
+ * one host would be forty rows keyed on text, and interleaving two hosts
+ * defeated the last-row dedup entirely. The four fields are what a reader acts
+ * on — which card, which frame, reaching for what, stopped by which rule.
+ * @param report - the refusal.
+ * @returns the key.
+ */
+export function blockedNoticeKey(report: Omit<BlockedNoticeReport, 'text'>): string {
+  return JSON.stringify([report.characterId, report.frameKind, report.host, report.directive])
+}
+
+/** Refusals counted since the last flush, per key. */
+export interface PendingBlockedNotice {
+  text: string
+  count: number
+  firstAt: number
+  lastAt: number
+}
+
+/**
+ * Fold one batch of counted refusals into the log.
+ *
+ * Pure, so the arithmetic the durable record depends on — the count adds up
+ * exactly, the first time is kept and the last one moves — is asserted without
+ * a clock. A key already in the log is updated **wherever it is** and moved to
+ * the end, since its newest occurrence is the log's newest event; a key the log
+ * no longer holds (it fell off the front) starts a new row, and the drop is
+ * counted as every drop is.
+ * @param log - the log now.
+ * @param pending - the batch, in first-arrival order.
+ * @param nextSeq - hands out one notice sequence number per row written.
+ * @returns the new log, how many rows fell off, and the last row written.
+ */
+export function foldBlockedNotices(
+  log: readonly Notice[],
+  pending: ReadonlyMap<string, PendingBlockedNotice>,
+  nextSeq: () => number,
+): { log: readonly Notice[], dropped: number, latest: Notice | undefined } {
+  let next = [...log]
+  let latest: Notice | undefined
+  for (const [key, batch] of pending) {
+    const at = next.findIndex(notice => notice.blockKey === key)
+    const held = at === -1 ? undefined : next[at]
+    const count = (held === undefined ? 0 : held.count ?? 1) + batch.count
+    const row: Notice = {
+      kind: 'info',
+      text: batch.text,
+      seq: nextSeq(),
+      at: batch.lastAt,
+      ...count > 1 ? { count, firstAt: held === undefined ? batch.firstAt : held.firstAt ?? held.at } : {},
+      blockKey: key,
+    }
+    if (at !== -1) next.splice(at, 1)
+    next.push(row)
+    latest = row
+  }
+  const dropped = Math.max(0, next.length - NOTICE_LOG_LIMIT)
+  if (dropped > 0) next = next.slice(-NOTICE_LOG_LIMIT)
+  return { log: next, dropped, latest }
+}
 
 /**
  * How long a page showing a reply as generating may hear **no stream frame at
@@ -442,6 +545,19 @@ export interface IrisState extends BranchTreeState {
   connected: boolean
   /** The host-authored system-plugin catalog and runtime state. */
   systemPlugins: SystemPluginSnapshot | undefined
+  /**
+   * Which browser-to-host connection `systemPlugins` was last read in, counted
+   * from zero and bumped on every reconnect.
+   *
+   * Browser-only, never on the wire. It exists for the one reader that cannot
+   * learn "this may be a different host process" from the snapshot: the
+   * plugin asset manifest, which is fetched per revision and would otherwise
+   * never be re-read across a reconnect that kept the revision — so a client
+   * bundle changed by a restarted host would go unseen. The snapshot itself
+   * is **kept** across the reconnect (see `beginSystemPluginSession`), and
+   * this counter is what tells the manifest to look again anyway.
+   */
+  systemPluginSession: number
   chats: ChatSummary[]
   /**
    * Whether the list's order is one somebody arranged, as the host reported it.
@@ -1622,6 +1738,16 @@ export interface IrisActions extends BranchTreeActions {
   ): Promise<void>
   notify(kind: Notice['kind'], text: string, options?: { lasting?: boolean }): void
   /**
+   * Raise the notice for one refused request, coalesced and batched.
+   *
+   * Identical refusals (same card, frame kind, host, directive) are one log
+   * row whose count keeps rising, with its first and last times kept; and the
+   * log takes them at most once per `BLOCKED_NOTICE_FLUSH_MS`, however fast
+   * they arrive. Everything else `notify` does it does too — the row and the
+   * bar — only later by up to one interval.
+   */
+  notifyBlocked(report: BlockedNoticeReport): void
+  /**
    * Run `/doctor`'s checks (`app/doctor.ts`) against this host, this page and
    * the open conversation. Reads only; the caller reports the rows.
    */
@@ -1707,12 +1833,60 @@ function systemPluginClock(store: IrisStore): SystemPluginProjectionClock {
   return created
 }
 
-/** Start a host session whose revision sequence may begin below the old one. */
-function beginSystemPluginSession(store: IrisStore): void {
+/**
+ * Start a host session whose revision sequence may begin below the old one.
+ *
+ * **The held snapshot stays on screen until the new session's first answer
+ * replaces it.** This used to clear `systemPlugins` here, and that one line
+ * was a rebuild of every frame on the page per reconnect: the script frame and
+ * each floor's interface frames key their run on the plugin runtime, so the
+ * runtime going `N → undefined → N` tore every run down and built it again —
+ * a burst of bootstraps and reports that lengthened the very main-thread
+ * stall which had caused the socket drop (web §124, §131). Now the clock alone
+ * forgets the revision, so the next snapshot is adopted whatever its number
+ * (a restarted host may start again at one), and `adoptSystemPluginSnapshot`
+ * keeps the held object when that answer is identical.
+ *
+ * What still rebuilds is everything that changed: a different revision, a
+ * different row, or a different client bundle (the manifest is re-read per
+ * session — `systemPluginSession` below). The fences keep their meaning
+ * because they are the host's: a frame still posting the old revision to a
+ * host that moved on is refused as a stale runtime revision, exactly as it
+ * was during the gap this used to leave.
+ */
+function beginSystemPluginSession(store: IrisStore): number {
   const clock = systemPluginClock(store)
   clock.session += 1
   clock.revision = undefined
+  store.setState({ systemPluginSession: clock.session })
+  return clock.session
+}
+
+/**
+ * Drop the held snapshot when the new session could not read its own.
+ *
+ * The other half of keeping the snapshot across a reconnect: it is kept only
+ * *until the new session answers*. A `plugin.list` that failed leaves nothing
+ * authoritative for this connection, and a snapshot from the previous one must
+ * not go on describing it — so the page falls back to what it did before this
+ * change, no runtime and no frames, until a later read succeeds.
+ */
+function abandonHeldSystemPlugins(store: IrisStore, session: number): void {
+  const clock = systemPluginClock(store)
+  if (clock.session !== session || clock.revision !== undefined) return
   store.setState({ systemPlugins: undefined })
+}
+
+/**
+ * Whether two snapshots say the same thing.
+ *
+ * Structural, over the wire shape: a snapshot is plain JSON from the host, and
+ * the same rows serialise the same way because the host builds them in one
+ * order. A false "different" here costs one rebuild (the old behaviour); a
+ * false "same" is impossible, since any differing field changes the string.
+ */
+function sameSystemPluginSnapshot(a: SystemPluginSnapshot, b: SystemPluginSnapshot): boolean {
+  return a.revision === b.revision && JSON.stringify(a.plugins) === JSON.stringify(b.plugins)
 }
 
 /**
@@ -1732,6 +1906,10 @@ function adoptSystemPluginSnapshot(
   if (session !== clock.session) return false
   if (clock.revision !== undefined && snapshot.revision <= clock.revision) return false
   clock.revision = snapshot.revision
+  // An identical answer — the reconnect's list, when nothing changed while the
+  // socket was down — keeps the held object, so no subscriber sees a change.
+  const held = store.getState().systemPlugins
+  if (held !== undefined && sameSystemPluginSnapshot(held, snapshot)) return true
   store.setState({ systemPlugins: snapshot })
   return true
 }
@@ -1760,6 +1938,29 @@ export function createIrisStore(
   source: { transport: 'rpc' | 'fake', origin: string },
 ): { store: IrisStore, dispose: () => void } {
   let noticeSeq = 0
+  /*
+   * Refusals counted since the last flush (`notifyBlocked`), and the one timer
+   * that will write them. In memory rather than in state on purpose: the whole
+   * point is that a report does not touch the store until the interval ends.
+   */
+  const pendingBlocked = new Map<string, PendingBlockedNotice>()
+  let blockedFlush: ReturnType<typeof setTimeout> | undefined
+  const flushBlocked = (): void => {
+    blockedFlush = undefined
+    if (pendingBlocked.size === 0) return
+    const batch = new Map(pendingBlocked)
+    pendingBlocked.clear()
+    const state = store.getState()
+    const folded = foldBlockedNotices(state.noticeLog, batch, () => {
+      noticeSeq += 1
+      return noticeSeq
+    })
+    store.setState({
+      noticeLog: folded.log,
+      noticesDropped: state.noticesDropped + folded.dropped,
+      ...folded.latest === undefined ? {} : { notice: folded.latest },
+    })
+  }
 
   const store: IrisStore = createStore<IrisState & IrisActions>((set, get) => {
     /**
@@ -1811,6 +2012,7 @@ export function createIrisStore(
           text,
           seq: noticeSeq,
           at: now,
+          firstAt: last.firstAt ?? last.at,
           count: (last.count ?? 1) + 1,
           ...lasting === true ? { lasting: true as const } : {},
         }
@@ -1933,6 +2135,7 @@ export function createIrisStore(
       ...branchTreeState(),
       ...branchTreeActions({ client, get, set, guard }),
       systemPlugins: undefined,
+      systemPluginSession: 0,
       chats: [],
       chatsOrdered: undefined,
       characters: [],
@@ -4225,6 +4428,20 @@ export function createIrisStore(
         set(raise(kind, text, undefined, options?.lasting))
       },
 
+      notifyBlocked(report: BlockedNoticeReport): void {
+        const key = blockedNoticeKey(report)
+        const now = Date.now()
+        const held = pendingBlocked.get(key)
+        if (held === undefined) pendingBlocked.set(key, { text: report.text, count: 1, firstAt: now, lastAt: now })
+        else {
+          held.count += 1
+          held.lastAt = now
+          held.text = report.text
+        }
+        if (blockedFlush !== undefined) return
+        blockedFlush = setTimeout(flushBlocked, BLOCKED_NOTICE_FLUSH_MS)
+      },
+
       async runDoctor(): Promise<DoctorRow[]> {
         return runDoctor(client, readDoctorPage(get().view?.characterId))
       },
@@ -4390,13 +4607,16 @@ export function createIrisStore(
   let wasConnected = client.connected
   const offConnection = client.onConnectionChange(connected => {
     if (connected && !wasConnected) {
-      beginSystemPluginSession(store)
+      const pluginSession = beginSystemPluginSession(store)
       store.setState({ connected })
       void resync('reconnect')
       // This read is authoritative for the newly connected host session. It
       // runs even if the settings drawer is never opened because frame owners
-      // use the runtime revision as their lifetime fence.
-      void store.getState().refreshSystemPlugins()
+      // key their runs on the runtime it produces. An identical answer keeps
+      // the held snapshot and rebuilds nothing; a failed one drops it.
+      void store.getState().refreshSystemPlugins().then(result => {
+        if (!result.ok) abandonHeldSystemPlugins(store, pluginSession)
+      })
       const log = store.getState().noticeLog
       const outage = log.some(notice => notice.source === 'transport' && !notice.resolved)
       if (outage) {
@@ -4419,6 +4639,8 @@ export function createIrisStore(
       offEvents()
       offSilence()
       if (silenceTimer !== undefined) clearTimeout(silenceTimer)
+      if (blockedFlush !== undefined) clearTimeout(blockedFlush)
+      blockedFlush = undefined
       watchStall(false)
     },
   }
