@@ -49,8 +49,7 @@ import { STARTED_EVENTS, settledEmissions } from '../sandbox/tavern-helper.ts'
 import { modeFor, remoteImports, stripCodeFence } from '../sandbox/script-source.ts'
 import { bundleFailureReason } from '../sandbox/bundle-proxy.ts'
 import { describeRun, isFailure } from '../sandbox/script-run-state.ts'
-import { sandboxPluginRuntime } from '@iris/plugin-web-api'
-import { usePluginAssetManifest } from './use-plugin-manifest.ts'
+import { usePluginFrameRuntime } from './plugin-frame-runtime.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import { getLanguage } from './i18n/language.ts'
 
@@ -66,21 +65,14 @@ export function CardScriptFrames(): ReactElement {
   const chatId = useIris(state => state.chatId)
   const characterId = useIris(state => state.view?.characterId)
   const consent = useIris(state => state.scriptsAllowed)
-  const pluginSnapshot = useIris(state => state.systemPlugins)
-  const pluginRevision = pluginSnapshot?.revision
   /*
-   * The manifest for exactly this revision: rows feed the snapshot reduction
-   * (the manifest says where a plugin's bytes live; the snapshot above says
-   * whether it runs at all), and its arrival in state is a rebuild dependency
-   * below — frames mounted before it landed were built without tags.
+   * The plugin runtime and the key this run is fenced on
+   * (`plugin-frame-runtime.ts`): a manifest row that lands after the frame
+   * mounted changes the key and rebuilds it — that frame was built without
+   * its tags — while a reconnect that changed nothing leaves the key, and the
+   * run, alone.
    */
-  const pluginManifest = usePluginAssetManifest(pluginRevision)
-  const pluginRuntime = sandboxPluginRuntime(
-    pluginSnapshot,
-    pluginManifest?.revision === pluginSnapshot?.revision ? pluginManifest : undefined,
-  )
-  const tavernHelperEnabled = pluginRuntime?.tavernHelper === true
-  const mvuEnabled = pluginRuntime?.mvu === true
+  const { runtime: pluginRuntime, key: pluginRuntimeKey } = usePluginFrameRuntime()
   const store = useIrisStore()
   const actions = useIrisActions()
   /**
@@ -179,7 +171,7 @@ export function CardScriptFrames(): ReactElement {
     if (pluginRuntime === undefined || !pluginRuntime.tavernHelper) return
 
     // One immutable capability snapshot belongs to this whole run. The effect's
-    // revision dependency tears it down before a replacement can capture the
+    // runtime-key dependency tears it down before a replacement can capture the
     // next incarnation.
     const frameRuntime = pluginRuntime
 
@@ -1077,10 +1069,13 @@ export function CardScriptFrames(): ReactElement {
     consent,
     store,
     actions,
-    pluginRevision,
-    tavernHelperEnabled,
-    mvuEnabled,
-    pluginManifest,
+    /*
+     * The whole runtime, by value: revision, TavernHelper, MVU and every
+     * plugin row the frame is handed. Not the revision alone — a reconnect
+     * used to move it `N → undefined → N` and rebuild a run whose runtime had
+     * not changed, and a restarted host can change a row without moving it.
+     */
+    pluginRuntimeKey,
     /*
      * **Whether there are any sandbox plugins at all**, not which ones.
      *

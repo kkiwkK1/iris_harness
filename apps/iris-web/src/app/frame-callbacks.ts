@@ -147,7 +147,23 @@ export function frameCallbacks(
         grade: refusal.grade,
         grant: refusal.grant ?? 'no',
       })
-      if (refusal.notify) actionsOf(store).notify('info', refusal.text)
+      /*
+       * Coalesced and batched (`notifyBlocked`), not one `notify` per report:
+       * a card whose fonts are refused reports each one every time a frame
+       * lays out, 2,900–4,800 times a round in the owner's stall run, and each
+       * `notify` was a log render and a bar render on a main thread that was
+       * already too busy to answer the host's heartbeat. The row still counts
+       * every one.
+       */
+      if (refusal.notify) {
+        actionsOf(store).notifyBlocked({
+          characterId: binding.characterId,
+          frameKind: binding.kind,
+          host: blocked,
+          directive,
+          text: refusal.text,
+        })
+      }
     },
     /*
      * What the frame paid for its libraries, and similar standing facts.

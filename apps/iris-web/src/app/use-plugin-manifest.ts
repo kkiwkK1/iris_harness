@@ -4,7 +4,9 @@
  *
  * Fetched per **snapshot revision**, not per mount: the manifest is the host
  * composing the enabled set, and a `plugins.changed` that moved the revision
- * is the only event that can change its content. The result lands in state,
+ * is the only event that can change its content within one host session —
+ * so it is also re-read once per reconnect, when the host behind the socket
+ * may be a new process at the same revision. The result lands in state,
  * whose identity is a rebuild dependency one level up — a manifest that
  * arrives after frames have mounted rebuilds them, because their tags were
  * built from the rows it carries.
@@ -38,10 +40,20 @@ async function pluginAssetManifest(): Promise<PluginAssetManifest> {
  * The manifest for one snapshot revision, or `undefined` while it is absent —
  * not yet fetched, unreachable, or invalid.
  * @param revision - the snapshot revision the manifest should answer for.
+ * @param session - the store's `systemPluginSession`, when the caller wants
+ *   the manifest re-read on every reconnect (frame owners do; see below).
+ *   Passed in rather than read here so this module stays loadable without
+ *   the store provider, which is a `.tsx` module.
  * @returns the manifest, when one has been read for the current revision.
  */
-export function usePluginAssetManifest(revision: number | undefined): PluginAssetManifest | undefined {
+export function usePluginAssetManifest(revision: number | undefined, session?: number): PluginAssetManifest | undefined {
   const [manifest, setManifest] = useState<PluginAssetManifest | undefined>(undefined)
+  /*
+   * Re-read per host session as well as per revision. A reconnect keeps the
+   * held snapshot (store.ts `beginSystemPluginSession`), so a restarted host
+   * that came back at the same revision would otherwise never be asked — and
+   * a client bundle it now serves differently would go unseen by every frame.
+   */
   useEffect(() => {
     if (revision === undefined) {
       setManifest(undefined)
@@ -50,7 +62,9 @@ export function usePluginAssetManifest(revision: number | undefined): PluginAsse
     let stale = false
     pluginAssetManifest().then(
       read => {
-        if (!stale) setManifest(read)
+        // An identical read keeps the held object, so a reconnect that changed
+        // nothing hands every consumer the same value it already had.
+        if (!stale) setManifest(held => (held !== undefined && sameManifest(held, read) ? held : read))
       },
       error => {
         if (!stale) {
@@ -62,8 +76,13 @@ export function usePluginAssetManifest(revision: number | undefined): PluginAsse
     return () => {
       stale = true
     }
-  }, [revision])
+  }, [revision, session])
   return manifest
+}
+
+/** Whether two manifest reads carry the same revision and rows. */
+function sameManifest(a: PluginAssetManifest, b: PluginAssetManifest): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
 }
 
 /**
