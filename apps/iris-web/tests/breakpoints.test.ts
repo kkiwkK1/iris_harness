@@ -11,19 +11,25 @@
  * one where the sidebar slides.
  *
  * ```
- *   ≤ 880      sidebar slides over the page   margin hidden   drawer overlays
- *   881–1431   sidebar is a column            margin hidden   drawer overlays
- *   1432–1439  sidebar is a column            margin hidden   drawer is a track
- *   1440–1831  sidebar is a column            400 or 36 …     drawer is a track
- *              …and an open drawer takes the margin's column (ASIDE_YIELD_QUERY)
- *   ≥ 1832     sidebar is a column            400 or 36       drawer is a track
+ *   ≤ 880      sidebar slides over the page    margin hidden         drawer overlays
+ *   881–1431   44 rail; open = panel over page margin hidden         drawer overlays
+ *   1432–1439  44 rail; open = panel over page margin hidden         drawer is a track
+ *   1440–1743  44 rail; open = panel over page 36 strip; open = panel drawer is a track
+ *   1744–…     44 rail or docked 400           36 strip or docked 400 drawer is a track
+ *              1440–1831: an open drawer takes the margin's column (ASIDE_YIELD_QUERY)
  * ```
  *
- * What is asserted is the *shape* of that table, not its numbers: each of the
- * three flanks has a base rule and exactly one width rule that overrides it, so
- * no interval is left to a default nobody chose. The one number pinned is the
- * **set** of breakpoints, because a fourth one is a fifth interval, and the
- * table above is then out of date without anything saying so.
+ * 1744 is `FLANKS_DOCK_FROM` (web §135): below it, an open flank lies over the
+ * page from a track that stays its rail, so a toggle never moves the reading
+ * column; from it, the side space holds a docked 400px flank beside the
+ * viewport-centred column. `stable-column.test.ts` holds the arithmetic.
+ *
+ * What is asserted is the *shape* of that table, not its numbers: each flank
+ * has a base rule, and each breakpoint block says something about a flank, so
+ * no interval is left to a default nobody chose and no boundary is dead. The
+ * one number pinned is the **set** of breakpoints, because another one is
+ * another interval, and the table above is then out of date without anything
+ * saying so.
  *
  * @module iris-web/tests/breakpoints
  */
@@ -33,7 +39,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-import { ASIDE_FROM, DRAWER_TRACK_FROM } from '../src/app/state-panel.ts'
+import { ASIDE_FROM, DRAWER_TRACK_FROM, FLANKS_DOCK_FROM } from '../src/app/state-panel.ts'
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'app')
 
@@ -100,24 +106,29 @@ function widths(css: string): { edge: string, px: number }[] {
       .map(match => ({ edge: match[1] ?? '', px: Number(match[2]) })))
 }
 
-test('the shell has exactly the three width breakpoints the interval table covers', () => {
+test('the shell has exactly the four width breakpoints the interval table covers', () => {
   /*
    * Not a count for its own sake: a breakpoint is an interval boundary, and an
    * interval nobody enumerated is an interval nobody checked the sidebar, the
-   * margin and the drawer in. If a fourth is added on purpose, add it to the
+   * margin and the drawer in. If a fifth is added on purpose, add it to the
    * table in this file's header at the same time — that is the whole point of
    * the assertion, and bumping the list without the table defeats it.
    */
   const found = SHEETS.flatMap(sheet => widths(readFileSync(join(APP, sheet), 'utf8')))
   const seen = [...new Set(found.map(one => `${one.edge}:${String(one.px)}`))].sort()
-  assert.deepEqual(seen, ['max:880', `min:${String(DRAWER_TRACK_FROM)}`, `min:${String(ASIDE_FROM)}`].sort(), [
+  assert.deepEqual(seen, [
+    'max:880',
+    `min:${String(DRAWER_TRACK_FROM)}`,
+    `min:${String(ASIDE_FROM)}`,
+    `min:${String(FLANKS_DOCK_FROM)}`,
+  ].sort(), [
     'the width breakpoints changed. The interval table in this file describes',
     'the sidebar, the variable margin and the settings drawer at every width;',
     'update it, then update this list.',
   ].join(' '))
 })
 
-test('each flank has a base rule and one width rule, so no interval is a default', () => {
+test('each flank has a base rule and a rule at every boundary where its form changes', () => {
   /*
    * The failure this catches is the one shape a stylesheet cannot report: a
    * selector styled only inside a media block, so that below (or above) it the
@@ -128,19 +139,28 @@ test('each flank has a base rule and one width rule, so no interval is a default
   const shell = readFileSync(join(APP, 'shell.css'), 'utf8')
   const panels = readFileSync(join(APP, 'panels.css'), 'utf8')
 
-  const cases: { what: string, selector: string, base: string, over: string, edge: string }[] = [
-    // The sidebar is a grid column by default and slides on a narrow window.
-    { what: 'the sidebar', selector: '.iris-sidebar', base: shell, over: panels, edge: '(max-width: 880px)' },
-    // The margin is absent by default and appears where there is room for it.
-    { what: 'the variable margin', selector: '.iris-aside', base: panels, over: panels, edge: `(min-width: ${String(ASIDE_FROM)}px)` },
+  const dock = `(min-width: ${String(FLANKS_DOCK_FROM)}px)`
+  // `element` is the rule that must exist outside every media query; `selector`
+  // is what the boundary's block must name — the element itself, or a state of
+  // it, or (for the sidebar's docking) the shell that carries its track width.
+  const cases: { what: string, element: string, base: string, selector: string, over: string, edge: string }[] = [
+    // The sidebar is a rail track by default and slides on a narrow window...
+    { what: 'the sidebar', element: '.iris-sidebar', base: shell, selector: '.iris-sidebar', over: panels, edge: '(max-width: 880px)' },
+    // ...and its track takes the panel's width where an open one docks. The
+    // rule there is on the shell, because the track width is one property the
+    // grid and the column's anchor both read (`--iris-dock-left`).
+    { what: 'the sidebar', element: '.iris-sidebar', base: shell, selector: ".iris-shell[data-iris-nav='open']", over: shell, edge: dock },
+    // The margin is absent by default and appears where there is room for it...
+    { what: 'the variable margin', element: '.iris-aside', base: panels, selector: '.iris-aside', over: panels, edge: `(min-width: ${String(ASIDE_FROM)}px)` },
+    // ...and its track takes the panel's width where an open one docks.
+    { what: 'the variable margin', element: '.iris-aside', base: panels, selector: ".iris-aside[data-iris-aside='open']", over: panels, edge: dock },
     // The drawer overlays by default and becomes a track on a wide window.
-    { what: 'the settings drawer', selector: '.iris-drawer', base: panels, over: panels, edge: `(min-width: ${String(DRAWER_TRACK_FROM)}px)` },
+    { what: 'the settings drawer', element: '.iris-drawer', base: panels, selector: '.iris-drawer', over: panels, edge: `(min-width: ${String(DRAWER_TRACK_FROM)}px)` },
   ]
 
   for (const one of cases) {
-    const { base } = split(one.base)
     assert.ok(
-      base.includes(`${one.selector} {`),
+      split(one.base).base.includes(`${one.element} {`),
       `${one.what} has no rule outside a media query: one interval is left to the cascade`,
     )
     const block = split(one.over).blocks.find(candidate => candidate.condition === one.edge)
@@ -160,6 +180,10 @@ test('the dismiss scrim exists only where there is a sliding sidebar to dismiss'
    * Above 880px the sidebar is a column that overlays nothing, so the scrim was
    * a full-viewport click-catcher with no background: invisible, and the
    * reader's next click anywhere on the page was spent dismissing it.
+   *
+   * Since web §135 an open sidebar between 881px and the docking width does lie
+   * over the page — but with a shadow and no scrim, deliberately (`App.tsx`
+   * says why), so the base rule still keeps the scrim off above 880px.
    *
    * Fixed in CSS rather than in the shell's state, deliberately. The scrim is
    * *for* the overlay sidebar, so its lifetime belongs to the same media query

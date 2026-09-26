@@ -63,7 +63,10 @@ export function App(): ReactElement {
   // snapshot, for the whole shell — because its lifetime must follow the
   // manifest, not any one page's visibility.
   const pluginRevision = useIris(state => state.systemPlugins?.revision)
-  usePluginCopyLoader(usePluginAssetManifest(pluginRevision))
+  // And once per host session (web §132): a host restarted at the same
+  // revision may serve different copy, and only the session says it changed.
+  const pluginSession = useIris(state => state.systemPluginSession)
+  usePluginCopyLoader(usePluginAssetManifest(pluginRevision, pluginSession))
 
   const [reading, setReadingState] = useState<ReadingPrefs>(loadReading)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -80,8 +83,16 @@ export function App(): ReactElement {
    * So the shell holds `collapsed`, and the width decides what collapsing
    * *looks* like: above 880px the panel becomes the 44px rail, at or below it
    * the panel is off-canvas and the ☰ is what brings it back (`panels.css`).
-   * The scrim is the same either way — it belongs to the overlay form, so
+   * The scrim is the same either way — it belongs to the sliding form, so
    * `panels.css` shows it only in the interval that has one.
+   *
+   * And the width decides what *expanding* looks like (web §135): from
+   * `FLANKS_DOCK_FROM` the panel docks as a 400px track beside the reading
+   * column; between 881px and that width it slides over the page from a track
+   * that stays the 44px rail, so the column never moves. The shell tells its
+   * stylesheet which way the switch is (`data-iris-nav`), because the column's
+   * anchor reads the sidebar's track width and only the docked, open form
+   * changes it.
    */
   const [collapsed, setCollapsed] = useState(loadSidebarCollapsed)
   const foldSidebar = useCallback((next: boolean): void => {
@@ -131,6 +142,7 @@ export function App(): ReactElement {
   return (
     <div
       className="iris-shell"
+      data-iris-nav={collapsed ? 'rail' : 'open'}
       // No drawer-open modifier on the shell, still — but for a new reason. The
       // drawer used to be a pure overlay nothing reacted to; it is now a grid
       // track, and a track that appears is the whole reaction. Nothing has to be
@@ -327,8 +339,10 @@ export function App(): ReactElement {
         Rendered from the one switch, exactly as before, and still shown only in
         the interval that has a sliding sidebar to dismiss (`panels.css`, the
         880px block; `breakpoints.test.ts` holds it to that). Above that width
-        the sidebar collapses to the rail instead of overlaying anything, so
-        there is nothing to tap past.
+        an open panel either docks or lies over the page with a shadow and no
+        scrim (web §135): a dimmed reading area on every window under 1744px
+        would be the price of a panel the reader asked to keep open, so it is
+        folded by its own button, the rail, or Escape instead.
       */}
       {collapsed ? null : (
         <div className="iris-scrim" role="presentation" onClick={() => foldSidebar(true)} />

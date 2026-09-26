@@ -16,6 +16,18 @@
  * own interface. Below 1200px the drawer stays the sliding overlay it always
  * was, because a 392px track there leaves no page to narrow; `panels.css` has
  * the arithmetic. The drawer keeps its rung on the z ladder in both forms.
+ *
+ * **The reading column does not follow the flanks** (owner ruling 2026-09-26,
+ * web §135). It used to be centred in whatever track the sidebar and the
+ * variable margin left, so opening the margin moved a 920px column's centre
+ * from x≈1000 to x≈868 and folding the sidebar moved it back. Now it is
+ * centred on the *viewport* (`--iris-column-left` below), and a flank takes a
+ * track beside it only where the side space holds the flank without touching
+ * the column (`FLANKS_DOCK_FROM`, `state-panel.ts`); narrower than that an
+ * open flank is a panel over the page and its track stays the rail. A toggle
+ * therefore changes neither the column's left edge nor its width, which is
+ * what keeps a card frame from re-measuring. The settings drawer is not a
+ * flank in this sense: it keeps 「梅花」's ruling and narrows the page.
  */
 
 .iris-shell {
@@ -23,20 +35,67 @@
   position: relative;
   display: grid;
   /*
-   * `auto` for the sidebar's track rather than the 272px it used to name,
-   * because the panel folds: the width now lives on `.iris-sidebar` itself and
-   * the track follows it, so one transition on one element animates both the
-   * panel and the reading area beside it. With the number here instead, the
-   * fold would have needed a modifier class on the shell as well — two places
-   * saying one thing, and the grid is the one that cannot fade.
+   * How wide the sidebar's track is right now: the 44px rail, or the 400px
+   * panel where it docks (the block below). One property, read twice — by
+   * the grid, and by the column's anchor — so the two cannot disagree about
+   * where the reading scroller starts. It is **not** the panel's width: below
+   * the docking width an open sidebar is 400px wide over a 44px track.
+   * `SIDEBAR_RAIL` in `state-panel.ts` copies the base value.
    */
-  grid-template-columns: auto minmax(0, 1fr);
+  --iris-dock-left: 44px;
+  /*
+   * Where the reading column starts, measured from the start of whatever box
+   * it is laid out in — the scroller for the column and the turn rail, the
+   * sheet for the masthead, the composer and the card toggle.
+   *
+   * The centred position is `(100vw - column) / 2` in viewport terms, less the
+   * sidebar's track, which is the only thing to the column's left. The right
+   * flank does not appear here at all, and that absence is the ruling: the
+   * margin opening moves the scroller's right edge and nothing else. The two
+   * clamps are for windows that cannot pay for the centred column — `0` keeps
+   * it off the sidebar, `100% - column` keeps it inside its box when the
+   * settings drawer has taken a track — and at a window wide enough for the
+   * flanks to dock neither clamp is active (`stable-column.test.ts` evaluates
+   * this declaration at 1920 and 1440).
+   *
+   * An unregistered custom property is substituted as text, so `100%` resolves
+   * against the box of the rule that reads it, not against the shell.
+   */
+  --iris-column-left: max(
+    0px,
+    min(
+      calc((100vw - var(--iris-column-max)) / 2 - var(--iris-dock-left)),
+      calc(100% - var(--iris-column-max))
+    )
+  );
+  grid-template-columns: var(--iris-dock-left) minmax(0, 1fr);
   height: 100%;
   background: var(--iris-bg-base);
   color: var(--iris-ink);
   font-family: var(--iris-font-ui);
   font-size: var(--iris-ui-size);
   font-weight: var(--iris-text-weight);
+}
+
+/*
+ * Where the side space holds a 400px flank beside a centred 920px column, an
+ * open sidebar docks: its track becomes the panel's width. 1744 is
+ * `FLANKS_DOCK_FROM` — 920 + 2 × (400 + the scroller's 12px lane), the margin
+ * side's need being the larger — and the margin docks from the same width
+ * (`panels.css`), so there is one interval where both dock and one where both
+ * overlay.
+ */
+@media (min-width: 1744px) {
+  .iris-shell[data-iris-nav='open'] {
+    --iris-dock-left: 400px;
+  }
+
+  /* Docked, the panel is its own track and overlays nothing, so it casts no
+     shadow onto the page. Scoped under the shell for specificity: this block
+     precedes the panel's base rule, which would otherwise win on order. */
+  .iris-shell .iris-sidebar__full {
+    box-shadow: none;
+  }
 }
 
 :focus-visible {
@@ -79,91 +138,94 @@
 /*
  * The panel, in two forms that are one element.
  *
- * 400px of column or 44px of rail (`Rail.dc.html`), and the two subtrees are
- * both mounted (`Sidebar.tsx` says why) — so everything below is a cross-fade
- * plus a width, and no rule here has to know which form is "real".
+ * 400px of panel or 44px of rail (`Rail.dc.html`), and the two subtrees are
+ * both mounted (`Sidebar.tsx` says why) — so everything below is a slide plus a
+ * cross-fade, and no rule here has to know which form is "real".
  *
- * `overflow: hidden` is what makes the fold read as the artboards draw it: the
- * list is clipped away as the panel narrows rather than reflowing into 44px,
- * which is why both children are absolutely positioned at their own natural
- * widths.
+ * **The element is the track, not the panel** (web §135). Its width is
+ * `--iris-dock-left`: 400px where an open sidebar docks, the 44px rail
+ * everywhere else — including while the panel is open over the page on a
+ * window too narrow to dock it. The 400px panel is `__full`, absolutely
+ * positioned at its own width and never resized, so it can overhang the track
+ * and nothing inside it reflows while it slides.
+ *
+ * No width transition any more. The fold used to animate this element's width
+ * over 220ms, and the reading area — every card frame in it — re-laid out on
+ * each of those frames. The track now changes at once, the column is anchored
+ * to the viewport so it does not notice, and the only motion is `__full`'s
+ * transform. Not `overflow: hidden` either, which used to clip the list as the
+ * bar narrowed: the panel is now meant to overhang, and a folded panel is
+ * translated wholly off the window's left edge rather than clipped.
+ *
+ * Positioned on the flank rung, so an overhanging panel paints over the
+ * reading area — a card's overlay surface included — as shell over content
+ * (`theme/tokens.css`, the ladder).
  */
 .iris-sidebar {
   position: relative;
-  /* 400 was 272 until 2026-09-21: widened by the ruling that capped the middle
-     column at 920px — the flanks take the width the middle gave back.
-     `SIDEBAR_TRACK` in `state-panel.ts` copies this number; change them
-     together. */
-  width: 400px;
+  z-index: var(--iris-flank-z);
+  width: var(--iris-dock-left);
   box-sizing: border-box;
   min-height: 0;
-  overflow: hidden;
   border-right: var(--iris-hairline) solid var(--iris-rule);
-  /*
-   * No delay: this is the *expanded* state, so this is the transition used on
-   * the way **to** it — the bar widens first and the content arrives into a
-   * column that is already there. The collapsing direction's own delay is on
-   * the modifier below, which is the state being transitioned to then.
-   */
-  transition: width var(--iris-fold-width) var(--iris-ease);
-}
-
-.iris-sidebar--rail {
-  width: 44px;
-  /* Collapsing waits for the content to leave: the wordmark is swallowed and
-     the list fades over `--iris-fold-word`, and only then does the bar narrow.
-     160 + 220 = 380ms, inside the 400ms the artboards allow the whole gesture. */
-  transition: width var(--iris-fold-width) var(--iris-ease) var(--iris-fold-word);
 }
 
 /*
- * The expanded form. Absolutely positioned at its own width so narrowing the
- * panel clips it instead of squeezing it, and `visibility` rather than
- * `display` so it can fade — and so that while it is away it is out of the
- * accessibility tree and out of the tab order.
+ * The expanded form: 400px, whatever the track is. 400 was 272 until
+ * 2026-09-21, widened by the ruling that capped the middle column at 920px.
+ * `SIDEBAR_TRACK` in `state-panel.ts` copies this number; change them
+ * together.
+ *
+ * `visibility` rather than `display`, so it can slide — and so that while it
+ * is away it is out of the accessibility tree and out of the tab order. It
+ * carries its own ground, border and shadow because below the docking width
+ * it lies over the page rather than beside it; the dock block above takes the
+ * shadow back off.
  */
 .iris-sidebar__full {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 400px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  opacity: 1;
+  background: var(--iris-bg-base);
+  border-right: var(--iris-hairline) solid var(--iris-rule);
+  box-shadow: 8px 0 28px color-mix(in srgb, var(--iris-bg-mask) 20%, transparent);
   transform: none;
   visibility: visible;
   /*
-   * Arriving: the content fades in once the bar has finished widening — but
-   * `visibility` flips **at once**, with no delay of its own.
+   * Arriving: slides in from the left edge, and `visibility` flips **at once**,
+   * with no delay of its own.
    *
    * The asymmetry is about focus, not about looks. The rail's 搜索 icon expands
    * the panel *and* puts the cursor in the search box, and a
    * `visibility: hidden` element cannot take focus — so a visibility delayed
-   * behind the width would have made that one icon expand the panel and then
-   * silently do nothing for 220ms. Nothing becomes visible any earlier for it:
-   * the opacity is still 0 and the bar still clips the column.
+   * behind the slide would have made that one icon expand the panel and then
+   * silently do nothing for 200ms.
    */
   transition:
-    opacity var(--iris-fold-word) var(--iris-ease) var(--iris-fold-width),
-    transform var(--iris-fold-word) var(--iris-ease) var(--iris-fold-width),
+    transform var(--iris-flank-slide) var(--iris-ease-out),
     visibility 0s linear;
 }
 
 .iris-sidebar--rail .iris-sidebar__full {
-  opacity: 0;
-  /* Leaving to the left, which is the direction the panel folds. */
-  transform: translateX(-8px);
+  /* Leaving to the left, which is the side the panel belongs to — the whole
+     width, so a folded panel is off the window rather than clipped. */
+  transform: translateX(-100%);
   visibility: hidden;
   transition:
-    opacity var(--iris-fold-fade) var(--iris-ease),
-    transform var(--iris-fold-fade) var(--iris-ease),
-    visibility 0s linear var(--iris-fold-fade);
+    transform var(--iris-flank-slide) var(--iris-ease-out),
+    visibility 0s linear var(--iris-flank-slide);
 }
 
 /*
- * The rail. Same two-form treatment, mirrored: it arrives from the left as the
- * bar finishes narrowing, and leaves immediately when the bar starts widening.
+ * The rail. It leaves at once when the panel is asked for — the panel covers
+ * it — and arrives only as the panel finishes leaving, so its icons never sit
+ * over a list that is still on screen.
  */
 .iris-sidebar__rail {
   position: absolute;
@@ -178,22 +240,25 @@
   opacity: 0;
   transform: translateX(-8px);
   visibility: hidden;
-  transition:
-    opacity var(--iris-fold-fade) var(--iris-ease),
-    transform var(--iris-fold-fade) var(--iris-ease),
-    visibility 0s linear var(--iris-fold-fade);
+  /* Gone at once: the rail paints above the panel (it comes later in the
+     tree), so a rail still fading out would ghost its icons over the panel
+     sliding in across it. */
+  transition: none;
 }
 
 .iris-sidebar--rail .iris-sidebar__rail {
   opacity: 1;
   transform: none;
   visibility: visible;
-  /* Left to right, and only once the bar is nearly narrow: the icons must not
-     appear over a column that is still 200px wide. */
+  /* Left to right, and only once the panel has slid away: the icons must not
+     appear over a list that is still on screen. `visibility` flips at once all
+     the same, for the reason `__full` gives: folding hands focus back to the
+     rail (`Sidebar.tsx`), and a still-hidden button cannot take it. The
+     opacity is 0 until the slide ends, so nothing shows any earlier. */
   transition:
-    opacity var(--iris-fold-fade) var(--iris-ease) var(--iris-fold-width),
-    transform var(--iris-fold-fade) var(--iris-ease) var(--iris-fold-width),
-    visibility 0s linear var(--iris-fold-width);
+    opacity var(--iris-fold-fade) var(--iris-ease) var(--iris-flank-slide),
+    transform var(--iris-fold-fade) var(--iris-ease) var(--iris-flank-slide),
+    visibility 0s linear;
 }
 
 /* Pushes the import icon to the rail's foot, where the 「导入卡片」 button is
@@ -747,11 +812,12 @@
 
   /* The fold keeps its two end states and loses the choreography: the blades
      arrive shut rather than turning (「减少动效偏好下叶片不转」), and the panel
-     changes width at once. */
-  .iris-sidebar,
-  .iris-sidebar--rail,
+     is there or gone at once — no slide, no delayed visibility. */
   .iris-sidebar__full,
-  .iris-sidebar--rail .iris-sidebar__full,
+  .iris-sidebar--rail .iris-sidebar__full {
+    transition: none;
+  }
+
   .iris-sidebar__rail,
   .iris-sidebar--rail .iris-sidebar__rail,
   .iris-brand__word,
@@ -937,18 +1003,27 @@
  * Three tracks: the reading area, the variable margin, the settings drawer.
  *
  * `auto` for the two flanks rather than fixed widths, so each one's own rule
- * decides how wide it is — 236px or the 36px rail for the margin; the drawer's
+ * decides how wide it is — 400px or the 36px rail for the margin; the drawer's
  * token, or nothing at all when it is closed or is still the overlay form — and
  * this file needs no modifier class per state. The reading track is
- * `minmax(0, 1fr)`: it absorbs every change and the prose re-wraps, which is the
- * whole ruling. A flank with no item in it collapses to zero on its own, which
- * is why the same three tracks are correct at every width.
+ * `minmax(0, 1fr)` and absorbs every change — but since web §135 the column
+ * inside it is anchored to the viewport, so a margin that docks or folds moves
+ * the scroller's right edge and not the prose. Only the drawer, which keeps
+ * 「梅花」's ruling, can still narrow the column. A flank with no item in it
+ * collapses to zero on its own, which is why the same three tracks are correct
+ * at every width.
+ *
+ * `overflow-x: clip` because a folded margin's panel waits translated past the
+ * window's right edge, and a transformed box out there would otherwise give
+ * the whole page a sideways scroll. `clip` rather than `hidden`, so the stage
+ * does not become a scroll container and the vertical axis is untouched.
  */
 .iris-stage {
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
+  overflow-x: clip;
 }
 
 /*
@@ -1081,9 +1156,22 @@
  * title starts on the same vertical as the prose below it. It used to be a
  * centred box capped at the book measure with a gutter of padding inside it;
  * with the measure gone, the inset *is* the alignment.
+ *
+ * Since web §135 the inset is measured from the **column**, not from the
+ * sheet: the sheet's left edge moves when the sidebar docks, and a title that
+ * followed it would shift 356px while the prose under it stayed put. The left
+ * padding is the column's start plus the gutter; the right one is the space
+ * between the column's end and the sheet's, plus the gutter, so 设置 stays over
+ * the column's right edge when the margin opens beside it. The rule under the
+ * masthead still runs the sheet's whole width — it divides the page, not the
+ * column. `max()` keeps both at least one gutter on a window that has no side
+ * space at all.
  */
 .iris-masthead {
-  padding: 22px var(--iris-gutter) 16px;
+  padding: 22px
+    max(var(--iris-gutter), calc(100% - var(--iris-column-left) - min(var(--iris-column-max), 100%) + var(--iris-gutter)))
+    16px
+    calc(var(--iris-column-left) + var(--iris-gutter));
   border-bottom: var(--iris-hairline) solid var(--iris-rule);
 }
 

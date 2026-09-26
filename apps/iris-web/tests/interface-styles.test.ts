@@ -138,6 +138,13 @@ test('prose, a card interface and the composer are one width: bounded, centred, 
    * centred in the track. That is what this pins: the cap present and naming
    * the token, the slot still escaping nothing, the composer still riding the
    * column rather than carrying its own width.
+   *
+   * 2026-09-26, owner ruling (web §135): centred on the **viewport**, not the
+   * track, so a flank toggle cannot move it. `margin: 0 auto` is therefore the
+   * wrong centring now — it is exactly what moved the column 132px when the
+   * margin opened — and what is pinned is that the column and the composer both
+   * start at the one anchor, `--iris-column-left`. `stable-column.test.ts`
+   * evaluates the anchor itself.
    */
   const reading = readFileSync(join(here, '..', 'src', 'app', 'reading.css'), 'utf8')
   const panels = readFileSync(join(here, '..', 'src', 'app', 'panels.css'), 'utf8')
@@ -158,7 +165,11 @@ test('prose, a card interface and the composer are one width: bounded, centred, 
     /max-width:var\(--iris-column-max\)/,
     'the reading column lost its bound — the uncapped track is what out-measured the reader',
   )
-  assert.match(column, /margin:0auto/, 'a bounded column that is not centred parks a dead channel on one side')
+  assert.match(
+    column,
+    /margin:000var\(--iris-column-left\)/,
+    'the column is not placed by the viewport anchor — centred in its track, it moves with every flank toggle',
+  )
 
   const slot = rule(reading, '.iris-interfaces__slot {')
   assert.ok(
@@ -171,6 +182,11 @@ test('prose, a card interface and the composer are one width: bounded, centred, 
     inner,
     /max-width:var\(--iris-column-max\)/,
     'the composer carries its own cap instead of the column token — the two widths can drift',
+  )
+  assert.match(
+    inner,
+    /margin:000var\(--iris-column-left\)/,
+    'the composer is placed apart from the column, so the field and the prose part company on a flank toggle',
   )
 })
 

@@ -50,6 +50,7 @@ import { matchesLibraryQuery } from './library-search.ts'
 import { dropIndex, makeWay, moveItem } from './reorder.ts'
 import { laneHues, TRUNK } from './tree-map.ts'
 import { loadChatSort, saveChatSort, type ChatSort } from './sidebar-state.ts'
+import { SIDEBAR_OVERLAY_QUERY } from './state-panel.ts'
 import { CARD_FILE_ACCEPT } from './card-files.ts'
 import type { Language } from './i18n/strings.ts'
 import type { ChatSearchHit } from '@iris/protocol'
@@ -168,6 +169,8 @@ export function Sidebar({
   const chats = useIris(state => state.chats)
   const ordered = useIris(state => state.chatsOrdered)
   const characters = useIris(state => state.characters)
+  /** Whether the branch compare mode is up; it owns Escape while it is. */
+  const comparing = useIris(state => state.compare !== undefined)
   const chatId = useIris(state => state.chatId)
   const actions = useIrisActions()
   const picker = useRef<HTMLInputElement>(null)
@@ -545,6 +548,44 @@ export function Sidebar({
       ...renderChatRows(childrenOf(row.chatId), depth + 1),
     ])
 
+  /*
+   * Focus across the fold (web §135).
+   *
+   * The control a reader presses to open or fold the panel is hidden by that
+   * press — the rail goes when the panel comes, and the head's fold button
+   * leaves with the panel — so without this, focus fell to the document on
+   * every fold, and a panel opened over the page on a narrower window left the
+   * keyboard behind on a rail it now covers. Opening moves focus into the panel
+   * (unless something inside already has it — the rail's 搜索 icon puts it in
+   * the search box) and remembers where it came from; folding hands it back
+   * there, or to the rail's expand button when that place has gone. Only a
+   * change of `collapsed` after mount moves anything: the first render must
+   * not steal focus from wherever the page load put it.
+   */
+  const full = useRef<HTMLDivElement>(null)
+  const foldButton = useRef<HTMLButtonElement>(null)
+  const expandButton = useRef<HTMLButtonElement>(null)
+  const opener = useRef<HTMLElement | null>(null)
+  const wasCollapsed = useRef(collapsed)
+  useEffect(() => {
+    if (wasCollapsed.current === collapsed) return
+    wasCollapsed.current = collapsed
+    const active = document.activeElement
+    if (!collapsed) {
+      opener.current = active instanceof HTMLElement && !(full.current?.contains(active) ?? false) ? active : null
+      if (!(full.current?.contains(active) ?? false)) foldButton.current?.focus()
+      return
+    }
+    const lost = active === null || active === document.body || (full.current?.contains(active) ?? false)
+    if (!lost) return
+    const back = opener.current
+    opener.current = null
+    // The opener counts only if it can still take focus: a rail icon is
+    // visible again now, a control inside the folded panel is not.
+    if (back !== null && back.isConnected && !(full.current?.contains(back) ?? false)) back.focus()
+    if (document.activeElement !== back) expandButton.current?.focus()
+  }, [collapsed])
+
   /** Bring the panel back and land on one list, which is what a rail icon does. */
   const openOn = (next: SidebarTab, focusSearch = false): void => {
     setTab(next)
@@ -599,7 +640,27 @@ export function Sidebar({
         }}
       />
 
-      <div className="iris-sidebar__full" id="iris-sidebar-body" aria-hidden={collapsed}>
+      <div
+        ref={full}
+        className="iris-sidebar__full"
+        id="iris-sidebar-body"
+        aria-hidden={collapsed}
+        onKeyDown={event => {
+          // Over the page, the panel closes on Escape the way a drawer does.
+          // Docked, it is part of the layout, and Escape belongs to whatever
+          // has focus inside it (a rename field, a menu).
+          if (event.key !== 'Escape' || collapsed) return
+          if (typeof window.matchMedia !== 'function' || !window.matchMedia(SIDEBAR_OVERLAY_QUERY).matches) return
+          if (event.defaultPrevented) return
+          // The branch compare mode owns Escape while it is up (`TreeMap.tsx`):
+          // one press leaves the comparison, the next folds the panel.
+          if (comparing) return
+          // A field's own Escape (cancel a rename, clear a search) comes first.
+          const target = event.target
+          if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+          onCollapsed(true)
+        }}
+      >
         <div className="iris-brand">
           <span className="iris-brand__id">
             {/* The identity, and the one mark in the product that has states:
@@ -619,6 +680,7 @@ export function Sidebar({
             sliding out from under the pointer.
           */}
           <button
+            ref={foldButton}
             type="button"
             className="iris-sidebar__ico"
             aria-label={t('collapseSidebar')}
@@ -876,6 +938,7 @@ export function Sidebar({
       <div className="iris-sidebar__rail" aria-hidden={!collapsed}>
         <ApertureMark size={18} open={!collapsed} />
         <button
+          ref={expandButton}
           type="button"
           className="iris-sidebar__ico iris-sidebar__ico--flip"
           aria-label={t('expandSidebar')}

@@ -21,8 +21,8 @@
  * The window width under which a first-time reader gets the rail.
  *
  * **Not a layout breakpoint, and it is deliberately not in a stylesheet.** The
- * shell has exactly three width breakpoints (880 / 1432 / 1440, enumerated in
- * `breakpoints.test.ts`) and each one *is* a rule: below it the layout is one
+ * shell has exactly four width breakpoints (880 / 1432 / 1440 / 1744,
+ * enumerated in `breakpoints.test.ts`) and each one *is* a rule: below it the layout is one
  * thing and above it another, at every moment. This is a **default** — it is
  * read once, when there is no stored choice, and never again; a reader who
  * narrows their window does not lose their expanded sidebar, and one who

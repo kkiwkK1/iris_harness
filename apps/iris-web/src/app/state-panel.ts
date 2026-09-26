@@ -519,6 +519,60 @@ export const ASIDE_YIELD_BELOW = SIDEBAR_TRACK + ASIDE_TRACK + DRAWER_TRACK + RE
 export const ASIDE_YIELD_QUERY =
   `(min-width: ${String(ASIDE_FROM)}px) and (max-width: ${String(ASIDE_YIELD_BELOW - 1)}px)`
 
+/*
+ * ------------------------------------------------------- the stable column
+ *
+ * Owner ruling 2026-09-26: opening or folding the sidebar or the variable
+ * margin must not move or resize the reading column. The column is centred on
+ * the **viewport** (`shell.css`, `--iris-column-left`), and a flank only takes
+ * a track beside it where the side space can hold the flank without touching
+ * the column. Everywhere narrower, an open flank is a panel over the page and
+ * its track stays the rail it folds to, so the reading scroller never changes
+ * width on a toggle and no card frame re-measures.
+ *
+ * These are copies of CSS declarations, like the four above, and
+ * `stable-column.test.ts` reads each one back out of its stylesheet.
+ */
+
+/** The reading column's width (`tokens.css`, `--iris-column-max`). */
+export const COLUMN_TRACK = 920
+
+/** The sidebar's folded width (`shell.css`, `--iris-dock-left`'s base value). */
+export const SIDEBAR_RAIL = 44
+
+/**
+ * The widest scrollbar lane the reading scroller reserves, as an upper bound.
+ *
+ * Not a measurement of one platform: `tokens.css` asks every surface for
+ * `scrollbar-width: thin` and an 8px webkit bar, and Chromium's thin bar on
+ * Windows is 11px (measured on 8805, 2026-09-26). The lane sits on the
+ * scroller's right edge, between the column and the margin, so the margin side
+ * needs it and the sidebar side does not. Rounded up, because the error in the
+ * other direction is a column that touches the margin.
+ */
+export const SCROLLBAR_LANE = 12
+
+/**
+ * The window width from which an open flank docks beside the column.
+ *
+ * The column is `COLUMN_TRACK` wide and centred, so each side has
+ * `(width - COLUMN_TRACK) / 2`. The sidebar needs its 400px of that; the margin
+ * needs its 400px plus the scroller's lane. One breakpoint for both flanks —
+ * the larger need — so there is one interval where both dock and one where both
+ * overlay, rather than a third where they disagree.
+ */
+export const FLANKS_DOCK_FROM = COLUMN_TRACK + 2 * Math.max(SIDEBAR_TRACK, ASIDE_TRACK + SCROLLBAR_LANE)
+
+/** Where an open sidebar is a panel over the page (it slides at ≤880 as well). */
+export const SIDEBAR_OVERLAY_QUERY = `(max-width: ${String(FLANKS_DOCK_FROM - 1)}px)`
+
+/** Where an open variable margin is a panel over the page. */
+export const ASIDE_OVERLAY_QUERY =
+  `(min-width: ${String(ASIDE_FROM)}px) and (max-width: ${String(FLANKS_DOCK_FROM - 1)}px)`
+
+/** How long a flank's slide lasts (`tokens.css`, `--iris-flank-slide`). */
+export const FLANK_SLIDE_MS = 200
+
 /**
  * Whether the variable margin shows its full column right now.
  *

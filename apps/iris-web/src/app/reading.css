@@ -44,13 +44,20 @@
    * two screens of height, and the prose line out-measured any comfortable
    * read. The three surfaces are still one width — prose, a card's interface
    * and the composer all live in this column — but the width is now a chosen
-   * number (`--iris-column-max`, `tokens.css`), centred in whatever track the
-   * variable margin and the drawer leave. Keep the cap and the centring
+   * number (`--iris-column-max`, `tokens.css`). Keep the cap and the centring
    * together: capping without centring would park a dead channel on one side,
    * which is the failure 「梅花」 was right to forbid.
+   *
+   * **Centred on the viewport, not on the track** (owner ruling 2026-09-26,
+   * web §135). `margin: 0 auto` centred the column in whatever the sidebar and
+   * the margin left, so every flank toggle moved it — 132px when the margin
+   * opened at ~2000px wide — and on a narrower window resized it, which
+   * re-measures every card frame inside. `--iris-column-left` (`shell.css`)
+   * puts the start where a viewport-centred column starts, minus the sidebar's
+   * track, and the width stays the cap; neither reads the right flank.
    */
   max-width: var(--iris-column-max);
-  margin: 0 auto;
+  margin: 0 0 0 var(--iris-column-left);
   padding: 40px var(--iris-gutter) 28px 0;
   /*
    * A short conversation sits ON the composer instead of floating above it. It

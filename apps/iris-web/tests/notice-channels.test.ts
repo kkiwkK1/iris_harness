@@ -78,31 +78,44 @@ test('an interface frame fault reaches the notice log, not only the report list'
   )
 })
 
-test('the composer reserves the reading surface’s scrollbar lane', () => {
+test('the composer and the column share one anchor, so the scroller’s lane is not the composer’s', () => {
   /*
-   * Read from `__inner`, not `.iris-composer`, and the move is load-bearing.
+   * This used to pin the opposite: `__inner` reserved the reading scroller's
+   * scrollbar lane (web §40), because both boxes were centred in their own
+   * tracks and the scroller's track was one lane narrower — the reservation was
+   * what put the two centres on one line.
    *
-   * A scroll container clips its absolutely-positioned children — `overflow-y:
-   * auto` computes `overflow-x` to `auto` as well — and the 「梅花」 composer has
-   * one: the plum branch that crosses its top edge. So the lane reservation and
-   * the panel's padding moved one box inward, and the paint-and-position box
-   * declares no overflow at all. Asserting the old element would have passed
-   * only while the branch was clipped.
+   * Web §135 anchors both to the viewport instead: each starts at
+   * `--iris-column-left` and is the cap wide, and the lane sits to the column's
+   * right, outside it. A reservation in `__inner` would now make the field one
+   * lane narrower than the prose on every window with room for the column —
+   * so the invariant is restated, not dropped: one anchor for both boxes, and
+   * no lane on the composer. The scroller keeps its own `stable` lane, which
+   * still stops the column's content edge moving when a scrollbar appears.
+   *
+   * Read from `__inner`, not `.iris-composer`: the paint-and-position box must
+   * declare no overflow at all, or the plum branch crossing its top edge is
+   * clipped.
    */
   const composer = ruleBody(panelsCss, '.iris-composer__inner {')
   assert.ok(composer !== undefined, 'the composer inner rule disappeared')
-  const body = dense(composer)
-  assert.match(body, /scrollbar-gutter:stable/, 'the lane reservation is the midline parity')
-  assert.match(body, /overflow-y:auto/, 'the reservation needs a scroll container')
-  assert.match(
+  const body = dense(composer.replace(/\/\*[\s\S]*?\*\//g, ''))
+  assert.match(body, /margin:000var\(--iris-column-left\)/, 'the composer is not placed by the column’s anchor')
+  assert.doesNotMatch(
     body,
-    /min-height:max-content/,
-    'a scroll container loses its automatic minimum; without it a short window squashes the composer',
+    /scrollbar-gutter/,
+    'the composer reserves a lane again; with the column anchored to the viewport that narrows the field under the prose',
   )
-  // The reading surface reserves the same lane — the two declarations are the
-  // parity. If the scroller's `stable` goes, this pair goes with it.
+  const outer = ruleBody(panelsCss, '.iris-composer {')
+  assert.ok(outer !== undefined)
+  assert.doesNotMatch(dense(outer.replace(/\/\*[\s\S]*?\*\//g, '')), /overflow/, 'the composer panel clips its branch again')
   const readingCss = readFileSync(join(src, 'app', 'reading.css'), 'utf8')
   assert.match(dense(ruleBody(readingCss, '.iris-scroll {') ?? ''), /scrollbar-gutter:stable/)
+  assert.match(
+    dense((ruleBody(readingCss, '.iris-column {') ?? '').replace(/\/\*[\s\S]*?\*\//g, '')),
+    /margin:000var\(--iris-column-left\)/,
+    'the column is not placed by the same anchor as the composer',
+  )
 })
 
 test('the composer field is sized inside its box', () => {
