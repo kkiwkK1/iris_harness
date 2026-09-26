@@ -152,6 +152,8 @@ npm --prefix apps/iris-web run check:render
 
 感谢 [SillyTavern](https://github.com/SillyTavern/SillyTavern)、[ST-Prompt-Template](https://github.com/zonde306/ST-Prompt-Template)、[MagVarUpdate](https://github.com/MagicalAstrogy/MagVarUpdate)、[TavernHelper](https://github.com/N0VI028/JS-Slash-Runner)，以及 Cordis 和 `@deepseek-ai/*` 的开发者与社区。
 
+感谢类脑社区与角色卡作者；社区分享的角色卡帮助我们测试和改进 Iris 的兼容性。
+
 Iris 以 [GNU AGPL-3.0](LICENSE) 发布。第三方代码与依赖的许可信息见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ---
