@@ -84,6 +84,26 @@ export {
  */
 export { toEntryDigest } from './digests.ts'
 
+/*
+ * The variable diff between two floors, in the contract for the same reason:
+ * the host answers `chat.variablesDiff` from chat files and the fake client
+ * from seeded floors, and both must classify a change the same way.
+ */
+export {
+  diffTables,
+  diffVariables,
+  isMvuPair,
+  sameVariables,
+  type VariableDiff,
+  type VariableDiffEntry,
+  type VariableDiffKind,
+  type VariableDiffNote,
+  type VariableDiffSummary,
+  type VariablePath,
+  type VariablesDiffSide,
+  type VariablesDiffView,
+} from './variables-diff.ts'
+
 export {
   parseRequest,
   type PluginRevisionRequest,

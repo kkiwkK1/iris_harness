@@ -616,6 +616,107 @@ export function saveLastTree(chatId: string, sight: LastSight, storage: StorageL
   }
 }
 
+/* ------------------------------------------------------------------ compare */
+
+/**
+ * A two-floor diff (`chat.variablesDiff`), put into the shape the tree above
+ * already draws: B's table as the tree, with the same added / changed marks a
+ * round diff puts on it, and what only A holds as the removals list.
+ *
+ * The host's paths and the tree's paths are not the same thing, and this is
+ * the one place they are reconciled:
+ *
+ * - the host counts array positions from 0 and the tree numbers them from 1;
+ * - a list of scalars is **one row** in the tree (three tags are a value), so
+ *   a position-level entry inside one marks the whole list as changed;
+ * - an MVU pair holding an object is a two-row branch in the tree, so a path
+ *   through its value half gains the tree's `1`.
+ */
+export interface CompareMarks {
+  /** B's table, as the tree's entries. */
+  entries: [string, unknown][]
+  /** Tree paths only B holds. */
+  added: ReadonlySet<string>
+  /** Tree paths whose reading differs, each with its `A → B` sentence. */
+  changed: ReadonlyMap<string, string>
+  /** What only A holds, with a readable path. */
+  removed: { path: string, label: string, value: unknown }[]
+  /** True when some difference was found by comparing list positions. */
+  byIndex: boolean
+}
+
+/** One step down a value the way the host's path takes it. */
+function stepInto(value: unknown, segment: string | number): unknown {
+  if (value === null || typeof value !== 'object') return undefined
+  if (typeof segment === 'number') return Array.isArray(value) ? value[segment] : undefined
+  if (isMvuPairShape(value)) return stepInto(value[0], segment)
+  if (Array.isArray(value)) return undefined
+  return Object.getOwnPropertyDescriptor(value, segment)?.value
+}
+
+/** The MVU `[value, description]` shape, as `@iris/protocol`'s `isMvuPair` reads it. */
+function isMvuPairShape(value: unknown): value is [unknown, string] {
+  return Array.isArray(value) && value.length === 2 && typeof value[1] === 'string' && !Array.isArray(value[0])
+}
+
+/**
+ * Reconcile a two-floor diff with the tree.
+ * @param entries - the host's entries (`VariableDiffEntry`s).
+ * @param tables - the two tables compared; a missing side is absent.
+ * @param lang - which language the sentences take.
+ * @returns the marks, keyed by tree path.
+ */
+export function compareMarks(
+  entries: readonly { path: readonly (string | number)[], kind: 'added' | 'removed' | 'changed', before?: unknown, after?: unknown, notes?: readonly string[] }[],
+  tables: { a?: unknown, b?: unknown },
+  lang: Language,
+): CompareMarks {
+  const added = new Set<string>()
+  const changed = new Map<string, string>()
+  const removed = new Map<string, { path: string, label: string, value: unknown }>()
+  let byIndex = false
+
+  for (const entry of entries) {
+    if (entry.notes?.includes('index') === true) byIndex = true
+    let path = ''
+    const labels: string[] = []
+    let inA: unknown = tables.a
+    let inB: unknown = tables.b
+    let cut = false
+    for (const segment of entry.path) {
+      const container = inB !== undefined ? inB : inA
+      if (typeof segment === 'number') {
+        // A list the tree draws as one row: the difference belongs to the row.
+        if (!isBranch(container)) { cut = true; break }
+        path += `/${String(segment + 1)}`
+        labels.push(String(segment + 1))
+      } else {
+        // Through an MVU pair's value half: the tree shows the pair as a
+        // two-row branch, and the value is its first row.
+        if (isMvuPairShape(container) && isBranch(container)) path += '/1'
+        path += `/${segment}`
+        labels.push(segment)
+      }
+      inA = stepInto(inA, segment)
+      inB = stepInto(inB, segment)
+    }
+    const label = labels.join(' / ')
+    if (cut) {
+      if (inB !== undefined && inA !== undefined) changed.set(path, changeSentence(inA, inB, lang))
+      else if (inB !== undefined) added.add(path)
+      else removed.set(path, { path, label, value: inA })
+      continue
+    }
+    if (entry.kind === 'added') added.add(path)
+    else if (entry.kind === 'changed') changed.set(path, changeSentence(entry.before, entry.after, lang))
+    else removed.set(path, { path, label, value: entry.before })
+  }
+
+  const b = tables.b
+  const tree = b !== null && typeof b === 'object' && !Array.isArray(b) ? Object.entries(b as Record<string, unknown>) : []
+  return { entries: tree, added, changed, removed: [...removed.values()], byIndex }
+}
+
 /* ------------------------------------------------------------------ preview */
 
 /**
@@ -632,6 +733,9 @@ export function previewValue(value: unknown, lang: Language): string {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  // A list of scalars reads the way the tree draws it (`describe`): `a, b`,
+  // not the `a,b` that `String` makes of an array.
+  if (Array.isArray(value) && !isBranch(value)) return value.map(entry => (entry === null ? '—' : String(entry))).join(', ')
   if (isBranch(value)) return translate(lang, 'stateItems', { n: branchSize(value) })
   return String(value)
 }

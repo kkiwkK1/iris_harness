@@ -12,12 +12,15 @@
  */
 
 import {
+  diffTables,
+  diffVariables,
   parseRequest,
   registerRequestSchema,
   segmentsOf,
   ownerOfFloor,
   toEntryDigest,
   type SegmentSummaryView,
+  type VariablesDiffSide,
   type AnyRpcMethod,
   type CharacterSummary,
   type ChatSearchHit,
@@ -1341,6 +1344,43 @@ class InMemoryClient implements FakeClient {
         }
         this.#segmentSummaries.set(`${owner}:${String(fromFloor)}-${String(toFloor)}`, summary)
         return { summary }
+      }
+
+      case 'chat.variablesDiff': {
+        // The host's rules, over the fake's per-reading tables: an unknown chat
+        // is refused, and a floor, reading or table that is not there is
+        // answered with `missing` on that side. The diff itself is the
+        // contract's (`diffVariables`), so the two cannot classify differently.
+        const { a, b, tables } = params as RpcRequest<'chat.variablesDiff'>
+        const read = (side: typeof a): { table: unknown, side: VariablesDiffSide } => {
+          const chat = this.#require(side.chatId)
+          const message = chat.messages[side.floor]
+          const base = { chatId: side.chatId, floor: side.floor }
+          if (message === undefined) {
+            return { table: undefined, side: { ...base, swipe: side.swipe ?? 0, swipes: 0, source: 'none', missing: 'no-floor' } }
+          }
+          const role = message.role === 'user' ? 'user' as const : 'assistant' as const
+          const swipe = side.swipe ?? message.index
+          const swipes = message.candidates.length
+          const candidate = message.candidates[swipe]
+          if (candidate === undefined) {
+            return { table: undefined, side: { ...base, swipe, swipes, role, source: 'none', missing: 'no-swipe' } }
+          }
+          if (candidate.variables === undefined) {
+            return { table: undefined, side: { ...base, swipe, swipes, role, source: 'none', missing: 'no-table' } }
+          }
+          return { table: candidate.variables, side: { ...base, swipe, swipes, role, source: 'floor' } }
+        }
+        const left = read(a)
+        const right = read(b)
+        return {
+          diff: {
+            a: left.side,
+            b: right.side,
+            ...diffVariables(left.table, right.table),
+            ...tables === true ? { tables: diffTables(left.table, right.table) } : {},
+          },
+        }
       }
 
       case 'script.context':

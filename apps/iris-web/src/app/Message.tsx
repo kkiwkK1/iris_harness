@@ -12,7 +12,7 @@
 
 import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
-import { Menu, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu, writeClipboard, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 
 import { MessageActions } from './MessageActions.tsx'
 import { MessageInterfaces } from './MessageInterfaces.tsx'
@@ -32,6 +32,8 @@ import { VariantRail } from './VariantRail.tsx'
 import { usageChipText, usageDetailRows } from './token-format.ts'
 import { useLanguage, t } from './i18n/use-language.ts'
 import type { BranchLink } from './tree-map.ts'
+import { BranchDeleteDialog } from './TreeMap.tsx'
+import { useIris, useIrisActions } from '../client/provider.tsx'
 
 /** What a message row can do, supplied by the pane that owns the chat. */
 export interface MessageHandlers {
@@ -66,6 +68,98 @@ export interface MessageHandlers {
  * row and no other. The row still re-renders on its own subscriptions
  * (language, body tag, quote scope), which `memo` does not block.
  */
+/**
+ * The ⑂N badge and the list it opens.
+ *
+ * Each row goes to that conversation at this floor, as before. Under them, two
+ * grouped actions name the same conversations again: 「比较变量」 compares this
+ * floor's variables with that conversation's same floor (the tree map's compare
+ * mode, shown in the margin), and 「删除」 opens the tree map's own delete
+ * dialog (`BranchDeleteDialog`, #187), so the two places delete alike.
+ *
+ * Its own component so the store subscriptions it needs are paid only on the
+ * floors that have a badge, not on every row.
+ */
+function ForkBadge({
+  floor,
+  branches,
+  onOpen,
+}: {
+  floor: number
+  branches: readonly BranchLink[]
+  onOpen: (chatId: string, floor: number) => void
+}): ReactElement | null {
+  const chatId = useIris(state => state.chatId)
+  const actions = useIrisActions()
+  const [open, setOpen] = useState(false)
+  const [deleting, setDeleting] = useState<string | undefined>(undefined)
+  const label = (link: BranchLink): string => link.relation === 'parent'
+    ? t('forkParent', { title: link.title })
+    : link.relation === 'sibling'
+      ? t('forkSibling', { title: link.title })
+      : link.title
+  const items: MenuEntry[] = [
+    ...branches.map(link => ({ id: `open:${link.chatId}`, label: label(link) })),
+    { type: 'separator', id: 'actions' },
+    {
+      id: 'compare',
+      label: t('forkCompare'),
+      submenu: branches.map(link => ({ id: `compare:${link.chatId}`, label: label(link) })),
+    },
+    {
+      id: 'delete',
+      label: t('forkDeleteGroup'),
+      danger: true,
+      submenu: branches.map(link => ({ id: `delete:${link.chatId}`, label: label(link), danger: true })),
+    },
+  ]
+  return (
+    <>
+      <Menu
+        open={open}
+        portal
+        align="start"
+        anchor={
+          <button
+            type="button"
+            className="iris-msg__forks"
+            data-control="floor-forks"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label={t('forkBadgeAria', { n: branches.length })}
+            onClick={() => setOpen(!open)}
+          >
+            ⑂{branches.length}
+          </button>
+        }
+        items={items}
+        onSelect={id => {
+          setOpen(false)
+          const at = id.indexOf(':')
+          const verb = id.slice(0, at)
+          const target = id.slice(at + 1)
+          if (verb === 'open') onOpen(target, floor)
+          else if (verb === 'compare' && chatId !== undefined) {
+            actions.compareFloors({ chatId, floor }, { chatId: target, floor })
+          } else if (verb === 'delete') setDeleting(target)
+        }}
+        onClose={() => setOpen(false)}
+      />
+      {deleting === undefined || chatId === undefined ? null : (
+        <BranchDeleteDialog
+          chatId={deleting}
+          viewing={chatId}
+          onClose={() => setDeleting(undefined)}
+          onConfirm={subBranches => {
+            setDeleting(undefined)
+            void actions.deleteChat(deleting, { subBranches })
+          }}
+        />
+      )}
+    </>
+  )
+}
+
 export const Message = memo(function Message({
   message,
   canRegenerate,
@@ -82,7 +176,6 @@ export const Message = memo(function Message({
   canBranch?: boolean
 }): ReactElement {
   const [editing, setEditing] = useState(false)
-  const [forksOpen, setForksOpen] = useState(false)
   const [draft, setDraft] = useState(message.text)
   const field = useRef<HTMLTextAreaElement>(null)
   // Subscribed so a language switch re-renders the row's actions.
@@ -191,37 +284,7 @@ export const Message = memo(function Message({
           the floor number, because it is a way somewhere rather than a label.
         */}
         {branches === undefined || branches.length === 0 ? null : (
-          <Menu
-            open={forksOpen}
-            portal
-            align="start"
-            anchor={
-              <button
-                type="button"
-                className="iris-msg__forks"
-                data-control="floor-forks"
-                aria-haspopup="menu"
-                aria-expanded={forksOpen}
-                aria-label={t('forkBadgeAria', { n: branches.length })}
-                onClick={() => setForksOpen(!forksOpen)}
-              >
-                ⑂{branches.length}
-              </button>
-            }
-            items={branches.map(link => ({
-              id: link.chatId,
-              label: link.relation === 'parent'
-                ? t('forkParent', { title: link.title })
-                : link.relation === 'sibling'
-                  ? t('forkSibling', { title: link.title })
-                  : link.title,
-            }))}
-            onSelect={id => {
-              setForksOpen(false)
-              handlers.onOpenBranch(id, message.id)
-            }}
-            onClose={() => setForksOpen(false)}
-          />
+          <ForkBadge floor={message.id} branches={branches} onOpen={handlers.onOpenBranch} />
         )}
       </div>
 

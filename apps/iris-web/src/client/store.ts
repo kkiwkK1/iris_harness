@@ -55,6 +55,7 @@ import type {
 import { asRpcError, describeError, isHostError } from './errors.ts'
 import { branchTreeActions, branchTreeState, type BranchTreeActions, type BranchTreeState } from './branch-tree.ts'
 import { segmentSummaryActions, segmentSummaryState, type SegmentSummaryActions, type SegmentSummaryState } from './segment-summaries.ts'
+import { variableCompareActions, variableCompareState, type VariableCompareActions, type VariableCompareState } from './variable-compare.ts'
 
 /**
  * What a library save carries: the editable half of a stored script.
@@ -542,7 +543,7 @@ export interface CardReportOptions {
   grant?: RefusalGrant
 }
 
-export interface IrisState extends BranchTreeState, SegmentSummaryState {
+export interface IrisState extends BranchTreeState, SegmentSummaryState, VariableCompareState {
   connected: boolean
   /** The host-authored system-plugin catalog and runtime state. */
   systemPlugins: SystemPluginSnapshot | undefined
@@ -1060,7 +1061,7 @@ export interface IrisState extends BranchTreeState, SegmentSummaryState {
 }
 
 /** What the interface calls. Every one of these is a host round trip. */
-export interface IrisActions extends BranchTreeActions, SegmentSummaryActions {
+export interface IrisActions extends BranchTreeActions, SegmentSummaryActions, VariableCompareActions {
   boot(): Promise<void>
   /** Replace the plugin projection from an explicit host read. */
   refreshSystemPlugins(): Promise<SystemPluginOperationResult>
@@ -2138,6 +2139,10 @@ export function createIrisStore(
       // The tree map's segment summaries (`segment-summaries.ts`).
       ...segmentSummaryState(),
       ...segmentSummaryActions({ client, get, set }),
+      // The tree map's compare mode (`variable-compare.ts`): two picked floors
+      // and the host's variable diff between them.
+      ...variableCompareState(),
+      ...variableCompareActions({ client, get, set, guard }),
       systemPlugins: undefined,
       systemPluginSession: 0,
       chats: [],

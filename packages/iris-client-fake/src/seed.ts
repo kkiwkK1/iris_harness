@@ -656,6 +656,24 @@ export function seedChats(): FakeChat[] {
     // turn above and the bare total here.
     ], [routed(CACHED, { model: 'deepseek-reasoner', provider: 'deepseek' }, booted - 5 * 60 * 1_000)]),
   ]
+  /*
+   * Per-reading variable tables, MVU-shaped, for `chat.variablesDiff` and the
+   * tree map's compare mode. Every rule the diff has meets one here: an MVU
+   * `[value, description]` pair that moves (好感度), a string that changes
+   * (地点), a list compared by position (物品), a key that arrives (线索), and
+   * the two readings of turn 1 disagreeing. The user lines carry none — the
+   * `no-table` answer is seeded too.
+   */
+  const tables: [number, number, Record<string, unknown>][] = [
+    [0, 0, { stat_data: { 好感度: [30, '她对你的信任'], 地点: '巷口灯柱下', 物品: ['细口钳'] } }],
+    [2, 0, { stat_data: { 好感度: [32, '她对你的信任'], 地点: '巷口灯柱下', 物品: ['细口钳', '灯芯'] } }],
+    [2, 1, { stat_data: { 好感度: [28, '她对你的信任'], 地点: '灯柱旁的台阶', 物品: ['细口钳'] } }],
+    [4, 0, { stat_data: { 好感度: [35, '她对你的信任'], 地点: '巷口灯柱下', 物品: ['灯芯', '细口钳'], 线索: { 数人者: '第三次' } } }],
+  ]
+  for (const [floor, swipe, table] of tables) {
+    const candidate = lamplighter[floor]?.candidates[swipe]
+    if (candidate !== undefined) candidate.variables = table
+  }
 
   /**
    * The second conversation carries **no costs anywhere**, deliberately.

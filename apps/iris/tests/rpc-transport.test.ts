@@ -326,6 +326,9 @@ const PROBES: { [M in RpcMethod]: RpcRequest<M> } = {
   // before any provider is reached — so the write arm's probe spends nothing.
   'chat.segmentSummaries': { chatId: 'no-such-chat' },
   'chat.summarizeSegment': { chatId: 'no-such-chat', fromFloor: 0, toFloor: 0 },
+  // The same: both sides name a chat the probe host does not have, and the
+  // not-found refusal proves the read-only handler is registered and ran.
+  'chat.variablesDiff': { a: { chatId: 'no-such-chat', floor: 0 }, b: { chatId: 'no-such-chat', floor: 1 } },
   // The import probe names a card that is not in the library: reachability is
   // the property, and the not-found answer proves the handler ran.
   'chat.import': { filename: 'probe.jsonl', content: 'e30=', characterId: 'no-such-card' },
